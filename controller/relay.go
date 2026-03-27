@@ -93,13 +93,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
 			case types.RelayFormatClaude:
-				c.JSON(newAPIError.StatusCode, gin.H{
+				c.JSON(http.StatusInternalServerError, gin.H{
 					"type":  "error",
-					"error": newAPIError.ToClaudeError(),
+					"error": buildClientFacingClaudeError(newAPIError),
 				})
 			default:
-				c.JSON(newAPIError.StatusCode, gin.H{
-					"error": newAPIError.ToOpenAIError(),
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error": buildClientFacingOpenAIError(newAPIError),
 				})
 			}
 		}
@@ -246,6 +246,27 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		return true // 允许跨域
 	},
+}
+
+const (
+	clientFacingRelayErrorMessage = "server error"
+	clientFacingRelayErrorType    = "new_api_error"
+	clientFacingRelayErrorCode    = "server_error"
+)
+
+func buildClientFacingOpenAIError(_ *types.NewAPIError) types.OpenAIError {
+	return types.OpenAIError{
+		Message: clientFacingRelayErrorMessage,
+		Type:    clientFacingRelayErrorType,
+		Code:    clientFacingRelayErrorCode,
+	}
+}
+
+func buildClientFacingClaudeError(_ *types.NewAPIError) types.ClaudeError {
+	return types.ClaudeError{
+		Message: clientFacingRelayErrorMessage,
+		Type:    clientFacingRelayErrorType,
+	}
 }
 
 func addUsedChannel(c *gin.Context, channelId int) {
