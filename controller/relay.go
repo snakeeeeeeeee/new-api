@@ -93,14 +93,27 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
 			case types.RelayFormatClaude:
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"type":  "error",
-					"error": buildClientFacingClaudeError(newAPIError),
-				})
+				if shouldWrapClientFacingRelayError(newAPIError) {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"type":  "error",
+						"error": buildClientFacingClaudeError(newAPIError),
+					})
+				} else {
+					c.JSON(newAPIError.StatusCode, gin.H{
+						"type":  "error",
+						"error": newAPIError.ToClaudeError(),
+					})
+				}
 			default:
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": buildClientFacingOpenAIError(newAPIError),
-				})
+				if shouldWrapClientFacingRelayError(newAPIError) {
+					c.JSON(http.StatusInternalServerError, gin.H{
+						"error": buildClientFacingOpenAIError(newAPIError),
+					})
+				} else {
+					c.JSON(newAPIError.StatusCode, gin.H{
+						"error": newAPIError.ToOpenAIError(),
+					})
+				}
 			}
 		}
 	}()
@@ -253,6 +266,18 @@ const (
 	clientFacingRelayErrorType    = "new_api_error"
 	clientFacingRelayErrorCode    = "server_error"
 )
+
+func shouldWrapClientFacingRelayError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	switch err.GetErrorType() {
+	case types.ErrorTypeOpenAIError, types.ErrorTypeClaudeError:
+		return true
+	default:
+		return false
+	}
+}
 
 func buildClientFacingOpenAIError(_ *types.NewAPIError) types.OpenAIError {
 	return types.OpenAIError{

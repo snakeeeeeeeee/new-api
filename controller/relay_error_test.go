@@ -18,10 +18,14 @@ func TestBuildClientFacingOpenAIError(t *testing.T) {
 	require.Equal(t, clientFacingRelayErrorCode, got.Code)
 	require.Equal(t, http.StatusTooManyRequests, apiErr.StatusCode)
 	require.Contains(t, apiErr.Error(), "upstream claude provider returned 429")
+	require.True(t, shouldWrapClientFacingRelayError(apiErr))
 }
 
 func TestBuildClientFacingClaudeError(t *testing.T) {
-	apiErr := types.NewErrorWithStatusCode(assertErr("upstream vendor example.com failed"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
+	apiErr := types.WithClaudeError(types.ClaudeError{
+		Message: "upstream vendor example.com failed",
+		Type:    "upstream_error",
+	}, http.StatusServiceUnavailable)
 
 	got := buildClientFacingClaudeError(apiErr)
 
@@ -29,6 +33,13 @@ func TestBuildClientFacingClaudeError(t *testing.T) {
 	require.Equal(t, clientFacingRelayErrorType, got.Type)
 	require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
 	require.Contains(t, apiErr.Error(), "example.com")
+	require.True(t, shouldWrapClientFacingRelayError(apiErr))
+}
+
+func TestShouldWrapClientFacingRelayError_FalseForLocalErrors(t *testing.T) {
+	apiErr := types.NewErrorWithStatusCode(assertErr("model ratio not set"), types.ErrorCodeModelPriceError, http.StatusInternalServerError)
+
+	require.False(t, shouldWrapClientFacingRelayError(apiErr))
 }
 
 func assertErr(msg string) error {
