@@ -312,7 +312,7 @@ func TestAddTokenAllowsVisibleAggregateGroup(t *testing.T) {
 	}
 }
 
-func TestAddTokenRejectsHiddenRealGroupWhenAggregateVisible(t *testing.T) {
+func TestAddTokenAllowsRealGroupWhenAggregateVisible(t *testing.T) {
 	db := setupTokenControllerTestDB(t)
 	seedTokenTestUser(t, db, 1, "vip")
 	originalGroups := setting.UserUsableGroups2JSONString()
@@ -352,11 +352,8 @@ func TestAddTokenRejectsHiddenRealGroupWhenAggregateVisible(t *testing.T) {
 	AddToken(ctx)
 
 	response := decodeAPIResponse(t, recorder)
-	if response.Success {
-		t.Fatalf("expected failure response when selecting hidden real group")
-	}
-	if !strings.Contains(response.Message, "无权选择 default 分组") {
-		t.Fatalf("unexpected message: %s", response.Message)
+	if !response.Success {
+		t.Fatalf("expected success response, got message: %s", response.Message)
 	}
 }
 

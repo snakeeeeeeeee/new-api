@@ -81,7 +81,7 @@ func TestVisibleAggregateGroupsAndRatios(t *testing.T) {
 	require.Contains(t, usableGroups, "enterprise-stable")
 
 	visibleGroups := GetUserVisibleGroups("vip")
-	require.NotContains(t, visibleGroups, "default")
+	require.Contains(t, visibleGroups, "default")
 	require.Contains(t, visibleGroups, "enterprise-stable")
 	require.Equal(t, 1.5, GetUserGroupRatio("vip", "enterprise-stable"))
 

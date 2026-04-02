@@ -68,20 +68,7 @@ func GetAggregateGroupRatio(group string) (float64, bool) {
 }
 
 func GetUserVisibleGroups(userGroup string) map[string]string {
-	visibleGroups := GetUserUsableGroups(userGroup)
-	if len(visibleGroups) == 0 {
-		return visibleGroups
-	}
-	hiddenRealGroups := make(map[string]struct{})
-	for _, aggregateGroup := range GetVisibleAggregateGroups(userGroup) {
-		for _, realGroup := range aggregateGroup.GetTargetGroups() {
-			hiddenRealGroups[realGroup] = struct{}{}
-		}
-	}
-	for group := range hiddenRealGroups {
-		delete(visibleGroups, group)
-	}
-	return visibleGroups
+	return GetUserUsableGroups(userGroup)
 }
 
 func CanUserSelectGroup(userGroup, group string) bool {
