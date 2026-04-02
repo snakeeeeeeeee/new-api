@@ -236,6 +236,7 @@ export const processGroupsData = (data, userGroup) => {
     value: group,
     ratio: info.ratio,
     fullLabel: info.desc,
+    groupType: info.type || 'real',
   }));
 
   if (groupOptions.length === 0) {

@@ -350,9 +350,10 @@ func TokenAuth() func(c *gin.Context) {
 				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
 				return
 			}
-			// check group in common.GroupRatio
-			if !ratio_setting.ContainsGroupRatio(tokenGroup) {
-				if tokenGroup != "auto" {
+			if !ratio_setting.ContainsGroupRatio(tokenGroup) && tokenGroup != "auto" {
+				if aggregateGroup, ok := service.GetAggregateGroup(tokenGroup, true); ok {
+					common.SetContextKey(c, constant.ContextKeyAggregateGroup, aggregateGroup.Name)
+				} else {
 					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("分组 %s 已被弃用", tokenGroup))
 					return
 				}

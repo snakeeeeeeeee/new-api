@@ -262,9 +262,9 @@ var upgrader = websocket.Upgrader{
 }
 
 const (
-	clientFacingRelayErrorMessage = "server error"
+	clientFacingRelayErrorMessage = "Service temporarily unavailable, please try again later."
 	clientFacingRelayErrorType    = "new_api_error"
-	clientFacingRelayErrorCode    = "server_error"
+	clientFacingRelayErrorCode    = "service_unavailable"
 )
 
 func shouldWrapClientFacingRelayError(err *types.NewAPIError) bool {
@@ -429,6 +429,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
 		}
 		service.AppendChannelAffinityAdminInfo(c, adminInfo)
+		service.AppendAggregateGroupAdminInfo(c, adminInfo)
 		other["admin_info"] = adminInfo
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		if startTime.IsZero() {

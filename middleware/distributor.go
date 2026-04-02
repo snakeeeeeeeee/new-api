@@ -159,7 +159,10 @@ func Distribute() func(c *gin.Context) {
 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
-			service.RecordChannelAffinity(c, channel.Id)
+			if common.GetContextKeyString(c, constant.ContextKeyAggregateGroup) == "" {
+				service.RecordChannelAffinity(c, channel.Id)
+			}
+			service.RecordAggregateRouteSuccess(c, modelRequest.Model)
 		}
 	}
 }

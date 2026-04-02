@@ -9,10 +9,29 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 )
+
+func validateTokenGroupForWrite(userId int, group string, keepExistingGroup string) error {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return nil
+	}
+	if keepExistingGroup != "" && keepExistingGroup == group {
+		return nil
+	}
+	userGroup, err := model.GetUserGroup(userId, false)
+	if err != nil {
+		return err
+	}
+	if !service.CanUserSelectGroup(userGroup, group) {
+		return fmt.Errorf("无权选择 %s 分组", group)
+	}
+	return nil
+}
 
 func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	if token == nil {
@@ -222,6 +241,13 @@ func AddToken(c *gin.Context) {
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
 	}
+	if err := validateTokenGroupForWrite(c.GetInt("id"), cleanToken.Group, ""); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if cleanToken.Group != "auto" {
+		cleanToken.CrossGroupRetry = false
+	}
 	err = cleanToken.Insert()
 	if err != nil {
 		common.ApiError(c, err)
@@ -276,6 +302,7 @@ func UpdateToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	originalGroup := cleanToken.Group
 	if token.Status == common.TokenStatusEnabled {
 		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
 			common.ApiErrorI18n(c, i18n.MsgTokenExpiredCannotEnable)
@@ -299,6 +326,15 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+	}
+	if statusOnly == "" {
+		if err := validateTokenGroupForWrite(userId, cleanToken.Group, originalGroup); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if cleanToken.Group != "auto" {
+			cleanToken.CrossGroupRetry = false
+		}
 	}
 	err = cleanToken.Update()
 	if err != nil {

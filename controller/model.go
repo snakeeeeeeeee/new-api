@@ -178,7 +178,7 @@ func ListModels(c *gin.Context, modelType int) {
 				}
 			}
 		} else {
-			models = model.GetGroupEnabledModels(group)
+			models = service.GetModelsForGroup(group)
 		}
 		for _, modelName := range models {
 			if !acceptUnsetRatioModel {

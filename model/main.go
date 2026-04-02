@@ -61,6 +61,12 @@ func initCol() {
 	//common.SysLog("Using Log SQL Type: " + common.LogSqlType)
 }
 
+func ensureCommonColumnsInitialized() {
+	if commonGroupCol == "" || commonKeyCol == "" {
+		initCol()
+	}
+}
+
 var DB *gorm.DB
 
 var LOG_DB *gorm.DB
@@ -271,6 +277,8 @@ func migrateDB() error {
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},
+		&AggregateGroup{},
+		&AggregateGroupTarget{},
 		&Setup{},
 		&TwoFA{},
 		&TwoFABackupCode{},
@@ -319,6 +327,8 @@ func migrateDBFast() error {
 		{&Model{}, "Model"},
 		{&Vendor{}, "Vendor"},
 		{&PrefillGroup{}, "PrefillGroup"},
+		{&AggregateGroup{}, "AggregateGroup"},
+		{&AggregateGroupTarget{}, "AggregateGroupTarget"},
 		{&Setup{}, "Setup"},
 		{&TwoFA{}, "TwoFA"},
 		{&TwoFABackupCode{}, "TwoFABackupCode"},

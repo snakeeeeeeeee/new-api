@@ -166,6 +166,21 @@ const EditTokenModal = (props) => {
       } else {
         data.model_limits = [];
       }
+      setGroups((prev) => {
+        if ((prev || []).some((group) => group.value === data.group)) {
+          return prev;
+        }
+        return [
+          {
+            label: t('历史分组（仅允许保留）'),
+            value: data.group,
+            ratio: 1,
+            fullLabel: t('历史分组（仅允许保留）'),
+            groupType: 'real',
+          },
+          ...(prev || []),
+        ];
+      });
       if (formApiRef.current) {
         formApiRef.current.setValues({ ...getInitValues(), ...data });
       }

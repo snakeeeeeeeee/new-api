@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -8,35 +9,42 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func clonePricingItems(pricing []model.Pricing) []model.Pricing {
+	cloned := make([]model.Pricing, 0, len(pricing))
+	for _, item := range pricing {
+		copied := item
+		if len(item.EnableGroup) > 0 {
+			copied.EnableGroup = append([]string{}, item.EnableGroup...)
+		}
+		if len(item.SupportedEndpointTypes) > 0 {
+			copied.SupportedEndpointTypes = append([]constant.EndpointType{}, item.SupportedEndpointTypes...)
+		}
+		cloned = append(cloned, copied)
+	}
+	return cloned
+}
+
 func GetPricing(c *gin.Context) {
-	pricing := model.GetPricing()
+	pricing := clonePricingItems(model.GetPricing())
 	userId, exists := c.Get("id")
 	usableGroup := map[string]string{}
 	groupRatio := map[string]float64{}
-	for s, f := range ratio_setting.GetGroupRatioCopy() {
-		groupRatio[s] = f
-	}
 	var group string
 	if exists {
 		user, err := model.GetUserCache(userId.(int))
 		if err == nil {
 			group = user.Group
-			for g := range groupRatio {
-				ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
-				if ok {
-					groupRatio[g] = ratio
-				}
-			}
 		}
 	}
 
-	usableGroup = service.GetUserUsableGroups(group)
-	// check groupRatio contains usableGroup
-	for group := range ratio_setting.GetGroupRatioCopy() {
-		if _, ok := usableGroup[group]; !ok {
-			delete(groupRatio, group)
-		}
+	usableGroup = service.GetUserVisibleGroups(group)
+	for groupName := range usableGroup {
+		groupRatio[groupName] = service.GetUserGroupRatio(group, groupName)
 	}
+	for i := range pricing {
+		pricing[i].EnableGroup = service.MapVisibleModelGroups(group, pricing[i].EnableGroup)
+	}
+	autoGroups := service.MapVisibleModelGroups(group, service.GetUserAutoGroup(group))
 
 	c.JSON(200, gin.H{
 		"success":            true,
@@ -45,7 +53,7 @@ func GetPricing(c *gin.Context) {
 		"group_ratio":        groupRatio,
 		"usable_group":       usableGroup,
 		"supported_endpoint": model.GetSupportedEndpointMap(),
-		"auto_groups":        service.GetUserAutoGroup(group),
+		"auto_groups":        autoGroups,
 		"_":                  "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }

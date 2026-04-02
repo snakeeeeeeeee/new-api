@@ -246,6 +246,15 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/upstream_updates/detect", controller.DetectChannelUpstreamModelUpdates)
 			channelRoute.POST("/upstream_updates/detect_all", controller.DetectAllChannelUpstreamModelUpdates)
 		}
+		aggregateGroupRoute := apiRouter.Group("/aggregate_group")
+		aggregateGroupRoute.Use(middleware.AdminAuth())
+		{
+			aggregateGroupRoute.GET("/", controller.GetAggregateGroups)
+			aggregateGroupRoute.GET("/:id", controller.GetAggregateGroup)
+			aggregateGroupRoute.POST("/", controller.CreateAggregateGroup)
+			aggregateGroupRoute.PUT("/", controller.UpdateAggregateGroup)
+			aggregateGroupRoute.DELETE("/:id", controller.DeleteAggregateGroup)
+		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
 		{

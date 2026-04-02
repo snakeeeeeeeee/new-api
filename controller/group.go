@@ -28,20 +28,24 @@ func GetUserGroups(c *gin.Context) {
 	userGroup := ""
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
-	userUsableGroups := service.GetUserUsableGroups(userGroup)
-	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
-		// UserUsableGroups contains the groups that the user can use
-		if desc, ok := userUsableGroups[groupName]; ok {
-			usableGroups[groupName] = map[string]interface{}{
-				"ratio": service.GetUserGroupRatio(userGroup, groupName),
-				"desc":  desc,
-			}
+	userVisibleGroups := service.GetUserVisibleGroups(userGroup)
+	for groupName, desc := range userVisibleGroups {
+		usableGroups[groupName] = map[string]interface{}{
+			"ratio": service.GetUserGroupRatio(userGroup, groupName),
+			"desc":  desc,
+			"type": func() string {
+				if service.IsAggregateGroup(groupName) {
+					return "aggregate"
+				}
+				return "real"
+			}(),
 		}
 	}
-	if _, ok := userUsableGroups["auto"]; ok {
+	if _, ok := service.GetUserUsableGroups(userGroup)["auto"]; ok {
 		usableGroups["auto"] = map[string]interface{}{
 			"ratio": "自动",
 			"desc":  setting.GetUsableGroupDescription("auto"),
+			"type":  "auto",
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{

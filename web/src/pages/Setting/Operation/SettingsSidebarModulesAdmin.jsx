@@ -61,6 +61,7 @@ export default function SettingsSidebarModulesAdmin(props) {
     admin: {
       enabled: true,
       channel: true,
+      aggregate_group: true,
       models: true,
       deployment: true,
       redemption: true,
@@ -119,11 +120,12 @@ export default function SettingsSidebarModulesAdmin(props) {
         topup: true,
         personal: true,
       },
-      admin: {
-        enabled: true,
-        channel: true,
-        models: true,
-        deployment: true,
+        admin: {
+          enabled: true,
+          channel: true,
+          aggregate_group: true,
+          models: true,
+          deployment: true,
         redemption: true,
         user: true,
         subscription: true,
@@ -191,6 +193,7 @@ export default function SettingsSidebarModulesAdmin(props) {
           admin: {
             enabled: true,
             channel: true,
+            aggregate_group: true,
             models: true,
             deployment: true,
             redemption: true,
@@ -254,6 +257,11 @@ export default function SettingsSidebarModulesAdmin(props) {
       description: t('系统管理功能'),
       modules: [
         { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
+        {
+          key: 'aggregate_group',
+          title: t('聚合分组'),
+          description: t('聚合分组与真实分组链路'),
+        },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {
           key: 'deployment',

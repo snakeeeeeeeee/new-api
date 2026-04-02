@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -58,6 +59,9 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(&model.Token{}); err != nil {
 		t.Fatalf("failed to migrate token table: %v", err)
 	}
+	if err := db.AutoMigrate(&model.User{}, &model.AggregateGroup{}, &model.AggregateGroupTarget{}); err != nil {
+		t.Fatalf("failed to migrate token table: %v", err)
+	}
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
@@ -67,6 +71,21 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 	})
 
 	return db
+}
+
+func seedTokenTestUser(t *testing.T, db *gorm.DB, userID int, group string) {
+	t.Helper()
+	user := &model.User{
+		Id:       userID,
+		Username: fmt.Sprintf("user_%d", userID),
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+		Role:     common.RoleCommonUser,
+		Group:    group,
+	}
+	if err := db.Create(user).Error; err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
 }
 
 func seedToken(t *testing.T, db *gorm.DB, userID int, name string, rawKey string) *model.Token {
@@ -237,6 +256,107 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), token.Key) {
 		t.Fatalf("update response leaked raw token key: %s", recorder.Body.String())
+	}
+}
+
+func TestAddTokenAllowsVisibleAggregateGroup(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	seedTokenTestUser(t, db, 1, "vip")
+	originalGroups := setting.UserUsableGroups2JSONString()
+	defer func() {
+		_ = setting.UpdateUserUsableGroupsByJSONString(originalGroups)
+	}()
+	if err := setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组"}`); err != nil {
+		t.Fatalf("failed to update usable groups: %v", err)
+	}
+	aggregateGroup := &model.AggregateGroup{
+		Name:                    "enterprise-stable",
+		DisplayName:             "企业稳定组",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.2,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	if err := aggregateGroup.SetVisibleUserGroups([]string{"vip"}); err != nil {
+		t.Fatalf("failed to set visible groups: %v", err)
+	}
+	if err := aggregateGroup.InsertWithTargets([]model.AggregateGroupTarget{
+		{RealGroup: "default", OrderIndex: 0},
+	}); err != nil {
+		t.Fatalf("failed to create aggregate group: %v", err)
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token", map[string]any{
+		"name":                 "aggregate-token",
+		"expired_time":         -1,
+		"remain_quota":         100,
+		"unlimited_quota":      true,
+		"model_limits_enabled": false,
+		"model_limits":         "",
+		"group":                "enterprise-stable",
+		"cross_group_retry":    false,
+	}, 1)
+	AddToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+
+	var created model.Token
+	if err := db.First(&created, "name = ?", "aggregate-token").Error; err != nil {
+		t.Fatalf("failed to load created token: %v", err)
+	}
+	if created.Group != "enterprise-stable" {
+		t.Fatalf("expected aggregate group, got %s", created.Group)
+	}
+}
+
+func TestAddTokenRejectsHiddenRealGroupWhenAggregateVisible(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	seedTokenTestUser(t, db, 1, "vip")
+	originalGroups := setting.UserUsableGroups2JSONString()
+	defer func() {
+		_ = setting.UpdateUserUsableGroupsByJSONString(originalGroups)
+	}()
+	if err := setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组"}`); err != nil {
+		t.Fatalf("failed to update usable groups: %v", err)
+	}
+	aggregateGroup := &model.AggregateGroup{
+		Name:                    "enterprise-stable",
+		DisplayName:             "企业稳定组",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.2,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	if err := aggregateGroup.SetVisibleUserGroups([]string{"vip"}); err != nil {
+		t.Fatalf("failed to set visible groups: %v", err)
+	}
+	if err := aggregateGroup.InsertWithTargets([]model.AggregateGroupTarget{
+		{RealGroup: "default", OrderIndex: 0},
+	}); err != nil {
+		t.Fatalf("failed to create aggregate group: %v", err)
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token", map[string]any{
+		"name":                 "real-group-token",
+		"expired_time":         -1,
+		"remain_quota":         100,
+		"unlimited_quota":      true,
+		"model_limits_enabled": false,
+		"model_limits":         "",
+		"group":                "default",
+		"cross_group_retry":    false,
+	}, 1)
+	AddToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if response.Success {
+		t.Fatalf("expected failure response when selecting hidden real group")
+	}
+	if !strings.Contains(response.Message, "无权选择 default 分组") {
+		t.Fatalf("unexpected message: %s", response.Message)
 	}
 }
 

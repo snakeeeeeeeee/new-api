@@ -152,6 +152,11 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			break
 		}
+	} else if aggregateGroup, ok := GetAggregateGroup(param.TokenGroup, true); ok {
+		channel, selectGroup, err = selectAggregateGroupChannel(param, aggregateGroup)
+		if err != nil {
+			return nil, param.TokenGroup, err
+		}
 	} else {
 		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry())
 		if err != nil {

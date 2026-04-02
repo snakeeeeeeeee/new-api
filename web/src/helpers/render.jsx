@@ -133,6 +133,7 @@ export function getLucideIcon(key, selected = false) {
     case 'topup':
       return <CreditCard {...commonProps} color={iconColor} />;
     case 'channel':
+    case 'aggregate_group':
       return <Layers {...commonProps} color={iconColor} />;
     case 'redemption':
       return <Gift {...commonProps} color={iconColor} />;
@@ -966,9 +967,16 @@ export const renderGroupOption = (item) => {
       onMouseEnter={handleMouseEnter}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        <Typography.Text strong type={disabled ? 'tertiary' : undefined}>
-          {value}
-        </Typography.Text>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <Typography.Text strong type={disabled ? 'tertiary' : undefined}>
+            {value}
+          </Typography.Text>
+          {item.groupType === 'aggregate' && (
+            <Tag color='blue' size='small' shape='circle'>
+              {i18next.t('聚合')}
+            </Tag>
+          )}
+        </div>
         <Typography.Text type='secondary' size='small'>
           {label}
         </Typography.Text>

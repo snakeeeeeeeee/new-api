@@ -1,0 +1,69 @@
+# New-API local development Docker Compose configuration
+#
+# Usage:
+#   docker compose -f docker-compose-dev.yml up -d --build
+#   docker compose -f docker-compose-dev.yml logs -f new-api-dev
+#   docker compose -f docker-compose-dev.yml down
+#
+# Access:
+#   http://localhost:3001
+
+version: '3.4'
+
+services:
+  new-api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: new-api-local:dev
+    container_name: new-api-dev
+    restart: unless-stopped
+    command: --log-dir /app/logs
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./data-dev:/data
+      - ./logs-dev:/app/logs
+    environment:
+      - SQL_DSN=postgresql://root:123456@postgres-dev:5432/new-api
+      - REDIS_CONN_STRING=redis://redis-dev
+      - TZ=Asia/Shanghai
+      - ERROR_LOG_ENABLED=true
+      - BATCH_UPDATE_ENABLED=true
+    depends_on:
+      - redis-dev
+      - postgres-dev
+    networks:
+      - new-api-dev-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis-dev:
+    image: redis:latest
+    container_name: redis-dev
+    restart: unless-stopped
+    networks:
+      - new-api-dev-network
+
+  postgres-dev:
+    image: postgres:15
+    container_name: postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: 123456
+      POSTGRES_DB: new-api
+    volumes:
+      - pg_data_dev:/var/lib/postgresql/data
+    networks:
+      - new-api-dev-network
+
+volumes:
+  pg_data_dev:
+
+networks:
+  new-api-dev-network:
+    driver: bridge
