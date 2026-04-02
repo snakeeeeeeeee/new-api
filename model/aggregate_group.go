@@ -168,11 +168,14 @@ func GetAggregateGroupByID(id int) (*AggregateGroup, error) {
 		return nil, gorm.ErrRecordNotFound
 	}
 	var group AggregateGroup
-	err := DB.Preload("Targets", func(tx *gorm.DB) *gorm.DB {
+	tx := DB.Preload("Targets", func(tx *gorm.DB) *gorm.DB {
 		return tx.Order("order_index ASC")
-	}).First(&group, "id = ?", id).Error
-	if err != nil {
-		return nil, err
+	}).Where("id = ?", id).Limit(1).Find(&group)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
 	}
 	return &group, nil
 }
@@ -188,9 +191,12 @@ func GetAggregateGroupByName(name string, enabledOnly bool) (*AggregateGroup, er
 	if enabledOnly {
 		query = query.Where("status = ?", AggregateGroupStatusEnabled)
 	}
-	err := query.First(&group).Error
-	if err != nil {
-		return nil, err
+	tx := query.Limit(1).Find(&group)
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
 	}
 	return &group, nil
 }
