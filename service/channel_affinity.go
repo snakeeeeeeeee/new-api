@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/cachex"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -607,6 +608,9 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 
 func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 	if c == nil {
+		return false
+	}
+	if common.GetContextKeyString(c, constant.ContextKeyAggregateGroup) != "" {
 		return false
 	}
 	v, ok := c.Get(ginKeyChannelAffinitySkipRetry)

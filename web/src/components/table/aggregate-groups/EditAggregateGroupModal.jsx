@@ -56,6 +56,7 @@ const defaultInputs = {
   group_ratio: 1,
   recovery_enabled: true,
   recovery_interval_seconds: 300,
+  retry_status_codes: '',
   visible_user_groups: [],
   targets: [],
 };
@@ -107,6 +108,7 @@ const EditAggregateGroupModal = ({
             data.recovery_interval_seconds === undefined
               ? 300
               : data.recovery_interval_seconds,
+          retry_status_codes: data.retry_status_codes || '',
           visible_user_groups: data.visible_user_groups || [],
           targets: (data.targets || []).map((item) => item.real_group),
         });
@@ -171,6 +173,7 @@ const EditAggregateGroupModal = ({
         group_ratio: Number(inputs.group_ratio),
         recovery_enabled: inputs.recovery_enabled,
         recovery_interval_seconds: Number(inputs.recovery_interval_seconds),
+        retry_status_codes: inputs.retry_status_codes.trim(),
         visible_user_groups: inputs.visible_user_groups,
         targets: inputs.targets.map((real_group) => ({ real_group })),
       };
@@ -322,6 +325,21 @@ const EditAggregateGroupModal = ({
                 disabled={!inputs.recovery_enabled}
                 style={{ width: '100%' }}
               />
+            </Col>
+            <Col span={12}>
+              <div className='mb-2'>
+                <Text strong>{t('聚合重试状态码')}</Text>
+              </div>
+              <Input
+                value={inputs.retry_status_codes}
+                onChange={(value) => updateField('retry_status_codes', value)}
+                placeholder={t('留空沿用系统规则，例如：401,403,429,500-599')}
+              />
+              <div className='mt-1 text-xs text-gray-500'>
+                {t(
+                  '仅对当前聚合分组生效；填写后覆盖系统默认重试状态码规则。',
+                )}
+              </div>
             </Col>
             <Col span={12}>
               <div className='mb-2'>

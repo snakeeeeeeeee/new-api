@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -162,6 +163,7 @@ func ValidateAggregateGroupConfig(group *model.AggregateGroup, visibleUserGroups
 	group.Name = strings.TrimSpace(group.Name)
 	group.DisplayName = strings.TrimSpace(group.DisplayName)
 	group.Description = strings.TrimSpace(group.Description)
+	group.RetryStatusCodes = strings.TrimSpace(group.RetryStatusCodes)
 	if group.Name == "" {
 		return errors.New("聚合分组名称不能为空")
 	}
@@ -179,6 +181,11 @@ func ValidateAggregateGroupConfig(group *model.AggregateGroup, visibleUserGroups
 	}
 	if group.RecoveryEnabled && group.RecoveryIntervalSeconds <= 0 {
 		return errors.New("恢复间隔必须大于 0")
+	}
+	if group.RetryStatusCodes != "" {
+		if _, err := operation_setting.ParseHTTPStatusCodeRanges(group.RetryStatusCodes); err != nil {
+			return fmt.Errorf("聚合分组重试状态码规则无效: %w", err)
+		}
 	}
 	if len(visibleUserGroups) == 0 {
 		return errors.New("至少选择一个可见用户组")
@@ -272,4 +279,25 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 		}
 	}
 	return groupsCopy
+}
+
+func ShouldRetryStatusCodeByAggregateGroup(group string, code int) (bool, bool) {
+	aggregateGroup, ok := GetAggregateGroup(group, true)
+	if !ok || aggregateGroup == nil {
+		return false, false
+	}
+	rules := strings.TrimSpace(aggregateGroup.RetryStatusCodes)
+	if rules == "" {
+		return false, false
+	}
+	ranges, err := operation_setting.ParseHTTPStatusCodeRanges(rules)
+	if err != nil || len(ranges) == 0 {
+		return false, false
+	}
+	for _, statusRange := range ranges {
+		if code >= statusRange.Start && code <= statusRange.End {
+			return true, true
+		}
+	}
+	return false, true
 }

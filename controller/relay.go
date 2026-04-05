@@ -242,7 +242,37 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		shouldRetryRequest := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+		if shouldRetryRequest {
+			if transition := service.PrepareAggregateGroupRetry(c, retryParam.GetRetry(), relayInfo.OriginModelName); transition != nil {
+				if transition.HasNext {
+					logger.LogWarn(c, fmt.Sprintf(
+						"aggregate fallback retry: aggregate_group=%s, model=%s, failed_group=%s(index=%d), next_group=%s(index=%d), status_code=%d, retry=%d/%d",
+						transition.AggregateGroup,
+						relayInfo.OriginModelName,
+						transition.FailedGroup,
+						transition.FailedIndex,
+						transition.NextGroup,
+						transition.NextIndex,
+						newAPIError.StatusCode,
+						retryParam.GetRetry()+1,
+						common.RetryTimes,
+					))
+				} else {
+					logger.LogWarn(c, fmt.Sprintf(
+						"aggregate fallback exhausted: aggregate_group=%s, model=%s, failed_group=%s(index=%d), status_code=%d, no next route group",
+						transition.AggregateGroup,
+						relayInfo.OriginModelName,
+						transition.FailedGroup,
+						transition.FailedIndex,
+						newAPIError.StatusCode,
+					))
+					shouldRetryRequest = false
+				}
+			}
+		}
+
+		if !shouldRetryRequest {
 			break
 		}
 	}
@@ -330,7 +360,7 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
-	if info.ChannelMeta == nil {
+	if info.ChannelMeta == nil && (retryParam == nil || retryParam.GetRetry() == 0) {
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
 		if !autoBan {
@@ -389,6 +419,11 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	}
 	if operation_setting.IsAlwaysSkipRetryCode(openaiErr.GetErrorCode()) {
 		return false
+	}
+	if aggregateGroup := common.GetContextKeyString(c, constant.ContextKeyAggregateGroup); aggregateGroup != "" {
+		if decision, configured := service.ShouldRetryStatusCodeByAggregateGroup(aggregateGroup, code); configured {
+			return decision
+		}
 	}
 	return operation_setting.ShouldRetryByStatusCode(code)
 }

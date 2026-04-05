@@ -190,6 +190,57 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 	return nil, errors.New("channel not found")
 }
 
+func GetSatisfiedChannelPriorityCount(group string, model string) (int, error) {
+	if !common.MemoryCacheEnabled {
+		ensureCommonColumnsInitialized()
+		var priorities []int
+		err := DB.Model(&Ability{}).
+			Select("DISTINCT(priority)").
+			Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, model, true).
+			Order("priority DESC").
+			Pluck("priority", &priorities).Error
+		if err != nil {
+			return 0, err
+		}
+		if len(priorities) == 0 {
+			normalizedModel := ratio_setting.FormatMatchingModelName(model)
+			if normalizedModel != "" && normalizedModel != model {
+				priorities = []int{}
+				err = DB.Model(&Ability{}).
+					Select("DISTINCT(priority)").
+					Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, normalizedModel, true).
+					Order("priority DESC").
+					Pluck("priority", &priorities).Error
+				if err != nil {
+					return 0, err
+				}
+			}
+		}
+		return len(priorities), nil
+	}
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+
+	channels := group2model2channels[group][model]
+	if len(channels) == 0 {
+		normalizedModel := ratio_setting.FormatMatchingModelName(model)
+		channels = group2model2channels[group][normalizedModel]
+	}
+	if len(channels) == 0 {
+		return 0, nil
+	}
+	uniquePriorities := make(map[int64]struct{})
+	for _, channelID := range channels {
+		channel, ok := channelsIDM[channelID]
+		if !ok {
+			return 0, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
+		}
+		uniquePriorities[channel.GetPriority()] = struct{}{}
+	}
+	return len(uniquePriorities), nil
+}
+
 func CacheGetChannel(id int) (*Channel, error) {
 	if !common.MemoryCacheEnabled {
 		return GetChannelById(id, true)

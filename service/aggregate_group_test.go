@@ -151,3 +151,142 @@ func TestCacheGetRandomSatisfiedChannelUsesAggregateFallbackAndRecovery(t *testi
 	require.NotNil(t, channel)
 	require.Equal(t, "default", selectedGroup)
 }
+
+func TestPrepareAggregateGroupRetrySwitchesToNextRealGroup(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+
+	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, 0)
+
+	transition := PrepareAggregateGroupRetry(ctx, 0, "gpt-4.1")
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.Equal(t, "enterprise-stable", transition.AggregateGroup)
+	require.Equal(t, "default", transition.FailedGroup)
+	require.Equal(t, 0, transition.FailedIndex)
+	require.Equal(t, "vip", transition.NextGroup)
+	require.Equal(t, 1, transition.NextIndex)
+	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateRetryIndex))
+	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateRetryBase))
+}
+
+func TestPrepareAggregateGroupRetryStaysInCurrentRealGroupWhenLowerPriorityExists(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "default", "gpt-4.1", 0)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, 0)
+
+	transition := PrepareAggregateGroupRetry(ctx, 0, "gpt-4.1")
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.Equal(t, "default", transition.NextGroup)
+	require.Equal(t, 0, transition.NextIndex)
+	require.Equal(t, 0, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateRetryIndex))
+	require.Equal(t, 0, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateRetryBase))
+}
+
+func TestCacheGetRandomSatisfiedChannelUsesAggregateRetryIndex(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryIndex, 1)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, 1)
+
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "enterprise-stable",
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(1),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+	require.Equal(t, "vip", common.GetContextKeyString(ctx, constant.ContextKeyRouteGroup))
+	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateStartIndex))
+}
+
+func TestCacheGetRandomSatisfiedChannelUsesAggregateRetryBaseWithinCurrentRealGroup(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "default", "gpt-4.1", 0)
+	seedAggregateAbilityChannel(t, 1003, "vip", "gpt-4.1", 0)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, 0)
+
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "enterprise-stable",
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(1),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1002, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyRouteGroup))
+}
+
+func TestValidateAggregateGroupConfigRejectsInvalidRetryStatusCodes(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+
+	group := &model.AggregateGroup{
+		Name:                    "enterprise-stable",
+		DisplayName:             "enterprise-stable-display",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.2,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 10,
+		RetryStatusCodes:        "401,abc,500-599",
+	}
+
+	err := ValidateAggregateGroupConfig(group, []string{"vip"}, []string{"default"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "重试状态码规则无效")
+}
+
+func TestShouldRetryStatusCodeByAggregateGroup(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+
+	group := seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	group.RetryStatusCodes = "401,429,500-599"
+	require.NoError(t, group.UpdateWithTargets(NormalizeAggregateTargets([]string{"default", "vip"})))
+
+	shouldRetry, configured := ShouldRetryStatusCodeByAggregateGroup("enterprise-stable", 401)
+	require.True(t, configured)
+	require.True(t, shouldRetry)
+
+	shouldRetry, configured = ShouldRetryStatusCodeByAggregateGroup("enterprise-stable", 400)
+	require.True(t, configured)
+	require.False(t, shouldRetry)
+
+	shouldRetry, configured = ShouldRetryStatusCodeByAggregateGroup("default", 500)
+	require.False(t, configured)
+	require.False(t, shouldRetry)
+}

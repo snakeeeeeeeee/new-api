@@ -23,6 +23,7 @@ type aggregateGroupUpsertRequest struct {
 	GroupRatio              float64                       `json:"group_ratio"`
 	RecoveryEnabled         bool                          `json:"recovery_enabled"`
 	RecoveryIntervalSeconds int                           `json:"recovery_interval_seconds"`
+	RetryStatusCodes        string                        `json:"retry_status_codes"`
 	VisibleUserGroups       []string                      `json:"visible_user_groups"`
 	Targets                 []aggregateGroupTargetRequest `json:"targets"`
 }
@@ -36,6 +37,7 @@ type aggregateGroupResponse struct {
 	GroupRatio              float64                      `json:"group_ratio"`
 	RecoveryEnabled         bool                         `json:"recovery_enabled"`
 	RecoveryIntervalSeconds int                          `json:"recovery_interval_seconds"`
+	RetryStatusCodes        string                       `json:"retry_status_codes"`
 	VisibleUserGroups       []string                     `json:"visible_user_groups"`
 	Targets                 []model.AggregateGroupTarget `json:"targets"`
 	CreatedTime             int64                        `json:"created_time"`
@@ -59,6 +61,7 @@ func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupRes
 		GroupRatio:              group.GroupRatio,
 		RecoveryEnabled:         group.RecoveryEnabled,
 		RecoveryIntervalSeconds: group.RecoveryIntervalSeconds,
+		RetryStatusCodes:        group.RetryStatusCodes,
 		VisibleUserGroups:       group.GetVisibleUserGroups(),
 		Targets:                 targets,
 		CreatedTime:             group.CreatedTime,
@@ -122,6 +125,7 @@ func CreateAggregateGroup(c *gin.Context) {
 		GroupRatio:              req.GroupRatio,
 		RecoveryEnabled:         req.RecoveryEnabled,
 		RecoveryIntervalSeconds: req.RecoveryIntervalSeconds,
+		RetryStatusCodes:        req.RetryStatusCodes,
 	}
 	targetGroupNames := buildAggregateTargetNames(req.Targets)
 	if err := service.ValidateAggregateGroupConfig(group, req.VisibleUserGroups, targetGroupNames); err != nil {
@@ -173,6 +177,7 @@ func UpdateAggregateGroup(c *gin.Context) {
 		GroupRatio:              req.GroupRatio,
 		RecoveryEnabled:         req.RecoveryEnabled,
 		RecoveryIntervalSeconds: req.RecoveryIntervalSeconds,
+		RetryStatusCodes:        req.RetryStatusCodes,
 	}
 	targetGroupNames := buildAggregateTargetNames(req.Targets)
 	if err := service.ValidateAggregateGroupConfig(group, req.VisibleUserGroups, targetGroupNames); err != nil {

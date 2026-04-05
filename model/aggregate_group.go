@@ -22,6 +22,7 @@ type AggregateGroup struct {
 	GroupRatio              float64                `json:"group_ratio" gorm:"default:1"`
 	RecoveryEnabled         bool                   `json:"recovery_enabled" gorm:"default:true"`
 	RecoveryIntervalSeconds int                    `json:"recovery_interval_seconds" gorm:"default:300"`
+	RetryStatusCodes        string                 `json:"retry_status_codes" gorm:"type:text"`
 	VisibleUserGroups       string                 `json:"-" gorm:"type:text"`
 	CreatedTime             int64                  `json:"created_time" gorm:"bigint"`
 	UpdatedTime             int64                  `json:"updated_time" gorm:"bigint"`
@@ -121,6 +122,7 @@ func (g *AggregateGroup) UpdateWithTargets(targets []AggregateGroupTarget) error
 			"group_ratio":               g.GroupRatio,
 			"recovery_enabled":          g.RecoveryEnabled,
 			"recovery_interval_seconds": g.RecoveryIntervalSeconds,
+			"retry_status_codes":        g.RetryStatusCodes,
 			"visible_user_groups":       g.VisibleUserGroups,
 			"updated_time":              g.UpdatedTime,
 		}).Error; err != nil {

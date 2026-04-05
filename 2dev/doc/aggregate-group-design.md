@@ -21,6 +21,7 @@ V1 已实现：
 - 聚合分组运行时状态按 `聚合分组 + 模型` 维度存储
 - 恢复采用懒恢复，不引入后台扫描任务
 - 聚合分组倍率覆盖最终 group ratio
+- 聚合分组支持独立配置“状态码重试规则”，覆盖系统默认 retry 状态码策略
 - token 页、定价页、模型页、用户分组接口不再向企业用户暴露底层真实组
 
 V1 不做：
@@ -44,6 +45,7 @@ V1 不做：
 - `group_ratio`
 - `recovery_enabled`
 - `recovery_interval_seconds`
+- `retry_status_codes`
 - `visible_user_groups`
 - `created_time`
 - `updated_time`
@@ -52,6 +54,7 @@ V1 不做：
 说明：
 
 - `visible_user_groups` 使用 `TEXT` 存 JSON 数组，兼容 SQLite / MySQL / PostgreSQL
+- `retry_status_codes` 使用 `TEXT` 存状态码范围字符串，例如 `401,403,429,500-599`
 - `status` 使用启用/禁用整型状态，风格与现有模型一致
 
 ### `aggregate_group_targets`
@@ -128,6 +131,7 @@ flowchart TD
 - `ContextKeyRouteGroup` 保存实际命中的真实分组
 - `ContextKeyRouteGroupIndex` 保存实际命中的真实分组顺序
 - `ContextKeyAggregateStartIndex` 保存本次请求开始时的优先级起点
+- `ContextKeyAggregateRetryIndex` 保存失败后下一次 retry 应从哪个真实分组继续
 
 ### 选路策略
 
@@ -137,6 +141,22 @@ flowchart TD
 - 每个真实分组内部继续复用现有 `ability` + `priority` + `weight` 选路逻辑
 - 当当前真实分组在当前 retry 层级没有可用渠道时，切换到下一个真实分组
 - 整体 retry 预算仍沿用现有 `common.RetryTimes`
+- 当前真实分组上游返回“可重试失败”时，下一次 retry 从下一个真实分组开始，而不是重新回到当前真实分组
+- 切到下一个真实分组后，该真实分组内部始终从自己的最高优先级开始选路
+- 若当前真实分组内部存在更低优先级可用渠道，则会先在当前真实分组内继续尝试下一优先级，再切换到下一个真实分组
+
+### 聚合分组级重试状态码规则
+
+- 聚合分组新增 `retry_status_codes` 配置项
+- 留空时：沿用系统全局状态码重试规则
+- 非空时：仅当前聚合分组按该配置判断“状态码是否允许继续 A -> B -> C”
+- 格式复用现有状态码范围语法，例如：
+  - `401,403,429,500-599`
+  - `500-599`
+  - `401,429`
+- 该配置只覆盖“基于 HTTP 状态码”的 retry 判断
+- `skip_retry` 错误、显式不可重试错误仍不会进入聚合 fallback
+- 非状态码网络错误（如 `client.Do` 失败）仍按现有非状态码失败逻辑处理
 
 ### 懒恢复状态
 
@@ -228,6 +248,9 @@ flowchart TD
   - `route_group`
   - `route_group_index`
   - `aggregate_start_index`
+- 运行时日志额外打印聚合 fallback 链路，例如：
+  - `aggregate fallback retry: aggregate_group=... failed_group=A next_group=B`
+  - `aggregate fallback exhausted: aggregate_group=... failed_group=B no next route group`
 
 错误日志与消费日志都已接入。
 

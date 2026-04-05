@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -154,6 +156,35 @@ func TestShouldSkipRetryAfterChannelAffinityFailure(t *testing.T) {
 				})
 			},
 			want: true,
+		},
+		{
+			name: "aggregate group ignores channel affinity skip retry meta",
+			ctx: func() *gin.Context {
+				ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+					RuleName:   "rule-skip-retry",
+					SkipRetry:  true,
+					UsingGroup: "default",
+					ModelName:  "claude-haiku-4-5",
+				})
+				common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "ha-route")
+				return ctx
+			},
+			want: false,
+		},
+		{
+			name: "aggregate group ignores explicit channel affinity skip retry flag",
+			ctx: func() *gin.Context {
+				ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+					RuleName:   "rule-explicit-flag",
+					SkipRetry:  false,
+					UsingGroup: "default",
+					ModelName:  "claude-haiku-4-5",
+				})
+				ctx.Set(ginKeyChannelAffinitySkipRetry, true)
+				common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "ha-route")
+				return ctx
+			},
+			want: false,
 		},
 		{
 			name: "no flag and no skip retry meta",
