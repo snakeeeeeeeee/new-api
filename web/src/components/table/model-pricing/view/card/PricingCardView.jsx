@@ -44,6 +44,7 @@ import PricingCardSkeleton from './PricingCardSkeleton';
 import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
 import { renderLimitedItems } from '../../../../common/ui/RenderUtils';
 import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
+import HealthMiniSection from '../../health/HealthMiniSection';
 
 const CARD_STYLES = {
   container:
@@ -71,6 +72,7 @@ const PricingCardView = ({
   tokenUnit,
   displayPrice,
   showRatio,
+  healthChecksMap,
   t,
   selectedRowKeys = [],
   setSelectedRowKeys,
@@ -312,6 +314,13 @@ const PricingCardView = ({
                 <div className='mt-auto'>
                   {/* 标签区域 */}
                   {renderTags(model)}
+
+                  <HealthMiniSection
+                    modelName={model.model_name}
+                    selectedGroup={selectedGroup}
+                    healthChecksMap={healthChecksMap}
+                    t={t}
+                  />
 
                   {/* 倍率信息（可选） */}
                   {showRatio && (

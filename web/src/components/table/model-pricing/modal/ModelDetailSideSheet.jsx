@@ -26,6 +26,7 @@ import ModelHeader from './components/ModelHeader';
 import ModelBasicInfo from './components/ModelBasicInfo';
 import ModelEndpoints from './components/ModelEndpoints';
 import ModelPricingTable from './components/ModelPricingTable';
+import ModelHealthPanel from '../health/ModelHealthPanel';
 
 const { Text } = Typography;
 
@@ -43,6 +44,8 @@ const ModelDetailSideSheet = ({
   vendorsMap,
   endpointMap,
   autoGroups,
+  selectedGroup,
+  healthChecksMap,
   t,
 }) => {
   const isMobile = useIsMobile();
@@ -99,6 +102,12 @@ const ModelDetailSideSheet = ({
               showRatio={showRatio}
               usableGroup={usableGroup}
               autoGroups={autoGroups}
+              t={t}
+            />
+            <ModelHealthPanel
+              modelData={modelData}
+              selectedGroup={selectedGroup}
+              healthChecksMap={healthChecksMap}
               t={t}
             />
           </>

@@ -77,6 +77,8 @@ const PricingPage = () => {
         vendorsMap={pricingData.vendorsMap}
         endpointMap={pricingData.endpointMap}
         autoGroups={pricingData.autoGroups}
+        selectedGroup={pricingData.selectedGroup}
+        healthChecksMap={pricingData.healthChecksMap}
         t={pricingData.t}
       />
     </div>

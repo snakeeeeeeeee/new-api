@@ -72,12 +72,14 @@ const defaultGlobalSettingInputs = {
   'global.chat_completions_to_responses_policy': '{}',
   'general_setting.ping_interval_enabled': false,
   'general_setting.ping_interval_seconds': 60,
+  HealthDashboardURL: '',
 };
 
 export default function SettingGlobalModel(props) {
   const { t } = useTranslation();
 
   const [loading, setLoading] = useState(false);
+  const [healthDashboardSaving, setHealthDashboardSaving] = useState(false);
   const [inputs, setInputs] = useState(defaultGlobalSettingInputs);
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(defaultGlobalSettingInputs);
@@ -102,6 +104,9 @@ export default function SettingGlobalModel(props) {
     if (key === 'global.chat_completions_to_responses_policy') {
       const text = typeof value === 'string' ? value.trim() : '';
       return text === '' ? '{}' : value;
+    }
+    if (key === 'HealthDashboardURL') {
+      return typeof value === 'string' ? value.trim() : '';
     }
     return value;
   };
@@ -140,6 +145,30 @@ export default function SettingGlobalModel(props) {
         setLoading(false);
       });
   }
+
+  const saveHealthDashboardURL = async () => {
+    const normalizedValue = normalizeValueBeforeSave(
+      'HealthDashboardURL',
+      inputs.HealthDashboardURL,
+    );
+    if ((inputsRow.HealthDashboardURL || '') === normalizedValue) {
+      return showWarning(t('你似乎并没有修改什么'));
+    }
+
+    setHealthDashboardSaving(true);
+    try {
+      await API.put('/api/option/', {
+        key: 'HealthDashboardURL',
+        value: String(normalizedValue),
+      });
+      showSuccess(t('保存成功'));
+      await props.refresh();
+    } catch (error) {
+      showError(t('保存失败，请重试'));
+    } finally {
+      setHealthDashboardSaving(false);
+    }
+  };
 
   useEffect(() => {
     const currentInputs = {};
@@ -352,6 +381,42 @@ export default function SettingGlobalModel(props) {
                     </Button>
                   </div>
                 </Col>
+              </Row>
+            </Form.Section>
+
+            <Form.Section
+              text={
+                <span style={{ fontSize: 14, fontWeight: 600 }}>
+                  {t('健康检查设置')}
+                </span>
+              }
+            >
+              <Row>
+                <Col span={24}>
+                  <Form.Input
+                    label={t('健康检查 URL')}
+                    field={'HealthDashboardURL'}
+                    placeholder='https://your-health-check.example.com/api/dashboard'
+                    extraText={t(
+                      '模型广场健康状态卡片会通过后端请求这个地址。保存后立即生效，无需重启服务。',
+                    )}
+                    onChange={(value) =>
+                      setInputs({
+                        ...inputs,
+                        HealthDashboardURL: value,
+                      })
+                    }
+                  />
+                </Col>
+              </Row>
+              <Row>
+                <Button
+                  size='default'
+                  loading={healthDashboardSaving}
+                  onClick={saveHealthDashboardURL}
+                >
+                  {t('保存健康检查设置')}
+                </Button>
               </Row>
             </Form.Section>
 

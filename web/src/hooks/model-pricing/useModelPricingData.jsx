@@ -31,6 +31,7 @@ import {
 import { Modal } from '@douyinfe/semi-ui';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
+import { buildHealthChecksMap } from '../../components/table/model-pricing/health/healthUtils';
 
 export const useModelPricingData = () => {
   const { t } = useTranslation();
@@ -59,6 +60,8 @@ export const useModelPricingData = () => {
   const [usableGroup, setUsableGroup] = useState({});
   const [endpointMap, setEndpointMap] = useState({});
   const [autoGroups, setAutoGroups] = useState([]);
+  const [healthDashboard, setHealthDashboard] = useState(null);
+  const [healthChecksMap, setHealthChecksMap] = useState({});
 
   const [statusState] = useContext(StatusContext);
   const [userState] = useContext(UserContext);
@@ -277,6 +280,21 @@ export const useModelPricingData = () => {
     await loadPricing();
   };
 
+  const loadHealthDashboard = async () => {
+    try {
+      const res = await API.get('/api/health/dashboard');
+      const { success, data } = res.data || {};
+      if (!success) {
+        return;
+      }
+      const dashboard = data?.dashboard || null;
+      setHealthDashboard(dashboard);
+      setHealthChecksMap(buildHealthChecksMap(dashboard));
+    } catch (error) {
+      console.error('加载健康监测数据失败', error);
+    }
+  };
+
   const copyText = async (text) => {
     if (await copy(text)) {
       showSuccess(t('已复制：') + text);
@@ -330,6 +348,14 @@ export const useModelPricingData = () => {
 
   useEffect(() => {
     refresh().then();
+    loadHealthDashboard().then();
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      loadHealthDashboard().then();
+    }, 30000);
+    return () => clearInterval(timer);
   }, []);
 
   // 当筛选条件变化时重置到第一页
@@ -387,6 +413,8 @@ export const useModelPricingData = () => {
     usableGroup,
     endpointMap,
     autoGroups,
+    healthDashboard,
+    healthChecksMap,
 
     // 计算属性
     priceRate,
