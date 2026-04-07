@@ -226,6 +226,68 @@ func TestCacheGetRandomSatisfiedChannelUsesAggregateRetryIndex(t *testing.T) {
 	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateStartIndex))
 }
 
+func TestResolveAggregateGroupStartIndexPreservesInitialStartIndexAcrossRetry(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "enterprise-stable",
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, 0, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateStartIndex))
+	require.Equal(t, 0, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateInitialStartIndex))
+
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryIndex, 1)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, 1)
+
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "enterprise-stable",
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(1),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateStartIndex))
+	require.Equal(t, 0, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateInitialStartIndex))
+}
+
+func TestRecordAggregateRouteSuccessSetsFailureWindowAfterFallbackSuccess(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "vip")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 1)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateStartIndex, 1)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateInitialStartIndex, 0)
+
+	RecordAggregateRouteSuccess(ctx, "gpt-4.1")
+
+	state, err := GetAggregateGroupRuntimeState("enterprise-stable", "gpt-4.1")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, 1, state.ActiveIndex)
+	require.Equal(t, "vip", state.ActiveGroup)
+	require.Greater(t, state.LastFailAt, int64(0))
+	require.Greater(t, state.LastSwitchAt, int64(0))
+}
+
 func TestCacheGetRandomSatisfiedChannelUsesAggregateRetryBaseWithinCurrentRealGroup(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	common.MemoryCacheEnabled = false

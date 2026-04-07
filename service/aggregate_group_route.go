@@ -48,13 +48,23 @@ func resolveExplicitAggregateRetryBase(ctx *gin.Context) (int, bool) {
 	return base, true
 }
 
+func setAggregateGroupStartIndexes(ctx *gin.Context, startIndex int) {
+	if ctx == nil || startIndex < 0 {
+		return
+	}
+	common.SetContextKey(ctx, constant.ContextKeyAggregateStartIndex, startIndex)
+	if _, exists := common.GetContextKey(ctx, constant.ContextKeyAggregateInitialStartIndex); !exists {
+		common.SetContextKey(ctx, constant.ContextKeyAggregateInitialStartIndex, startIndex)
+	}
+}
+
 func resolveAggregateGroupStartIndex(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string) (int, int) {
 	if ctx == nil || aggregateGroup == nil {
 		return 0, 0
 	}
 	retryBase := 0
 	if retryIndex, ok := resolveExplicitAggregateRetryIndex(ctx); ok {
-		common.SetContextKey(ctx, constant.ContextKeyAggregateStartIndex, retryIndex)
+		setAggregateGroupStartIndexes(ctx, retryIndex)
 		if base, ok := resolveExplicitAggregateRetryBase(ctx); ok {
 			retryBase = base
 		}
@@ -71,7 +81,7 @@ func resolveAggregateGroupStartIndex(ctx *gin.Context, aggregateGroup *model.Agg
 			}
 		}
 	}
-	common.SetContextKey(ctx, constant.ContextKeyAggregateStartIndex, startIndex)
+	setAggregateGroupStartIndexes(ctx, startIndex)
 	return startIndex, retryBase
 }
 
@@ -189,6 +199,10 @@ func RecordAggregateRouteSuccess(c *gin.Context, modelName string) {
 	}
 	routeGroupIndex := common.GetContextKeyInt(c, constant.ContextKeyRouteGroupIndex)
 	startIndex := common.GetContextKeyInt(c, constant.ContextKeyAggregateStartIndex)
+	initialStartIndex := common.GetContextKeyInt(c, constant.ContextKeyAggregateInitialStartIndex)
+	if initialStartIndex < 0 {
+		initialStartIndex = startIndex
+	}
 	now := common.GetTimestamp()
 
 	state, _ := GetAggregateGroupRuntimeState(aggregateGroup, modelName)
@@ -204,7 +218,7 @@ func RecordAggregateRouteSuccess(c *gin.Context, modelName string) {
 	if routeGroupIndex == 0 {
 		newState.LastFailAt = 0
 		newState.LastSwitchAt = 0
-	} else if startIndex != routeGroupIndex {
+	} else if initialStartIndex != routeGroupIndex {
 		newState.LastFailAt = now
 		newState.LastSwitchAt = now
 	}

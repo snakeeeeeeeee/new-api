@@ -8,7 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const aggregateGroupRuntimeStateTTL = 7 * 24 * time.Hour
+const aggregateGroupRuntimeStateTTL = 24 * time.Hour
 
 type AggregateGroupRuntimeState struct {
 	ActiveIndex   int    `json:"active_index"`
