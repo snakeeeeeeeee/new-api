@@ -238,10 +238,10 @@ const RechargeCard = ({
                   <Col xs={24} sm={24} md={24} lg={10} xl={10}>
                     <Form.InputNumber
                       field='topUpCount'
-                      label={t('充值数量')}
+                      label={t('充值额度')}
                       disabled={!enableOnlineTopUp && !enableStripeTopUp && !enableWaffoTopUp}
                       placeholder={
-                        t('充值数量，最低 ') + renderQuotaWithAmount(minTopUp)
+                        t('充值额度，最低 ') + renderQuotaWithAmount(minTopUp)
                       }
                       value={topUpCount}
                       min={minTopUp}
@@ -266,6 +266,7 @@ const RechargeCard = ({
                       parser={(value) =>
                         value ? parseInt(value.replace(/[^\d]/g, '')) : 0
                       }
+                      suffix='$'
                       extraText={
                         <Skeleton
                           loading={showAmountSkeleton}
@@ -392,36 +393,19 @@ const RechargeCard = ({
                       const originalPrice = preset.value * priceRatio;
                       const discountedPrice = originalPrice * discount;
                       const hasDiscount = discount < 1.0;
-                      const actualPay = discountedPrice;
-                      const save = originalPrice - discountedPrice;
+                      const actualPayCNY = discountedPrice;
 
                       // 根据当前货币类型换算显示金额和数量
                       const { symbol, rate, type } = getCurrencyConfig();
-                      const statusStr = localStorage.getItem('status');
-                      let usdRate = 7; // 默认CNY汇率
-                      try {
-                        if (statusStr) {
-                          const s = JSON.parse(statusStr);
-                          usdRate = s?.usd_exchange_rate || 7;
-                        }
-                      } catch (e) { }
 
                       let displayValue = preset.value; // 显示的数量
-                      let displayActualPay = actualPay;
-                      let displaySave = save;
 
-                      if (type === 'USD') {
-                        // 数量保持USD，价格从CNY转USD
-                        displayActualPay = actualPay / usdRate;
-                        displaySave = save / usdRate;
-                      } else if (type === 'CNY') {
-                        // 数量转CNY，价格已是CNY
-                        displayValue = preset.value * usdRate;
-                      } else if (type === 'CUSTOM') {
-                        // 数量和价格都转自定义货币
+                      if (type === 'CNY') {
+                        // 数量转CNY展示
                         displayValue = preset.value * rate;
-                        displayActualPay = (actualPay / usdRate) * rate;
-                        displaySave = (save / usdRate) * rate;
+                      } else if (type === 'CUSTOM') {
+                        // 数量转自定义货币展示，支付金额始终按人民币显示
+                        displayValue = preset.value * rate;
                       }
 
                       return (
@@ -468,11 +452,7 @@ const RechargeCard = ({
                                 margin: '4px 0',
                               }}
                             >
-                              {t('实付')} {symbol}
-                              {displayActualPay.toFixed(2)}，
-                              {hasDiscount
-                                ? `${t('节省')} ${symbol}${displaySave.toFixed(2)}`
-                                : `${t('节省')} ${symbol}0.00`}
+                              {t('实付')} ¥{actualPayCNY.toFixed(2)}
                             </div>
                           </div>
                         </Card>
