@@ -196,10 +196,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		ModelName:  relayInfo.OriginModelName,
 		Retry:      common.GetPointer(0),
 	}
+	_, isAggregateGroupRequest := service.GetAggregateGroup(relayInfo.TokenGroup, true)
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for {
+		if !isAggregateGroupRequest && retryParam.GetRetry() > common.RetryTimes {
+			break
+		}
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
@@ -243,21 +247,33 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
 		shouldRetryRequest := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
-		if shouldRetryRequest {
-			if transition := service.PrepareAggregateGroupRetry(c, retryParam.GetRetry(), relayInfo.OriginModelName); transition != nil {
+		if isAggregateGroupRequest {
+			if transition := service.PrepareAggregateGroupRetry(c, retryParam.GetRetry(), relayInfo.OriginModelName, common.RetryTimes); transition != nil {
+				shouldRetryRequest = shouldRetry(c, newAPIError, 1)
 				if transition.HasNext {
-					logger.LogWarn(c, fmt.Sprintf(
-						"aggregate fallback retry: aggregate_group=%s, model=%s, failed_group=%s(index=%d), next_group=%s(index=%d), status_code=%d, retry=%d/%d",
-						transition.AggregateGroup,
-						relayInfo.OriginModelName,
-						transition.FailedGroup,
-						transition.FailedIndex,
-						transition.NextGroup,
-						transition.NextIndex,
-						newAPIError.StatusCode,
-						retryParam.GetRetry()+1,
-						common.RetryTimes,
-					))
+					if transition.WithinCurrentGroup {
+						logger.LogWarn(c, fmt.Sprintf(
+							"aggregate group internal retry: aggregate_group=%s, model=%s, route_group=%s(index=%d), status_code=%d, retry=%d/%d",
+							transition.AggregateGroup,
+							relayInfo.OriginModelName,
+							transition.FailedGroup,
+							transition.FailedIndex,
+							newAPIError.StatusCode,
+							retryParam.GetRetry()+1,
+							common.RetryTimes,
+						))
+					} else {
+						logger.LogWarn(c, fmt.Sprintf(
+							"aggregate fallback retry: aggregate_group=%s, model=%s, failed_group=%s(index=%d), next_group=%s(index=%d), status_code=%d",
+							transition.AggregateGroup,
+							relayInfo.OriginModelName,
+							transition.FailedGroup,
+							transition.FailedIndex,
+							transition.NextGroup,
+							transition.NextIndex,
+							newAPIError.StatusCode,
+						))
+					}
 				} else {
 					logger.LogWarn(c, fmt.Sprintf(
 						"aggregate fallback exhausted: aggregate_group=%s, model=%s, failed_group=%s(index=%d), status_code=%d, no next route group",
@@ -275,6 +291,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetryRequest {
 			break
 		}
+		retryParam.IncreaseRetry()
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -588,8 +605,12 @@ func RelayTask(c *gin.Context) {
 		ModelName:  relayInfo.OriginModelName,
 		Retry:      common.GetPointer(0),
 	}
+	_, isAggregateGroupRequest := service.GetAggregateGroup(relayInfo.TokenGroup, true)
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	for {
+		if !isAggregateGroupRequest && retryParam.GetRetry() > common.RetryTimes {
+			break
+		}
 		var channel *model.Channel
 
 		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
@@ -634,9 +655,51 @@ func RelayTask(c *gin.Context) {
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
 		}
 
-		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+		shouldRetryTask := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
+		if isAggregateGroupRequest {
+			if transition := service.PrepareAggregateGroupRetry(c, retryParam.GetRetry(), relayInfo.OriginModelName, common.RetryTimes); transition != nil {
+				shouldRetryTask = shouldRetryTaskRelay(c, channel.Id, taskErr, 1)
+				if transition.HasNext {
+					if transition.WithinCurrentGroup {
+						logger.LogWarn(c, fmt.Sprintf(
+							"aggregate task internal retry: aggregate_group=%s, model=%s, route_group=%s(index=%d), status_code=%d, retry=%d/%d",
+							transition.AggregateGroup,
+							relayInfo.OriginModelName,
+							transition.FailedGroup,
+							transition.FailedIndex,
+							taskErr.StatusCode,
+							retryParam.GetRetry()+1,
+							common.RetryTimes,
+						))
+					} else {
+						logger.LogWarn(c, fmt.Sprintf(
+							"aggregate task fallback retry: aggregate_group=%s, model=%s, failed_group=%s(index=%d), next_group=%s(index=%d), status_code=%d",
+							transition.AggregateGroup,
+							relayInfo.OriginModelName,
+							transition.FailedGroup,
+							transition.FailedIndex,
+							transition.NextGroup,
+							transition.NextIndex,
+							taskErr.StatusCode,
+						))
+					}
+				} else {
+					logger.LogWarn(c, fmt.Sprintf(
+						"aggregate task fallback exhausted: aggregate_group=%s, model=%s, failed_group=%s(index=%d), status_code=%d, no next route group",
+						transition.AggregateGroup,
+						relayInfo.OriginModelName,
+						transition.FailedGroup,
+						transition.FailedIndex,
+						taskErr.StatusCode,
+					))
+					shouldRetryTask = false
+				}
+			}
+		}
+		if !shouldRetryTask {
 			break
 		}
+		retryParam.IncreaseRetry()
 	}
 
 	useChannel := c.GetStringSlice("use_channel")

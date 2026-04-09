@@ -27,6 +27,7 @@ func prepareAggregateGroupServiceTest(t *testing.T) {
 	model.DB.Exec("DELETE FROM abilities")
 	model.DB.Exec("DELETE FROM channels")
 	originalGroups := setting.UserUsableGroups2JSONString()
+	originalRetryTimes := common.RetryTimes
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组","svip":"SVIP分组"}`))
 	t.Cleanup(func() {
 		model.DB.Exec("DELETE FROM aggregate_group_targets")
@@ -36,6 +37,7 @@ func prepareAggregateGroupServiceTest(t *testing.T) {
 		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalGroups))
 		aggregateGroupRuntimeStateMemory = sync.Map{}
 		common.MemoryCacheEnabled = false
+		common.RetryTimes = originalRetryTimes
 	})
 }
 
@@ -164,9 +166,10 @@ func TestPrepareAggregateGroupRetrySwitchesToNextRealGroup(t *testing.T) {
 	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
 	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, 0)
 
-	transition := PrepareAggregateGroupRetry(ctx, 0, "gpt-4.1")
+	transition := PrepareAggregateGroupRetry(ctx, 0, "gpt-4.1", common.RetryTimes)
 	require.NotNil(t, transition)
 	require.True(t, transition.HasNext)
+	require.False(t, transition.WithinCurrentGroup)
 	require.Equal(t, "enterprise-stable", transition.AggregateGroup)
 	require.Equal(t, "default", transition.FailedGroup)
 	require.Equal(t, 0, transition.FailedIndex)
@@ -179,6 +182,7 @@ func TestPrepareAggregateGroupRetrySwitchesToNextRealGroup(t *testing.T) {
 func TestPrepareAggregateGroupRetryStaysInCurrentRealGroupWhenLowerPriorityExists(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	common.MemoryCacheEnabled = false
+	common.RetryTimes = 1
 
 	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
 	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
@@ -191,9 +195,10 @@ func TestPrepareAggregateGroupRetryStaysInCurrentRealGroupWhenLowerPriorityExist
 	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
 	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, 0)
 
-	transition := PrepareAggregateGroupRetry(ctx, 0, "gpt-4.1")
+	transition := PrepareAggregateGroupRetry(ctx, 0, "gpt-4.1", common.RetryTimes)
 	require.NotNil(t, transition)
 	require.True(t, transition.HasNext)
+	require.True(t, transition.WithinCurrentGroup)
 	require.Equal(t, "default", transition.NextGroup)
 	require.Equal(t, 0, transition.NextIndex)
 	require.Equal(t, 0, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateRetryIndex))
@@ -313,6 +318,55 @@ func TestCacheGetRandomSatisfiedChannelUsesAggregateRetryBaseWithinCurrentRealGr
 	require.Equal(t, 1002, channel.Id)
 	require.Equal(t, "default", selectedGroup)
 	require.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyRouteGroup))
+}
+
+func TestPrepareAggregateGroupRetrySwitchesToNextRealGroupWhenInternalRetryDisabled(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 0
+
+	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip", "svip"})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "default", "gpt-4.1", 0)
+	seedAggregateAbilityChannel(t, 1003, "vip", "gpt-4.1", 10)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, 0)
+
+	transition := PrepareAggregateGroupRetry(ctx, 0, "gpt-4.1", common.RetryTimes)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.False(t, transition.WithinCurrentGroup)
+	require.Equal(t, "vip", transition.NextGroup)
+	require.Equal(t, 1, transition.NextIndex)
+}
+
+func TestPrepareAggregateGroupRetryStaysInCurrentRealGroupWithinConfiguredRetries(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 1
+
+	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "default", "gpt-4.1", 0)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, 0)
+
+	transition := PrepareAggregateGroupRetry(ctx, 0, "gpt-4.1", common.RetryTimes)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.True(t, transition.WithinCurrentGroup)
+	require.Equal(t, "default", transition.NextGroup)
+	require.Equal(t, 0, transition.NextIndex)
 }
 
 func TestValidateAggregateGroupConfigRejectsInvalidRetryStatusCodes(t *testing.T) {

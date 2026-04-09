@@ -10,12 +10,13 @@ import (
 )
 
 type AggregateRetryTransition struct {
-	AggregateGroup string
-	FailedGroup    string
-	FailedIndex    int
-	NextGroup      string
-	NextIndex      int
-	HasNext        bool
+	AggregateGroup     string
+	FailedGroup        string
+	FailedIndex        int
+	NextGroup          string
+	NextIndex          int
+	HasNext            bool
+	WithinCurrentGroup bool
 }
 
 func resolveExplicitAggregateRetryIndex(ctx *gin.Context) (int, bool) {
@@ -134,7 +135,7 @@ func selectAggregateGroupChannel(param *RetryParam, aggregateGroup *model.Aggreg
 	return nil, "", nil
 }
 
-func PrepareAggregateGroupRetry(c *gin.Context, currentRetry int, modelName string) *AggregateRetryTransition {
+func PrepareAggregateGroupRetry(c *gin.Context, currentRetry int, modelName string, maxInternalRetries int) *AggregateRetryTransition {
 	if c == nil {
 		return nil
 	}
@@ -165,8 +166,9 @@ func PrepareAggregateGroupRetry(c *gin.Context, currentRetry int, modelName stri
 		if priorityRetry < 0 {
 			priorityRetry = 0
 		}
-		if priorityRetry+1 < priorityCount {
+		if priorityRetry < maxInternalRetries && priorityRetry+1 < priorityCount {
 			transition.HasNext = true
+			transition.WithinCurrentGroup = true
 			transition.NextGroup = failedGroup
 			transition.NextIndex = failedIndex
 			common.SetContextKey(c, constant.ContextKeyAggregateRetryIndex, failedIndex)
