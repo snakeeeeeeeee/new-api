@@ -960,6 +960,25 @@ export const renderGroupOption = (item) => {
     }
   };
 
+  const aggregateBadgeStyle = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 34,
+    height: 20,
+    padding: '0 9px',
+    borderRadius: 999,
+    fontSize: 10,
+    fontWeight: 800,
+    letterSpacing: '0.12em',
+    color: '#ffffff',
+    background:
+      'linear-gradient(135deg, #ff6ec7 0%, #8b5cf6 34%, #38bdf8 68%, #2dd4bf 100%)',
+    boxShadow:
+      'inset 0 0 0 1px rgba(255,255,255,0.38), 0 6px 18px rgba(139,92,246,0.22), 0 2px 8px rgba(56,189,248,0.18)',
+    textShadow: '0 1px 2px rgba(15,23,42,0.25)',
+  };
+
   return (
     <div
       style={baseStyle}
@@ -972,9 +991,9 @@ export const renderGroupOption = (item) => {
             {value}
           </Typography.Text>
           {item.groupType === 'aggregate' && (
-            <Tag color='blue' size='small' shape='circle'>
-              {i18next.t('聚合')}
-            </Tag>
+            <span style={aggregateBadgeStyle}>
+              HA
+            </span>
           )}
         </div>
         <Typography.Text type='secondary' size='small'>
