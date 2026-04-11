@@ -86,33 +86,47 @@ flowchart TD
 
     C -- "是" --> H["保留 `ContextKeyUsingGroup = 聚合分组`"]
     H --> I["读取聚合分组 targets 顺序"]
-    I --> J["读取 Redis 运行态<br/>active_index / active_group / last_fail_at"]
-    J --> K{"恢复间隔已到?"}
+    I --> J["读取聚合运行态<br/>active_index / active_group / last_fail_at"]
+    J --> K{"懒恢复间隔已到?"}
     K -- "否" --> L["从当前 active_index 开始"]
     K -- "是" --> M["从最高优先级真实组开始"]
-    L --> N["按真实组顺序展开：A -> B -> C"]
+    L --> N{"全局智能策略开启<br/>且当前聚合分组启用智能策略?"}
     M --> N
-    N --> O["在当前真实组内按 `group + model` 查 ability"]
-    O --> P{"当前真实组有可用渠道吗?"}
-    P -- "有" --> Q["按组内 priority / weight 选择渠道"]
-    P -- "没有" --> R["切换到下一个真实组"]
-    R --> O
-    Q --> G
+    N -- "否" --> O["直接按真实组顺序展开：A -> B -> C"]
+    N -- "是" --> P["优先按真实组顺序遍历：A -> B -> C"]
+    P --> Q{"该真实组对当前模型是否处于<br/>临时降级窗口?"}
+    Q -- "是" --> R["记录 skipped degraded route 并继续下一个真实组"]
+    Q -- "否" --> S["进入该真实组的组选路"]
+    R --> P
+    P --> T{"优先遍历结束后是否命中渠道?"}
+    T -- "是" --> G
+    T -- "否" --> O["回退到原始真实组链路（软跳过）"]
 
-    G --> S{"上游请求成功?"}
-    S -- "成功" --> T["记录消费日志"]
-    T --> U["用户日志写逻辑组<br/>管理员日志写 route_group"]
-    U --> V["聚合分组计费倍率取 aggregate_groups.group_ratio"]
-    V --> W["若为聚合分组则更新 Redis 运行态"]
+    O --> U["在当前真实组内按 `group + model` 查 ability"]
+    U --> V{"当前真实组有可用渠道吗?"}
+    V -- "有" --> W["按组内 priority / weight 选择渠道"]
+    V -- "没有" --> X["切换到下一个真实组"]
+    X --> U
+    S --> U
+    W --> G
 
-    S -- "失败且可重试" --> X{"还有 retry 预算吗?"}
-    X -- "有" --> Y["同一请求继续 retry"]
-    Y --> Z{"聚合分组?"}
-    Z -- "否" --> E
-    Z -- "是" --> R
+    G --> Y{"上游请求成功?"}
+    Y -- "成功" --> Z["记录消费日志"]
+    Z --> AA["用户日志写逻辑组<br/>管理员日志写 route_group"]
+    AA --> AB["聚合分组计费倍率取 aggregate_groups.group_ratio"]
+    AB --> AC["更新聚合运行态（懒恢复状态）"]
+    AC --> AD{"智能策略已启用?"}
+    AD -- "是" --> AE["记录 smart success<br/>重置连续失败，累计或清空连续慢请求"]
+    AD -- "否" --> AF["请求结束"]
+    AE --> AF
 
-    S -- "失败且不可重试" --> AA["直接返回错误"]
-    X -- "无" --> AB["返回最终失败"]
+    Y -- "失败且可重试" --> AG{"还有可继续的聚合链路吗?"}
+    AG -- "有" --> AH["若智能策略已启用：<br/>记录 smart failure，达到阈值则临时降级该真实组"]
+    AH --> AI["继续下一真实组或当前组内下一优先级"]
+    AI --> U
+
+    Y -- "失败且不可重试" --> AJ["直接返回错误"]
+    AG -- "无" --> AK["返回最终失败"]
 ```
 
 ### 两类分组概念
@@ -132,6 +146,7 @@ flowchart TD
 - `ContextKeyRouteGroupIndex` 保存实际命中的真实分组顺序
 - `ContextKeyAggregateStartIndex` 保存本次请求开始时的优先级起点
 - `ContextKeyAggregateRetryIndex` 保存失败后下一次 retry 应从哪个真实分组继续
+- `ContextKeyAggregateSmartRouting` 保存当前请求是否启用聚合智能策略
 
 ### 选路策略
 
@@ -144,6 +159,60 @@ flowchart TD
 - 当前真实分组上游返回“可重试失败”时，下一次 retry 从下一个真实分组开始，而不是重新回到当前真实分组
 - 切到下一个真实分组后，该真实分组内部始终从自己的最高优先级开始选路
 - 若当前真实分组内部存在更低优先级可用渠道，则会先在当前真实分组内继续尝试下一优先级，再切换到下一个真实分组
+
+### 智能策略 V1
+
+- 智能策略只有在以下两个条件同时满足时才会生效：
+  - 全局 `aggregate_group.smart_strategy_enabled = true`
+  - 当前聚合分组 `smart_routing_enabled = true`
+- 智能策略不改数据库中配置的真实分组顺序，只在运行时临时跳过已降级的真实分组
+- 当前实现是“软跳过”：
+  - 先尝试跳过处于临时降级窗口的真实分组
+  - 如果优先遍历一轮后没有选中任何渠道，则回退到原始真实组链路再尝试一次，避免直接把旧逻辑硬改成强熔断
+- 不支持模型负缓存未引入：
+  - 现有 `abilities` 选路本身已会按 `group + model` 过滤不支持该模型的真实分组
+  - 因此第一版不额外增加“不支持模型禁用多久”逻辑
+
+### 智能降级状态
+
+运行时智能降级状态按 `aggregate_group + model + route_group` 存储，独立于旧的聚合运行态：
+
+- `consecutive_failures`
+- `consecutive_slows`
+- `degraded_until`
+- `last_failure_at`
+- `last_slow_at`
+- `last_success_at`
+
+触发规则：
+
+- 连续失败达到阈值：
+  - 命中当前聚合组允许继续 fallback 的错误后，累计 `consecutive_failures`
+  - 达到阈值后，将该真实分组对该模型临时降级 `degrade_duration_seconds`
+- 连续慢请求达到阈值：
+  - 请求成功但耗时超过 `slow_request_threshold_seconds` 时，累计 `consecutive_slows`
+  - 达到阈值后，将该真实分组对该模型临时降级 `degrade_duration_seconds`
+- 成功后：
+  - `consecutive_failures` 清零
+  - 若本次不慢，`consecutive_slows` 清零
+
+### 两层恢复语义
+
+当前聚合分组存在两套恢复语义，作用不同：
+
+- 懒恢复（旧逻辑）
+  - 由聚合分组自身 `recovery_enabled / recovery_interval_seconds` 控制
+  - 作用是决定“下一次请求从哪个真实分组开始尝试”
+  - 例如降级到第二真实组后，恢复间隔到了，就会重新从第一个真实组开始探测
+- 智能降级恢复（新逻辑）
+  - 由全局 `aggregate_group.degrade_duration_seconds` 控制
+  - 作用是决定“某个真实分组对某个模型是否仍应被临时跳过”
+  - 降级窗口到期后，该真实分组会重新参与优先遍历，并打印 `aggregate smart strategy recovered route`
+
+两者叠加后的实际语义是：
+
+- 懒恢复负责“恢复起始优先级”
+- 智能降级负责“该优先级对应的真实分组当前是否应优先跳过”
 
 ### 聚合分组级重试状态码规则
 
@@ -176,6 +245,18 @@ flowchart TD
 - 若恢复间隔已到，则从最高优先级真实分组重新探测
 - 只有成功请求才会更新持久状态
 - 回到最高优先级真实分组成功后，清空失败时间并恢复 `active_index = 0`
+
+### 智能策略全局配置
+
+当前全局配置项通过 `Option` 持久化，集中挂在 `aggregate_group.*` 命名空间：
+
+- `aggregate_group.smart_strategy_enabled`
+- `aggregate_group.consecutive_failure_threshold`
+- `aggregate_group.degrade_duration_seconds`
+- `aggregate_group.slow_request_threshold_seconds`
+- `aggregate_group.consecutive_slow_threshold`
+
+这些配置只影响已开启 `smart_routing_enabled` 的聚合分组。
 
 ## 计费规则
 
@@ -251,6 +332,14 @@ flowchart TD
 - 运行时日志额外打印聚合 fallback 链路，例如：
   - `aggregate fallback retry: aggregate_group=... failed_group=A next_group=B`
   - `aggregate fallback exhausted: aggregate_group=... failed_group=B no next route group`
+- 智能策略日志额外打印：
+  - `aggregate smart strategy skipped degraded route: ...`
+  - `aggregate smart degrade by consecutive failures: ...`
+  - `aggregate smart degrade by consecutive slow requests: ...`
+  - `aggregate smart strategy recovered route: ...`
+- 聚合请求的渠道失败与最终失败日志统一增加聚合上下文：
+  - `aggregate channel error: aggregate_group=... model=... route_group=... channel#...`
+  - `aggregate relay error: aggregate_group=... model=... route_group=... status_code=...`
 
 错误日志与消费日志都已接入。
 

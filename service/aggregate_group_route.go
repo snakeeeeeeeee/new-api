@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 )
@@ -86,20 +87,22 @@ func resolveAggregateGroupStartIndex(ctx *gin.Context, aggregateGroup *model.Agg
 	return startIndex, retryBase
 }
 
-func selectAggregateGroupChannel(param *RetryParam, aggregateGroup *model.AggregateGroup) (*model.Channel, string, error) {
-	if param == nil || param.Ctx == nil || aggregateGroup == nil {
-		return nil, "", fmt.Errorf("invalid aggregate group route param")
-	}
-
-	startIndex, retryBase := resolveAggregateGroupStartIndex(param.Ctx, aggregateGroup, param.ModelName)
-	if startIndex >= len(aggregateGroup.Targets) {
-		return nil, "", nil
-	}
-
-	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateGroup, aggregateGroup.Name)
-
+func selectAggregateGroupChannelFromIndex(param *RetryParam, aggregateGroup *model.AggregateGroup, startIndex int, retryBase int, skipDegraded bool) (*model.Channel, string, error) {
 	for i := startIndex; i < len(aggregateGroup.Targets); i++ {
 		target := aggregateGroup.Targets[i]
+		if skipDegraded {
+			degraded, state, recovered, err := IsAggregateGroupRouteTemporarilyDegraded(aggregateGroup.Name, param.ModelName, target.RealGroup)
+			if err != nil {
+				return nil, target.RealGroup, err
+			}
+			if recovered {
+				logger.LogInfo(param.Ctx, fmt.Sprintf("aggregate smart strategy recovered route: aggregate_group=%s, model=%s, route_group=%s", aggregateGroup.Name, param.ModelName, target.RealGroup))
+			}
+			if degraded {
+				logger.LogWarn(param.Ctx, fmt.Sprintf("aggregate smart strategy skipped degraded route: aggregate_group=%s, model=%s, route_group=%s(index=%d), degraded_until=%d", aggregateGroup.Name, param.ModelName, target.RealGroup, i, state.DegradedUntil))
+				continue
+			}
+		}
 
 		groupRetryBase := retryBase
 		if i > startIndex {
@@ -133,6 +136,32 @@ func selectAggregateGroupChannel(param *RetryParam, aggregateGroup *model.Aggreg
 	}
 
 	return nil, "", nil
+}
+
+func selectAggregateGroupChannel(param *RetryParam, aggregateGroup *model.AggregateGroup) (*model.Channel, string, error) {
+	if param == nil || param.Ctx == nil || aggregateGroup == nil {
+		return nil, "", fmt.Errorf("invalid aggregate group route param")
+	}
+
+	startIndex, retryBase := resolveAggregateGroupStartIndex(param.Ctx, aggregateGroup, param.ModelName)
+	if startIndex >= len(aggregateGroup.Targets) {
+		return nil, "", nil
+	}
+
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateGroup, aggregateGroup.Name)
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateSmartRouting, IsAggregateSmartRoutingEnabled(aggregateGroup))
+
+	if IsAggregateSmartRoutingEnabled(aggregateGroup) {
+		channel, group, err := selectAggregateGroupChannelFromIndex(param, aggregateGroup, startIndex, retryBase, true)
+		if err != nil {
+			return nil, group, err
+		}
+		if channel != nil {
+			return channel, group, nil
+		}
+	}
+
+	return selectAggregateGroupChannelFromIndex(param, aggregateGroup, startIndex, retryBase, false)
 }
 
 func PrepareAggregateGroupRetry(c *gin.Context, currentRetry int, modelName string, maxInternalRetries int) *AggregateRetryTransition {
@@ -225,6 +254,7 @@ func RecordAggregateRouteSuccess(c *gin.Context, modelName string) {
 		newState.LastSwitchAt = now
 	}
 	_ = SetAggregateGroupRuntimeState(aggregateGroup, modelName, newState)
+	RecordAggregateRouteSmartSuccess(c, modelName, routeGroup)
 }
 
 func AppendAggregateGroupAdminInfo(c *gin.Context, adminInfo map[string]interface{}) {

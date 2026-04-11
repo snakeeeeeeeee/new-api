@@ -54,6 +54,7 @@ const defaultInputs = {
   description: '',
   status: 1,
   group_ratio: 1,
+  smart_routing_enabled: false,
   recovery_enabled: true,
   recovery_interval_seconds: 300,
   retry_status_codes: '',
@@ -102,6 +103,10 @@ const EditAggregateGroupModal = ({
           description: data.description || '',
           status: data.status || 1,
           group_ratio: data.group_ratio === undefined ? 1 : data.group_ratio,
+          smart_routing_enabled:
+            data.smart_routing_enabled === undefined
+              ? false
+              : data.smart_routing_enabled,
           recovery_enabled:
             data.recovery_enabled === undefined ? true : data.recovery_enabled,
           recovery_interval_seconds:
@@ -171,6 +176,7 @@ const EditAggregateGroupModal = ({
         description: inputs.description.trim(),
         status: inputs.status,
         group_ratio: Number(inputs.group_ratio),
+        smart_routing_enabled: inputs.smart_routing_enabled,
         recovery_enabled: inputs.recovery_enabled,
         recovery_interval_seconds: Number(inputs.recovery_interval_seconds),
         retry_status_codes: inputs.retry_status_codes.trim(),
@@ -301,6 +307,17 @@ const EditAggregateGroupModal = ({
               <Switch
                 checked={inputs.status === 1}
                 onChange={(checked) => updateField('status', checked ? 1 : 2)}
+              />
+            </Col>
+            <Col span={8}>
+              <div className='mb-2'>
+                <Text strong>{t('当前分组启用智能策略')}</Text>
+              </div>
+              <Switch
+                checked={inputs.smart_routing_enabled}
+                onChange={(checked) =>
+                  updateField('smart_routing_enabled', checked)
+                }
               />
             </Col>
             <Col span={8}>

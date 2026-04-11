@@ -48,6 +48,7 @@ const (
 	ContextKeyAggregateInitialStartIndex ContextKey = "aggregate_initial_start_index"
 	ContextKeyAggregateRetryIndex        ContextKey = "aggregate_retry_index"
 	ContextKeyAggregateRetryBase         ContextKey = "aggregate_retry_base"
+	ContextKeyAggregateSmartRouting      ContextKey = "aggregate_smart_routing"
 
 	/* user related keys */
 	ContextKeyUserId      ContextKey = "id"

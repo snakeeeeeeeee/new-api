@@ -21,6 +21,7 @@ type aggregateGroupUpsertRequest struct {
 	Description             string                        `json:"description"`
 	Status                  int                           `json:"status"`
 	GroupRatio              float64                       `json:"group_ratio"`
+	SmartRoutingEnabled     bool                          `json:"smart_routing_enabled"`
 	RecoveryEnabled         bool                          `json:"recovery_enabled"`
 	RecoveryIntervalSeconds int                           `json:"recovery_interval_seconds"`
 	RetryStatusCodes        string                        `json:"retry_status_codes"`
@@ -35,6 +36,7 @@ type aggregateGroupResponse struct {
 	Description             string                       `json:"description"`
 	Status                  int                          `json:"status"`
 	GroupRatio              float64                      `json:"group_ratio"`
+	SmartRoutingEnabled     bool                         `json:"smart_routing_enabled"`
 	RecoveryEnabled         bool                         `json:"recovery_enabled"`
 	RecoveryIntervalSeconds int                          `json:"recovery_interval_seconds"`
 	RetryStatusCodes        string                       `json:"retry_status_codes"`
@@ -59,6 +61,7 @@ func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupRes
 		Description:             group.Description,
 		Status:                  group.Status,
 		GroupRatio:              group.GroupRatio,
+		SmartRoutingEnabled:     group.SmartRoutingEnabled,
 		RecoveryEnabled:         group.RecoveryEnabled,
 		RecoveryIntervalSeconds: group.RecoveryIntervalSeconds,
 		RetryStatusCodes:        group.RetryStatusCodes,
@@ -123,6 +126,7 @@ func CreateAggregateGroup(c *gin.Context) {
 		Description:             req.Description,
 		Status:                  req.Status,
 		GroupRatio:              req.GroupRatio,
+		SmartRoutingEnabled:     req.SmartRoutingEnabled,
 		RecoveryEnabled:         req.RecoveryEnabled,
 		RecoveryIntervalSeconds: req.RecoveryIntervalSeconds,
 		RetryStatusCodes:        req.RetryStatusCodes,
@@ -175,6 +179,7 @@ func UpdateAggregateGroup(c *gin.Context) {
 		Description:             req.Description,
 		Status:                  req.Status,
 		GroupRatio:              req.GroupRatio,
+		SmartRoutingEnabled:     req.SmartRoutingEnabled,
 		RecoveryEnabled:         req.RecoveryEnabled,
 		RecoveryIntervalSeconds: req.RecoveryIntervalSeconds,
 		RetryStatusCodes:        req.RetryStatusCodes,

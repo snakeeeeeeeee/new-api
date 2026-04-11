@@ -20,6 +20,7 @@ type AggregateGroup struct {
 	Description             string                 `json:"description,omitempty" gorm:"type:varchar(255)"`
 	Status                  int                    `json:"status" gorm:"default:1;index"`
 	GroupRatio              float64                `json:"group_ratio" gorm:"default:1"`
+	SmartRoutingEnabled     bool                   `json:"smart_routing_enabled" gorm:"default:false"`
 	RecoveryEnabled         bool                   `json:"recovery_enabled" gorm:"default:true"`
 	RecoveryIntervalSeconds int                    `json:"recovery_interval_seconds" gorm:"default:300"`
 	RetryStatusCodes        string                 `json:"retry_status_codes" gorm:"type:text"`
@@ -120,6 +121,7 @@ func (g *AggregateGroup) UpdateWithTargets(targets []AggregateGroupTarget) error
 			"description":               g.Description,
 			"status":                    g.Status,
 			"group_ratio":               g.GroupRatio,
+			"smart_routing_enabled":     g.SmartRoutingEnabled,
 			"recovery_enabled":          g.RecoveryEnabled,
 			"recovery_interval_seconds": g.RecoveryIntervalSeconds,
 			"retry_status_codes":        g.RetryStatusCodes,

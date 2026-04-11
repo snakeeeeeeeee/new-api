@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -28,6 +29,11 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 	common.UsingMySQL = false
 	common.UsingPostgreSQL = false
 	common.RedisEnabled = false
+	originalSmartStrategyEnabled := setting.AggregateGroupSmartStrategyEnabled
+	originalFailureThreshold := setting.AggregateGroupFailureThreshold
+	originalDegradeDurationSeconds := setting.AggregateGroupDegradeDurationSeconds
+	originalSlowRequestThreshold := setting.AggregateGroupSlowRequestThreshold
+	originalConsecutiveSlowLimit := setting.AggregateGroupConsecutiveSlowLimit
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -35,9 +41,14 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.Channel{}, &model.Ability{}))
+	require.NoError(t, db.AutoMigrate(&model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.Channel{}, &model.Ability{}, &model.Option{}))
 
 	t.Cleanup(func() {
+		setting.AggregateGroupSmartStrategyEnabled = originalSmartStrategyEnabled
+		setting.AggregateGroupFailureThreshold = originalFailureThreshold
+		setting.AggregateGroupDegradeDurationSeconds = originalDegradeDurationSeconds
+		setting.AggregateGroupSlowRequestThreshold = originalSlowRequestThreshold
+		setting.AggregateGroupConsecutiveSlowLimit = originalConsecutiveSlowLimit
 		sqlDB, err := db.DB()
 		if err == nil {
 			_ = sqlDB.Close()
@@ -55,6 +66,7 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 		"description":"for enterprise",
 		"status":1,
 		"group_ratio":1.5,
+		"smart_routing_enabled":true,
 		"recovery_enabled":true,
 		"recovery_interval_seconds":300,
 		"retry_status_codes":"401,429,500-599",
@@ -83,6 +95,7 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 	require.Contains(t, string(listResp.Data), "enterprise-stable")
 	require.Contains(t, string(listResp.Data), `"real_group":"default"`)
 	require.Contains(t, string(listResp.Data), `"retry_status_codes":"401,429,500-599"`)
+	require.Contains(t, string(listResp.Data), `"smart_routing_enabled":true`)
 }
 
 func TestCreateAggregateGroupRejectsInvalidRetryStatusCodes(t *testing.T) {

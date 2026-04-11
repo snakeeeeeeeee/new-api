@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -257,6 +258,51 @@ func UpdateOption(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": err.Error(),
+			})
+			return
+		}
+	case "aggregate_group.smart_strategy_enabled":
+		_, err = strconv.ParseBool(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "聚合分组智能策略开关格式无效",
+			})
+			return
+		}
+	case "aggregate_group.consecutive_failure_threshold":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue <= 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "连续失败阈值必须大于 0",
+			})
+			return
+		}
+	case "aggregate_group.degrade_duration_seconds":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue <= 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "临时降级时长必须大于 0",
+			})
+			return
+		}
+	case "aggregate_group.slow_request_threshold_seconds":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue <= 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "慢请求阈值必须大于 0",
+			})
+			return
+		}
+	case "aggregate_group.consecutive_slow_threshold":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue <= 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "连续慢请求阈值必须大于 0",
 			})
 			return
 		}

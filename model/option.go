@@ -164,6 +164,11 @@ func InitOptionMap() {
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
 	common.OptionMap["AutomaticRetryStatusCodes"] = operation_setting.AutomaticRetryStatusCodesToString()
+	common.OptionMap["aggregate_group.smart_strategy_enabled"] = strconv.FormatBool(setting.AggregateGroupSmartStrategyEnabled)
+	common.OptionMap["aggregate_group.consecutive_failure_threshold"] = strconv.Itoa(setting.AggregateGroupFailureThreshold)
+	common.OptionMap["aggregate_group.degrade_duration_seconds"] = strconv.Itoa(setting.AggregateGroupDegradeDurationSeconds)
+	common.OptionMap["aggregate_group.slow_request_threshold_seconds"] = strconv.Itoa(setting.AggregateGroupSlowRequestThreshold)
+	common.OptionMap["aggregate_group.consecutive_slow_threshold"] = strconv.Itoa(setting.AggregateGroupConsecutiveSlowLimit)
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
 
 	// 自动添加所有注册的模型配置
@@ -505,6 +510,28 @@ func updateOptionMap(key string, value string) (err error) {
 		err = operation_setting.AutomaticDisableStatusCodesFromString(value)
 	case "AutomaticRetryStatusCodes":
 		err = operation_setting.AutomaticRetryStatusCodesFromString(value)
+	case "aggregate_group.smart_strategy_enabled":
+		setting.AggregateGroupSmartStrategyEnabled = value == "true"
+	case "aggregate_group.consecutive_failure_threshold":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupFailureThreshold(intValue)
+		setting.AggregateGroupFailureThreshold = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
+	case "aggregate_group.degrade_duration_seconds":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupDegradeDurationSeconds(intValue)
+		setting.AggregateGroupDegradeDurationSeconds = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
+	case "aggregate_group.slow_request_threshold_seconds":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupSlowRequestThreshold(intValue)
+		setting.AggregateGroupSlowRequestThreshold = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
+	case "aggregate_group.consecutive_slow_threshold":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupConsecutiveSlowThreshold(intValue)
+		setting.AggregateGroupConsecutiveSlowLimit = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
 	case "StreamCacheQueueLength":
 		setting.StreamCacheQueueLength, _ = strconv.Atoi(value)
 	case "PayMethods":

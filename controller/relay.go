@@ -87,7 +87,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
-			logger.LogError(c, fmt.Sprintf("relay error: %s", newAPIError.Error()))
+			if common.GetContextKeyString(c, constant.ContextKeyAggregateGroup) != "" {
+				logger.LogError(c, buildAggregateRelayErrorLog(c, newAPIError))
+			} else {
+				logger.LogError(c, fmt.Sprintf("relay error: %s", newAPIError.Error()))
+			}
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -249,7 +253,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		shouldRetryRequest := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
 		if isAggregateGroupRequest {
 			if transition := service.PrepareAggregateGroupRetry(c, retryParam.GetRetry(), relayInfo.OriginModelName, common.RetryTimes); transition != nil {
-				shouldRetryRequest = shouldRetry(c, newAPIError, 1)
+				groupRetryable := shouldRetry(c, newAPIError, 1)
+				shouldRetryRequest = groupRetryable
+				if groupRetryable && !transition.WithinCurrentGroup {
+					service.RecordAggregateRouteSmartFailure(c, relayInfo.OriginModelName, transition.FailedGroup, newAPIError.StatusCode)
+				}
 				if transition.HasNext {
 					if transition.WithinCurrentGroup {
 						logger.LogWarn(c, fmt.Sprintf(
@@ -294,11 +302,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		retryParam.IncreaseRetry()
 	}
 
-	useChannel := c.GetStringSlice("use_channel")
-	if len(useChannel) > 1 {
-		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
-		logger.LogInfo(c, retryLogStr)
-	}
+	logUsedChannelTrace(c)
 }
 
 var upgrader = websocket.Upgrader{
@@ -345,6 +349,36 @@ func addUsedChannel(c *gin.Context, channelId int) {
 	useChannel := c.GetStringSlice("use_channel")
 	useChannel = append(useChannel, fmt.Sprintf("%d", channelId))
 	c.Set("use_channel", useChannel)
+
+	useChannelTrace := c.GetStringSlice("use_channel_trace")
+	useChannelTrace = append(useChannelTrace, formatUsedChannelTrace(c, channelId))
+	c.Set("use_channel_trace", useChannelTrace)
+}
+
+func formatUsedChannelTrace(c *gin.Context, channelId int) string {
+	if c == nil {
+		return fmt.Sprintf("channel#%d", channelId)
+	}
+	routeGroup := common.GetContextKeyString(c, constant.ContextKeyRouteGroup)
+	channelName := c.GetString("channel_name")
+	switch {
+	case routeGroup != "" && channelName != "":
+		return fmt.Sprintf("%s(channel#%d:%s)", routeGroup, channelId, channelName)
+	case routeGroup != "":
+		return fmt.Sprintf("%s(channel#%d)", routeGroup, channelId)
+	case channelName != "":
+		return fmt.Sprintf("channel#%d(%s)", channelId, channelName)
+	default:
+		return fmt.Sprintf("channel#%d", channelId)
+	}
+}
+
+func logUsedChannelTrace(c *gin.Context) {
+	useChannelTrace := c.GetStringSlice("use_channel_trace")
+	if len(useChannelTrace) <= 1 {
+		return
+	}
+	logger.LogInfo(c, fmt.Sprintf("聚合链路尝试：%s", strings.Join(useChannelTrace, " -> ")))
 }
 
 func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
@@ -445,8 +479,47 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	return operation_setting.ShouldRetryByStatusCode(code)
 }
 
+func buildAggregateChannelErrorLog(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) string {
+	aggregateGroup := common.GetContextKeyString(c, constant.ContextKeyAggregateGroup)
+	modelName := c.GetString("original_model")
+	routeGroup := common.GetContextKeyString(c, constant.ContextKeyRouteGroup)
+	routeGroupIndex := common.GetContextKeyInt(c, constant.ContextKeyRouteGroupIndex)
+	channelName := c.GetString("channel_name")
+	return fmt.Sprintf(
+		"aggregate channel error: aggregate_group=%s, model=%s, route_group=%s(index=%d), channel#%d(%s), status_code=%d, error=%s",
+		aggregateGroup,
+		modelName,
+		routeGroup,
+		routeGroupIndex,
+		channelError.ChannelId,
+		channelName,
+		err.StatusCode,
+		err.Error(),
+	)
+}
+
+func buildAggregateRelayErrorLog(c *gin.Context, err *types.NewAPIError) string {
+	aggregateGroup := common.GetContextKeyString(c, constant.ContextKeyAggregateGroup)
+	modelName := c.GetString("original_model")
+	routeGroup := common.GetContextKeyString(c, constant.ContextKeyRouteGroup)
+	routeGroupIndex := common.GetContextKeyInt(c, constant.ContextKeyRouteGroupIndex)
+	return fmt.Sprintf(
+		"aggregate relay error: aggregate_group=%s, model=%s, route_group=%s(index=%d), status_code=%d, error=%s",
+		aggregateGroup,
+		modelName,
+		routeGroup,
+		routeGroupIndex,
+		err.StatusCode,
+		err.Error(),
+	)
+}
+
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
-	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
+	if common.GetContextKeyString(c, constant.ContextKeyAggregateGroup) != "" {
+		logger.LogError(c, buildAggregateChannelErrorLog(c, channelError, err))
+	} else {
+		logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
+	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	if service.ShouldDisableChannel(channelError.ChannelType, err) && channelError.AutoBan {
@@ -658,7 +731,11 @@ func RelayTask(c *gin.Context) {
 		shouldRetryTask := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
 		if isAggregateGroupRequest {
 			if transition := service.PrepareAggregateGroupRetry(c, retryParam.GetRetry(), relayInfo.OriginModelName, common.RetryTimes); transition != nil {
-				shouldRetryTask = shouldRetryTaskRelay(c, channel.Id, taskErr, 1)
+				groupRetryable := shouldRetryTaskRelay(c, channel.Id, taskErr, 1)
+				shouldRetryTask = groupRetryable
+				if groupRetryable && !transition.WithinCurrentGroup {
+					service.RecordAggregateRouteSmartFailure(c, relayInfo.OriginModelName, transition.FailedGroup, taskErr.StatusCode)
+				}
 				if transition.HasNext {
 					if transition.WithinCurrentGroup {
 						logger.LogWarn(c, fmt.Sprintf(
@@ -702,11 +779,7 @@ func RelayTask(c *gin.Context) {
 		retryParam.IncreaseRetry()
 	}
 
-	useChannel := c.GetStringSlice("use_channel")
-	if len(useChannel) > 1 {
-		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
-		logger.LogInfo(c, retryLogStr)
-	}
+	logUsedChannelTrace(c)
 
 	// ── 成功：结算 + 日志 + 插入任务 ──
 	if taskErr == nil {

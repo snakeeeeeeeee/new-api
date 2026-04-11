@@ -28,6 +28,11 @@ func prepareAggregateGroupServiceTest(t *testing.T) {
 	model.DB.Exec("DELETE FROM channels")
 	originalGroups := setting.UserUsableGroups2JSONString()
 	originalRetryTimes := common.RetryTimes
+	originalSmartStrategyEnabled := setting.AggregateGroupSmartStrategyEnabled
+	originalFailureThreshold := setting.AggregateGroupFailureThreshold
+	originalDegradeDurationSeconds := setting.AggregateGroupDegradeDurationSeconds
+	originalSlowRequestThreshold := setting.AggregateGroupSlowRequestThreshold
+	originalConsecutiveSlowLimit := setting.AggregateGroupConsecutiveSlowLimit
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组","svip":"SVIP分组"}`))
 	t.Cleanup(func() {
 		model.DB.Exec("DELETE FROM aggregate_group_targets")
@@ -36,8 +41,14 @@ func prepareAggregateGroupServiceTest(t *testing.T) {
 		model.DB.Exec("DELETE FROM channels")
 		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalGroups))
 		aggregateGroupRuntimeStateMemory = sync.Map{}
+		aggregateGroupRouteStrategyStateMemory = sync.Map{}
 		common.MemoryCacheEnabled = false
 		common.RetryTimes = originalRetryTimes
+		setting.AggregateGroupSmartStrategyEnabled = originalSmartStrategyEnabled
+		setting.AggregateGroupFailureThreshold = originalFailureThreshold
+		setting.AggregateGroupDegradeDurationSeconds = originalDegradeDurationSeconds
+		setting.AggregateGroupSlowRequestThreshold = originalSlowRequestThreshold
+		setting.AggregateGroupConsecutiveSlowLimit = originalConsecutiveSlowLimit
 	})
 }
 
@@ -72,6 +83,16 @@ func seedAggregateAbilityChannel(t *testing.T, id int, group string, modelName s
 	}
 	require.NoError(t, model.DB.Create(channel).Error)
 	require.NoError(t, channel.AddAbilities(nil))
+}
+
+func enableAggregateGroupSmartRouting(t *testing.T, group *model.AggregateGroup) {
+	t.Helper()
+	require.NotNil(t, group)
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	loadedGroup.SmartRoutingEnabled = true
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargets(loadedGroup.GetTargetGroups())))
+	group.SmartRoutingEnabled = true
 }
 
 func TestVisibleAggregateGroupsAndRatios(t *testing.T) {
@@ -405,4 +426,175 @@ func TestShouldRetryStatusCodeByAggregateGroup(t *testing.T) {
 	shouldRetry, configured = ShouldRetryStatusCodeByAggregateGroup("default", 500)
 	require.False(t, configured)
 	require.False(t, shouldRetry)
+}
+
+func TestAggregateSmartStrategyDisabledKeepsOriginalSelection(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	setting.AggregateGroupSmartStrategyEnabled = true
+
+	group := seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+
+	require.NoError(t, SetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		DegradedUntil: common.GetTimestamp() + 600,
+	}))
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+}
+
+func TestAggregateSmartStrategySkipsTemporarilyDegradedRoute(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	setting.AggregateGroupSmartStrategyEnabled = true
+
+	group := seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	enableAggregateGroupSmartRouting(t, group)
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+
+	require.NoError(t, SetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		DegradedUntil: common.GetTimestamp() + 600,
+	}))
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+	require.Equal(t, "vip", common.GetContextKeyString(ctx, constant.ContextKeyRouteGroup))
+}
+
+func TestAggregateSmartStrategyFailureThresholdTriggersTemporaryDegrade(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	setting.AggregateGroupSmartStrategyEnabled = true
+	setting.AggregateGroupFailureThreshold = 2
+	setting.AggregateGroupDegradeDurationSeconds = 600
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
+	common.SetContextKey(ctx, constant.ContextKeyAggregateSmartRouting, true)
+
+	RecordAggregateRouteSmartFailure(ctx, "gpt-4.1", "default", 503)
+
+	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, 1, state.ConsecutiveFailures)
+	require.Equal(t, int64(0), state.DegradedUntil)
+
+	RecordAggregateRouteSmartFailure(ctx, "gpt-4.1", "default", 503)
+
+	state, err = GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, 0, state.ConsecutiveFailures)
+	require.Greater(t, state.DegradedUntil, common.GetTimestamp())
+}
+
+func TestAggregateSmartStrategySlowSuccessOnlyAffectsLaterRequests(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	setting.AggregateGroupSmartStrategyEnabled = true
+	setting.AggregateGroupSlowRequestThreshold = 1
+	setting.AggregateGroupConsecutiveSlowLimit = 2
+	setting.AggregateGroupDegradeDurationSeconds = 600
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateStartIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateInitialStartIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateSmartRouting, true)
+	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-2*time.Second))
+
+	RecordAggregateRouteSuccess(ctx, "gpt-4.1")
+
+	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, 1, state.ConsecutiveSlows)
+	require.Equal(t, int64(0), state.DegradedUntil)
+
+	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-2*time.Second))
+	RecordAggregateRouteSuccess(ctx, "gpt-4.1")
+
+	state, err = GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, 0, state.ConsecutiveSlows)
+	require.Greater(t, state.DegradedUntil, common.GetTimestamp())
+}
+
+func TestAggregateSmartStrategyRecoveredRouteParticipatesAgainAfterWindow(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	setting.AggregateGroupSmartStrategyEnabled = true
+
+	group := seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	enableAggregateGroupSmartRouting(t, group)
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+
+	require.NoError(t, SetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		DegradedUntil: common.GetTimestamp() - 1,
+	}))
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+
+	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, int64(0), state.DegradedUntil)
+}
+
+func TestAggregateSmartStrategyStillSkipsUnsupportedModelByExistingAbilityLookup(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	setting.AggregateGroupSmartStrategyEnabled = true
+
+	group := seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	enableAggregateGroupSmartRouting(t, group)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
 }

@@ -20,26 +20,54 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   API,
+  compareObjects,
+  isRoot,
   showError,
   showSuccess,
+  showWarning,
   stringToColor,
+  toBoolean,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 import CardPro from '../../common/ui/CardPro';
 import CardTable from '../../common/ui/CardTable';
-import { Button, Popconfirm, Space, Tag, Typography } from '@douyinfe/semi-ui';
+import {
+  Button,
+  Card,
+  Col,
+  InputNumber,
+  Popconfirm,
+  Row,
+  Space,
+  Spin,
+  Switch,
+  Tag,
+  Typography,
+} from '@douyinfe/semi-ui';
 import EditAggregateGroupModal from './EditAggregateGroupModal';
 
 const { Text } = Typography;
 
+const defaultStrategyInputs = {
+  'aggregate_group.smart_strategy_enabled': false,
+  'aggregate_group.consecutive_failure_threshold': 2,
+  'aggregate_group.degrade_duration_seconds': 600,
+  'aggregate_group.slow_request_threshold_seconds': 30,
+  'aggregate_group.consecutive_slow_threshold': 3,
+};
+
 const AggregateGroupsPage = () => {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
+  const [optionsLoading, setOptionsLoading] = useState(false);
   const [groups, setGroups] = useState([]);
   const [realGroupOptions, setRealGroupOptions] = useState([]);
   const [userGroupOptions, setUserGroupOptions] = useState([]);
   const [editingGroup, setEditingGroup] = useState({ id: undefined });
   const [showEdit, setShowEdit] = useState(false);
+  const [strategyInputs, setStrategyInputs] = useState(defaultStrategyInputs);
+  const [strategyInputsRow, setStrategyInputsRow] =
+    useState(defaultStrategyInputs);
 
   const loadGroups = async () => {
     setLoading(true);
@@ -82,9 +110,44 @@ const AggregateGroupsPage = () => {
     }
   };
 
+  const loadStrategyOptions = async () => {
+    setOptionsLoading(true);
+    try {
+      const res = await API.get('/api/option/');
+      const { success, data, message } = res.data;
+      if (!success) {
+        showError(t(message));
+        return;
+      }
+      const nextInputs = { ...defaultStrategyInputs };
+      (data || []).forEach((item) => {
+        if (!(item.key in nextInputs)) {
+          return;
+        }
+        if (item.key === 'aggregate_group.smart_strategy_enabled') {
+          nextInputs[item.key] = toBoolean(item.value);
+          return;
+        }
+        const parsedValue = Number(item.value);
+        if (!Number.isNaN(parsedValue) && parsedValue > 0) {
+          nextInputs[item.key] = parsedValue;
+        }
+      });
+      setStrategyInputs(nextInputs);
+      setStrategyInputsRow(structuredClone(nextInputs));
+    } catch (error) {
+      showError(error?.message || t('获取聚合分组全局策略失败'));
+    } finally {
+      setOptionsLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadGroups();
     loadGroupOptions();
+    if (isRoot()) {
+      loadStrategyOptions();
+    }
   }, []);
 
   const handleDelete = async (id) => {
@@ -102,6 +165,38 @@ const AggregateGroupsPage = () => {
     }
   };
 
+  const updateStrategyField = (key, value) => {
+    setStrategyInputs((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
+
+  const handleSaveStrategy = async () => {
+    const updateArray = compareObjects(strategyInputs, strategyInputsRow);
+    if (!updateArray.length) {
+      showWarning(t('你似乎并没有修改什么'));
+      return;
+    }
+    setOptionsLoading(true);
+    try {
+      await Promise.all(
+        updateArray.map((item) =>
+          API.put('/api/option/', {
+            key: item.key,
+            value: strategyInputs[item.key],
+          }),
+        ),
+      );
+      showSuccess(t('聚合分组全局策略保存成功'));
+      setStrategyInputsRow(structuredClone(strategyInputs));
+    } catch (error) {
+      showError(error?.message || t('聚合分组全局策略保存失败'));
+    } finally {
+      setOptionsLoading(false);
+    }
+  };
+
   const columns = useMemo(
     () => [
       {
@@ -114,6 +209,11 @@ const AggregateGroupsPage = () => {
             <Tag color='blue' shape='circle'>
               {record.display_name}
             </Tag>
+            {record.smart_routing_enabled ? (
+              <Tag color='orange' size='small'>
+                {t('已启用智能策略')}
+              </Tag>
+            ) : null}
             <Tag color={record.status === 1 ? 'green' : 'grey'} size='small'>
               {record.status === 1 ? t('启用') : t('禁用')}
             </Tag>
@@ -239,6 +339,119 @@ const AggregateGroupsPage = () => {
         }
         t={t}
       >
+        {isRoot() ? (
+          <Spin spinning={optionsLoading}>
+            <Card className='!rounded-2xl shadow-sm border-0 mb-3'>
+              <div className='flex items-center justify-between gap-2 mb-3'>
+                <div>
+                  <Text strong>{t('聚合分组全局策略')}</Text>
+                  <div className='text-xs text-gray-600 mt-1'>
+                    {t('为开启智能策略的聚合分组配置连续失败、临时降级和慢请求阈值')}
+                  </div>
+                </div>
+                <Button type='primary' onClick={handleSaveStrategy}>
+                  {t('保存聚合分组策略')}
+                </Button>
+              </div>
+              <Row gutter={16}>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('启用智能策略')}</Text>
+                  </div>
+                  <Switch
+                    checked={
+                      strategyInputs['aggregate_group.smart_strategy_enabled']
+                    }
+                    onChange={(checked) =>
+                      updateStrategyField(
+                        'aggregate_group.smart_strategy_enabled',
+                        checked,
+                      )
+                    }
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('连续失败阈值')}</Text>
+                  </div>
+                  <InputNumber
+                    min={1}
+                    value={
+                      strategyInputs[
+                        'aggregate_group.consecutive_failure_threshold'
+                      ]
+                    }
+                    onChange={(value) =>
+                      updateStrategyField(
+                        'aggregate_group.consecutive_failure_threshold',
+                        Number(value) || 1,
+                      )
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('临时降级时长（秒）')}</Text>
+                  </div>
+                  <InputNumber
+                    min={1}
+                    value={
+                      strategyInputs['aggregate_group.degrade_duration_seconds']
+                    }
+                    onChange={(value) =>
+                      updateStrategyField(
+                        'aggregate_group.degrade_duration_seconds',
+                        Number(value) || 1,
+                      )
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('慢请求阈值（秒）')}</Text>
+                  </div>
+                  <InputNumber
+                    min={1}
+                    value={
+                      strategyInputs[
+                        'aggregate_group.slow_request_threshold_seconds'
+                      ]
+                    }
+                    onChange={(value) =>
+                      updateStrategyField(
+                        'aggregate_group.slow_request_threshold_seconds',
+                        Number(value) || 1,
+                      )
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('连续慢请求阈值')}</Text>
+                  </div>
+                  <InputNumber
+                    min={1}
+                    value={
+                      strategyInputs[
+                        'aggregate_group.consecutive_slow_threshold'
+                      ]
+                    }
+                    onChange={(value) =>
+                      updateStrategyField(
+                        'aggregate_group.consecutive_slow_threshold',
+                        Number(value) || 1,
+                      )
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Col>
+              </Row>
+            </Card>
+          </Spin>
+        ) : null}
         <CardTable
           rowKey='id'
           columns={columns}
