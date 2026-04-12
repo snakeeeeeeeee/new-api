@@ -85,15 +85,15 @@ const getCurrentTriggerReasonCompactLabel = (route, t) => {
 
 const getRouteStatusConfig = (route, t) => {
   if (route?.is_active) {
-    return { color: 'green', text: t('当前在用') };
+    return { color: 'green', text: 'In Use' };
   }
   if (route?.is_degraded) {
-    return { color: 'red', text: t('暂时跳过') };
+    return { color: 'red', text: 'Skipped' };
   }
   if ((route?.priority_count ?? 0) <= 0) {
-    return { color: 'grey', text: t('当前不能用') };
+    return { color: 'grey', text: 'Unavailable' };
   }
-  return { color: 'blue', text: t('待命') };
+  return { color: 'blue', text: 'Standby' };
 };
 
 const renderSwitchTag = (enabled, t) => {
@@ -107,7 +107,7 @@ const renderSwitchTag = (enabled, t) => {
 const getRouteVisualStyle = (route, t) => {
   const statusConfig = getRouteStatusConfig(route, t);
   switch (statusConfig.text) {
-    case t('当前在用'):
+    case 'In Use':
       return {
         ...statusConfig,
         fillStart: '#effdf4',
@@ -117,7 +117,7 @@ const getRouteVisualStyle = (route, t) => {
         badgeFill: '#dcfce7',
         badgeText: '#166534',
       };
-    case t('暂时跳过'):
+    case 'Skipped':
       return {
         ...statusConfig,
         fillStart: '#fff1f2',
@@ -127,7 +127,7 @@ const getRouteVisualStyle = (route, t) => {
         badgeFill: '#ffe4e6',
         badgeText: '#9f1239',
       };
-    case t('当前不能用'):
+    case 'Unavailable':
       return {
         ...statusConfig,
         fillStart: '#f8fafc',
@@ -173,8 +173,8 @@ const AggregateTopologyCanvas = ({
   reducedMotion,
   t,
 }) => {
-  const nodeWidth = isMobile ? 288 : 248;
-  const nodeHeight = 156;
+  const nodeWidth = isMobile ? 304 : 276;
+  const nodeHeight = 172;
   const gap = isMobile ? 72 : 104;
   const paddingX = isMobile ? 16 : 20;
   const paddingY = 18;
@@ -317,10 +317,12 @@ const AggregateTopologyCanvas = ({
           const gradientId = `aggregate-runtime-node-gradient-${node.route.route_index}`;
           const glowId = `aggregate-runtime-node-glow-${node.route.route_index}`;
           const statusText = node.visualStyle.text;
-          const badgeWidth = Math.max(56, statusText.length * 12 + 18);
-          const label = truncateLabel(node.route.route_group, isMobile ? 28 : 24);
+          const badgeWidth = Math.max(56, statusText.length * 9 + 18);
+          const label = truncateLabel(node.route.route_group, isMobile ? 30 : 28);
           const triggerLabel = getCurrentTriggerReasonCompactLabel(node.route, t);
           const recentIssue = hasRecentIssue(node.route);
+          const recentIssueText = t('最近异常');
+          const recentIssueWidth = Math.max(54, recentIssueText.length * 8 + 16);
 
           return (
             <g
@@ -340,15 +342,15 @@ const AggregateTopologyCanvas = ({
               <title>{node.route.route_group}</title>
               {node.isSelected ? (
                 <rect
-                  x={node.x - 4}
-                  y={node.y - 4}
-                  width={node.width + 8}
-                  height={node.height + 8}
-                  rx='26'
+                  x={node.x - 3}
+                  y={node.y - 3}
+                  width={node.width + 6}
+                  height={node.height + 6}
+                  rx='28'
                   fill='none'
                   stroke={node.visualStyle.accent}
-                  strokeOpacity='0.18'
-                  strokeWidth='8'
+                  strokeOpacity='0.12'
+                  strokeWidth='6'
                   filter={`url(#${glowId})`}
                 />
               ) : null}
@@ -357,17 +359,17 @@ const AggregateTopologyCanvas = ({
                 y={node.y}
                 width={node.width}
                 height={node.height}
-                rx='24'
+                rx='26'
                 fill={`url(#${gradientId})`}
                 stroke={node.isSelected ? node.visualStyle.accent : node.visualStyle.border}
                 strokeOpacity={node.isSelected ? 0.95 : 1}
-                strokeWidth={node.isSelected ? 2.5 : 1.4}
+                strokeWidth={node.isSelected ? 2.2 : 1.25}
               />
               <text
                 x={node.x + 18}
-                y={node.y + 30}
+                y={node.y + 28}
                 fill='#64748b'
-                fontSize='13'
+                fontSize='12'
                 fontWeight='500'
               >
                 {t('节点')} {node.route.route_index + 1}
@@ -375,18 +377,18 @@ const AggregateTopologyCanvas = ({
 
               <rect
                 x={node.x + node.width - badgeWidth - 16}
-                y={node.y + 16}
+                y={node.y + 14}
                 width={badgeWidth}
-                height='30'
-                rx='15'
+                height='24'
+                rx='12'
                 fill={node.visualStyle.badgeFill}
               />
               <text
                 x={node.x + node.width - badgeWidth / 2 - 16}
-                y={node.y + 35}
+                y={node.y + 29}
                 textAnchor='middle'
                 fill={node.visualStyle.badgeText}
-                fontSize='14'
+                fontSize='11'
                 fontWeight='700'
               >
                 {statusText}
@@ -395,33 +397,33 @@ const AggregateTopologyCanvas = ({
               {recentIssue ? (
                 <>
                   <rect
-                    x={node.x + node.width - 100}
-                    y={node.y + 54}
-                    width='84'
-                    height='24'
-                    rx='12'
+                    x={node.x + node.width - recentIssueWidth - 16}
+                    y={node.y + 44}
+                    width={recentIssueWidth}
+                    height='18'
+                    rx='9'
                     fill='#fff7ed'
                     stroke='#fdba74'
-                    strokeOpacity='0.95'
+                    strokeOpacity='0.9'
                   />
                   <text
-                    x={node.x + node.width - 58}
-                    y={node.y + 70}
+                    x={node.x + node.width - recentIssueWidth / 2 - 16}
+                    y={node.y + 57}
                     textAnchor='middle'
                     fill='#9a3412'
-                    fontSize='12'
+                    fontSize='9.5'
                     fontWeight='700'
                   >
-                    {t('最近异常')}
+                    {recentIssueText}
                   </text>
                 </>
               ) : null}
 
               <text
                 x={node.x + 18}
-                y={node.y + 84}
+                y={node.y + 92}
                 fill='#0f172a'
-                fontSize='18'
+                fontSize='16'
                 fontWeight='700'
               >
                 {label}
@@ -429,18 +431,18 @@ const AggregateTopologyCanvas = ({
 
               <text
                 x={node.x + 18}
-                y={node.y + 120}
+                y={node.y + 132}
                 fill='#64748b'
-                fontSize='12'
+                fontSize='11.5'
                 fontWeight='500'
               >
                 {t('可选层级')}
               </text>
               <text
                 x={node.x + 18}
-                y={node.y + 148}
+                y={node.y + 160}
                 fill='#1e293b'
-                fontSize='20'
+                fontSize='18'
                 fontWeight='700'
               >
                 {node.route.priority_count ?? 0}
@@ -448,18 +450,18 @@ const AggregateTopologyCanvas = ({
 
               <text
                 x={node.x + node.width / 2 + 4}
-                y={node.y + 120}
+                y={node.y + 132}
                 fill='#64748b'
-                fontSize='12'
+                fontSize='11.5'
                 fontWeight='500'
               >
                 {t('当前异常')}
               </text>
               <text
                 x={node.x + node.width / 2 + 4}
-                y={node.y + 148}
+                y={node.y + 158}
                 fill='#1e293b'
-                fontSize='15'
+                fontSize='13.5'
                 fontWeight='700'
               >
                 {triggerLabel}
