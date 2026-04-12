@@ -75,6 +75,8 @@ func RecordAggregateRouteSmartFailure(c *gin.Context, modelName string, routeGro
 		state.ConsecutiveFailures = 0
 		state.ConsecutiveSlows = 0
 		state.DegradedUntil = now + int64(setting.AggregateGroupDegradeDurationSeconds)
+		state.LastTriggerReason = AggregateSmartTriggerReasonConsecutiveFailures
+		state.LastTriggerAt = now
 		triggered = true
 	}
 	if err = SetAggregateGroupRouteStrategyState(aggregateGroup, modelName, routeGroup, state); err != nil {
@@ -119,6 +121,8 @@ func RecordAggregateRouteSmartSuccess(c *gin.Context, modelName string, routeGro
 			state.ConsecutiveFailures = 0
 			state.ConsecutiveSlows = 0
 			state.DegradedUntil = now + int64(setting.AggregateGroupDegradeDurationSeconds)
+			state.LastTriggerReason = AggregateSmartTriggerReasonConsecutiveSlows
+			state.LastTriggerAt = now
 			triggered = true
 		}
 		if err = SetAggregateGroupRouteStrategyState(aggregateGroup, modelName, routeGroup, state); err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,24 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 	return db
+}
+
+func seedAggregateGroupControllerAbilityChannel(t *testing.T, id int, group string, modelName string, priority int64) {
+	t.Helper()
+	weight := uint(10)
+	channel := &model.Channel{
+		Id:          id,
+		Name:        fmt.Sprintf("%s-channel-%d", group, id),
+		Key:         "sk-test",
+		Status:      common.ChannelStatusEnabled,
+		Group:       group,
+		Models:      modelName,
+		Priority:    &priority,
+		Weight:      &weight,
+		CreatedTime: time.Now().Unix(),
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
 }
 
 func TestCreateAggregateGroupAndList(t *testing.T) {
@@ -200,4 +219,137 @@ func TestGetChannelRetryDoesNotReuseInitialSelectedChannelForAggregateGroup(t *t
 	require.NotNil(t, channel)
 	require.Equal(t, 5, channel.Id)
 	require.Equal(t, "kiro1", common.GetContextKeyString(ctx, constant.ContextKeyRouteGroup))
+}
+
+func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+	setting.AggregateGroupSmartStrategyEnabled = true
+
+	group := &model.AggregateGroup{
+		Name:                    "runtime-ha",
+		DisplayName:             "Runtime HA",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1,
+		SmartRoutingEnabled:     true,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, group.InsertWithTargets([]model.AggregateGroupTarget{
+		{RealGroup: "default", OrderIndex: 0},
+		{RealGroup: "vip", OrderIndex: 1},
+	}))
+
+	seedAggregateGroupControllerAbilityChannel(t, 1001, "default", "z-model", 0)
+	seedAggregateGroupControllerAbilityChannel(t, 1002, "default", "a-model", 0)
+	seedAggregateGroupControllerAbilityChannel(t, 1003, "vip", "a-model", 0)
+
+	now := time.Now().Unix()
+	require.NoError(t, service.SetAggregateGroupRuntimeState(group.Name, "a-model", &service.AggregateGroupRuntimeState{
+		ActiveIndex:   1,
+		ActiveGroup:   "vip",
+		LastSuccessAt: now,
+		LastSwitchAt:  now,
+	}))
+	require.NoError(t, service.SetAggregateGroupRouteStrategyState(group.Name, "a-model", "default", &service.AggregateGroupRouteStrategyState{
+		DegradedUntil:     common.GetTimestamp() + 600,
+		LastFailureAt:     now,
+		LastTriggerReason: service.AggregateSmartTriggerReasonConsecutiveFailures,
+		LastTriggerAt:     now,
+	}))
+	require.NoError(t, service.SetAggregateGroupRouteStrategyState(group.Name, "a-model", "vip", &service.AggregateGroupRouteStrategyState{
+		ConsecutiveSlows: 1,
+		LastSuccessAt:    now,
+	}))
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(group.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/aggregate_group/%d/runtime", group.Id), nil)
+	GetAggregateGroupRuntime(ctx)
+
+	var resp struct {
+		Success bool                          `json:"success"`
+		Message string                        `json:"message"`
+		Data    aggregateGroupRuntimeResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+	require.Equal(t, []string{"a-model", "z-model"}, resp.Data.Models)
+	require.Equal(t, "a-model", resp.Data.SelectedModel)
+	require.True(t, resp.Data.SmartStrategy.EffectiveEnabled)
+	require.NotNil(t, resp.Data.Runtime)
+	require.NotNil(t, resp.Data.Runtime.ActiveRoute)
+	require.Equal(t, "vip", resp.Data.Runtime.ActiveRoute.ActiveGroup)
+	require.Len(t, resp.Data.Runtime.Routes, 2)
+	require.Equal(t, "default", resp.Data.Runtime.Routes[0].RouteGroup)
+	require.True(t, resp.Data.Runtime.Routes[0].IsDegraded)
+	require.Equal(t, service.AggregateSmartTriggerReasonConsecutiveFailures, resp.Data.Runtime.Routes[0].LastTriggerReason)
+	require.Equal(t, "vip", resp.Data.Runtime.Routes[1].RouteGroup)
+	require.True(t, resp.Data.Runtime.Routes[1].IsActive)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[1].ConsecutiveSlows)
+}
+
+func TestGetAggregateGroupRuntimeRejectsModelOutsideAggregateGroup(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+
+	group := &model.AggregateGroup{
+		Name:                    "runtime-invalid-model",
+		DisplayName:             "Runtime Invalid Model",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, group.InsertWithTargets([]model.AggregateGroupTarget{
+		{RealGroup: "default", OrderIndex: 0},
+	}))
+	seedAggregateGroupControllerAbilityChannel(t, 1001, "default", "a-model", 0)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(group.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/aggregate_group/%d/runtime?model=b-model", group.Id), nil)
+	GetAggregateGroupRuntime(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "模型不属于当前聚合分组")
+}
+
+func TestGetAggregateGroupRuntimeHandlesAggregateGroupWithoutModels(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+
+	group := &model.AggregateGroup{
+		Name:                    "runtime-empty",
+		DisplayName:             "Runtime Empty",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, group.InsertWithTargets([]model.AggregateGroupTarget{
+		{RealGroup: "default", OrderIndex: 0},
+		{RealGroup: "vip", OrderIndex: 1},
+	}))
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(group.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/aggregate_group/%d/runtime", group.Id), nil)
+	GetAggregateGroupRuntime(ctx)
+
+	var resp struct {
+		Success bool                          `json:"success"`
+		Message string                        `json:"message"`
+		Data    aggregateGroupRuntimeResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+	require.Empty(t, resp.Data.Models)
+	require.Empty(t, resp.Data.SelectedModel)
+	require.Nil(t, resp.Data.Runtime)
 }

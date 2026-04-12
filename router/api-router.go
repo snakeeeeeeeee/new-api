@@ -251,6 +251,7 @@ func SetApiRouter(router *gin.Engine) {
 		aggregateGroupRoute.Use(middleware.AdminAuth())
 		{
 			aggregateGroupRoute.GET("/", controller.GetAggregateGroups)
+			aggregateGroupRoute.GET("/:id/runtime", controller.GetAggregateGroupRuntime)
 			aggregateGroupRoute.GET("/:id", controller.GetAggregateGroup)
 			aggregateGroupRoute.POST("/", controller.CreateAggregateGroup)
 			aggregateGroupRoute.PUT("/", controller.UpdateAggregateGroup)

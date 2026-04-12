@@ -1,12 +1,14 @@
 package controller
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -44,6 +46,20 @@ type aggregateGroupResponse struct {
 	Targets                 []model.AggregateGroupTarget `json:"targets"`
 	CreatedTime             int64                        `json:"created_time"`
 	UpdatedTime             int64                        `json:"updated_time"`
+}
+
+type aggregateGroupSmartStrategyResponse struct {
+	GlobalEnabled    bool `json:"global_enabled"`
+	GroupEnabled     bool `json:"group_enabled"`
+	EffectiveEnabled bool `json:"effective_enabled"`
+}
+
+type aggregateGroupRuntimeResponse struct {
+	AggregateGroup *aggregateGroupResponse             `json:"aggregate_group"`
+	SmartStrategy  aggregateGroupSmartStrategyResponse `json:"smart_strategy"`
+	Models         []string                            `json:"models"`
+	SelectedModel  string                              `json:"selected_model"`
+	Runtime        *service.AggregateGroupRuntimeView  `json:"runtime,omitempty"`
 }
 
 func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupResponse {
@@ -109,6 +125,52 @@ func GetAggregateGroup(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, buildAggregateGroupResponse(group))
+}
+
+func GetAggregateGroupRuntime(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	group, err := model.GetAggregateGroupByID(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	models := service.GetModelsForGroup(group.Name)
+	slices.Sort(models)
+
+	selectedModel := strings.TrimSpace(c.Query("model"))
+	if selectedModel != "" && !slices.Contains(models, selectedModel) {
+		common.ApiErrorMsg(c, "模型不属于当前聚合分组")
+		return
+	}
+
+	var runtimeView *service.AggregateGroupRuntimeView
+	if len(models) > 0 {
+		if selectedModel == "" {
+			selectedModel = models[0]
+		}
+		runtimeView, err = service.BuildAggregateGroupRuntimeView(group, selectedModel)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+
+	common.ApiSuccess(c, &aggregateGroupRuntimeResponse{
+		AggregateGroup: buildAggregateGroupResponse(group),
+		SmartStrategy: aggregateGroupSmartStrategyResponse{
+			GlobalEnabled:    setting.AggregateGroupSmartStrategyEnabled,
+			GroupEnabled:     group.SmartRoutingEnabled,
+			EffectiveEnabled: service.IsAggregateSmartRoutingEnabled(group),
+		},
+		Models:        models,
+		SelectedModel: selectedModel,
+		Runtime:       runtimeView,
+	})
 }
 
 func CreateAggregateGroup(c *gin.Context) {

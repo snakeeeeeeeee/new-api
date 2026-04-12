@@ -45,6 +45,7 @@ import {
   Typography,
 } from '@douyinfe/semi-ui';
 import EditAggregateGroupModal from './EditAggregateGroupModal';
+import AggregateGroupRuntimeDrawer from './AggregateGroupRuntimeDrawer';
 
 const { Text } = Typography;
 
@@ -65,6 +66,8 @@ const AggregateGroupsPage = () => {
   const [userGroupOptions, setUserGroupOptions] = useState([]);
   const [editingGroup, setEditingGroup] = useState({ id: undefined });
   const [showEdit, setShowEdit] = useState(false);
+  const [runtimeGroup, setRuntimeGroup] = useState(null);
+  const [showRuntime, setShowRuntime] = useState(false);
   const [strategyInputs, setStrategyInputs] = useState(defaultStrategyInputs);
   const [strategyInputsRow, setStrategyInputsRow] =
     useState(defaultStrategyInputs);
@@ -283,6 +286,16 @@ const AggregateGroupsPage = () => {
             >
               {t('编辑')}
             </Button>
+            <Button
+              size='small'
+              theme='outline'
+              onClick={() => {
+                setRuntimeGroup(record);
+                setShowRuntime(true);
+              }}
+            >
+              {t('运行态')}
+            </Button>
             <Popconfirm
               title={t('确认删除该聚合分组？')}
               onConfirm={() => handleDelete(record.id)}
@@ -314,6 +327,16 @@ const AggregateGroupsPage = () => {
         }}
         realGroupOptions={realGroupOptions}
         userGroupOptions={userGroupOptions}
+      />
+
+      <AggregateGroupRuntimeDrawer
+        visible={showRuntime}
+        aggregateGroup={runtimeGroup}
+        onClose={() => {
+          setShowRuntime(false);
+          setRuntimeGroup(null);
+        }}
+        t={t}
       />
 
       <CardPro

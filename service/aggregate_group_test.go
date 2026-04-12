@@ -500,6 +500,8 @@ func TestAggregateSmartStrategyFailureThresholdTriggersTemporaryDegrade(t *testi
 	require.NotNil(t, state)
 	require.Equal(t, 1, state.ConsecutiveFailures)
 	require.Equal(t, int64(0), state.DegradedUntil)
+	require.Empty(t, state.LastTriggerReason)
+	require.Equal(t, int64(0), state.LastTriggerAt)
 
 	RecordAggregateRouteSmartFailure(ctx, "gpt-4.1", "default", 503)
 
@@ -508,6 +510,8 @@ func TestAggregateSmartStrategyFailureThresholdTriggersTemporaryDegrade(t *testi
 	require.NotNil(t, state)
 	require.Equal(t, 0, state.ConsecutiveFailures)
 	require.Greater(t, state.DegradedUntil, common.GetTimestamp())
+	require.Equal(t, AggregateSmartTriggerReasonConsecutiveFailures, state.LastTriggerReason)
+	require.Greater(t, state.LastTriggerAt, int64(0))
 }
 
 func TestAggregateSmartStrategySlowSuccessOnlyAffectsLaterRequests(t *testing.T) {
@@ -534,6 +538,8 @@ func TestAggregateSmartStrategySlowSuccessOnlyAffectsLaterRequests(t *testing.T)
 	require.NotNil(t, state)
 	require.Equal(t, 1, state.ConsecutiveSlows)
 	require.Equal(t, int64(0), state.DegradedUntil)
+	require.Empty(t, state.LastTriggerReason)
+	require.Equal(t, int64(0), state.LastTriggerAt)
 
 	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-2*time.Second))
 	RecordAggregateRouteSuccess(ctx, "gpt-4.1")
@@ -543,6 +549,8 @@ func TestAggregateSmartStrategySlowSuccessOnlyAffectsLaterRequests(t *testing.T)
 	require.NotNil(t, state)
 	require.Equal(t, 0, state.ConsecutiveSlows)
 	require.Greater(t, state.DegradedUntil, common.GetTimestamp())
+	require.Equal(t, AggregateSmartTriggerReasonConsecutiveSlows, state.LastTriggerReason)
+	require.Greater(t, state.LastTriggerAt, int64(0))
 }
 
 func TestAggregateSmartStrategyRecoveredRouteParticipatesAgainAfterWindow(t *testing.T) {
@@ -556,7 +564,9 @@ func TestAggregateSmartStrategyRecoveredRouteParticipatesAgainAfterWindow(t *tes
 	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
 
 	require.NoError(t, SetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
-		DegradedUntil: common.GetTimestamp() - 1,
+		DegradedUntil:     common.GetTimestamp() - 1,
+		LastTriggerReason: AggregateSmartTriggerReasonConsecutiveFailures,
+		LastTriggerAt:     common.GetTimestamp() - 10,
 	}))
 
 	rec := httptest.NewRecorder()
@@ -575,6 +585,8 @@ func TestAggregateSmartStrategyRecoveredRouteParticipatesAgainAfterWindow(t *tes
 	require.NoError(t, err)
 	require.NotNil(t, state)
 	require.Equal(t, int64(0), state.DegradedUntil)
+	require.Equal(t, AggregateSmartTriggerReasonConsecutiveFailures, state.LastTriggerReason)
+	require.Greater(t, state.LastTriggerAt, int64(0))
 }
 
 func TestAggregateSmartStrategyStillSkipsUnsupportedModelByExistingAbilityLookup(t *testing.T) {
