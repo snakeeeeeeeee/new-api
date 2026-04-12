@@ -16,6 +16,7 @@ type AggregateGroupRuntimeState struct {
 	LastFailAt    int64  `json:"last_fail_at"`
 	LastSuccessAt int64  `json:"last_success_at"`
 	LastSwitchAt  int64  `json:"last_switch_at"`
+	ActiveSinceAt int64  `json:"active_since_at"`
 }
 
 type aggregateGroupRuntimeStateEntry struct {

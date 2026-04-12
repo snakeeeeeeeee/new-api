@@ -250,6 +250,7 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 		ActiveGroup:   "vip",
 		LastSuccessAt: now,
 		LastSwitchAt:  now,
+		ActiveSinceAt: now,
 	}))
 	require.NoError(t, service.SetAggregateGroupRouteStrategyState(group.Name, "a-model", "default", &service.AggregateGroupRouteStrategyState{
 		DegradedUntil:     common.GetTimestamp() + 600,
@@ -281,6 +282,7 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 	require.NotNil(t, resp.Data.Runtime)
 	require.NotNil(t, resp.Data.Runtime.ActiveRoute)
 	require.Equal(t, "vip", resp.Data.Runtime.ActiveRoute.ActiveGroup)
+	require.Equal(t, now, resp.Data.Runtime.ActiveRoute.ActiveSinceAt)
 	require.Len(t, resp.Data.Runtime.Routes, 2)
 	require.Equal(t, "default", resp.Data.Runtime.Routes[0].RouteGroup)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].PriorityCount)

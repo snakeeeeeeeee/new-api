@@ -13,6 +13,7 @@ type AggregateGroupRuntimeActiveRouteView struct {
 	LastFailAt    int64  `json:"last_fail_at"`
 	LastSuccessAt int64  `json:"last_success_at"`
 	LastSwitchAt  int64  `json:"last_switch_at"`
+	ActiveSinceAt int64  `json:"active_since_at"`
 }
 
 type AggregateGroupRuntimeRouteView struct {
@@ -53,7 +54,8 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 		(strings.TrimSpace(activeState.ActiveGroup) != "" ||
 			activeState.LastFailAt > 0 ||
 			activeState.LastSuccessAt > 0 ||
-			activeState.LastSwitchAt > 0)
+			activeState.LastSwitchAt > 0 ||
+			activeState.ActiveSinceAt > 0)
 	if hasActiveState {
 		runtimeView.ActiveRoute = &AggregateGroupRuntimeActiveRouteView{
 			ActiveIndex:   activeState.ActiveIndex,
@@ -61,6 +63,7 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 			LastFailAt:    activeState.LastFailAt,
 			LastSuccessAt: activeState.LastSuccessAt,
 			LastSwitchAt:  activeState.LastSwitchAt,
+			ActiveSinceAt: activeState.ActiveSinceAt,
 		}
 	}
 

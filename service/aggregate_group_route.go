@@ -237,20 +237,33 @@ func RecordAggregateRouteSuccess(c *gin.Context, modelName string) {
 	now := common.GetTimestamp()
 
 	state, _ := GetAggregateGroupRuntimeState(aggregateGroup, modelName)
+	previousActiveGroup := ""
+	previousActiveIndex := -1
+	previousActiveSinceAt := int64(0)
 	newState := &AggregateGroupRuntimeState{
 		ActiveIndex:   routeGroupIndex,
 		ActiveGroup:   routeGroup,
 		LastSuccessAt: now,
 	}
 	if state != nil {
+		previousActiveGroup = state.ActiveGroup
+		previousActiveIndex = state.ActiveIndex
+		previousActiveSinceAt = state.ActiveSinceAt
 		newState.LastFailAt = state.LastFailAt
 		newState.LastSwitchAt = state.LastSwitchAt
+		newState.ActiveSinceAt = state.ActiveSinceAt
+	}
+	currentRouteChanged := previousActiveGroup != routeGroup || previousActiveIndex != routeGroupIndex
+	switchOccurred := initialStartIndex != routeGroupIndex || (state != nil && currentRouteChanged)
+	if currentRouteChanged || previousActiveSinceAt == 0 {
+		newState.ActiveSinceAt = now
 	}
 	if routeGroupIndex == 0 {
 		newState.LastFailAt = 0
-		newState.LastSwitchAt = 0
 	} else if initialStartIndex != routeGroupIndex {
 		newState.LastFailAt = now
+	}
+	if switchOccurred {
 		newState.LastSwitchAt = now
 	}
 	_ = SetAggregateGroupRuntimeState(aggregateGroup, modelName, newState)

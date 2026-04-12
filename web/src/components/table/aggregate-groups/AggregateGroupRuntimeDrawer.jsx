@@ -154,12 +154,8 @@ const getRouteVisualStyle = (route, t) => {
   }
 };
 
-const hasRecentIssue = (route) => {
-  return (
-    (route?.last_failure_at ?? 0) > 0 ||
-    (route?.last_trigger_at ?? 0) > 0 ||
-    (route?.last_slow_at ?? 0) > 0
-  );
+const hasRecentTrigger = (route) => {
+  return (route?.last_trigger_at ?? 0) > 0;
 };
 
 const truncateLabel = (text, maxLength = 26) => {
@@ -335,16 +331,16 @@ const AggregateTopologyCanvas = ({
           const badgeWidth = getPillWidth(statusText, 74, 8.3, 26);
           const label = truncateLabel(node.route.route_group, isMobile ? 30 : 28);
           const triggerLabel = getCurrentTriggerReasonCompactLabel(node.route, t);
-          const currentIssueLabel = triggerLabel === '-' ? t('无') : triggerLabel;
-          const recentIssue = hasRecentIssue(node.route);
-          const recentIssueText = t('最近异常');
-          const recentIssueWidth = getPillWidth(recentIssueText, 74, 8.2, 22);
-          const recentIssueX = node.x + node.width - headerInset - recentIssueWidth;
+          const currentDegradeLabel = triggerLabel === '-' ? t('未降级') : triggerLabel;
+          const recentTrigger = hasRecentTrigger(node.route);
+          const recentTriggerText = t('最近触发');
+          const recentTriggerWidth = getPillWidth(recentTriggerText, 74, 8.2, 22);
+          const recentTriggerX = node.x + node.width - headerInset - recentTriggerWidth;
           const centeredBadgeX = node.centerX - badgeWidth / 2;
-          const mainBadgeX = recentIssue
+          const mainBadgeX = recentTrigger
             ? Math.max(
                 node.x + 60,
-                Math.min(centeredBadgeX, recentIssueX - badgeWidth - 10),
+                Math.min(centeredBadgeX, recentTriggerX - badgeWidth - 10),
               )
             : centeredBadgeX;
           const metricGap = 12;
@@ -426,12 +422,12 @@ const AggregateTopologyCanvas = ({
                 {statusText}
               </text>
 
-              {recentIssue ? (
+              {recentTrigger ? (
                 <>
                   <rect
-                    x={recentIssueX}
+                    x={recentTriggerX}
                     y={headerY}
-                    width={recentIssueWidth}
+                    width={recentTriggerWidth}
                     height={badgeHeight}
                     rx={badgeRadius}
                     fill='#fff7ed'
@@ -439,7 +435,7 @@ const AggregateTopologyCanvas = ({
                     strokeWidth='1'
                   />
                   <text
-                    x={recentIssueX + recentIssueWidth / 2}
+                    x={recentTriggerX + recentTriggerWidth / 2}
                     y={headerY + badgeHeight / 2 + 0.5}
                     textAnchor='middle'
                     fill='#9a3412'
@@ -447,7 +443,7 @@ const AggregateTopologyCanvas = ({
                     fontSize='10.5'
                     fontWeight='700'
                   >
-                    {recentIssueText}
+                    {recentTriggerText}
                   </text>
                 </>
               ) : null}
@@ -508,7 +504,7 @@ const AggregateTopologyCanvas = ({
                 fontSize='10.5'
                 fontWeight='600'
               >
-                {t('当前异常')}
+                {t('当前降级')}
               </text>
               <text
                 x={node.x + metricInset + metricWidth + metricGap + 14}
@@ -517,7 +513,7 @@ const AggregateTopologyCanvas = ({
                 fontSize='12.5'
                 fontWeight='700'
               >
-                {currentIssueLabel}
+                {currentDegradeLabel}
               </text>
             </g>
           );
@@ -718,6 +714,10 @@ const AggregateGroupRuntimeDrawer = ({
                     ),
                   },
                   {
+                    key: t('当前活跃开始时间'),
+                    value: formatTime(activeRoute?.active_since_at),
+                  },
+                  {
                     key: t('懒恢复策略'),
                     value:
                       runtimeGroup?.recovery_enabled
@@ -841,21 +841,21 @@ const AggregateGroupRuntimeDrawer = ({
                           value: selectedRoute.priority_count ?? 0,
                         },
                         {
-                          key: t('最近异常'),
-                          value: hasRecentIssue(selectedRoute)
+                          key: t('最近触发'),
+                          value: hasRecentTrigger(selectedRoute)
                             ? t('有')
                             : t('无'),
                         },
                         {
-                          key: t('降级到期时间'),
+                          key: t('当前降级到期时间'),
                           value: formatTime(selectedRoute.degraded_until),
                         },
                         {
-                          key: t('当前连续失败数'),
+                          key: t('当前连续失败计数'),
                           value: selectedRoute.consecutive_failures ?? 0,
                         },
                         {
-                          key: t('当前连续慢请求数'),
+                          key: t('当前连续慢请求计数'),
                           value: selectedRoute.consecutive_slows ?? 0,
                         },
                         {
@@ -871,29 +871,36 @@ const AggregateGroupRuntimeDrawer = ({
                           value: formatTime(selectedRoute.last_slow_at),
                         },
                         {
-                          key: t('当前异常原因'),
+                          key: t('当前降级原因'),
                           value: getCurrentTriggerReasonLabel(selectedRoute, t),
                         },
                         {
-                          key: t('当前异常时间'),
+                          key: t('当前降级开始时间'),
                           value:
                             selectedRoute?.is_degraded
                               ? formatTime(selectedRoute.last_trigger_at)
                               : '-',
                         },
                         {
-                          key: t('最近异常原因'),
+                          key: t('最近触发原因'),
                           value: getTriggerReasonLabel(
                             selectedRoute.last_trigger_reason,
                             t,
                           ),
                         },
                         {
-                          key: t('最近异常时间'),
+                          key: t('最近触发时间'),
                           value: formatTime(selectedRoute.last_trigger_at),
                         },
                         {
-                          key: t('活跃链路最近切换时间'),
+                          key: t('当前活跃开始时间'),
+                          value:
+                            selectedRoute?.is_active
+                              ? formatTime(activeRoute?.active_since_at)
+                              : '-',
+                        },
+                        {
+                          key: t('最近链路切换时间'),
                           value: formatTime(activeRoute?.last_switch_at),
                         },
                       ]}

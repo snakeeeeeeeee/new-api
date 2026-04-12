@@ -66,14 +66,19 @@ func RecordAggregateRouteSmartFailure(c *gin.Context, modelName string, routeGro
 	if state == nil {
 		state = &AggregateGroupRouteStrategyState{}
 	}
+	if state.DegradedUntil > now {
+		state.LastFailureAt = now
+		if err = SetAggregateGroupRouteStrategyState(aggregateGroup, modelName, routeGroup, state); err != nil {
+			logger.LogError(c, "save aggregate smart strategy degraded failure state failed: "+err.Error())
+		}
+		return
+	}
 	state.ConsecutiveFailures++
 	state.ConsecutiveSlows = 0
 	state.LastFailureAt = now
 
 	triggered := false
 	if setting.AggregateGroupFailureThreshold > 0 && state.ConsecutiveFailures >= setting.AggregateGroupFailureThreshold {
-		state.ConsecutiveFailures = 0
-		state.ConsecutiveSlows = 0
 		state.DegradedUntil = now + int64(setting.AggregateGroupDegradeDurationSeconds)
 		state.LastTriggerReason = AggregateSmartTriggerReasonConsecutiveFailures
 		state.LastTriggerAt = now
@@ -105,6 +110,20 @@ func RecordAggregateRouteSmartSuccess(c *gin.Context, modelName string, routeGro
 	if state == nil {
 		state = &AggregateGroupRouteStrategyState{}
 	}
+	if state.DegradedUntil > now {
+		state.LastSuccessAt = now
+		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
+		if startTime.IsZero() {
+			startTime = time.Now()
+		}
+		if int(time.Since(startTime).Seconds()) >= setting.AggregateGroupSlowRequestThreshold {
+			state.LastSlowAt = now
+		}
+		if err = SetAggregateGroupRouteStrategyState(aggregateGroup, modelName, routeGroup, state); err != nil {
+			logger.LogError(c, "save aggregate smart strategy degraded success state failed: "+err.Error())
+		}
+		return
+	}
 	state.ConsecutiveFailures = 0
 	state.LastSuccessAt = now
 
@@ -118,8 +137,6 @@ func RecordAggregateRouteSmartSuccess(c *gin.Context, modelName string, routeGro
 		state.LastSlowAt = now
 		triggered := false
 		if setting.AggregateGroupConsecutiveSlowLimit > 0 && state.ConsecutiveSlows >= setting.AggregateGroupConsecutiveSlowLimit {
-			state.ConsecutiveFailures = 0
-			state.ConsecutiveSlows = 0
 			state.DegradedUntil = now + int64(setting.AggregateGroupDegradeDurationSeconds)
 			state.LastTriggerReason = AggregateSmartTriggerReasonConsecutiveSlows
 			state.LastTriggerAt = now
