@@ -20,6 +20,7 @@ type AggregateGroupRuntimeRouteView struct {
 	RouteIndex          int    `json:"route_index"`
 	IsActive            bool   `json:"is_active"`
 	IsDegraded          bool   `json:"is_degraded"`
+	PriorityCount       int    `json:"priority_count"`
 	DegradedUntil       int64  `json:"degraded_until"`
 	ConsecutiveFailures int    `json:"consecutive_failures"`
 	ConsecutiveSlows    int    `json:"consecutive_slows"`
@@ -69,6 +70,11 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 			RouteGroup: target.RealGroup,
 			RouteIndex: index,
 		}
+		priorityCount, err := model.GetSatisfiedChannelPriorityCount(target.RealGroup, modelName)
+		if err != nil {
+			return nil, err
+		}
+		routeView.PriorityCount = priorityCount
 		if hasActiveState {
 			if strings.TrimSpace(activeState.ActiveGroup) != "" {
 				routeView.IsActive = activeState.ActiveGroup == target.RealGroup

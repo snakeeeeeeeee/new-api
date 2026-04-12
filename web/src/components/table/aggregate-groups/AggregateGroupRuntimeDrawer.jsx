@@ -29,7 +29,6 @@ import {
   Card,
   Descriptions,
   Empty,
-  Select,
   SideSheet,
   Space,
   Spin,
@@ -59,14 +58,20 @@ const getTriggerReasonLabel = (reason, t) => {
   }
 };
 
-const renderStatusTag = (active, degraded, t) => {
-  if (active) {
-    return <Tag color='green'>{t('当前活跃')}</Tag>;
+const getRouteStatusConfig = (route, t) => {
+  if (route?.is_active) {
+    return { color: 'green', text: t('当前活跃') };
   }
-  if (degraded) {
-    return <Tag color='red'>{t('已降级')}</Tag>;
+  if (route?.is_degraded) {
+    return { color: 'red', text: t('已降级') };
   }
-  return <Tag color='blue'>{t('正常')}</Tag>;
+  if ((route?.priority_count ?? 0) <= 0) {
+    return { color: 'grey', text: t('不可用') };
+  }
+  if ((route?.last_failure_at ?? 0) > (route?.last_success_at ?? 0)) {
+    return { color: 'orange', text: t('最近失败') };
+  }
+  return { color: 'blue', text: t('正常') };
 };
 
 const renderSwitchTag = (enabled, t) => {
@@ -133,14 +138,7 @@ const AggregateGroupRuntimeDrawer = ({
   const smartStrategy = runtimeData?.smart_strategy;
   const runtime = runtimeData?.runtime;
   const activeRoute = runtime?.active_route;
-  const modelOptions = useMemo(
-    () =>
-      (runtimeData?.models || []).map((modelName) => ({
-        label: modelName,
-        value: modelName,
-      })),
-    [runtimeData?.models],
-  );
+  const models = useMemo(() => runtimeData?.models || [], [runtimeData?.models]);
 
   return (
     <SideSheet
@@ -261,18 +259,30 @@ const AggregateGroupRuntimeDrawer = ({
                   </div>
                 </div>
               </div>
-              <Select
-                placeholder={t('请选择模型')}
-                value={selectedModel || undefined}
-                optionList={modelOptions}
-                onChange={handleModelChange}
-                loading={loading}
-                disabled={!modelOptions.length}
-                filter
-              />
+              {!models.length ? (
+                <Text type='secondary'>{t('当前聚合分组下暂无模型')}</Text>
+              ) : (
+                <Space wrap>
+                  {models.map((modelName) => (
+                    <Tag
+                      key={modelName}
+                      color={selectedModel === modelName ? 'blue' : 'grey'}
+                      shape='circle'
+                      className='cursor-pointer'
+                      onClick={() => {
+                        if (modelName !== selectedModel) {
+                          handleModelChange(modelName);
+                        }
+                      }}
+                    >
+                      {modelName}
+                    </Tag>
+                  ))}
+                </Space>
+              )}
             </Card>
 
-            {!runtimeData?.models?.length ? (
+            {!models.length ? (
               <Card className='border-0 shadow-sm'>
                 <Empty description={t('当前聚合分组下暂无模型')} />
               </Card>
@@ -320,69 +330,74 @@ const AggregateGroupRuntimeDrawer = ({
                 </Card>
 
                 <div className='space-y-3'>
-                  {runtime.routes?.map((route) => (
-                    <Card
-                      key={`${route.route_group}-${route.route_index}`}
-                      className='border-0 shadow-sm'
-                      title={
-                        <div className='flex items-center justify-between gap-2'>
-                          <Space>
-                            <Text strong>
-                              {route.route_index + 1}. {route.route_group}
-                            </Text>
-                            {renderStatusTag(
-                              route.is_active,
-                              route.is_degraded,
-                              t,
-                            )}
-                          </Space>
-                          {route.is_degraded ? (
-                            <Tag color='red'>{t('临时降级中')}</Tag>
-                          ) : null}
-                        </div>
-                      }
-                    >
-                      <Descriptions
-                        data={[
-                          {
-                            key: t('降级到期时间'),
-                            value: formatTime(route.degraded_until),
-                          },
-                          {
-                            key: t('连续失败数'),
-                            value: route.consecutive_failures ?? 0,
-                          },
-                          {
-                            key: t('连续慢请求数'),
-                            value: route.consecutive_slows ?? 0,
-                          },
-                          {
-                            key: t('最近成功时间'),
-                            value: formatTime(route.last_success_at),
-                          },
-                          {
-                            key: t('最近失败时间'),
-                            value: formatTime(route.last_failure_at),
-                          },
-                          {
-                            key: t('最近慢请求时间'),
-                            value: formatTime(route.last_slow_at),
-                          },
-                          {
-                            key: t('当前/最近触发原因'),
-                            value: getTriggerReasonLabel(
-                              route.last_trigger_reason,
-                              t,
-                            ),
-                          },
-                          {
-                            key: t('最近触发时间'),
-                            value: formatTime(route.last_trigger_at),
-                          },
-                        ]}
-                      />
-                    </Card>
-                  ))}
+                  {runtime.routes?.map((route) => {
+                    const statusConfig = getRouteStatusConfig(route, t);
+                    return (
+                      <Card
+                        key={`${route.route_group}-${route.route_index}`}
+                        className='border-0 shadow-sm'
+                        title={
+                          <div className='flex items-center justify-between gap-2'>
+                            <Space>
+                              <Text strong>
+                                {route.route_index + 1}. {route.route_group}
+                              </Text>
+                              <Tag color={statusConfig.color}>
+                                {statusConfig.text}
+                              </Tag>
+                            </Space>
+                            {route.is_degraded ? (
+                              <Tag color='red'>{t('临时降级中')}</Tag>
+                            ) : null}
+                          </div>
+                        }
+                      >
+                        <Descriptions
+                          data={[
+                            {
+                              key: t('可用优先级数'),
+                              value: route.priority_count ?? 0,
+                            },
+                            {
+                              key: t('降级到期时间'),
+                              value: formatTime(route.degraded_until),
+                            },
+                            {
+                              key: t('连续失败数'),
+                              value: route.consecutive_failures ?? 0,
+                            },
+                            {
+                              key: t('连续慢请求数'),
+                              value: route.consecutive_slows ?? 0,
+                            },
+                            {
+                              key: t('最近成功时间'),
+                              value: formatTime(route.last_success_at),
+                            },
+                            {
+                              key: t('最近失败时间'),
+                              value: formatTime(route.last_failure_at),
+                            },
+                            {
+                              key: t('最近慢请求时间'),
+                              value: formatTime(route.last_slow_at),
+                            },
+                            {
+                              key: t('当前/最近触发原因'),
+                              value: getTriggerReasonLabel(
+                                route.last_trigger_reason,
+                                t,
+                              ),
+                            },
+                            {
+                              key: t('最近触发时间'),
+                              value: formatTime(route.last_trigger_at),
+                            },
+                          ]}
+                        />
+                      </Card>
+                    );
+                  })}
                 </div>
               </>
             )}

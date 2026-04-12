@@ -283,9 +283,11 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 	require.Equal(t, "vip", resp.Data.Runtime.ActiveRoute.ActiveGroup)
 	require.Len(t, resp.Data.Runtime.Routes, 2)
 	require.Equal(t, "default", resp.Data.Runtime.Routes[0].RouteGroup)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].PriorityCount)
 	require.True(t, resp.Data.Runtime.Routes[0].IsDegraded)
 	require.Equal(t, service.AggregateSmartTriggerReasonConsecutiveFailures, resp.Data.Runtime.Routes[0].LastTriggerReason)
 	require.Equal(t, "vip", resp.Data.Runtime.Routes[1].RouteGroup)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[1].PriorityCount)
 	require.True(t, resp.Data.Runtime.Routes[1].IsActive)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[1].ConsecutiveSlows)
 }
