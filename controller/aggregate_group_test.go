@@ -355,3 +355,51 @@ func TestGetAggregateGroupRuntimeHandlesAggregateGroupWithoutModels(t *testing.T
 	require.Empty(t, resp.Data.SelectedModel)
 	require.Nil(t, resp.Data.Runtime)
 }
+
+func TestGetAggregateGroupRuntimeMarksRouteUnavailableWhenSubGroupDoesNotSupportModel(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+
+	group := &model.AggregateGroup{
+		Name:                    "runtime-partial-model-support",
+		DisplayName:             "Runtime Partial Model Support",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, group.InsertWithTargets([]model.AggregateGroupTarget{
+		{RealGroup: "default", OrderIndex: 0},
+		{RealGroup: "vip", OrderIndex: 1},
+	}))
+
+	seedAggregateGroupControllerAbilityChannel(t, 1001, "default", "claude-haiku-4-5", 0)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(group.Id)}}
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf("/api/aggregate_group/%d/runtime?model=claude-haiku-4-5", group.Id),
+		nil,
+	)
+	GetAggregateGroupRuntime(ctx)
+
+	var resp struct {
+		Success bool                          `json:"success"`
+		Message string                        `json:"message"`
+		Data    aggregateGroupRuntimeResponse `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+	require.Equal(t, []string{"claude-haiku-4-5"}, resp.Data.Models)
+	require.Equal(t, "claude-haiku-4-5", resp.Data.SelectedModel)
+	require.NotNil(t, resp.Data.Runtime)
+	require.Len(t, resp.Data.Runtime.Routes, 2)
+	require.Equal(t, "default", resp.Data.Runtime.Routes[0].RouteGroup)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].PriorityCount)
+	require.Equal(t, "vip", resp.Data.Runtime.Routes[1].RouteGroup)
+	require.Equal(t, 0, resp.Data.Runtime.Routes[1].PriorityCount)
+	require.False(t, resp.Data.Runtime.Routes[1].IsDegraded)
+	require.False(t, resp.Data.Runtime.Routes[1].IsActive)
+}

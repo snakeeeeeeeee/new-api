@@ -58,6 +58,17 @@ const getTriggerReasonLabel = (reason, t) => {
   }
 };
 
+const getTriggerReasonCompactLabel = (reason, t) => {
+  switch (reason) {
+    case 'consecutive_failures':
+      return t('连续失败');
+    case 'consecutive_slows':
+      return t('连续慢请求');
+    default:
+      return '-';
+  }
+};
+
 const getRouteStatusConfig = (route, t) => {
   if (route?.is_active) {
     return { color: 'green', text: t('当前活跃') };
@@ -82,6 +93,353 @@ const renderSwitchTag = (enabled, t) => {
   );
 };
 
+const getRouteVisualStyle = (route, t) => {
+  const statusConfig = getRouteStatusConfig(route, t);
+  switch (statusConfig.text) {
+    case t('当前活跃'):
+      return {
+        ...statusConfig,
+        fillStart: '#effdf4',
+        fillEnd: '#f7fff9',
+        border: 'rgba(34, 197, 94, 0.35)',
+        accent: '#16a34a',
+        badgeFill: '#dcfce7',
+        badgeText: '#166534',
+      };
+    case t('已降级'):
+      return {
+        ...statusConfig,
+        fillStart: '#fff1f2',
+        fillEnd: '#fff7f7',
+        border: 'rgba(239, 68, 68, 0.35)',
+        accent: '#dc2626',
+        badgeFill: '#ffe4e6',
+        badgeText: '#9f1239',
+      };
+    case t('不可用'):
+      return {
+        ...statusConfig,
+        fillStart: '#f8fafc',
+        fillEnd: '#f1f5f9',
+        border: 'rgba(148, 163, 184, 0.35)',
+        accent: '#64748b',
+        badgeFill: '#e2e8f0',
+        badgeText: '#475569',
+      };
+    case t('最近失败'):
+      return {
+        ...statusConfig,
+        fillStart: '#fff7ed',
+        fillEnd: '#fffaf4',
+        border: 'rgba(249, 115, 22, 0.35)',
+        accent: '#f97316',
+        badgeFill: '#ffedd5',
+        badgeText: '#9a3412',
+      };
+    default:
+      return {
+        ...statusConfig,
+        fillStart: '#eff6ff',
+        fillEnd: '#f8fbff',
+        border: 'rgba(96, 165, 250, 0.28)',
+        accent: '#2563eb',
+        badgeFill: '#dbeafe',
+        badgeText: '#1d4ed8',
+      };
+  }
+};
+
+const truncateLabel = (text, maxLength = 26) => {
+  if (!text) {
+    return '-';
+  }
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+};
+
+const AggregateTopologyCanvas = ({
+  routes = [],
+  selectedRouteKey,
+  onSelectRoute,
+  isMobile,
+  reducedMotion,
+  t,
+}) => {
+  const nodeWidth = isMobile ? 288 : 248;
+  const nodeHeight = 156;
+  const gap = isMobile ? 72 : 104;
+  const paddingX = isMobile ? 16 : 20;
+  const paddingY = 18;
+  const viewWidth = isMobile
+    ? nodeWidth + paddingX * 2
+    : routes.length * nodeWidth + Math.max(routes.length - 1, 0) * gap + paddingX * 2;
+  const viewHeight = isMobile
+    ? routes.length * nodeHeight + Math.max(routes.length - 1, 0) * gap + paddingY * 2
+    : nodeHeight + paddingY * 2;
+
+  const nodes = routes.map((route, index) => {
+    const x = isMobile ? paddingX : paddingX + index * (nodeWidth + gap);
+    const y = isMobile ? paddingY + index * (nodeHeight + gap) : paddingY;
+    return {
+      route,
+      x,
+      y,
+      width: nodeWidth,
+      height: nodeHeight,
+      centerX: x + nodeWidth / 2,
+      centerY: y + nodeHeight / 2,
+      isSelected: selectedRouteKey === route.route_group,
+      visualStyle: getRouteVisualStyle(route, t),
+    };
+  });
+
+  const paths = nodes.slice(0, -1).map((node, index) => {
+    const nextNode = nodes[index + 1];
+    const path = isMobile
+      ? `M ${node.centerX} ${node.y + node.height} C ${node.centerX} ${node.y + node.height + gap * 0.28}, ${nextNode.centerX} ${nextNode.y - gap * 0.28}, ${nextNode.centerX} ${nextNode.y}`
+      : `M ${node.x + node.width} ${node.centerY} C ${node.x + node.width + gap * 0.28} ${node.centerY}, ${nextNode.x - gap * 0.28} ${nextNode.centerY}, ${nextNode.x} ${nextNode.centerY}`;
+    return {
+      id: `${node.route.route_group}-${nextNode.route.route_group}-${index}`,
+      path,
+    };
+  });
+
+  return (
+    <div className={isMobile ? 'overflow-y-auto' : 'overflow-x-auto pb-1'}>
+      <svg
+        width={isMobile ? '100%' : viewWidth}
+        height={viewHeight}
+        viewBox={`0 0 ${viewWidth} ${viewHeight}`}
+        fill='none'
+        aria-hidden='true'
+      >
+        <defs>
+          {nodes.map((node) => {
+            const gradientId = `aggregate-runtime-node-gradient-${node.route.route_index}`;
+            const glowId = `aggregate-runtime-node-glow-${node.route.route_index}`;
+            return (
+              <React.Fragment key={gradientId}>
+                <linearGradient id={gradientId} x1='0' y1='0' x2='1' y2='1'>
+                  <stop offset='0%' stopColor={node.visualStyle.fillStart} />
+                  <stop offset='100%' stopColor={node.visualStyle.fillEnd} />
+                </linearGradient>
+                <filter id={glowId} x='-20%' y='-20%' width='160%' height='160%'>
+                  <feGaussianBlur stdDeviation='8' result='blur' />
+                  <feMerge>
+                    <feMergeNode in='blur' />
+                    <feMergeNode in='SourceGraphic' />
+                  </feMerge>
+                </filter>
+              </React.Fragment>
+            );
+          })}
+
+          {paths.map((pathItem) => {
+            const markerId = `aggregate-runtime-arrow-${pathItem.id}`;
+            const glowId = `aggregate-runtime-flow-glow-${pathItem.id}`;
+            return (
+              <React.Fragment key={markerId}>
+                <marker
+                  id={markerId}
+                  markerWidth='8'
+                  markerHeight='8'
+                  refX='6'
+                  refY='4'
+                  orient='auto'
+                  markerUnits='strokeWidth'
+                >
+                  <path d='M 0 0 L 8 4 L 0 8 z' fill='#3b82f6' fillOpacity='0.85' />
+                </marker>
+                <filter id={glowId} x='-20%' y='-20%' width='140%' height='140%'>
+                  <feGaussianBlur stdDeviation='1.4' result='coloredBlur' />
+                  <feMerge>
+                    <feMergeNode in='coloredBlur' />
+                    <feMergeNode in='SourceGraphic' />
+                  </feMerge>
+                </filter>
+              </React.Fragment>
+            );
+          })}
+        </defs>
+
+        {paths.map((pathItem) => {
+          const markerId = `aggregate-runtime-arrow-${pathItem.id}`;
+          const glowId = `aggregate-runtime-flow-glow-${pathItem.id}`;
+          return (
+            <g key={pathItem.id}>
+              <path
+                d={pathItem.path}
+                stroke='#cbd5e1'
+                strokeOpacity='0.75'
+                strokeWidth='1.4'
+                strokeLinecap='round'
+                fill='none'
+              />
+              <path
+                d={pathItem.path}
+                stroke='#60a5fa'
+                strokeOpacity='0.95'
+                strokeWidth='2.2'
+                strokeLinecap='round'
+                strokeDasharray='10 12'
+                markerEnd={`url(#${markerId})`}
+                filter={`url(#${glowId})`}
+                fill='none'
+              >
+                {!reducedMotion ? (
+                  <animate
+                    attributeName='stroke-dashoffset'
+                    from='44'
+                    to='0'
+                    dur='1.2s'
+                    repeatCount='indefinite'
+                  />
+                ) : null}
+              </path>
+              {!reducedMotion ? (
+                <circle r='3.4' fill='#3b82f6' opacity='0.96' filter={`url(#${glowId})`}>
+                  <animateMotion dur='1.9s' repeatCount='indefinite' path={pathItem.path} />
+                </circle>
+              ) : null}
+            </g>
+          );
+        })}
+
+        {nodes.map((node) => {
+          const gradientId = `aggregate-runtime-node-gradient-${node.route.route_index}`;
+          const glowId = `aggregate-runtime-node-glow-${node.route.route_index}`;
+          const statusText = node.visualStyle.text;
+          const badgeWidth = Math.max(56, statusText.length * 12 + 18);
+          const label = truncateLabel(node.route.route_group, isMobile ? 28 : 24);
+          const triggerLabel = getTriggerReasonCompactLabel(
+            node.route.last_trigger_reason,
+            t,
+          );
+
+          return (
+            <g
+              key={`${node.route.route_group}-${node.route.route_index}`}
+              role='button'
+              tabIndex={0}
+              aria-label={`${node.route.route_group} ${statusText}`}
+              style={{ cursor: 'pointer' }}
+              onClick={() => onSelectRoute(node.route.route_group)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  onSelectRoute(node.route.route_group);
+                }
+              }}
+            >
+              <title>{node.route.route_group}</title>
+              {node.isSelected ? (
+                <rect
+                  x={node.x - 4}
+                  y={node.y - 4}
+                  width={node.width + 8}
+                  height={node.height + 8}
+                  rx='26'
+                  fill='none'
+                  stroke={node.visualStyle.accent}
+                  strokeOpacity='0.18'
+                  strokeWidth='8'
+                  filter={`url(#${glowId})`}
+                />
+              ) : null}
+              <rect
+                x={node.x}
+                y={node.y}
+                width={node.width}
+                height={node.height}
+                rx='24'
+                fill={`url(#${gradientId})`}
+                stroke={node.isSelected ? node.visualStyle.accent : node.visualStyle.border}
+                strokeOpacity={node.isSelected ? 0.95 : 1}
+                strokeWidth={node.isSelected ? 2.5 : 1.4}
+              />
+              <text
+                x={node.x + 18}
+                y={node.y + 30}
+                fill='#64748b'
+                fontSize='13'
+                fontWeight='500'
+              >
+                {t('节点')} {node.route.route_index + 1}
+              </text>
+
+              <rect
+                x={node.x + node.width - badgeWidth - 16}
+                y={node.y + 16}
+                width={badgeWidth}
+                height='30'
+                rx='15'
+                fill={node.visualStyle.badgeFill}
+              />
+              <text
+                x={node.x + node.width - badgeWidth / 2 - 16}
+                y={node.y + 35}
+                textAnchor='middle'
+                fill={node.visualStyle.badgeText}
+                fontSize='14'
+                fontWeight='700'
+              >
+                {statusText}
+              </text>
+
+              <text
+                x={node.x + 18}
+                y={node.y + 74}
+                fill='#0f172a'
+                fontSize='18'
+                fontWeight='700'
+              >
+                {label}
+              </text>
+
+              <text
+                x={node.x + 18}
+                y={node.y + 112}
+                fill='#64748b'
+                fontSize='12'
+                fontWeight='500'
+              >
+                {t('优先级层数')}
+              </text>
+              <text
+                x={node.x + 18}
+                y={node.y + 140}
+                fill='#1e293b'
+                fontSize='20'
+                fontWeight='700'
+              >
+                {node.route.priority_count ?? 0}
+              </text>
+
+              <text
+                x={node.x + node.width / 2 + 4}
+                y={node.y + 112}
+                fill='#64748b'
+                fontSize='12'
+                fontWeight='500'
+              >
+                {t('触发原因')}
+              </text>
+              <text
+                x={node.x + node.width / 2 + 4}
+                y={node.y + 140}
+                fill='#1e293b'
+                fontSize='15'
+                fontWeight='700'
+              >
+                {triggerLabel}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+};
+
 const AggregateGroupRuntimeDrawer = ({
   visible,
   aggregateGroup,
@@ -92,6 +450,8 @@ const AggregateGroupRuntimeDrawer = ({
   const [loading, setLoading] = useState(false);
   const [runtimeData, setRuntimeData] = useState(null);
   const [selectedModel, setSelectedModel] = useState('');
+  const [selectedRouteKey, setSelectedRouteKey] = useState('');
+  const [reducedMotion, setReducedMotion] = useState(false);
 
   const fetchRuntime = async (modelName = '') => {
     if (!aggregateGroup?.id) {
@@ -110,6 +470,11 @@ const AggregateGroupRuntimeDrawer = ({
       }
       setRuntimeData(data);
       setSelectedModel(data?.selected_model || '');
+      const nextSelectedRoute =
+        data?.runtime?.routes?.find((route) => route?.is_active)?.route_group ||
+        data?.runtime?.routes?.[0]?.route_group ||
+        '';
+      setSelectedRouteKey(nextSelectedRoute);
     } catch (error) {
       showError(error?.message || t('获取聚合分组运行态失败'));
     } finally {
@@ -126,6 +491,21 @@ const AggregateGroupRuntimeDrawer = ({
     setSelectedModel('');
   }, [visible, aggregateGroup?.id]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReducedMotion(mediaQuery.matches);
+    update();
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', update);
+      return () => mediaQuery.removeEventListener('change', update);
+    }
+    mediaQuery.addListener(update);
+    return () => mediaQuery.removeListener(update);
+  }, []);
+
   const handleRefresh = () => {
     fetchRuntime(selectedModel);
   };
@@ -139,6 +519,19 @@ const AggregateGroupRuntimeDrawer = ({
   const runtime = runtimeData?.runtime;
   const activeRoute = runtime?.active_route;
   const models = useMemo(() => runtimeData?.models || [], [runtimeData?.models]);
+  const selectedRoute = useMemo(() => {
+    if (!runtime?.routes?.length) {
+      return null;
+    }
+    return (
+      runtime.routes.find((route) => route.route_group === selectedRouteKey) ||
+      runtime.routes[0]
+    );
+  }, [runtime?.routes, selectedRouteKey]);
+  const degradedRouteCount = useMemo(
+    () => runtime?.routes?.filter((route) => route.is_degraded).length || 0,
+    [runtime?.routes],
+  );
 
   return (
     <SideSheet
@@ -246,6 +639,14 @@ const AggregateGroupRuntimeDrawer = ({
                           })
                         : t('关闭'),
                   },
+                  {
+                    key: t('当前模型'),
+                    value: selectedModel || '-',
+                  },
+                  {
+                    key: t('降级节点数'),
+                    value: degradedRouteCount,
+                  },
                 ]}
               />
             </Card>
@@ -255,7 +656,7 @@ const AggregateGroupRuntimeDrawer = ({
                 <div>
                   <Text strong>{t('模型选择')}</Text>
                   <div className='text-xs text-gray-600 mt-1'>
-                    {t('切换模型查看当前聚合分组下的运行态')}
+                    {t('点击模型名称切换当前链路视图')}
                   </div>
                 </div>
               </div>
@@ -268,7 +669,12 @@ const AggregateGroupRuntimeDrawer = ({
                       key={modelName}
                       color={selectedModel === modelName ? 'blue' : 'grey'}
                       shape='circle'
-                      className='cursor-pointer'
+                      className='cursor-pointer transition-all duration-200'
+                      style={{
+                        paddingInline: 10,
+                        paddingBlock: 4,
+                        borderWidth: selectedModel === modelName ? 2 : 1,
+                      }}
                       onClick={() => {
                         if (modelName !== selectedModel) {
                           handleModelChange(modelName);
@@ -292,113 +698,106 @@ const AggregateGroupRuntimeDrawer = ({
               </Card>
             ) : (
               <>
+              <Card className='border-0 shadow-sm'>
+                <div className='flex items-center justify-between gap-2 mb-3'>
+                  <div>
+                    <Text strong>{t('链路拓扑')}</Text>
+                    <div className='text-xs text-gray-600 mt-1'>
+                      {t('按照真实分组顺序展示当前模型的聚合链路，点击节点查看详情')}
+                    </div>
+                  </div>
+                  {activeRoute?.active_group ? (
+                    <Tag color='green'>{activeRoute.active_group}</Tag>
+                  ) : null}
+                </div>
+                <div
+                  className={
+                    isMobile
+                      ? ''
+                      : ''
+                  }
+                >
+                  <AggregateTopologyCanvas
+                    routes={runtime.routes || []}
+                    selectedRouteKey={selectedRoute?.route_group}
+                    onSelectRoute={setSelectedRouteKey}
+                    isMobile={isMobile}
+                    reducedMotion={reducedMotion}
+                    t={t}
+                  />
+                </div>
+              </Card>
+
                 <Card className='border-0 shadow-sm'>
                   <div className='flex items-center justify-between gap-2 mb-3'>
                     <div>
-                      <Text strong>{t('活跃链路')}</Text>
+                      <Text strong>{t('节点详情')}</Text>
                       <div className='text-xs text-gray-600 mt-1'>
-                        {selectedModel || t('未选择模型')}
+                        {selectedRoute?.route_group || t('未选择节点')}
                       </div>
                     </div>
-                    {activeRoute?.active_group ? (
-                      <Tag color='green'>{activeRoute.active_group}</Tag>
+                    {selectedRoute ? (
+                      <Tag color={getRouteVisualStyle(selectedRoute, t).color}>
+                        {getRouteVisualStyle(selectedRoute, t).text}
+                      </Tag>
                     ) : null}
                   </div>
-                  <Descriptions
-                    data={[
-                      {
-                        key: t('当前索引'),
-                        value:
-                          activeRoute && activeRoute.active_index >= 0
-                            ? activeRoute.active_index + 1
-                            : '-',
-                      },
-                      {
-                        key: t('最近切换时间'),
-                        value: formatTime(activeRoute?.last_switch_at),
-                      },
-                      {
-                        key: t('最近成功时间'),
-                        value: formatTime(activeRoute?.last_success_at),
-                      },
-                      {
-                        key: t('最近失败时间'),
-                        value: formatTime(activeRoute?.last_fail_at),
-                      },
-                    ]}
-                  />
+                  {selectedRoute ? (
+                    <Descriptions
+                      data={[
+                        {
+                          key: t('当前索引'),
+                          value: selectedRoute.route_index + 1,
+                        },
+                        {
+                          key: t('可用优先级层数'),
+                          value: selectedRoute.priority_count ?? 0,
+                        },
+                        {
+                          key: t('降级到期时间'),
+                          value: formatTime(selectedRoute.degraded_until),
+                        },
+                        {
+                          key: t('连续失败数'),
+                          value: selectedRoute.consecutive_failures ?? 0,
+                        },
+                        {
+                          key: t('连续慢请求数'),
+                          value: selectedRoute.consecutive_slows ?? 0,
+                        },
+                        {
+                          key: t('最近成功时间'),
+                          value: formatTime(selectedRoute.last_success_at),
+                        },
+                        {
+                          key: t('最近失败时间'),
+                          value: formatTime(selectedRoute.last_failure_at),
+                        },
+                        {
+                          key: t('最近慢请求时间'),
+                          value: formatTime(selectedRoute.last_slow_at),
+                        },
+                        {
+                          key: t('当前/最近触发原因'),
+                          value: getTriggerReasonLabel(
+                            selectedRoute.last_trigger_reason,
+                            t,
+                          ),
+                        },
+                        {
+                          key: t('最近触发时间'),
+                          value: formatTime(selectedRoute.last_trigger_at),
+                        },
+                        {
+                          key: t('活跃链路最近切换时间'),
+                          value: formatTime(activeRoute?.last_switch_at),
+                        },
+                      ]}
+                    />
+                  ) : (
+                    <Empty description={t('请选择链路节点查看详情')} />
+                  )}
                 </Card>
-
-                <div className='space-y-3'>
-                  {runtime.routes?.map((route) => {
-                    const statusConfig = getRouteStatusConfig(route, t);
-                    return (
-                      <Card
-                        key={`${route.route_group}-${route.route_index}`}
-                        className='border-0 shadow-sm'
-                        title={
-                          <div className='flex items-center justify-between gap-2'>
-                            <Space>
-                              <Text strong>
-                                {route.route_index + 1}. {route.route_group}
-                              </Text>
-                              <Tag color={statusConfig.color}>
-                                {statusConfig.text}
-                              </Tag>
-                            </Space>
-                            {route.is_degraded ? (
-                              <Tag color='red'>{t('临时降级中')}</Tag>
-                            ) : null}
-                          </div>
-                        }
-                      >
-                        <Descriptions
-                          data={[
-                            {
-                              key: t('可用优先级数'),
-                              value: route.priority_count ?? 0,
-                            },
-                            {
-                              key: t('降级到期时间'),
-                              value: formatTime(route.degraded_until),
-                            },
-                            {
-                              key: t('连续失败数'),
-                              value: route.consecutive_failures ?? 0,
-                            },
-                            {
-                              key: t('连续慢请求数'),
-                              value: route.consecutive_slows ?? 0,
-                            },
-                            {
-                              key: t('最近成功时间'),
-                              value: formatTime(route.last_success_at),
-                            },
-                            {
-                              key: t('最近失败时间'),
-                              value: formatTime(route.last_failure_at),
-                            },
-                            {
-                              key: t('最近慢请求时间'),
-                              value: formatTime(route.last_slow_at),
-                            },
-                            {
-                              key: t('当前/最近触发原因'),
-                              value: getTriggerReasonLabel(
-                                route.last_trigger_reason,
-                                t,
-                              ),
-                            },
-                            {
-                              key: t('最近触发时间'),
-                              value: formatTime(route.last_trigger_at),
-                            },
-                          ]}
-                        />
-                      </Card>
-                    );
-                  })}
-                </div>
               </>
             )}
           </div>
