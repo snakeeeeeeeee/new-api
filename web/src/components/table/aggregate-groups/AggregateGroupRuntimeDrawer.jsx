@@ -69,20 +69,31 @@ const getTriggerReasonCompactLabel = (reason, t) => {
   }
 };
 
+const getCurrentTriggerReasonLabel = (route, t) => {
+  if (!route?.is_degraded) {
+    return '-';
+  }
+  return getTriggerReasonLabel(route?.last_trigger_reason, t);
+};
+
+const getCurrentTriggerReasonCompactLabel = (route, t) => {
+  if (!route?.is_degraded) {
+    return '-';
+  }
+  return getTriggerReasonCompactLabel(route?.last_trigger_reason, t);
+};
+
 const getRouteStatusConfig = (route, t) => {
   if (route?.is_active) {
-    return { color: 'green', text: t('当前活跃') };
+    return { color: 'green', text: t('当前在用') };
   }
   if (route?.is_degraded) {
-    return { color: 'red', text: t('已降级') };
+    return { color: 'red', text: t('暂时跳过') };
   }
   if ((route?.priority_count ?? 0) <= 0) {
-    return { color: 'grey', text: t('不可用') };
+    return { color: 'grey', text: t('当前不能用') };
   }
-  if ((route?.last_failure_at ?? 0) > (route?.last_success_at ?? 0)) {
-    return { color: 'orange', text: t('最近失败') };
-  }
-  return { color: 'blue', text: t('正常') };
+  return { color: 'blue', text: t('待命') };
 };
 
 const renderSwitchTag = (enabled, t) => {
@@ -96,7 +107,7 @@ const renderSwitchTag = (enabled, t) => {
 const getRouteVisualStyle = (route, t) => {
   const statusConfig = getRouteStatusConfig(route, t);
   switch (statusConfig.text) {
-    case t('当前活跃'):
+    case t('当前在用'):
       return {
         ...statusConfig,
         fillStart: '#effdf4',
@@ -106,7 +117,7 @@ const getRouteVisualStyle = (route, t) => {
         badgeFill: '#dcfce7',
         badgeText: '#166534',
       };
-    case t('已降级'):
+    case t('暂时跳过'):
       return {
         ...statusConfig,
         fillStart: '#fff1f2',
@@ -116,7 +127,7 @@ const getRouteVisualStyle = (route, t) => {
         badgeFill: '#ffe4e6',
         badgeText: '#9f1239',
       };
-    case t('不可用'):
+    case t('当前不能用'):
       return {
         ...statusConfig,
         fillStart: '#f8fafc',
@@ -125,16 +136,6 @@ const getRouteVisualStyle = (route, t) => {
         accent: '#64748b',
         badgeFill: '#e2e8f0',
         badgeText: '#475569',
-      };
-    case t('最近失败'):
-      return {
-        ...statusConfig,
-        fillStart: '#fff7ed',
-        fillEnd: '#fffaf4',
-        border: 'rgba(249, 115, 22, 0.35)',
-        accent: '#f97316',
-        badgeFill: '#ffedd5',
-        badgeText: '#9a3412',
       };
     default:
       return {
@@ -147,6 +148,14 @@ const getRouteVisualStyle = (route, t) => {
         badgeText: '#1d4ed8',
       };
   }
+};
+
+const hasRecentIssue = (route) => {
+  return (
+    (route?.last_failure_at ?? 0) > 0 ||
+    (route?.last_trigger_at ?? 0) > 0 ||
+    (route?.last_slow_at ?? 0) > 0
+  );
 };
 
 const truncateLabel = (text, maxLength = 26) => {
@@ -310,10 +319,8 @@ const AggregateTopologyCanvas = ({
           const statusText = node.visualStyle.text;
           const badgeWidth = Math.max(56, statusText.length * 12 + 18);
           const label = truncateLabel(node.route.route_group, isMobile ? 28 : 24);
-          const triggerLabel = getTriggerReasonCompactLabel(
-            node.route.last_trigger_reason,
-            t,
-          );
+          const triggerLabel = getCurrentTriggerReasonCompactLabel(node.route, t);
+          const recentIssue = hasRecentIssue(node.route);
 
           return (
             <g
@@ -385,9 +392,34 @@ const AggregateTopologyCanvas = ({
                 {statusText}
               </text>
 
+              {recentIssue ? (
+                <>
+                  <rect
+                    x={node.x + node.width - 100}
+                    y={node.y + 54}
+                    width='84'
+                    height='24'
+                    rx='12'
+                    fill='#fff7ed'
+                    stroke='#fdba74'
+                    strokeOpacity='0.95'
+                  />
+                  <text
+                    x={node.x + node.width - 58}
+                    y={node.y + 70}
+                    textAnchor='middle'
+                    fill='#9a3412'
+                    fontSize='12'
+                    fontWeight='700'
+                  >
+                    {t('最近异常')}
+                  </text>
+                </>
+              ) : null}
+
               <text
                 x={node.x + 18}
-                y={node.y + 74}
+                y={node.y + 84}
                 fill='#0f172a'
                 fontSize='18'
                 fontWeight='700'
@@ -397,16 +429,16 @@ const AggregateTopologyCanvas = ({
 
               <text
                 x={node.x + 18}
-                y={node.y + 112}
+                y={node.y + 120}
                 fill='#64748b'
                 fontSize='12'
                 fontWeight='500'
               >
-                {t('优先级层数')}
+                {t('可选层级')}
               </text>
               <text
                 x={node.x + 18}
-                y={node.y + 140}
+                y={node.y + 148}
                 fill='#1e293b'
                 fontSize='20'
                 fontWeight='700'
@@ -416,16 +448,16 @@ const AggregateTopologyCanvas = ({
 
               <text
                 x={node.x + node.width / 2 + 4}
-                y={node.y + 112}
+                y={node.y + 120}
                 fill='#64748b'
                 fontSize='12'
                 fontWeight='500'
               >
-                {t('触发原因')}
+                {t('当前异常')}
               </text>
               <text
                 x={node.x + node.width / 2 + 4}
-                y={node.y + 140}
+                y={node.y + 148}
                 fill='#1e293b'
                 fontSize='15'
                 fontWeight='700'
@@ -750,19 +782,25 @@ const AggregateGroupRuntimeDrawer = ({
                           value: selectedRoute.route_index + 1,
                         },
                         {
-                          key: t('可用优先级层数'),
+                          key: t('可选层级'),
                           value: selectedRoute.priority_count ?? 0,
+                        },
+                        {
+                          key: t('最近异常'),
+                          value: hasRecentIssue(selectedRoute)
+                            ? t('有')
+                            : t('无'),
                         },
                         {
                           key: t('降级到期时间'),
                           value: formatTime(selectedRoute.degraded_until),
                         },
                         {
-                          key: t('连续失败数'),
+                          key: t('当前连续失败数'),
                           value: selectedRoute.consecutive_failures ?? 0,
                         },
                         {
-                          key: t('连续慢请求数'),
+                          key: t('当前连续慢请求数'),
                           value: selectedRoute.consecutive_slows ?? 0,
                         },
                         {
@@ -778,14 +816,25 @@ const AggregateGroupRuntimeDrawer = ({
                           value: formatTime(selectedRoute.last_slow_at),
                         },
                         {
-                          key: t('当前/最近触发原因'),
+                          key: t('当前异常原因'),
+                          value: getCurrentTriggerReasonLabel(selectedRoute, t),
+                        },
+                        {
+                          key: t('当前异常时间'),
+                          value:
+                            selectedRoute?.is_degraded
+                              ? formatTime(selectedRoute.last_trigger_at)
+                              : '-',
+                        },
+                        {
+                          key: t('最近异常原因'),
                           value: getTriggerReasonLabel(
                             selectedRoute.last_trigger_reason,
                             t,
                           ),
                         },
                         {
-                          key: t('最近触发时间'),
+                          key: t('最近异常时间'),
                           value: formatTime(selectedRoute.last_trigger_at),
                         },
                         {
