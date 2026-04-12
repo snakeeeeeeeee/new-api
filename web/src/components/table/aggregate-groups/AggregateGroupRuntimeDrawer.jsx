@@ -116,6 +116,7 @@ const getRouteVisualStyle = (route, t) => {
         accent: '#16a34a',
         badgeFill: '#dcfce7',
         badgeText: '#166534',
+        badgeStroke: 'rgba(34, 197, 94, 0.18)',
       };
     case 'Skipped':
       return {
@@ -126,6 +127,7 @@ const getRouteVisualStyle = (route, t) => {
         accent: '#dc2626',
         badgeFill: '#ffe4e6',
         badgeText: '#9f1239',
+        badgeStroke: 'rgba(244, 63, 94, 0.18)',
       };
     case 'Unavailable':
       return {
@@ -136,6 +138,7 @@ const getRouteVisualStyle = (route, t) => {
         accent: '#64748b',
         badgeFill: '#e2e8f0',
         badgeText: '#475569',
+        badgeStroke: 'rgba(100, 116, 139, 0.16)',
       };
     default:
       return {
@@ -146,6 +149,7 @@ const getRouteVisualStyle = (route, t) => {
         accent: '#2563eb',
         badgeFill: '#dbeafe',
         badgeText: '#1d4ed8',
+        badgeStroke: 'rgba(59, 130, 246, 0.16)',
       };
   }
 };
@@ -163,6 +167,13 @@ const truncateLabel = (text, maxLength = 26) => {
     return '-';
   }
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+};
+
+const getPillWidth = (text, minWidth = 64, charWidth = 8.4, horizontalPadding = 24) => {
+  if (!text) {
+    return minWidth;
+  }
+  return Math.max(minWidth, text.length * charWidth + horizontalPadding);
 };
 
 const AggregateTopologyCanvas = ({
@@ -317,12 +328,30 @@ const AggregateTopologyCanvas = ({
           const gradientId = `aggregate-runtime-node-gradient-${node.route.route_index}`;
           const glowId = `aggregate-runtime-node-glow-${node.route.route_index}`;
           const statusText = node.visualStyle.text;
-          const badgeWidth = Math.max(56, statusText.length * 9 + 18);
+          const badgeHeight = 24;
+          const badgeRadius = 12;
+          const headerInset = 16;
+          const headerY = node.y + 14;
+          const badgeWidth = getPillWidth(statusText, 74, 8.3, 26);
           const label = truncateLabel(node.route.route_group, isMobile ? 30 : 28);
           const triggerLabel = getCurrentTriggerReasonCompactLabel(node.route, t);
+          const currentIssueLabel = triggerLabel === '-' ? t('无') : triggerLabel;
           const recentIssue = hasRecentIssue(node.route);
           const recentIssueText = t('最近异常');
-          const recentIssueWidth = Math.max(54, recentIssueText.length * 8 + 16);
+          const recentIssueWidth = getPillWidth(recentIssueText, 74, 8.2, 22);
+          const recentIssueX = node.x + node.width - headerInset - recentIssueWidth;
+          const centeredBadgeX = node.centerX - badgeWidth / 2;
+          const mainBadgeX = recentIssue
+            ? Math.max(
+                node.x + 60,
+                Math.min(centeredBadgeX, recentIssueX - badgeWidth - 10),
+              )
+            : centeredBadgeX;
+          const metricGap = 12;
+          const metricInset = 16;
+          const metricWidth = (node.width - metricInset * 2 - metricGap) / 2;
+          const metricY = node.y + 112;
+          const metricHeight = 44;
 
           return (
             <g
@@ -369,26 +398,29 @@ const AggregateTopologyCanvas = ({
                 x={node.x + 18}
                 y={node.y + 28}
                 fill='#64748b'
-                fontSize='12'
-                fontWeight='500'
+                fontSize='11.5'
+                fontWeight='600'
               >
                 {t('节点')} {node.route.route_index + 1}
               </text>
 
               <rect
-                x={node.x + node.width - badgeWidth - 16}
-                y={node.y + 14}
+                x={mainBadgeX}
+                y={headerY}
                 width={badgeWidth}
-                height='24'
-                rx='12'
+                height={badgeHeight}
+                rx={badgeRadius}
                 fill={node.visualStyle.badgeFill}
+                stroke={node.visualStyle.badgeStroke}
+                strokeWidth='1'
               />
               <text
-                x={node.x + node.width - badgeWidth / 2 - 16}
-                y={node.y + 29}
+                x={mainBadgeX + badgeWidth / 2}
+                y={headerY + badgeHeight / 2 + 0.5}
                 textAnchor='middle'
                 fill={node.visualStyle.badgeText}
-                fontSize='11'
+                dominantBaseline='middle'
+                fontSize='10.5'
                 fontWeight='700'
               >
                 {statusText}
@@ -397,21 +429,22 @@ const AggregateTopologyCanvas = ({
               {recentIssue ? (
                 <>
                   <rect
-                    x={node.x + node.width - recentIssueWidth - 16}
-                    y={node.y + 44}
+                    x={recentIssueX}
+                    y={headerY}
                     width={recentIssueWidth}
-                    height='18'
-                    rx='9'
+                    height={badgeHeight}
+                    rx={badgeRadius}
                     fill='#fff7ed'
-                    stroke='#fdba74'
-                    strokeOpacity='0.9'
+                    stroke='rgba(251, 146, 60, 0.24)'
+                    strokeWidth='1'
                   />
                   <text
-                    x={node.x + node.width - recentIssueWidth / 2 - 16}
-                    y={node.y + 57}
+                    x={recentIssueX + recentIssueWidth / 2}
+                    y={headerY + badgeHeight / 2 + 0.5}
                     textAnchor='middle'
                     fill='#9a3412'
-                    fontSize='9.5'
+                    dominantBaseline='middle'
+                    fontSize='10.5'
                     fontWeight='700'
                   >
                     {recentIssueText}
@@ -421,7 +454,7 @@ const AggregateTopologyCanvas = ({
 
               <text
                 x={node.x + 18}
-                y={node.y + 92}
+                y={node.y + 80}
                 fill='#0f172a'
                 fontSize='16'
                 fontWeight='700'
@@ -429,42 +462,62 @@ const AggregateTopologyCanvas = ({
                 {label}
               </text>
 
+              <rect
+                x={node.x + metricInset}
+                y={metricY}
+                width={metricWidth}
+                height={metricHeight}
+                rx='16'
+                fill='rgba(255,255,255,0.72)'
+                stroke='rgba(148, 163, 184, 0.18)'
+                strokeWidth='1'
+              />
               <text
-                x={node.x + 18}
-                y={node.y + 132}
+                x={node.x + metricInset + 14}
+                y={metricY + 15}
                 fill='#64748b'
-                fontSize='11.5'
-                fontWeight='500'
+                fontSize='10.5'
+                fontWeight='600'
               >
                 {t('可选层级')}
               </text>
               <text
-                x={node.x + 18}
-                y={node.y + 160}
-                fill='#1e293b'
-                fontSize='18'
+                x={node.x + metricInset + 14}
+                y={metricY + 33}
+                fill='#0f172a'
+                fontSize='16'
                 fontWeight='700'
               >
                 {node.route.priority_count ?? 0}
               </text>
 
+              <rect
+                x={node.x + metricInset + metricWidth + metricGap}
+                y={metricY}
+                width={metricWidth}
+                height={metricHeight}
+                rx='16'
+                fill='rgba(255,255,255,0.72)'
+                stroke='rgba(148, 163, 184, 0.18)'
+                strokeWidth='1'
+              />
               <text
-                x={node.x + node.width / 2 + 4}
-                y={node.y + 132}
+                x={node.x + metricInset + metricWidth + metricGap + 14}
+                y={metricY + 15}
                 fill='#64748b'
-                fontSize='11.5'
-                fontWeight='500'
+                fontSize='10.5'
+                fontWeight='600'
               >
                 {t('当前异常')}
               </text>
               <text
-                x={node.x + node.width / 2 + 4}
-                y={node.y + 158}
-                fill='#1e293b'
-                fontSize='13.5'
+                x={node.x + metricInset + metricWidth + metricGap + 14}
+                y={metricY + 33}
+                fill='#0f172a'
+                fontSize='12.5'
                 fontWeight='700'
               >
-                {triggerLabel}
+                {currentIssueLabel}
               </text>
             </g>
           );
