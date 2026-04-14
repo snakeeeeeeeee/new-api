@@ -46,6 +46,7 @@ export default function SettingsLog(props) {
   const [loadingCleanHistoryLog, setLoadingCleanHistoryLog] = useState(false);
   const [inputs, setInputs] = useState({
     LogConsumeEnabled: false,
+    LogConsumeExcludedUserIDs: '',
     historyTimestamp: dayjs().subtract(1, 'month').toDate(),
   });
   const refForm = useRef();
@@ -215,6 +216,26 @@ export default function SettingsLog(props) {
                     });
                   }}
                 />
+              </Col>
+              <Col xs={24} sm={24} md={16} lg={16} xl={16}>
+                <Form.Input
+                  field={'LogConsumeExcludedUserIDs'}
+                  label={t('排除消费日志的用户 ID')}
+                  placeholder={t('例如：17,34')}
+                  onChange={(value) => {
+                    setInputs({
+                      ...inputs,
+                      LogConsumeExcludedUserIDs: value,
+                    });
+                  }}
+                />
+                <Text
+                  type='tertiary'
+                  size='small'
+                  style={{ display: 'block', marginTop: 4 }}
+                >
+                  {t('仅对消费日志生效，多个用户 ID 用英文逗号分隔；错误日志仍保留，历史日志不会自动删除。')}
+                </Text>
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Spin spinning={loadingCleanHistoryLog}>

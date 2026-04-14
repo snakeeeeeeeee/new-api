@@ -16,6 +16,10 @@ import (
 func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	setupAggregateGroupControllerTestDB(t)
 	model.InitOptionMap()
+	originalExcludedIDs := common.LogConsumeExcludedUserIDs
+	t.Cleanup(func() {
+		_, _ = common.SetLogConsumeExcludedUserIDs(originalExcludedIDs)
+	})
 
 	listRecorder := httptest.NewRecorder()
 	listCtx, _ := gin.CreateTestContext(listRecorder)
@@ -27,6 +31,7 @@ func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.True(t, listResp.Success, listResp.Message)
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.smart_strategy_enabled"`)
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.consecutive_failure_threshold"`)
+	require.Contains(t, string(listResp.Data), `"key":"LogConsumeExcludedUserIDs"`)
 
 	updatePayload := []byte(`{"key":"aggregate_group.consecutive_failure_threshold","value":"4"}`)
 	updateRecorder := httptest.NewRecorder()
@@ -51,4 +56,33 @@ func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.NoError(t, common.Unmarshal(switchRecorder.Body.Bytes(), &switchResp))
 	require.True(t, switchResp.Success, switchResp.Message)
 	require.True(t, setting.AggregateGroupSmartStrategyEnabled)
+
+	excludedPayload := []byte(`{"key":"LogConsumeExcludedUserIDs","value":"34, 17,34"}`)
+	excludedRecorder := httptest.NewRecorder()
+	excludedCtx, _ := gin.CreateTestContext(excludedRecorder)
+	excludedCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(excludedPayload))
+	excludedCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(excludedCtx)
+
+	var excludedResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(excludedRecorder.Body.Bytes(), &excludedResp))
+	require.True(t, excludedResp.Success, excludedResp.Message)
+	require.Equal(t, "17,34", common.LogConsumeExcludedUserIDs)
+
+	invalidPayload := []byte(`{"key":"LogConsumeExcludedUserIDs","value":"17,abc"}`)
+	invalidRecorder := httptest.NewRecorder()
+	invalidCtx, _ := gin.CreateTestContext(invalidRecorder)
+	invalidCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(invalidPayload))
+	invalidCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(invalidCtx)
+
+	var invalidResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(invalidRecorder.Body.Bytes(), &invalidResp))
+	require.False(t, invalidResp.Success)
+	require.Contains(t, invalidResp.Message, "不是正整数")
+	require.Equal(t, "17,34", common.LogConsumeExcludedUserIDs)
+
+	var stored model.Option
+	require.NoError(t, model.DB.Where("key = ?", "LogConsumeExcludedUserIDs").First(&stored).Error)
+	require.Equal(t, "17,34", stored.Value)
 }

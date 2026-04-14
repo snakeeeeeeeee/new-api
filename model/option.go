@@ -47,6 +47,7 @@ func InitOptionMap() {
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
+	common.OptionMap["LogConsumeExcludedUserIDs"] = common.LogConsumeExcludedUserIDs
 	common.OptionMap["DisplayInCurrencyEnabled"] = strconv.FormatBool(common.DisplayInCurrencyEnabled)
 	common.OptionMap["DisplayTokenStatEnabled"] = strconv.FormatBool(common.DisplayTokenStatEnabled)
 	common.OptionMap["DrawingEnabled"] = strconv.FormatBool(common.DrawingEnabled)
@@ -200,6 +201,13 @@ func SyncOptions(frequency int) {
 }
 
 func UpdateOption(key string, value string) error {
+	if key == "LogConsumeExcludedUserIDs" {
+		normalized, _, err := common.NormalizeLogConsumeExcludedUserIDs(value)
+		if err != nil {
+			return err
+		}
+		value = normalized
+	}
 	// Save to database first
 	option := Option{
 		Key: key,
@@ -218,6 +226,16 @@ func UpdateOption(key string, value string) error {
 func updateOptionMap(key string, value string) (err error) {
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
+	previousValue, hadPrevious := common.OptionMap[key]
+	defer func() {
+		if err != nil {
+			if hadPrevious {
+				common.OptionMap[key] = previousValue
+			} else {
+				delete(common.OptionMap, key)
+			}
+		}
+	}()
 	common.OptionMap[key] = value
 
 	// 检查是否是模型配置 - 使用更规范的方式处理
@@ -323,6 +341,13 @@ func updateOptionMap(key string, value string) (err error) {
 		}
 	}
 	switch key {
+	case "LogConsumeExcludedUserIDs":
+		var normalized string
+		normalized, err = common.SetLogConsumeExcludedUserIDs(value)
+		if err != nil {
+			return err
+		}
+		common.OptionMap[key] = normalized
 	case "EmailDomainWhitelist":
 		common.EmailDomainWhitelist = strings.Split(value, ",")
 	case "SMTPServer":
