@@ -46,7 +46,24 @@ type StripePayRequest struct {
 type StripeAdaptor struct {
 }
 
+func validateStripeTopupConfig() error {
+	if !strings.HasPrefix(setting.StripeApiSecret, "sk_") && !strings.HasPrefix(setting.StripeApiSecret, "rk_") {
+		return errors.New("Stripe 未配置或密钥无效")
+	}
+	if setting.StripeWebhookSecret == "" {
+		return errors.New("Stripe Webhook 未配置")
+	}
+	if setting.StripePriceId == "" {
+		return errors.New("Stripe Price 未配置")
+	}
+	return nil
+}
+
 func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
+	if err := validateStripeTopupConfig(); err != nil {
+		c.JSON(200, gin.H{"message": "error", "data": err.Error()})
+		return
+	}
 	if req.Amount < getStripeMinTopup() {
 		c.JSON(200, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", getStripeMinTopup())})
 		return
@@ -66,6 +83,10 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 }
 
 func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
+	if err := validateStripeTopupConfig(); err != nil {
+		c.JSON(200, gin.H{"message": "error", "data": err.Error()})
+		return
+	}
 	if req.PaymentMethod != PaymentMethodStripe {
 		c.JSON(200, gin.H{"message": "error", "data": "不支持的支付渠道"})
 		return
@@ -146,6 +167,12 @@ func RequestStripePay(c *gin.Context) {
 }
 
 func StripeWebhook(c *gin.Context) {
+	if setting.StripeWebhookSecret == "" {
+		log.Println("Stripe Webhook Secret 未配置，拒绝处理")
+		c.AbortWithStatus(http.StatusForbidden)
+		return
+	}
+
 	payload, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		log.Printf("解析Stripe Webhook参数失败: %v\n", err)
@@ -154,8 +181,7 @@ func StripeWebhook(c *gin.Context) {
 	}
 
 	signature := c.GetHeader("Stripe-Signature")
-	endpointSecret := setting.StripeWebhookSecret
-	event, err := webhook.ConstructEventWithOptions(payload, signature, endpointSecret, webhook.ConstructEventOptions{
+	event, err := webhook.ConstructEventWithOptions(payload, signature, setting.StripeWebhookSecret, webhook.ConstructEventOptions{
 		IgnoreAPIVersionMismatch: true,
 	})
 
@@ -170,6 +196,10 @@ func StripeWebhook(c *gin.Context) {
 		sessionCompleted(event)
 	case stripe.EventTypeCheckoutSessionExpired:
 		sessionExpired(event)
+	case stripe.EventTypeCheckoutSessionAsyncPaymentSucceeded:
+		sessionAsyncPaymentSucceeded(event)
+	case stripe.EventTypeCheckoutSessionAsyncPaymentFailed:
+		sessionAsyncPaymentFailed(event)
 	default:
 		log.Printf("不支持的Stripe Webhook事件类型: %s\n", event.Type)
 	}
@@ -186,9 +216,60 @@ func sessionCompleted(event stripe.Event) {
 		return
 	}
 
-	// Try complete subscription order first
+	paymentStatus := event.GetObjectValue("payment_status")
+	if paymentStatus != "paid" {
+		log.Printf("Stripe Checkout 支付尚未完成，payment_status: %s, ref: %s（等待异步支付结果）", paymentStatus, referenceId)
+		return
+	}
+
+	fulfillStripeOrder(event, referenceId, customerId)
+}
+
+func sessionAsyncPaymentSucceeded(event stripe.Event) {
+	customerId := event.GetObjectValue("customer")
+	referenceId := event.GetObjectValue("client_reference_id")
+	log.Printf("Stripe 异步支付成功: %s", referenceId)
+
+	fulfillStripeOrder(event, referenceId, customerId)
+}
+
+func sessionAsyncPaymentFailed(event stripe.Event) {
+	referenceId := event.GetObjectValue("client_reference_id")
+	log.Printf("Stripe 异步支付失败: %s", referenceId)
+
+	if len(referenceId) == 0 {
+		log.Println("异步支付失败事件未提供支付单号")
+		return
+	}
+
 	LockOrder(referenceId)
 	defer UnlockOrder(referenceId)
+
+	if err := model.FailStripeTopUp(referenceId); err != nil {
+		switch {
+		case errors.Is(err, model.ErrTopUpNotFound):
+			log.Println("Stripe 异步支付失败，充值订单不存在:", referenceId)
+		case errors.Is(err, model.ErrTopUpPaymentMethodMismatch):
+			log.Printf("Stripe 异步支付失败命中非 Stripe 订单，拒绝处理: ref=%s", referenceId)
+		case errors.Is(err, model.ErrTopUpStatusInvalid):
+			log.Printf("Stripe 异步支付失败，订单状态非pending: ref=%s", referenceId)
+		default:
+			log.Printf("标记 Stripe 充值订单失败出错: %v, ref: %s", err, referenceId)
+		}
+		return
+	}
+	log.Printf("Stripe 充值订单已标记为失败: %s", referenceId)
+}
+
+func fulfillStripeOrder(event stripe.Event, referenceId string, customerId string) {
+	if len(referenceId) == 0 {
+		log.Println("未提供支付单号")
+		return
+	}
+
+	LockOrder(referenceId)
+	defer UnlockOrder(referenceId)
+
 	payload := map[string]any{
 		"customer":     customerId,
 		"amount_total": event.GetObjectValue("amount_total"),
@@ -202,9 +283,18 @@ func sessionCompleted(event stripe.Event) {
 		return
 	}
 
-	err := model.Recharge(referenceId, customerId)
+	err := model.RechargeStripe(referenceId, customerId)
 	if err != nil {
-		log.Println(err.Error(), referenceId)
+		switch {
+		case errors.Is(err, model.ErrTopUpNotFound):
+			log.Printf("Stripe 充值订单不存在: ref=%s", referenceId)
+		case errors.Is(err, model.ErrTopUpPaymentMethodMismatch):
+			log.Printf("Stripe webhook 命中非 Stripe 订单，拒绝完成: ref=%s", referenceId)
+		case errors.Is(err, model.ErrTopUpStatusInvalid):
+			log.Printf("Stripe 充值订单状态非pending，跳过处理: ref=%s", referenceId)
+		default:
+			log.Println(err.Error(), referenceId)
+		}
 		return
 	}
 
@@ -236,24 +326,22 @@ func sessionExpired(event stripe.Event) {
 		return
 	}
 
-	topUp := model.GetTopUpByTradeNo(referenceId)
-	if topUp == nil {
-		log.Println("充值订单不存在", referenceId)
-		return
-	}
-
-	if topUp.Status != common.TopUpStatusPending {
-		log.Println("充值订单状态错误", referenceId)
-	}
-
-	topUp.Status = common.TopUpStatusExpired
-	err := topUp.Update()
+	err := model.ExpireStripeTopUp(referenceId)
 	if err != nil {
-		log.Println("过期充值订单失败", referenceId, ", err:", err.Error())
+		switch {
+		case errors.Is(err, model.ErrTopUpNotFound):
+			log.Println("Stripe 充值订单不存在", referenceId)
+		case errors.Is(err, model.ErrTopUpPaymentMethodMismatch):
+			log.Printf("Stripe 过期事件命中非 Stripe 订单，拒绝处理: ref=%s", referenceId)
+		case errors.Is(err, model.ErrTopUpStatusInvalid):
+			log.Printf("Stripe 充值订单状态错误: ref=%s", referenceId)
+		default:
+			log.Println("过期 Stripe 充值订单失败", referenceId, ", err:", err.Error())
+		}
 		return
 	}
 
-	log.Println("充值订单已过期", referenceId)
+	log.Println("Stripe 充值订单已过期", referenceId)
 }
 
 // genStripeLink generates a Stripe Checkout session URL for payment.
