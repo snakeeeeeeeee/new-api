@@ -27,6 +27,7 @@ import {
   Tag,
   Typography,
 } from '@douyinfe/semi-ui';
+import { copy, showSuccess } from '../../helpers';
 import {
   BarChart2,
   Gift,
@@ -86,6 +87,7 @@ const InvitationCard = ({
   renderQuota,
   renderQuotaWithAmount,
   setOpenTransfer,
+  inviteRegisterBaseUrl,
 }) => {
   const [showInviteCodesModal, setShowInviteCodesModal] = useState(false);
   const [showInviteesModal, setShowInviteesModal] = useState(false);
@@ -97,6 +99,19 @@ const InvitationCard = ({
   const inviteeCount =
     userState?.user?.invite_user_count || inviteesPreview.length || 0;
   const boundInviteCode = userState?.user?.bound_invite_code;
+
+  const buildInviteRegisterLink = (code) => {
+    const baseUrl =
+      (inviteRegisterBaseUrl || window.location.origin || '').replace(/\/$/, '');
+    return `${baseUrl}/register?invite_code=${encodeURIComponent(code || '')}`;
+  };
+
+  const handleCopyInviteLink = async (code) => {
+    const link = buildInviteRegisterLink(code);
+    if (await copy(link)) {
+      showSuccess(t('邀请链接已复制到剪贴板'));
+    }
+  };
 
   const inviteCodeColumns = useMemo(
     () => [
@@ -150,8 +165,21 @@ const InvitationCard = ({
         key: 'invite_total_consume',
         render: (value) => renderQuota(value || 0),
       },
+      {
+        title: t('邀请链接'),
+        key: 'invite_link',
+        render: (_, record) => (
+          <Button
+            size='small'
+            theme='borderless'
+            onClick={() => handleCopyInviteLink(record.code)}
+          >
+            {t('复制邀请链接')}
+          </Button>
+        ),
+      },
     ],
-    [renderQuota, renderQuotaWithAmount, t],
+    [inviteRegisterBaseUrl, renderQuota, renderQuotaWithAmount, t],
   );
 
   const inviteeColumns = useMemo(
@@ -392,6 +420,18 @@ const InvitationCard = ({
                       <Tag size='small' shape='circle'>
                         {t('单次赠送')} {renderQuota(inviteCode.reward_quota_per_use || 0)}
                       </Tag>
+                    </div>
+                    <div className='space-y-2'>
+                      <Text type='tertiary' className='text-xs break-all'>
+                        {buildInviteRegisterLink(inviteCode.code)}
+                      </Text>
+                      <Button
+                        size='small'
+                        theme='borderless'
+                        onClick={() => handleCopyInviteLink(inviteCode.code)}
+                      >
+                        {t('复制邀请链接')}
+                      </Button>
                     </div>
                   </div>
                 ))}
