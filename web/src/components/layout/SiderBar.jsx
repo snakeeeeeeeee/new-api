@@ -34,6 +34,7 @@ const routerMap = {
   home: '/',
   channel: '/console/channel',
   aggregate_group: '/console/aggregate-group',
+  invite_code: '/console/invite-code',
   token: '/console/token',
   redemption: '/console/redemption',
   topup: '/console/topup',
@@ -158,6 +159,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('聚合分组'),
         itemKey: 'aggregate_group',
         to: '/aggregate-group',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('邀请码管理'),
+        itemKey: 'invite_code',
+        to: '/invite-code',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

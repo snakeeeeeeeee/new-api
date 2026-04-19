@@ -21,35 +21,41 @@ const UserNameMaxLength = 20
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
-	Id               int            `json:"id"`
-	Username         string         `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
-	OriginalPassword string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
-	DisplayName      string         `json:"display_name" gorm:"index" validate:"max=20"`
-	Role             int            `json:"role" gorm:"type:int;default:1"`   // admin, common
-	Status           int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
-	Email            string         `json:"email" gorm:"index" validate:"max=50"`
-	GitHubId         string         `json:"github_id" gorm:"column:github_id;index"`
-	DiscordId        string         `json:"discord_id" gorm:"column:discord_id;index"`
-	OidcId           string         `json:"oidc_id" gorm:"column:oidc_id;index"`
-	WeChatId         string         `json:"wechat_id" gorm:"column:wechat_id;index"`
-	TelegramId       string         `json:"telegram_id" gorm:"column:telegram_id;index"`
-	VerificationCode string         `json:"verification_code" gorm:"-:all"`                                    // this field is only for Email verification, don't save it to database!
-	AccessToken      *string        `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
-	Quota            int            `json:"quota" gorm:"type:int;default:0"`
-	UsedQuota        int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
-	RequestCount     int            `json:"request_count" gorm:"type:int;default:0;"`               // request number
-	Group            string         `json:"group" gorm:"type:varchar(64);default:'default'"`
-	AffCode          string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
-	AffCount         int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
-	AffQuota         int            `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
-	AffHistoryQuota  int            `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
-	InviterId        int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
-	DeletedAt        gorm.DeletedAt `gorm:"index"`
-	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
-	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
-	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
-	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	Id                  int            `json:"id"`
+	Username            string         `json:"username" gorm:"unique;index" validate:"max=20"`
+	Password            string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
+	OriginalPassword    string         `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
+	DisplayName         string         `json:"display_name" gorm:"index" validate:"max=20"`
+	Role                int            `json:"role" gorm:"type:int;default:1"`   // admin, common
+	Status              int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
+	Email               string         `json:"email" gorm:"index" validate:"max=50"`
+	GitHubId            string         `json:"github_id" gorm:"column:github_id;index"`
+	DiscordId           string         `json:"discord_id" gorm:"column:discord_id;index"`
+	OidcId              string         `json:"oidc_id" gorm:"column:oidc_id;index"`
+	WeChatId            string         `json:"wechat_id" gorm:"column:wechat_id;index"`
+	TelegramId          string         `json:"telegram_id" gorm:"column:telegram_id;index"`
+	VerificationCode    string         `json:"verification_code" gorm:"-:all"`                                    // this field is only for Email verification, don't save it to database!
+	AccessToken         *string        `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
+	Quota               int            `json:"quota" gorm:"type:int;default:0"`
+	UsedQuota           int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
+	RequestCount        int            `json:"request_count" gorm:"type:int;default:0;"`               // request number
+	Group               string         `json:"group" gorm:"type:varchar(64);default:'default'"`
+	AffCode             string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
+	AffCount            int            `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
+	AffQuota            int            `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
+	AffHistoryQuota     int            `json:"aff_history_quota" gorm:"type:int;default:0;column:aff_history"` // 邀请历史额度
+	InviterId           int            `json:"inviter_id" gorm:"type:int;column:inviter_id;index"`
+	InviteCodeId        int            `json:"invite_code_id,omitempty" gorm:"type:int;column:invite_code_id;index"`
+	InviteCodeOwnerId   int            `json:"invite_code_owner_id,omitempty" gorm:"type:int;column:invite_code_owner_id;index"`
+	DeletedAt           gorm.DeletedAt `gorm:"index"`
+	LinuxDOId           string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
+	Setting             string         `json:"setting" gorm:"type:text;column:setting"`
+	Remark              string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
+	StripeCustomer      string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	InviteCode          string         `json:"invite_code,omitempty" gorm:"-:all"`
+	InviteUserCount     int64          `json:"invite_user_count,omitempty" gorm:"-"`
+	InviteTotalRecharge float64        `json:"invite_total_recharge,omitempty" gorm:"-"`
+	InviteTotalConsume  int            `json:"invite_total_consume,omitempty" gorm:"-"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -131,6 +137,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"enabled":         true,
 			"channel":         true,
 			"aggregate_group": true,
+			"invite_code":     true,
 			"models":          true,
 			"redemption":      true,
 			"user":            true,
@@ -142,6 +149,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"enabled":         true,
 			"channel":         true,
 			"aggregate_group": true,
+			"invite_code":     true,
 			"models":          true,
 			"redemption":      true,
 			"user":            true,
@@ -341,6 +349,68 @@ func inviteUser(inviterId int) (err error) {
 	return DB.Save(user).Error
 }
 
+func initializeNewUserSidebar(user *User) {
+	if user == nil || user.Id == 0 {
+		return
+	}
+	var createdUser User
+	if err := DB.Where("id = ?", user.Id).First(&createdUser).Error; err == nil {
+		defaultSidebarConfig := generateDefaultSidebarConfigForRole(createdUser.Role)
+		if defaultSidebarConfig != "" {
+			currentSetting := createdUser.GetSetting()
+			currentSetting.SidebarModules = defaultSidebarConfig
+			createdUser.SetSetting(currentSetting)
+			createdUser.Update(false)
+			common.SysLog(fmt.Sprintf("为新用户 %s (角色: %d) 初始化边栏配置", createdUser.Username, createdUser.Role))
+		}
+	}
+}
+
+func recordNewUserQuotaLog(userID int) {
+	if common.QuotaForNewUser > 0 {
+		RecordLog(userID, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
+	}
+}
+
+func applyLegacyInviteRewards(inviterId int, inviteeID int) {
+	if inviterId == 0 {
+		return
+	}
+	if common.QuotaForInvitee > 0 {
+		_ = IncreaseUserQuota(inviteeID, common.QuotaForInvitee, true)
+		RecordLog(inviteeID, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
+	}
+	if common.QuotaForInviter > 0 {
+		RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
+		_ = inviteUser(inviterId)
+	}
+}
+
+func recordInviteCodeRewardLog(userID int, inviteCode *InviteCode, rewardGranted bool) {
+	if !rewardGranted || inviteCode == nil || inviteCode.RewardQuotaPerUse <= 0 {
+		return
+	}
+	RecordLog(userID, LogTypeSystem, fmt.Sprintf("使用邀请码 %s 赠送 %s", inviteCode.Code, logger.LogQuota(inviteCode.RewardQuotaPerUse)))
+}
+
+func (user *User) prepareForInsert() error {
+	var err error
+	if user.Password != "" {
+		user.Password, err = common.Password2Hash(user.Password)
+		if err != nil {
+			return err
+		}
+	}
+	user.Quota = common.QuotaForNewUser
+	user.AffCode = common.GetRandomString(4)
+
+	if user.Setting == "" {
+		defaultSetting := dto.UserSetting{}
+		user.SetSetting(defaultSetting)
+	}
+	return nil
+}
+
 func (user *User) TransferAffQuotaToQuota(quota int) error {
 	// 检查quota是否小于最小额度
 	if float64(quota) < common.QuotaPerUnit {
@@ -379,22 +449,8 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 }
 
 func (user *User) Insert(inviterId int) error {
-	var err error
-	if user.Password != "" {
-		user.Password, err = common.Password2Hash(user.Password)
-		if err != nil {
-			return err
-		}
-	}
-	user.Quota = common.QuotaForNewUser
-	//user.SetAccessToken(common.GetUUID())
-	user.AffCode = common.GetRandomString(4)
-
-	// 初始化用户设置，包括默认的边栏配置
-	if user.Setting == "" {
-		defaultSetting := dto.UserSetting{}
-		// 这里暂时不设置SidebarModules，因为需要在用户创建后根据角色设置
-		user.SetSetting(defaultSetting)
+	if err := user.prepareForInsert(); err != nil {
+		return err
 	}
 
 	result := DB.Create(user)
@@ -402,35 +458,9 @@ func (user *User) Insert(inviterId int) error {
 		return result.Error
 	}
 
-	// 用户创建成功后，根据角色初始化边栏配置
-	// 需要重新获取用户以确保有正确的ID和Role
-	var createdUser User
-	if err := DB.Where("username = ?", user.Username).First(&createdUser).Error; err == nil {
-		// 生成基于角色的默认边栏配置
-		defaultSidebarConfig := generateDefaultSidebarConfigForRole(createdUser.Role)
-		if defaultSidebarConfig != "" {
-			currentSetting := createdUser.GetSetting()
-			currentSetting.SidebarModules = defaultSidebarConfig
-			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
-			common.SysLog(fmt.Sprintf("为新用户 %s (角色: %d) 初始化边栏配置", createdUser.Username, createdUser.Role))
-		}
-	}
-
-	if common.QuotaForNewUser > 0 {
-		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
-	}
-	if inviterId != 0 {
-		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
-		}
-	}
+	initializeNewUserSidebar(user)
+	recordNewUserQuotaLog(user.Id)
+	applyLegacyInviteRewards(inviterId, user.Id)
 	return nil
 }
 
@@ -438,20 +468,8 @@ func (user *User) Insert(inviterId int) error {
 // This is used for OAuth registration where user creation and binding need to be atomic.
 // Post-creation tasks (sidebar config, logs, inviter rewards) are handled after the transaction commits.
 func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
-	var err error
-	if user.Password != "" {
-		user.Password, err = common.Password2Hash(user.Password)
-		if err != nil {
-			return err
-		}
-	}
-	user.Quota = common.QuotaForNewUser
-	user.AffCode = common.GetRandomString(4)
-
-	// 初始化用户设置
-	if user.Setting == "" {
-		defaultSetting := dto.UserSetting{}
-		user.SetSetting(defaultSetting)
+	if err := user.prepareForInsert(); err != nil {
+		return err
 	}
 
 	result := tx.Create(user)
@@ -462,35 +480,52 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 	return nil
 }
 
+func (user *User) InsertWithManagedInviteCode(code string) (*InviteCode, bool, error) {
+	if err := user.prepareForInsert(); err != nil {
+		return nil, false, err
+	}
+
+	var rewardGranted bool
+	var inviteCode *InviteCode
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		lockedInviteCode, err := LockInviteCodeByCodeTx(tx, code)
+		if err != nil {
+			return err
+		}
+
+		user.Group = lockedInviteCode.TargetGroup
+		user.InviterId = lockedInviteCode.OwnerUserId
+		user.InviteCodeId = lockedInviteCode.Id
+		user.InviteCodeOwnerId = lockedInviteCode.OwnerUserId
+
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+
+		rewardGranted, err = ApplyInviteCodeRewardTx(tx, user.Id, lockedInviteCode)
+		if err != nil {
+			return err
+		}
+		inviteCode = lockedInviteCode
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	initializeNewUserSidebar(user)
+	recordNewUserQuotaLog(user.Id)
+	recordInviteCodeRewardLog(user.Id, inviteCode, rewardGranted)
+	return inviteCode, rewardGranted, nil
+}
+
 // FinalizeOAuthUserCreation performs post-transaction tasks for OAuth user creation.
 // This should be called after the transaction commits successfully.
 func (user *User) FinalizeOAuthUserCreation(inviterId int) {
-	// 用户创建成功后，根据角色初始化边栏配置
-	var createdUser User
-	if err := DB.Where("id = ?", user.Id).First(&createdUser).Error; err == nil {
-		defaultSidebarConfig := generateDefaultSidebarConfigForRole(createdUser.Role)
-		if defaultSidebarConfig != "" {
-			currentSetting := createdUser.GetSetting()
-			currentSetting.SidebarModules = defaultSidebarConfig
-			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
-			common.SysLog(fmt.Sprintf("为新用户 %s (角色: %d) 初始化边栏配置", createdUser.Username, createdUser.Role))
-		}
-	}
-
-	if common.QuotaForNewUser > 0 {
-		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
-	}
-	if inviterId != 0 {
-		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
-		}
-		if common.QuotaForInviter > 0 {
-			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
-		}
-	}
+	initializeNewUserSidebar(user)
+	recordNewUserQuotaLog(user.Id)
+	applyLegacyInviteRewards(inviterId, user.Id)
 }
 
 func (user *User) Update(updatePassword bool) error {

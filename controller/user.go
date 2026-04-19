@@ -22,6 +22,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type LoginRequest struct {
@@ -179,9 +180,16 @@ func Register(c *gin.Context) {
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
-	if err := cleanUser.Insert(inviterId); err != nil {
-		common.ApiError(c, err)
-		return
+	if strings.TrimSpace(user.InviteCode) != "" {
+		if _, _, err := cleanUser.InsertWithManagedInviteCode(user.InviteCode); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	} else {
+		if err := cleanUser.Insert(inviterId); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 
 	// 获取插入后的用户ID
@@ -233,6 +241,10 @@ func GetAllUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if err := model.PopulateUsersInviteStats(users); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
@@ -247,6 +259,10 @@ func SearchUsers(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	users, total, err := model.SearchUsers(keyword, group, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.PopulateUsersInviteStats(users); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -271,6 +287,10 @@ func GetUser(c *gin.Context) {
 	myRole := c.GetInt("role")
 	if myRole <= user.Role && myRole != common.RoleRootUser {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
+		return
+	}
+	if err := model.PopulateUsersInviteStats([]*model.User{user}); err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -384,31 +404,80 @@ func GetSelf(c *gin.Context) {
 
 	// 构建响应数据，包含用户信息和权限
 	responseData := map[string]interface{}{
-		"id":                user.Id,
-		"username":          user.Username,
-		"display_name":      user.DisplayName,
-		"role":              user.Role,
-		"status":            user.Status,
-		"email":             user.Email,
-		"github_id":         user.GitHubId,
-		"discord_id":        user.DiscordId,
-		"oidc_id":           user.OidcId,
-		"wechat_id":         user.WeChatId,
-		"telegram_id":       user.TelegramId,
-		"group":             user.Group,
-		"quota":             user.Quota,
-		"used_quota":        user.UsedQuota,
-		"request_count":     user.RequestCount,
-		"aff_code":          user.AffCode,
-		"aff_count":         user.AffCount,
-		"aff_quota":         user.AffQuota,
-		"aff_history_quota": user.AffHistoryQuota,
-		"inviter_id":        user.InviterId,
-		"linux_do_id":       user.LinuxDOId,
-		"setting":           user.Setting,
-		"stripe_customer":   user.StripeCustomer,
-		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
-		"permissions":       permissions,                // 新增权限字段
+		"id":                   user.Id,
+		"username":             user.Username,
+		"display_name":         user.DisplayName,
+		"role":                 user.Role,
+		"status":               user.Status,
+		"email":                user.Email,
+		"github_id":            user.GitHubId,
+		"discord_id":           user.DiscordId,
+		"oidc_id":              user.OidcId,
+		"wechat_id":            user.WeChatId,
+		"telegram_id":          user.TelegramId,
+		"group":                user.Group,
+		"quota":                user.Quota,
+		"used_quota":           user.UsedQuota,
+		"request_count":        user.RequestCount,
+		"aff_code":             user.AffCode,
+		"aff_count":            user.AffCount,
+		"aff_quota":            user.AffQuota,
+		"aff_history_quota":    user.AffHistoryQuota,
+		"inviter_id":           user.InviterId,
+		"invite_code_id":       user.InviteCodeId,
+		"invite_code_owner_id": user.InviteCodeOwnerId,
+		"linux_do_id":          user.LinuxDOId,
+		"setting":              user.Setting,
+		"stripe_customer":      user.StripeCustomer,
+		"sidebar_modules":      userSetting.SidebarModules, // 正确提取sidebar_modules字段
+		"permissions":          permissions,                // 新增权限字段
+	}
+
+	statsByOwnerID, err := model.GetInviteStatsByOwnerUserIDs([]int{id})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if stats, ok := statsByOwnerID[id]; ok {
+		responseData["invite_user_count"] = stats.InviteUserCount
+		responseData["invite_total_recharge"] = stats.InviteTotalRecharge
+		responseData["invite_total_consume"] = stats.InviteTotalConsume
+	} else {
+		responseData["invite_user_count"] = 0
+		responseData["invite_total_recharge"] = 0
+		responseData["invite_total_consume"] = 0
+	}
+
+	inviteCodes, inviteCodeCount, err := model.GetInviteCodesByOwnerUserID(id, 0, 5)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	responseData["invite_code_count"] = inviteCodeCount
+	responseData["invite_codes"] = inviteCodes
+
+	invitees, inviteeTotal, err := model.GetInviteeSummariesByOwnerUserID(id, 0, 5)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	responseData["invite_user_count"] = inviteeTotal
+	responseData["invitees"] = invitees
+
+	if user.InviteCodeId > 0 {
+		boundInviteCode, err := model.GetInviteCodeByIDUnscoped(user.InviteCodeId)
+		if err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				common.ApiError(c, err)
+				return
+			}
+		} else {
+			if err := model.PopulateInviteCodeStats([]*model.InviteCode{boundInviteCode}); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			responseData["bound_invite_code"] = boundInviteCode
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

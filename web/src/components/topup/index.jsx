@@ -832,6 +832,7 @@ const TopUp = () => {
           t={t}
           userState={userState}
           renderQuota={renderQuota}
+          renderQuotaWithAmount={renderQuotaWithAmount}
           setOpenTransfer={setOpenTransfer}
           affLink={affLink}
           handleAffLinkClick={handleAffLinkClick}

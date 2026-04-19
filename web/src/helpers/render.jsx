@@ -135,6 +135,7 @@ export function getLucideIcon(key, selected = false) {
     case 'channel':
     case 'aggregate_group':
       return <Layers {...commonProps} color={iconColor} />;
+    case 'invite_code':
     case 'redemption':
       return <Gift {...commonProps} color={iconColor} />;
     case 'user':

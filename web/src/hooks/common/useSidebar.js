@@ -48,6 +48,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     enabled: true,
     channel: true,
     aggregate_group: true,
+    invite_code: true,
     models: true,
     deployment: true,
     redemption: true,

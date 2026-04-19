@@ -29,7 +29,12 @@ import {
   Dropdown,
 } from '@douyinfe/semi-ui';
 import { IconMore } from '@douyinfe/semi-icons';
-import { renderGroup, renderNumber, renderQuota } from '../../../helpers';
+import {
+  renderGroup,
+  renderNumber,
+  renderQuota,
+  renderQuotaWithAmount,
+} from '../../../helpers';
 
 /**
  * Render user role
@@ -178,10 +183,13 @@ const renderInviteInfo = (text, record, t) => {
     <div>
       <Space spacing={1}>
         <Tag color='white' shape='circle' className='!text-xs'>
-          {t('邀请')}: {renderNumber(record.aff_count)}
+          {t('邀请')}: {renderNumber(record.invite_user_count || 0)}
         </Tag>
         <Tag color='white' shape='circle' className='!text-xs'>
-          {t('收益')}: {renderQuota(record.aff_history_quota)}
+          {t('充值')}: {renderQuotaWithAmount(record.invite_total_recharge || 0)}
+        </Tag>
+        <Tag color='white' shape='circle' className='!text-xs'>
+          {t('消费')}: {renderQuota(record.invite_total_consume || 0)}
         </Tag>
         <Tag color='white' shape='circle' className='!text-xs'>
           {record.inviter_id === 0

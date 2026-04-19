@@ -68,6 +68,9 @@ import { SiDiscord } from 'react-icons/si';
 const RegisterForm = () => {
   let navigate = useNavigate();
   const { t } = useTranslation();
+  let affCode = new URLSearchParams(window.location.search).get('aff');
+  let inviteCodeFromUrl =
+    new URLSearchParams(window.location.search).get('invite_code');
   const githubButtonTextKeyByState = {
     idle: '使用 GitHub 继续',
     redirecting: '正在跳转 GitHub...',
@@ -80,6 +83,7 @@ const RegisterForm = () => {
     email: '',
     verification_code: '',
     wechat_verification_code: '',
+    invite_code: inviteCodeFromUrl || '',
   });
   const { username, password, password2 } = inputs;
   const [userState, userDispatch] = useContext(UserContext);
@@ -114,9 +118,11 @@ const RegisterForm = () => {
   const logo = getLogo();
   const systemName = getSystemName();
 
-  let affCode = new URLSearchParams(window.location.search).get('aff');
   if (affCode) {
     localStorage.setItem('aff', affCode);
+  }
+  if (inviteCodeFromUrl) {
+    localStorage.setItem('invite_code', inviteCodeFromUrl);
   }
 
   const status = useMemo(() => {
@@ -234,7 +240,10 @@ const RegisterForm = () => {
         if (!affCode) {
           affCode = localStorage.getItem('aff');
         }
+        const inviteCode =
+          inputs.invite_code || localStorage.getItem('invite_code');
         inputs.aff_code = affCode;
+        inputs.invite_code = inviteCode;
         const res = await API.post(
           `/api/user/register?turnstile=${turnstileToken}`,
           inputs,
@@ -600,6 +609,15 @@ const RegisterForm = () => {
                   mode='password'
                   onChange={(value) => handleChange('password2', value)}
                   prefix={<IconLock />}
+                />
+
+                <Form.Input
+                  field='invite_code'
+                  label={t('邀请码')}
+                  placeholder={t('请输入邀请码（选填）')}
+                  name='invite_code'
+                  onChange={(value) => handleChange('invite_code', value)}
+                  prefix={<IconKey />}
                 />
 
                 {showEmailVerification && (
