@@ -649,14 +649,19 @@ const LogDashboardPage = () => {
               {t('按最终失败请求聚合，已剔除 request id 等动态片段')}
             </Text>
           </div>
-          <CardTable
-            rowKey={(record, index) => `${record.message}-${index}`}
-            columns={errorMessageColumns}
-            dataSource={dashboard?.top_error_messages || []}
-            loading={loading}
-            hidePagination
-            empty={<Empty description={t('当前窗口暂无错误信息')} style={{ padding: 24 }} />}
-          />
+          <div
+            className='overflow-y-auto overflow-x-hidden rounded-xl'
+            style={{ maxHeight: '520px' }}
+          >
+            <CardTable
+              rowKey={(record, index) => `${record.message}-${index}`}
+              columns={errorMessageColumns}
+              dataSource={dashboard?.top_error_messages || []}
+              loading={loading}
+              hidePagination
+              empty={<Empty description={t('当前窗口暂无错误信息')} style={{ padding: 24 }} />}
+            />
+          </div>
         </Card>
 
         <Card className='!rounded-2xl shadow-sm border-0' loading={loading}>
@@ -668,14 +673,19 @@ const LogDashboardPage = () => {
               {t('按最终失败请求的最后一条错误状态码聚合')}
             </Text>
           </div>
-          <CardTable
-            rowKey={(record, index) => `${record.status_code}-${index}`}
-            columns={statusCodeColumns}
-            dataSource={dashboard?.top_status_codes || []}
-            loading={loading}
-            hidePagination
-            empty={<Empty description={t('当前窗口暂无状态码统计')} style={{ padding: 24 }} />}
-          />
+          <div
+            className='overflow-y-auto overflow-x-hidden rounded-xl'
+            style={{ maxHeight: '520px' }}
+          >
+            <CardTable
+              rowKey={(record, index) => `${record.status_code}-${index}`}
+              columns={statusCodeColumns}
+              dataSource={dashboard?.top_status_codes || []}
+              loading={loading}
+              hidePagination
+              empty={<Empty description={t('当前窗口暂无状态码统计')} style={{ padding: 24 }} />}
+            />
+          </div>
         </Card>
       </div>
     </div>
