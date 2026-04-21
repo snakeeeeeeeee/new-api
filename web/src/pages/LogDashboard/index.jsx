@@ -87,6 +87,7 @@ const LogDashboardPage = () => {
   const { t } = useTranslation();
   const [activeWindow, setActiveWindow] = useState('1h');
   const [activeTrendMode, setActiveTrendMode] = useState('overall');
+  const [activeStatsTab, setActiveStatsTab] = useState('channel');
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -459,6 +460,29 @@ const LogDashboardPage = () => {
     average_success_use_time_seconds: 0,
   };
 
+  const statsTableContent =
+    activeStatsTab === 'channel' ? (
+      <CardTable
+        rowKey='channel_id'
+        columns={channelColumns}
+        dataSource={dashboard?.channels || []}
+        loading={loading}
+        hidePagination
+        scroll={{ x: 'max-content' }}
+        empty={<Empty description={t('当前窗口暂无渠道尝试数据')} style={{ padding: 24 }} />}
+      />
+    ) : (
+      <CardTable
+        rowKey='group_name'
+        columns={groupColumns}
+        dataSource={dashboard?.groups || []}
+        loading={loading}
+        hidePagination
+        scroll={{ x: 'max-content' }}
+        empty={<Empty description={t('当前窗口暂无分组统计数据')} style={{ padding: 24 }} />}
+      />
+    );
+
   return (
     <div className='mt-[60px] px-2 pb-4 space-y-4'>
       <Card className='!rounded-2xl shadow-sm border-0'>
@@ -581,44 +605,38 @@ const LogDashboardPage = () => {
         )}
       </Card>
 
-      <Card className='!rounded-2xl shadow-sm border-0' loading={loading}>
-        <div className='mb-4'>
-          <Title heading={5} className='!mb-1'>
-            {t('渠道统计')}
-          </Title>
-          <Text type='tertiary'>
-            {t('按渠道尝试统计成功率、失败率与最近错误分布')}
-          </Text>
+      <Card
+        className='!rounded-2xl shadow-sm border-0'
+        loading={loading}
+        title={
+          <div className='flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between'>
+            <div>
+              <Title heading={5} className='!mb-1'>
+                {t('统计明细')}
+              </Title>
+              <Text type='tertiary'>
+                {activeStatsTab === 'channel'
+                  ? t('按渠道尝试统计成功率、失败率与最近错误分布')
+                  : t('按最终请求结果统计各分组成功率、失败率与最近错误分布')}
+              </Text>
+            </div>
+            <Tabs
+              type='slash'
+              activeKey={activeStatsTab}
+              onChange={setActiveStatsTab}
+            >
+              <TabPane itemKey='channel' tab={t('渠道统计')} />
+              <TabPane itemKey='group' tab={t('分组统计')} />
+            </Tabs>
+          </div>
+        }
+      >
+        <div
+          className='overflow-y-auto overflow-x-hidden rounded-xl'
+          style={{ maxHeight: '560px' }}
+        >
+          {statsTableContent}
         </div>
-        <CardTable
-          rowKey='channel_id'
-          columns={channelColumns}
-          dataSource={dashboard?.channels || []}
-          loading={loading}
-          hidePagination
-          scroll={{ x: 'max-content' }}
-          empty={<Empty description={t('当前窗口暂无渠道尝试数据')} style={{ padding: 24 }} />}
-        />
-      </Card>
-
-      <Card className='!rounded-2xl shadow-sm border-0' loading={loading}>
-        <div className='mb-4'>
-          <Title heading={5} className='!mb-1'>
-            {t('分组统计')}
-          </Title>
-          <Text type='tertiary'>
-            {t('按最终请求结果统计各分组成功率、失败率与最近错误分布')}
-          </Text>
-        </div>
-        <CardTable
-          rowKey='group_name'
-          columns={groupColumns}
-          dataSource={dashboard?.groups || []}
-          loading={loading}
-          hidePagination
-          scroll={{ x: 'max-content' }}
-          empty={<Empty description={t('当前窗口暂无分组统计数据')} style={{ padding: 24 }} />}
-        />
       </Card>
 
       <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
