@@ -39,6 +39,19 @@ type Log struct {
 	Other            string `json:"other"`
 }
 
+type DashboardLogEntry struct {
+	UserId      int    `json:"user_id"`
+	CreatedAt   int64  `json:"created_at"`
+	Type        int    `json:"type"`
+	Content     string `json:"content"`
+	UseTime     int    `json:"use_time"`
+	ChannelId   int    `json:"channel_id"`
+	RequestId   string `json:"request_id"`
+	Other       string `json:"other"`
+	Group       string `json:"group" gorm:"column:log_group"`
+	ChannelName string `json:"channel_name" gorm:"-"`
+}
+
 // don't use iota, avoid change log type value
 const (
 	LogTypeUnknown = 0
@@ -69,6 +82,76 @@ func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs, 0)
 	return logs, err
+}
+
+func GetChannelNameMap(channelIDs []int) (map[int]string, error) {
+	channelMap := make(map[int]string)
+	if len(channelIDs) == 0 {
+		return channelMap, nil
+	}
+
+	channelIDSet := types.NewSet[int]()
+	for _, channelID := range channelIDs {
+		if channelID > 0 {
+			channelIDSet.Add(channelID)
+		}
+	}
+	if channelIDSet.Len() == 0 {
+		return channelMap, nil
+	}
+
+	if common.MemoryCacheEnabled {
+		for _, channelID := range channelIDSet.Items() {
+			cacheChannel, err := CacheGetChannel(channelID)
+			if err == nil && cacheChannel != nil && cacheChannel.Name != "" {
+				channelMap[channelID] = cacheChannel.Name
+			}
+		}
+	}
+
+	missingIDs := make([]int, 0, channelIDSet.Len())
+	for _, channelID := range channelIDSet.Items() {
+		if _, ok := channelMap[channelID]; !ok {
+			missingIDs = append(missingIDs, channelID)
+		}
+	}
+
+	if len(missingIDs) == 0 {
+		return channelMap, nil
+	}
+
+	var channels []struct {
+		Id   int    `gorm:"column:id"`
+		Name string `gorm:"column:name"`
+	}
+	if err := DB.Table("channels").Select("id, name").Where("id IN ?", missingIDs).Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	for _, channel := range channels {
+		channelMap[channel.Id] = channel.Name
+	}
+	return channelMap, nil
+}
+
+func GetLogsForDashboard(ctx context.Context, startTimestamp int64, endTimestamp int64) ([]*DashboardLogEntry, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var logs []*DashboardLogEntry
+	query := LOG_DB.WithContext(ctx).
+		Model(&Log{}).
+		Select("user_id, created_at, type, content, use_time, channel_id, request_id, other, "+logGroupCol+" as log_group").
+		Where("type IN ?", []int{LogTypeConsume, LogTypeError})
+	if startTimestamp != 0 {
+		query = query.Where("created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		query = query.Where("created_at <= ?", endTimestamp)
+	}
+	if err := query.Order("created_at asc, id asc").Find(&logs).Error; err != nil {
+		return nil, err
+	}
+	return logs, nil
 }
 
 func RecordLog(userId int, logType int, content string) {

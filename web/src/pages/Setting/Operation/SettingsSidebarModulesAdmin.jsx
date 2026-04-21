@@ -30,6 +30,7 @@ import {
 } from '@douyinfe/semi-ui';
 import { API, showSuccess, showError } from '../../../helpers';
 import { StatusContext } from '../../../context/Status';
+import { mergeAdminConfig } from '../../../hooks/common/useSidebar';
 
 const { Text } = Typography;
 
@@ -63,6 +64,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         channel: true,
         aggregate_group: true,
         invite_code: true,
+        log_dashboard: true,
         models: true,
         deployment: true,
         redemption: true,
@@ -126,6 +128,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         channel: true,
         aggregate_group: true,
         invite_code: true,
+        log_dashboard: true,
         models: true,
         deployment: true,
         redemption: true,
@@ -178,7 +181,7 @@ export default function SettingsSidebarModulesAdmin(props) {
     if (props.options && props.options.SidebarModulesAdmin) {
       try {
         const modules = JSON.parse(props.options.SidebarModulesAdmin);
-        setSidebarModulesAdmin(modules);
+        setSidebarModulesAdmin(mergeAdminConfig(modules));
       } catch (error) {
         // 使用默认配置
         const defaultModules = {
@@ -197,6 +200,7 @@ export default function SettingsSidebarModulesAdmin(props) {
             channel: true,
             aggregate_group: true,
             invite_code: true,
+            log_dashboard: true,
             models: true,
             deployment: true,
             redemption: true,
@@ -275,6 +279,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'invite_code',
           title: t('邀请码管理'),
           description: t('管理员邀请码配置'),
+        },
+        {
+          key: 'log_dashboard',
+          title: t('日志看板'),
+          description: t('日志运行态统计'),
         },
         {
           key: 'subscription',

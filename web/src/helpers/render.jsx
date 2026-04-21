@@ -125,6 +125,7 @@ export function getLucideIcon(key, selected = false) {
     case 'token':
       return <Key {...commonProps} color={iconColor} />;
     case 'log':
+    case 'log_dashboard':
       return <BarChart3 {...commonProps} color={iconColor} />;
     case 'midjourney':
       return <ImageIcon {...commonProps} color={iconColor} />;
