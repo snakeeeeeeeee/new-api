@@ -117,12 +117,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	if request.N != nil {
 		imageN = *request.N
 	}
-	if usage.(*dto.Usage).TotalTokens == 0 {
-		usage.(*dto.Usage).TotalTokens = int(imageN)
-	}
-	if usage.(*dto.Usage).PromptTokens == 0 {
-		usage.(*dto.Usage).PromptTokens = int(imageN)
-	}
+	normalizeImageUsage(usage.(*dto.Usage), imageN)
 
 	quality := "standard"
 	if request.Quality == "hd" {
@@ -143,4 +138,47 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
 	return nil
+}
+
+func normalizeImageUsage(usage *dto.Usage, imageN uint) {
+	if usage == nil {
+		return
+	}
+
+	if usage.PromptTokens == 0 && usage.InputTokens > 0 {
+		usage.PromptTokens = usage.InputTokens
+	}
+	if usage.CompletionTokens == 0 && usage.OutputTokens > 0 {
+		usage.CompletionTokens = usage.OutputTokens
+	}
+
+	if usage.InputTokensDetails != nil {
+		if usage.PromptTokensDetails.CachedTokens == 0 {
+			usage.PromptTokensDetails.CachedTokens = usage.InputTokensDetails.CachedTokens
+		}
+		if usage.PromptTokensDetails.CachedCreationTokens == 0 {
+			usage.PromptTokensDetails.CachedCreationTokens = usage.InputTokensDetails.CachedCreationTokens
+		}
+		if usage.PromptTokensDetails.TextTokens == 0 {
+			usage.PromptTokensDetails.TextTokens = usage.InputTokensDetails.TextTokens
+		}
+		if usage.PromptTokensDetails.AudioTokens == 0 {
+			usage.PromptTokensDetails.AudioTokens = usage.InputTokensDetails.AudioTokens
+		}
+		if usage.PromptTokensDetails.ImageTokens == 0 {
+			usage.PromptTokensDetails.ImageTokens = usage.InputTokensDetails.ImageTokens
+		}
+	}
+
+	if usage.TotalTokens == 0 {
+		totalTokens := usage.PromptTokens + usage.CompletionTokens
+		if totalTokens > 0 {
+			usage.TotalTokens = totalTokens
+		} else {
+			usage.TotalTokens = int(imageN)
+		}
+	}
+	if usage.PromptTokens == 0 {
+		usage.PromptTokens = int(imageN)
+	}
 }
