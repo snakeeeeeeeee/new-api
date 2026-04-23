@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConvertImageRequestStripsResponseFormatForAzureGPTImage(t *testing.T) {
+func TestConvertImageRequestStripsResponseFormatForGPTImageOnOpenAIAdaptor(t *testing.T) {
 	t.Parallel()
 
 	gin.SetMode(gin.TestMode)
@@ -28,7 +28,7 @@ func TestConvertImageRequestStripsResponseFormatForAzureGPTImage(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		RelayMode: relayconstant.RelayModeImagesGenerations,
 		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelType:       constant.ChannelTypeAzure,
+			ChannelType:       constant.ChannelTypeOpenAI,
 			UpstreamModelName: "gpt-image-2",
 		},
 	}
@@ -42,7 +42,7 @@ func TestConvertImageRequestStripsResponseFormatForAzureGPTImage(t *testing.T) {
 	require.Empty(t, imageRequest.ResponseFormat)
 }
 
-func TestConvertImageRequestKeepsResponseFormatForNonAzureGPTImage(t *testing.T) {
+func TestConvertImageRequestKeepsResponseFormatForNonGPTImage(t *testing.T) {
 	t.Parallel()
 
 	gin.SetMode(gin.TestMode)
@@ -51,7 +51,7 @@ func TestConvertImageRequestKeepsResponseFormatForNonAzureGPTImage(t *testing.T)
 
 	adaptor := &Adaptor{}
 	request := dto.ImageRequest{
-		Model:          "gpt-image-2",
+		Model:          "dall-e-3",
 		Prompt:         "future warrior",
 		ResponseFormat: "b64_json",
 	}
