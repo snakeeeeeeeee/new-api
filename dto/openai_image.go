@@ -171,9 +171,14 @@ func (i *ImageRequest) SetModelName(modelName string) {
 }
 
 type ImageResponse struct {
-	Data     []ImageData     `json:"data"`
-	Created  int64           `json:"created"`
-	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Data         []ImageData     `json:"data"`
+	Created      int64           `json:"created"`
+	Background   string          `json:"background,omitempty"`
+	OutputFormat string          `json:"output_format,omitempty"`
+	Quality      string          `json:"quality,omitempty"`
+	Size         string          `json:"size,omitempty"`
+	Usage        *Usage          `json:"usage,omitempty"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
 }
 type ImageData struct {
 	Url           string `json:"url"`

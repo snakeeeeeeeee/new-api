@@ -200,6 +200,7 @@ const EditChannelModal = (props) => {
     aws_key_type: 'ak_sk',
     // 企业账户设置
     is_enterprise_account: false,
+    image_response_adapter: '',
     // 字段透传控制默认值
     allow_service_tier: false,
     disable_store: false, // false = 允许透传（默认开启）
@@ -832,6 +833,8 @@ const EditChannelModal = (props) => {
           const parsedSettings = JSON.parse(data.settings);
           data.azure_responses_version =
             parsedSettings.azure_responses_version || '';
+          data.image_response_adapter =
+            parsedSettings.image_response_adapter || '';
           // 读取 Vertex 密钥格式
           data.vertex_key_type = parsedSettings.vertex_key_type || 'json';
           // 读取 AWS 密钥格式和区域
@@ -868,6 +871,7 @@ const EditChannelModal = (props) => {
         } catch (error) {
           console.error('解析其他设置失败:', error);
           data.azure_responses_version = '';
+          data.image_response_adapter = '';
           data.region = '';
           data.vertex_key_type = 'json';
           data.aws_key_type = 'ak_sk';
@@ -886,6 +890,7 @@ const EditChannelModal = (props) => {
         }
       } else {
         // 兼容历史数据：老渠道没有 settings 时，默认按 json 展示
+        data.image_response_adapter = '';
         data.vertex_key_type = 'json';
         data.aws_key_type = 'ak_sk';
         data.is_enterprise_account = false;
@@ -1697,6 +1702,13 @@ const EditChannelModal = (props) => {
         localInputs.is_enterprise_account === true;
     }
 
+    if (localInputs.type === 1) {
+      settings.image_response_adapter =
+        localInputs.image_response_adapter || '';
+    } else if ('image_response_adapter' in settings) {
+      delete settings.image_response_adapter;
+    }
+
     // type === 33 (AWS): 保存 aws_key_type 到 settings
     if (localInputs.type === 33) {
       settings.aws_key_type = localInputs.aws_key_type || 'ak_sk';
@@ -1759,6 +1771,7 @@ const EditChannelModal = (props) => {
     delete localInputs.system_prompt;
     delete localInputs.system_prompt_override;
     delete localInputs.is_enterprise_account;
+    delete localInputs.image_response_adapter;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
     // 顶层的 aws_key_type 不应发送给后端
@@ -2429,6 +2442,27 @@ const EditChannelModal = (props) => {
 
                   {inputs.type === 1 && (
                     <Form.Switch field='force_format' label={t('强制格式化')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('force_format', value)} extraText={t('强制将响应格式化为 OpenAI 标准格式（只适用于OpenAI渠道类型）')} />
+                  )}
+
+                  {inputs.type === 1 && (
+                    <Form.Select
+                      field='image_response_adapter'
+                      label={t('图片响应适配器')}
+                      placeholder={t('默认无')}
+                      optionList={[
+                        { label: t('无'), value: '' },
+                        { label: 'CPA', value: 'cpa' },
+                      ]}
+                      onChange={(value) =>
+                        handleChannelOtherSettingsChange(
+                          'image_response_adapter',
+                          value || '',
+                        )
+                      }
+                      extraText={t(
+                        '仅用于图片接口响应兼容。启用后，会将特定上游图片返回转换为 OpenAI 图片格式。',
+                      )}
+                    />
                   )}
 
                   <Form.Switch field='thinking_to_content' label={t('思考内容转换')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('thinking_to_content', value)} extraText={t('将 reasoning_content 转换为 <think> 标签拼接到内容中')} />
