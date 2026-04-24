@@ -119,10 +119,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 	normalizeImageUsage(usage.(*dto.Usage), imageN)
 
-	quality := "standard"
-	if request.Quality == "hd" {
-		quality = "hd"
-	}
+	quality := imageLogQuality(request.Quality)
 
 	var logContent []string
 
@@ -138,6 +135,14 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
 	return nil
+}
+
+func imageLogQuality(quality string) string {
+	quality = strings.TrimSpace(quality)
+	if quality == "" {
+		return "standard"
+	}
+	return quality
 }
 
 func normalizeImageUsage(usage *dto.Usage, imageN uint) {

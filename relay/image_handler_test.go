@@ -39,3 +39,14 @@ func TestNormalizeImageUsageFallsBackToImageCount(t *testing.T) {
 	require.Equal(t, 0, usage.CompletionTokens)
 	require.Equal(t, 2, usage.TotalTokens)
 }
+
+func TestImageLogQualityUsesRequestValue(t *testing.T) {
+	t.Parallel()
+
+	require.Equal(t, "high", imageLogQuality("high"))
+	require.Equal(t, "medium", imageLogQuality(" medium "))
+	require.Equal(t, "low", imageLogQuality("low"))
+	require.Equal(t, "auto", imageLogQuality("auto"))
+	require.Equal(t, "hd", imageLogQuality("hd"))
+	require.Equal(t, "standard", imageLogQuality(""))
+}
