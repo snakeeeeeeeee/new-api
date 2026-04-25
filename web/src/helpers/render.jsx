@@ -993,9 +993,7 @@ export const renderGroupOption = (item) => {
             {value}
           </Typography.Text>
           {item.groupType === 'aggregate' && (
-            <span style={aggregateBadgeStyle}>
-              HA
-            </span>
+            <span style={aggregateBadgeStyle}>HA</span>
           )}
         </div>
         <Typography.Text type='secondary' size='small'>
@@ -1117,6 +1115,14 @@ export function renderQuotaWithAmount(amount) {
     return symbol + formattedAmount;
   }
   return '$' + formattedAmount;
+}
+
+export function renderPaymentAmount(amount, symbol = '¥') {
+  const numericAmount = Number(amount);
+  const formattedAmount = Number.isFinite(numericAmount)
+    ? numericAmount.toFixed(2)
+    : amount;
+  return `${symbol}${formattedAmount}`;
 }
 
 /**

@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { Modal, Badge } from '@douyinfe/semi-ui';
 import {
+  renderPaymentAmount,
   renderQuota,
   renderNumber,
   renderQuotaWithAmount,
@@ -128,6 +129,8 @@ const UserInfoModal = ({
 
           {/* 邀请信息 */}
           {(userInfoData.invite_user_count !== undefined ||
+            userInfoData.invite_total_recharge_amount !== undefined ||
+            userInfoData.invite_total_recharge_money !== undefined ||
             userInfoData.invite_total_recharge !== undefined ||
             userInfoData.invite_total_consume !== undefined) && (
             <div style={rowStyle}>
@@ -138,19 +141,33 @@ const UserInfoModal = ({
                 </div>
               </div>
               <div style={colStyle}>
-                {renderLabel(t('邀请总充值'), 'success')}
+                {renderLabel(t('邀请充值额度'), 'success')}
                 <div style={valueStyle}>
                   {renderQuotaWithAmount(
-                    userInfoData.invite_total_recharge || 0,
+                    userInfoData.invite_total_recharge_amount || 0,
                   )}
                 </div>
               </div>
             </div>
           )}
 
+          {(userInfoData.invite_total_recharge_money !== undefined ||
+            userInfoData.invite_total_recharge !== undefined) && (
+            <div style={infoItemStyle}>
+              {renderLabel(t('邀请实付金额'), 'success')}
+              <div style={valueStyle}>
+                {renderPaymentAmount(
+                  userInfoData.invite_total_recharge_money ??
+                    userInfoData.invite_total_recharge ??
+                    0,
+                )}
+              </div>
+            </div>
+          )}
+
           {userInfoData.invite_total_consume !== undefined && (
             <div style={infoItemStyle}>
-              {renderLabel(t('邀请总消费'), 'warning')}
+              {renderLabel(t('邀请消费额度'), 'warning')}
               <div style={valueStyle}>
                 {renderQuota(userInfoData.invite_total_consume || 0)}
               </div>

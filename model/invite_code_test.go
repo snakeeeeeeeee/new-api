@@ -38,11 +38,11 @@ func seedInviteCode(t *testing.T, code string, ownerID int, targetGroup string, 
 	return inviteCode
 }
 
-func seedInviteTopUp(t *testing.T, userID int, tradeNo string, money float64, status string) {
+func seedInviteTopUp(t *testing.T, userID int, tradeNo string, amount int64, money float64, status string) {
 	t.Helper()
 	topUp := &TopUp{
 		UserId:        userID,
-		Amount:        0,
+		Amount:        amount,
 		Money:         money,
 		TradeNo:       tradeNo,
 		PaymentMethod: "epay",
@@ -139,20 +139,24 @@ func TestGetInviteStatsAggregatesUsersRechargeAndConsume(t *testing.T) {
 	require.NoError(t, DB.Create(user1).Error)
 	require.NoError(t, DB.Create(user2).Error)
 
-	seedInviteTopUp(t, 201, "topup_stats_1", 12.5, common.TopUpStatusSuccess)
-	seedInviteTopUp(t, 202, "topup_stats_2", 7.5, common.TopUpStatusSuccess)
-	seedInviteTopUp(t, 202, "topup_stats_3", 99, common.TopUpStatusPending)
+	seedInviteTopUp(t, 201, "topup_stats_1", 100, 12.5, common.TopUpStatusSuccess)
+	seedInviteTopUp(t, 202, "topup_stats_2", 50, 7.5, common.TopUpStatusSuccess)
+	seedInviteTopUp(t, 202, "topup_stats_3", 999, 99, common.TopUpStatusPending)
 
 	ownerStats, err := GetInviteStatsByOwnerUserIDs([]int{12})
 	require.NoError(t, err)
 	require.Equal(t, int64(2), ownerStats[12].InviteUserCount)
 	require.Equal(t, 20.0, ownerStats[12].InviteTotalRecharge)
+	require.Equal(t, int64(150), ownerStats[12].InviteTotalRechargeAmount)
+	require.Equal(t, 20.0, ownerStats[12].InviteTotalRechargeMoney)
 	require.Equal(t, 8000, ownerStats[12].InviteTotalConsume)
 
 	codeStats, err := GetInviteStatsByInviteCodeIDs([]int{inviteCode.Id})
 	require.NoError(t, err)
 	require.Equal(t, int64(2), codeStats[inviteCode.Id].InviteUserCount)
 	require.Equal(t, 20.0, codeStats[inviteCode.Id].InviteTotalRecharge)
+	require.Equal(t, int64(150), codeStats[inviteCode.Id].InviteTotalRechargeAmount)
+	require.Equal(t, 20.0, codeStats[inviteCode.Id].InviteTotalRechargeMoney)
 	require.Equal(t, 8000, codeStats[inviteCode.Id].InviteTotalConsume)
 }
 
@@ -215,6 +219,7 @@ func TestGetInviteeSummariesByOwnerUserIDIncludesInviteCodeState(t *testing.T) {
 	}
 	require.NoError(t, DB.Create(userDisabled).Error)
 	require.NoError(t, DB.Create(userDeleted).Error)
+	seedInviteTopUp(t, 301, "topup_invitee_state_1", 42, 4.2, common.TopUpStatusSuccess)
 
 	invitees, total, err := GetInviteeSummariesByOwnerUserID(14, 0, 10)
 	require.NoError(t, err)
@@ -228,6 +233,9 @@ func TestGetInviteeSummariesByOwnerUserIDIncludesInviteCodeState(t *testing.T) {
 
 	require.Equal(t, InviteCodeStatusDisabled, inviteeMap["invitee_disabled"].InviteCodeStatus)
 	require.False(t, inviteeMap["invitee_disabled"].InviteCodeDeleted)
+	require.Equal(t, 4.2, inviteeMap["invitee_disabled"].InviteTotalRecharge)
+	require.Equal(t, int64(42), inviteeMap["invitee_disabled"].InviteTotalRechargeAmount)
+	require.Equal(t, 4.2, inviteeMap["invitee_disabled"].InviteTotalRechargeMoney)
 	require.True(t, inviteeMap["invitee_deleted"].InviteCodeDeleted)
 	require.Equal(t, InviteCodeStatusEnabled, inviteeMap["invitee_deleted"].InviteCodeStatus)
 }
@@ -262,14 +270,26 @@ func TestBindUserInviteBindingManualCodeUpdatesStatsAndSummariesWithoutReward(t 
 	require.Equal(t, 80, updated.InviteCodeOwnerId)
 	require.Equal(t, change.NewInviteCodeID, updated.InviteCodeId)
 	require.Equal(t, 12345, updated.Quota)
+	require.NoError(t, PopulateUsersInviteStats([]*User{&updated}))
+	require.Equal(t, "manual_owner", updated.InviterUsername)
 
 	manualCode, err := GetInviteCodeByID(change.NewInviteCodeID)
 	require.NoError(t, err)
 	require.Equal(t, ManualInviteCodePrefix, manualCode.Prefix)
+	require.True(t, manualCode.IsManual)
 	require.Equal(t, 0, manualCode.RewardQuotaPerUse)
 	require.Equal(t, 0, manualCode.RewardTotalUses)
 	require.Equal(t, 0, manualCode.RewardUsedUses)
 	require.Equal(t, InviteCodeStatusEnabled, manualCode.Status)
+
+	registrationUser := &User{
+		Username: "manual_code_register",
+		Password: "password123",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+	}
+	_, _, err = registrationUser.InsertWithManagedInviteCode(manualCode.Code)
+	require.ErrorIs(t, err, ErrInviteCodeManualOnly)
 
 	stats, err := GetInviteStatsByOwnerUserIDs([]int{80})
 	require.NoError(t, err)

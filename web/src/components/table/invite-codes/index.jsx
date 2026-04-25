@@ -39,6 +39,7 @@ import { useInviteCodesData } from '../../../hooks/invite-codes/useInviteCodesDa
 import {
   copy,
   renderNumber,
+  renderPaymentAmount,
   renderQuota,
   renderQuotaWithAmount,
   showSuccess,
@@ -105,12 +106,18 @@ const InviteCodesPage = () => {
         render: (value) => renderNumber(value || 0),
       },
       {
-        title: t('邀请总充值'),
-        dataIndex: 'invite_total_recharge',
+        title: t('邀请充值额度'),
+        dataIndex: 'invite_total_recharge_amount',
         render: (value) => renderQuotaWithAmount(value || 0),
       },
       {
-        title: t('邀请总消费'),
+        title: t('邀请实付金额'),
+        dataIndex: 'invite_total_recharge_money',
+        render: (value, record) =>
+          renderPaymentAmount(value ?? record.invite_total_recharge ?? 0),
+      },
+      {
+        title: t('邀请消费额度'),
         dataIndex: 'invite_total_consume',
         render: (value) => renderQuota(value || 0),
       },
@@ -157,10 +164,7 @@ const InviteCodesPage = () => {
               size='small'
               type={record.status === 1 ? 'danger' : 'primary'}
               onClick={() =>
-                updateInviteCodeStatus(
-                  record,
-                  record.status === 1 ? 2 : 1,
-                )
+                updateInviteCodeStatus(record, record.status === 1 ? 2 : 1)
               }
             >
               {record.status === 1 ? t('禁用') : t('启用')}
@@ -252,9 +256,13 @@ const InviteCodesPage = () => {
             scroll={{ x: 'max-content' }}
             empty={
               <Empty
-                image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
+                image={
+                  <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                }
                 darkModeImage={
-                  <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
+                  <IllustrationNoResultDark
+                    style={{ width: 150, height: 150 }}
+                  />
                 }
                 description={t('搜索无结果')}
                 style={{ padding: 30 }}

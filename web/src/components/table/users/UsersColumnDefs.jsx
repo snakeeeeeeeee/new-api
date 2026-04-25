@@ -32,6 +32,7 @@ import { IconMore } from '@douyinfe/semi-icons';
 import {
   renderGroup,
   renderNumber,
+  renderPaymentAmount,
   renderQuota,
   renderQuotaWithAmount,
 } from '../../../helpers';
@@ -179,6 +180,11 @@ const renderQuotaUsage = (text, record, t) => {
  * Render invite information
  */
 const renderInviteInfo = (text, record, t) => {
+  const inviterText =
+    record.inviter_id === 0
+      ? t('无邀请人')
+      : `${t('邀请人')}: #${record.inviter_id}${record.inviter_username ? ` ${record.inviter_username}` : ''}`;
+
   return (
     <div>
       <Space spacing={1}>
@@ -186,15 +192,22 @@ const renderInviteInfo = (text, record, t) => {
           {t('邀请')}: {renderNumber(record.invite_user_count || 0)}
         </Tag>
         <Tag color='white' shape='circle' className='!text-xs'>
-          {t('充值')}: {renderQuotaWithAmount(record.invite_total_recharge || 0)}
+          {t('充值额')}:{' '}
+          {renderQuotaWithAmount(record.invite_total_recharge_amount || 0)}
         </Tag>
         <Tag color='white' shape='circle' className='!text-xs'>
-          {t('消费')}: {renderQuota(record.invite_total_consume || 0)}
+          {t('实付')}:{' '}
+          {renderPaymentAmount(
+            record.invite_total_recharge_money ??
+              record.invite_total_recharge ??
+              0,
+          )}
         </Tag>
         <Tag color='white' shape='circle' className='!text-xs'>
-          {record.inviter_id === 0
-            ? t('无邀请人')
-            : `${t('邀请人')}: ${record.inviter_id}`}
+          {t('消费额')}: {renderQuota(record.invite_total_consume || 0)}
+        </Tag>
+        <Tag color='white' shape='circle' className='!text-xs'>
+          {inviterText}
         </Tag>
       </Space>
     </div>

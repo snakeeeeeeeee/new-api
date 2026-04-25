@@ -446,10 +446,14 @@ func GetSelf(c *gin.Context) {
 	if stats, ok := statsByOwnerID[id]; ok {
 		responseData["invite_user_count"] = stats.InviteUserCount
 		responseData["invite_total_recharge"] = stats.InviteTotalRecharge
+		responseData["invite_total_recharge_amount"] = stats.InviteTotalRechargeAmount
+		responseData["invite_total_recharge_money"] = stats.InviteTotalRechargeMoney
 		responseData["invite_total_consume"] = stats.InviteTotalConsume
 	} else {
 		responseData["invite_user_count"] = 0
 		responseData["invite_total_recharge"] = 0
+		responseData["invite_total_recharge_amount"] = 0
+		responseData["invite_total_recharge_money"] = 0
 		responseData["invite_total_consume"] = 0
 	}
 

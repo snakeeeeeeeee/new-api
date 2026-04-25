@@ -26,46 +26,54 @@ var (
 	ErrInviteBindingSelf          = errors.New("不能绑定给自己")
 	ErrInviteCodeOwnerMismatch    = errors.New("邀请码不属于目标邀请人")
 	ErrInviteCodeUnavailable      = errors.New("邀请码不存在或已删除")
+	ErrInviteCodeManualOnly       = errors.New("手动绑定邀请码不能用于注册")
 )
 
 type InviteCode struct {
-	Id                  int            `json:"id"`
-	Code                string         `json:"code" gorm:"type:varchar(64);uniqueIndex"`
-	Prefix              string         `json:"prefix" gorm:"type:varchar(32);index"`
-	OwnerUserId         int            `json:"owner_user_id" gorm:"type:int;index"`
-	TargetGroup         string         `json:"target_group" gorm:"type:varchar(64);default:'default';index"`
-	RewardQuotaPerUse   int            `json:"reward_quota_per_use" gorm:"type:int;default:0"`
-	RewardTotalUses     int            `json:"reward_total_uses" gorm:"type:int;default:0"`
-	RewardUsedUses      int            `json:"reward_used_uses" gorm:"type:int;default:0"`
-	Status              int            `json:"status" gorm:"type:int;default:1;index"`
-	CreatedTime         int64          `json:"created_time" gorm:"bigint"`
-	UpdatedTime         int64          `json:"updated_time" gorm:"bigint"`
-	DeletedAt           gorm.DeletedAt `gorm:"index"`
-	Count               int            `json:"count,omitempty" gorm:"-:all"`
-	OwnerUsername       string         `json:"owner_username,omitempty" gorm:"-"`
-	InvitedUserCount    int64          `json:"invited_user_count,omitempty" gorm:"-"`
-	InviteTotalRecharge float64        `json:"invite_total_recharge,omitempty" gorm:"-"`
-	InviteTotalConsume  int            `json:"invite_total_consume,omitempty" gorm:"-"`
-	RemainingRewardUses int            `json:"remaining_reward_uses,omitempty" gorm:"-"`
-	IsDeleted           bool           `json:"is_deleted,omitempty" gorm:"-"`
+	Id                        int            `json:"id"`
+	Code                      string         `json:"code" gorm:"type:varchar(64);uniqueIndex"`
+	Prefix                    string         `json:"prefix" gorm:"type:varchar(32);index"`
+	OwnerUserId               int            `json:"owner_user_id" gorm:"type:int;index"`
+	TargetGroup               string         `json:"target_group" gorm:"type:varchar(64);default:'default';index"`
+	RewardQuotaPerUse         int            `json:"reward_quota_per_use" gorm:"type:int;default:0"`
+	RewardTotalUses           int            `json:"reward_total_uses" gorm:"type:int;default:0"`
+	RewardUsedUses            int            `json:"reward_used_uses" gorm:"type:int;default:0"`
+	Status                    int            `json:"status" gorm:"type:int;default:1;index"`
+	CreatedTime               int64          `json:"created_time" gorm:"bigint"`
+	UpdatedTime               int64          `json:"updated_time" gorm:"bigint"`
+	DeletedAt                 gorm.DeletedAt `gorm:"index"`
+	Count                     int            `json:"count,omitempty" gorm:"-:all"`
+	OwnerUsername             string         `json:"owner_username,omitempty" gorm:"-"`
+	InvitedUserCount          int64          `json:"invited_user_count,omitempty" gorm:"-"`
+	InviteTotalRecharge       float64        `json:"invite_total_recharge,omitempty" gorm:"-"`
+	InviteTotalRechargeAmount int64          `json:"invite_total_recharge_amount,omitempty" gorm:"-"`
+	InviteTotalRechargeMoney  float64        `json:"invite_total_recharge_money,omitempty" gorm:"-"`
+	InviteTotalConsume        int            `json:"invite_total_consume,omitempty" gorm:"-"`
+	RemainingRewardUses       int            `json:"remaining_reward_uses,omitempty" gorm:"-"`
+	IsDeleted                 bool           `json:"is_deleted,omitempty" gorm:"-"`
+	IsManual                  bool           `json:"is_manual,omitempty" gorm:"-"`
 }
 
 type InviteeSummary struct {
-	UserID              int     `json:"user_id"`
-	Username            string  `json:"username"`
-	Group               string  `json:"group"`
-	InviteCodeID        int     `json:"invite_code_id"`
-	InviteCode          string  `json:"invite_code"`
-	InviteCodeStatus    int     `json:"invite_code_status"`
-	InviteCodeDeleted   bool    `json:"invite_code_deleted"`
-	InviteTotalRecharge float64 `json:"invite_total_recharge"`
-	InviteTotalConsume  int     `json:"invite_total_consume"`
+	UserID                    int     `json:"user_id"`
+	Username                  string  `json:"username"`
+	Group                     string  `json:"group"`
+	InviteCodeID              int     `json:"invite_code_id"`
+	InviteCode                string  `json:"invite_code"`
+	InviteCodeStatus          int     `json:"invite_code_status"`
+	InviteCodeDeleted         bool    `json:"invite_code_deleted"`
+	InviteTotalRecharge       float64 `json:"invite_total_recharge"`
+	InviteTotalRechargeAmount int64   `json:"invite_total_recharge_amount"`
+	InviteTotalRechargeMoney  float64 `json:"invite_total_recharge_money"`
+	InviteTotalConsume        int     `json:"invite_total_consume"`
 }
 
 type InviteStats struct {
-	InviteUserCount     int64
-	InviteTotalRecharge float64
-	InviteTotalConsume  int
+	InviteUserCount           int64
+	InviteTotalRecharge       float64
+	InviteTotalRechargeAmount int64
+	InviteTotalRechargeMoney  float64
+	InviteTotalConsume        int
 }
 
 type InviteBindingChange struct {
@@ -86,6 +94,16 @@ func (code *InviteCode) normalizeDerivedFields() {
 	}
 	code.RemainingRewardUses = remaining
 	code.IsDeleted = code.DeletedAt.Valid
+	code.IsManual = isManualInviteCode(code)
+}
+
+func isManualInviteCode(code *InviteCode) bool {
+	if code == nil {
+		return false
+	}
+	prefix := strings.TrimSpace(strings.ToUpper(code.Prefix))
+	codeValue := strings.TrimSpace(strings.ToUpper(code.Code))
+	return prefix == ManualInviteCodePrefix || strings.HasPrefix(codeValue, ManualInviteCodePrefix+"-")
 }
 
 func (code *InviteCode) BeforeCreate(tx *gorm.DB) error {
@@ -174,6 +192,9 @@ func LockInviteCodeByCodeTx(tx *gorm.DB, code string) (*InviteCode, error) {
 			return nil, ErrInviteCodeNotFound
 		}
 		return nil, err
+	}
+	if isManualInviteCode(&inviteCode) {
+		return nil, ErrInviteCodeManualOnly
 	}
 	if inviteCode.Status != InviteCodeStatusEnabled {
 		return nil, ErrInviteCodeDisabled
@@ -377,6 +398,8 @@ func PopulateInviteCodeStats(inviteCodes []*InviteCode) error {
 		if stat, ok := statsByCodeID[code.Id]; ok {
 			code.InvitedUserCount = stat.InviteUserCount
 			code.InviteTotalRecharge = stat.InviteTotalRecharge
+			code.InviteTotalRechargeAmount = stat.InviteTotalRechargeAmount
+			code.InviteTotalRechargeMoney = stat.InviteTotalRechargeMoney
 			code.InviteTotalConsume = stat.InviteTotalConsume
 		}
 		code.normalizeDerivedFields()
@@ -402,8 +425,44 @@ func PopulateUsersInviteStats(users []*User) error {
 		if stat, ok := statsByOwnerID[user.Id]; ok {
 			user.InviteUserCount = stat.InviteUserCount
 			user.InviteTotalRecharge = stat.InviteTotalRecharge
+			user.InviteTotalRechargeAmount = stat.InviteTotalRechargeAmount
+			user.InviteTotalRechargeMoney = stat.InviteTotalRechargeMoney
 			user.InviteTotalConsume = stat.InviteTotalConsume
 		}
+	}
+	if err := loadUserInviterUsernames(users); err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadUserInviterUsernames(users []*User) error {
+	inviterIDSet := make(map[int]struct{})
+	for _, user := range users {
+		if user.InviterId > 0 {
+			inviterIDSet[user.InviterId] = struct{}{}
+		}
+	}
+	if len(inviterIDSet) == 0 {
+		return nil
+	}
+
+	inviterIDs := make([]int, 0, len(inviterIDSet))
+	for inviterID := range inviterIDSet {
+		inviterIDs = append(inviterIDs, inviterID)
+	}
+
+	var inviters []User
+	if err := DB.Select("id", "username").Where("id IN ?", inviterIDs).Find(&inviters).Error; err != nil {
+		return err
+	}
+
+	usernameMap := make(map[int]string, len(inviters))
+	for _, inviter := range inviters {
+		usernameMap[inviter.Id] = inviter.Username
+	}
+	for _, user := range users {
+		user.InviterUsername = usernameMap[user.InviterId]
 	}
 	return nil
 }
@@ -415,8 +474,9 @@ type inviteUserSummaryRow struct {
 }
 
 type inviteRechargeSummaryRow struct {
-	KeyID               int     `gorm:"column:key_id"`
-	InviteTotalRecharge float64 `gorm:"column:invite_total_recharge"`
+	KeyID                     int     `gorm:"column:key_id"`
+	InviteTotalRechargeAmount int64   `gorm:"column:invite_total_recharge_amount"`
+	InviteTotalRechargeMoney  float64 `gorm:"column:invite_total_recharge_money"`
 }
 
 func getInviteStatsByUserField(userField string, ids []int) (map[int]InviteStats, error) {
@@ -442,7 +502,7 @@ func getInviteStatsByUserField(userField string, ids []int) (map[int]InviteStats
 
 	var rechargeRows []inviteRechargeSummaryRow
 	if err := DB.Table("top_ups").
-		Select(fmt.Sprintf("users.%s as key_id, COALESCE(sum(top_ups.money), 0) as invite_total_recharge", userField)).
+		Select(fmt.Sprintf("users.%s as key_id, COALESCE(sum(top_ups.amount), 0) as invite_total_recharge_amount, COALESCE(sum(top_ups.money), 0) as invite_total_recharge_money", userField)).
 		Joins("JOIN users ON users.id = top_ups.user_id").
 		Where(fmt.Sprintf("users.%s IN ? AND users.invite_code_id > 0 AND top_ups.status = ?", userField), ids, common.TopUpStatusSuccess).
 		Group(fmt.Sprintf("users.%s", userField)).
@@ -451,7 +511,9 @@ func getInviteStatsByUserField(userField string, ids []int) (map[int]InviteStats
 	}
 	for _, row := range rechargeRows {
 		stat := stats[row.KeyID]
-		stat.InviteTotalRecharge = row.InviteTotalRecharge
+		stat.InviteTotalRecharge = row.InviteTotalRechargeMoney
+		stat.InviteTotalRechargeAmount = row.InviteTotalRechargeAmount
+		stat.InviteTotalRechargeMoney = row.InviteTotalRechargeMoney
 		stats[row.KeyID] = stat
 	}
 	return stats, nil
@@ -680,8 +742,9 @@ func UnbindUserInviteBinding(userID int) (*InviteBindingChange, error) {
 }
 
 type inviteeRechargeRow struct {
-	UserID              int     `gorm:"column:user_id"`
-	InviteTotalRecharge float64 `gorm:"column:invite_total_recharge"`
+	UserID                    int     `gorm:"column:user_id"`
+	InviteTotalRechargeAmount int64   `gorm:"column:invite_total_recharge_amount"`
+	InviteTotalRechargeMoney  float64 `gorm:"column:invite_total_recharge_money"`
 }
 
 type inviteeSummaryQueryRow struct {
@@ -748,19 +811,23 @@ func GetInviteeSummariesByOwnerUserID(ownerUserID int, startIdx int, limit int) 
 
 	var rechargeRows []inviteeRechargeRow
 	if err := DB.Table("top_ups").
-		Select("user_id, COALESCE(sum(money), 0) as invite_total_recharge").
+		Select("user_id, COALESCE(sum(amount), 0) as invite_total_recharge_amount, COALESCE(sum(money), 0) as invite_total_recharge_money").
 		Where("user_id IN ? AND status = ?", userIDs, common.TopUpStatusSuccess).
 		Group("user_id").
 		Scan(&rechargeRows).Error; err != nil {
 		return nil, 0, err
 	}
 
-	rechargeMap := make(map[int]float64, len(rechargeRows))
+	rechargeMap := make(map[int]inviteeRechargeRow, len(rechargeRows))
 	for _, row := range rechargeRows {
-		rechargeMap[row.UserID] = row.InviteTotalRecharge
+		rechargeMap[row.UserID] = row
 	}
 	for _, invitee := range invitees {
-		invitee.InviteTotalRecharge = rechargeMap[invitee.UserID]
+		if row, ok := rechargeMap[invitee.UserID]; ok {
+			invitee.InviteTotalRecharge = row.InviteTotalRechargeMoney
+			invitee.InviteTotalRechargeAmount = row.InviteTotalRechargeAmount
+			invitee.InviteTotalRechargeMoney = row.InviteTotalRechargeMoney
+		}
 	}
 	return invitees, total, nil
 }
