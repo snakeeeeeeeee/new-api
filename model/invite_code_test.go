@@ -231,3 +231,165 @@ func TestGetInviteeSummariesByOwnerUserIDIncludesInviteCodeState(t *testing.T) {
 	require.True(t, inviteeMap["invitee_deleted"].InviteCodeDeleted)
 	require.Equal(t, InviteCodeStatusEnabled, inviteeMap["invitee_deleted"].InviteCodeStatus)
 }
+
+func TestBindUserInviteBindingManualCodeUpdatesStatsAndSummariesWithoutReward(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 80, "manual_owner")
+	invitee := &User{
+		Id:        801,
+		Username:  "manual_invitee",
+		Password:  "password123",
+		Role:      common.RoleCommonUser,
+		Status:    common.UserStatusEnabled,
+		Group:     "default",
+		Quota:     12345,
+		UsedQuota: 678,
+		AffCode:   "aff-manual-invitee",
+	}
+	require.NoError(t, DB.Create(invitee).Error)
+
+	change, err := BindUserInviteBinding(801, 80, 0)
+	require.NoError(t, err)
+	require.Equal(t, 80, change.NewInviterID)
+	require.Equal(t, 80, change.NewInviteCodeOwnerID)
+	require.NotZero(t, change.NewInviteCodeID)
+	require.NotNil(t, change.InviteCode)
+	require.Equal(t, manualInviteCodeValue(80), change.InviteCode.Code)
+
+	var updated User
+	require.NoError(t, DB.First(&updated, "id = ?", 801).Error)
+	require.Equal(t, 80, updated.InviterId)
+	require.Equal(t, 80, updated.InviteCodeOwnerId)
+	require.Equal(t, change.NewInviteCodeID, updated.InviteCodeId)
+	require.Equal(t, 12345, updated.Quota)
+
+	manualCode, err := GetInviteCodeByID(change.NewInviteCodeID)
+	require.NoError(t, err)
+	require.Equal(t, ManualInviteCodePrefix, manualCode.Prefix)
+	require.Equal(t, 0, manualCode.RewardQuotaPerUse)
+	require.Equal(t, 0, manualCode.RewardTotalUses)
+	require.Equal(t, 0, manualCode.RewardUsedUses)
+	require.Equal(t, InviteCodeStatusEnabled, manualCode.Status)
+
+	stats, err := GetInviteStatsByOwnerUserIDs([]int{80})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), stats[80].InviteUserCount)
+	require.Equal(t, 678, stats[80].InviteTotalConsume)
+
+	invitees, total, err := GetInviteeSummariesByOwnerUserID(80, 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, invitees, 1)
+	require.Equal(t, "manual_invitee", invitees[0].Username)
+	require.Equal(t, manualCode.Id, invitees[0].InviteCodeID)
+}
+
+func TestRebindUserInviteBindingMovesStatsBetweenOwners(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 81, "old_owner")
+	seedInviteOwner(t, 82, "new_owner")
+	oldCode := seedInviteCode(t, "REBIND-OLD", 81, "default", 0, 0, 0, InviteCodeStatusEnabled)
+	newCode := seedInviteCode(t, "REBIND-NEW", 82, "default", 0, 0, 0, InviteCodeStatusEnabled)
+	invitee := &User{
+		Id:                811,
+		Username:          "rebind_invitee",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "default",
+		UsedQuota:         900,
+		AffCode:           "aff-rebind-invitee",
+		InviterId:         81,
+		InviteCodeOwnerId: 81,
+		InviteCodeId:      oldCode.Id,
+	}
+	require.NoError(t, DB.Create(invitee).Error)
+
+	beforeStats, err := GetInviteStatsByOwnerUserIDs([]int{81, 82})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), beforeStats[81].InviteUserCount)
+	require.NotContains(t, beforeStats, 82)
+
+	change, err := BindUserInviteBinding(811, 82, newCode.Id)
+	require.NoError(t, err)
+	require.Equal(t, 81, change.OldInviterID)
+	require.Equal(t, oldCode.Id, change.OldInviteCodeID)
+	require.Equal(t, 82, change.NewInviterID)
+	require.Equal(t, newCode.Id, change.NewInviteCodeID)
+
+	afterStats, err := GetInviteStatsByOwnerUserIDs([]int{81, 82})
+	require.NoError(t, err)
+	require.NotContains(t, afterStats, 81)
+	require.Equal(t, int64(1), afterStats[82].InviteUserCount)
+	require.Equal(t, 900, afterStats[82].InviteTotalConsume)
+}
+
+func TestUnbindUserInviteBindingRemovesStats(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 83, "unbind_owner")
+	inviteCode := seedInviteCode(t, "UNBIND-CODE", 83, "default", 0, 0, 0, InviteCodeStatusEnabled)
+	invitee := &User{
+		Id:                831,
+		Username:          "unbind_invitee",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "default",
+		UsedQuota:         700,
+		AffCode:           "aff-unbind-invitee",
+		InviterId:         83,
+		InviteCodeOwnerId: 83,
+		InviteCodeId:      inviteCode.Id,
+	}
+	require.NoError(t, DB.Create(invitee).Error)
+
+	change, err := UnbindUserInviteBinding(831)
+	require.NoError(t, err)
+	require.Equal(t, 83, change.OldInviterID)
+	require.Equal(t, inviteCode.Id, change.OldInviteCodeID)
+	require.Zero(t, change.NewInviterID)
+	require.Zero(t, change.NewInviteCodeID)
+
+	var updated User
+	require.NoError(t, DB.First(&updated, "id = ?", 831).Error)
+	require.Zero(t, updated.InviterId)
+	require.Zero(t, updated.InviteCodeOwnerId)
+	require.Zero(t, updated.InviteCodeId)
+
+	stats, err := GetInviteStatsByOwnerUserIDs([]int{83})
+	require.NoError(t, err)
+	require.NotContains(t, stats, 83)
+
+	invitees, total, err := GetInviteeSummariesByOwnerUserID(83, 0, 10)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), total)
+	require.Empty(t, invitees)
+}
+
+func TestBindUserInviteBindingRejectsSelf(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 84, "self_owner")
+
+	_, err := BindUserInviteBinding(84, 84, 0)
+	require.ErrorIs(t, err, ErrInviteBindingSelf)
+}
+
+func TestBindUserInviteBindingRejectsForeignInviteCode(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 85, "expected_owner")
+	seedInviteOwner(t, 86, "foreign_owner")
+	foreignCode := seedInviteCode(t, "FOREIGN-CODE", 86, "default", 0, 0, 0, InviteCodeStatusEnabled)
+	invitee := &User{
+		Id:       851,
+		Username: "foreign_code_invitee",
+		Password: "password123",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		AffCode:  "aff-foreign-code-invitee",
+	}
+	require.NoError(t, DB.Create(invitee).Error)
+
+	_, err := BindUserInviteBinding(851, 85, foreignCode.Id)
+	require.ErrorIs(t, err, ErrInviteCodeOwnerMismatch)
+}

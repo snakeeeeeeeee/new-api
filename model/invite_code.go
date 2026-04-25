@@ -9,16 +9,23 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
 	InviteCodeStatusEnabled  = 1
 	InviteCodeStatusDisabled = 2
+	ManualInviteCodePrefix   = "MANUAL"
 )
 
 var (
-	ErrInviteCodeNotFound = errors.New("invite code not found")
-	ErrInviteCodeDisabled = errors.New("invite code disabled")
+	ErrInviteCodeNotFound         = errors.New("invite code not found")
+	ErrInviteCodeDisabled         = errors.New("invite code disabled")
+	ErrInviteBindingUserNotFound  = errors.New("被绑定用户不存在")
+	ErrInviteBindingOwnerNotFound = errors.New("目标邀请人不存在")
+	ErrInviteBindingSelf          = errors.New("不能绑定给自己")
+	ErrInviteCodeOwnerMismatch    = errors.New("邀请码不属于目标邀请人")
+	ErrInviteCodeUnavailable      = errors.New("邀请码不存在或已删除")
 )
 
 type InviteCode struct {
@@ -59,6 +66,17 @@ type InviteStats struct {
 	InviteUserCount     int64
 	InviteTotalRecharge float64
 	InviteTotalConsume  int
+}
+
+type InviteBindingChange struct {
+	UserID               int         `json:"user_id"`
+	OldInviterID         int         `json:"old_inviter_id"`
+	OldInviteCodeOwnerID int         `json:"old_invite_code_owner_id"`
+	OldInviteCodeID      int         `json:"old_invite_code_id"`
+	NewInviterID         int         `json:"new_inviter_id"`
+	NewInviteCodeOwnerID int         `json:"new_invite_code_owner_id"`
+	NewInviteCodeID      int         `json:"new_invite_code_id"`
+	InviteCode           *InviteCode `json:"invite_code,omitempty"`
 }
 
 func (code *InviteCode) normalizeDerivedFields() {
@@ -470,6 +488,195 @@ func GetInviteCodesByOwnerUserID(ownerUserID int, startIdx int, num int) ([]*Inv
 		return nil, 0, err
 	}
 	return inviteCodes, total, nil
+}
+
+func GetBindableInviteCodesByOwnerUserID(ownerUserID int, startIdx int, num int) ([]*InviteCode, int64, error) {
+	if ownerUserID <= 0 {
+		return []*InviteCode{}, 0, nil
+	}
+
+	var inviteCodes []*InviteCode
+	var total int64
+	baseQuery := DB.Model(&InviteCode{}).Where("owner_user_id = ?", ownerUserID)
+	if err := baseQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	query := DB.Where("owner_user_id = ?", ownerUserID).Order("id desc")
+	if num > 0 {
+		query = query.Limit(num).Offset(startIdx)
+	}
+	if err := query.Find(&inviteCodes).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := PopulateInviteCodeStats(inviteCodes); err != nil {
+		return nil, 0, err
+	}
+	return inviteCodes, total, nil
+}
+
+func manualInviteCodeValue(ownerUserID int) string {
+	return fmt.Sprintf("%s-%d", ManualInviteCodePrefix, ownerUserID)
+}
+
+func manualInviteCodeTargetGroup(owner *User) string {
+	targetGroup := strings.TrimSpace(owner.Group)
+	if targetGroup == "" {
+		return "default"
+	}
+	return targetGroup
+}
+
+func getOrCreateManualInviteCodeTx(tx *gorm.DB, owner *User) (*InviteCode, error) {
+	codeValue := manualInviteCodeValue(owner.Id)
+	targetGroup := manualInviteCodeTargetGroup(owner)
+	updates := map[string]interface{}{
+		"prefix":               ManualInviteCodePrefix,
+		"owner_user_id":        owner.Id,
+		"target_group":         targetGroup,
+		"reward_quota_per_use": 0,
+		"reward_total_uses":    0,
+		"reward_used_uses":     0,
+		"status":               InviteCodeStatusEnabled,
+		"deleted_at":           nil,
+		"updated_time":         common.GetTimestamp(),
+	}
+
+	var inviteCode InviteCode
+	err := tx.Unscoped().Where("code = ?", codeValue).First(&inviteCode).Error
+	if err == nil {
+		if err := tx.Unscoped().Model(&InviteCode{}).Where("id = ?", inviteCode.Id).Updates(updates).Error; err != nil {
+			return nil, err
+		}
+		if err := tx.Where("id = ?", inviteCode.Id).First(&inviteCode).Error; err != nil {
+			return nil, err
+		}
+		inviteCode.normalizeDerivedFields()
+		return &inviteCode, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	inviteCode = InviteCode{
+		Code:              codeValue,
+		Prefix:            ManualInviteCodePrefix,
+		OwnerUserId:       owner.Id,
+		TargetGroup:       targetGroup,
+		RewardQuotaPerUse: 0,
+		RewardTotalUses:   0,
+		RewardUsedUses:    0,
+		Status:            InviteCodeStatusEnabled,
+	}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&inviteCode).Error; err != nil {
+		return nil, err
+	}
+	if err := tx.Where("code = ?", codeValue).First(&inviteCode).Error; err != nil {
+		return nil, err
+	}
+	inviteCode.normalizeDerivedFields()
+	return &inviteCode, nil
+}
+
+func BindUserInviteBinding(userID int, ownerUserID int, inviteCodeID int) (*InviteBindingChange, error) {
+	var change *InviteBindingChange
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := tx.First(&user, "id = ?", userID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrInviteBindingUserNotFound
+			}
+			return err
+		}
+
+		var owner User
+		if err := tx.First(&owner, "id = ?", ownerUserID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrInviteBindingOwnerNotFound
+			}
+			return err
+		}
+
+		if user.Id == owner.Id {
+			return ErrInviteBindingSelf
+		}
+
+		var inviteCode *InviteCode
+		if inviteCodeID > 0 {
+			var selectedCode InviteCode
+			if err := tx.First(&selectedCode, "id = ?", inviteCodeID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrInviteCodeUnavailable
+				}
+				return err
+			}
+			if selectedCode.OwnerUserId != owner.Id {
+				return ErrInviteCodeOwnerMismatch
+			}
+			selectedCode.normalizeDerivedFields()
+			inviteCode = &selectedCode
+		} else {
+			var err error
+			inviteCode, err = getOrCreateManualInviteCodeTx(tx, &owner)
+			if err != nil {
+				return err
+			}
+		}
+
+		change = &InviteBindingChange{
+			UserID:               user.Id,
+			OldInviterID:         user.InviterId,
+			OldInviteCodeOwnerID: user.InviteCodeOwnerId,
+			OldInviteCodeID:      user.InviteCodeId,
+			NewInviterID:         owner.Id,
+			NewInviteCodeOwnerID: owner.Id,
+			NewInviteCodeID:      inviteCode.Id,
+			InviteCode:           inviteCode,
+		}
+
+		return tx.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
+			"inviter_id":           owner.Id,
+			"invite_code_owner_id": owner.Id,
+			"invite_code_id":       inviteCode.Id,
+		}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return change, invalidateUserCache(userID)
+}
+
+func UnbindUserInviteBinding(userID int) (*InviteBindingChange, error) {
+	var change *InviteBindingChange
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := tx.First(&user, "id = ?", userID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrInviteBindingUserNotFound
+			}
+			return err
+		}
+
+		change = &InviteBindingChange{
+			UserID:               user.Id,
+			OldInviterID:         user.InviterId,
+			OldInviteCodeOwnerID: user.InviteCodeOwnerId,
+			OldInviteCodeID:      user.InviteCodeId,
+			NewInviterID:         0,
+			NewInviteCodeOwnerID: 0,
+			NewInviteCodeID:      0,
+		}
+
+		return tx.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
+			"inviter_id":           0,
+			"invite_code_owner_id": 0,
+			"invite_code_id":       0,
+		}).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return change, invalidateUserCache(userID)
 }
 
 type inviteeRechargeRow struct {

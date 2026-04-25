@@ -340,6 +340,11 @@ type TransferAffQuotaRequest struct {
 	Quota int `json:"quota" binding:"required"`
 }
 
+type InviteBindingRequest struct {
+	OwnerUserId  int `json:"owner_user_id"`
+	InviteCodeId int `json:"invite_code_id"`
+}
+
 func TransferAffQuota(c *gin.Context) {
 	id := c.GetInt("id")
 	user, err := model.GetUserById(id, true)
@@ -695,6 +700,103 @@ func AdminClearUserBinding(c *gin.Context) {
 		"success": true,
 		"message": "success",
 	})
+}
+
+func canAdminManageUser(c *gin.Context, user *model.User) bool {
+	myRole := c.GetInt("role")
+	return myRole > user.Role || myRole == common.RoleRootUser
+}
+
+func formatInviteBindingLog(adminID int, change *model.InviteBindingChange) string {
+	return fmt.Sprintf(
+		"管理员(ID:%d)手动调整邀请归属：旧邀请人=%d，旧统计归属=%d，旧邀请码=%d，新邀请人=%d，新统计归属=%d，新邀请码=%d",
+		adminID,
+		change.OldInviterID,
+		change.OldInviteCodeOwnerID,
+		change.OldInviteCodeID,
+		change.NewInviterID,
+		change.NewInviteCodeOwnerID,
+		change.NewInviteCodeID,
+	)
+}
+
+func UpdateUserInviteBinding(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	var req InviteBindingRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if req.OwnerUserId <= 0 {
+		common.ApiError(c, errors.New("目标邀请人不能为空"))
+		return
+	}
+
+	user, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !canAdminManageUser(c, user) {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
+		return
+	}
+
+	change, err := model.BindUserInviteBinding(id, req.OwnerUserId, req.InviteCodeId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(id, model.LogTypeManage, formatInviteBindingLog(c.GetInt("id"), change))
+	common.ApiSuccess(c, change)
+}
+
+func DeleteUserInviteBinding(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	user, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !canAdminManageUser(c, user) {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
+		return
+	}
+
+	change, err := model.UnbindUserInviteBinding(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(id, model.LogTypeManage, formatInviteBindingLog(c.GetInt("id"), change))
+	common.ApiSuccess(c, change)
+}
+
+func GetUserInviteCodesByAdmin(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	pageInfo := common.GetPageQuery(c)
+	inviteCodes, total, err := model.GetBindableInviteCodesByOwnerUserID(id, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(inviteCodes)
+	common.ApiSuccess(c, pageInfo)
 }
 
 func UpdateSelf(c *gin.Context) {
