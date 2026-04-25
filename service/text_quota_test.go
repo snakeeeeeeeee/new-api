@@ -106,6 +106,36 @@ func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.
 	require.Equal(t, 118, summary.Quota)
 }
 
+func TestCalculateTextQuotaSummaryDoesNotMultiplyImageRequestCountForTokenBilledImage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		RelayFormat:     types.RelayFormatOpenAIImage,
+		OriginModelName: "gpt-image-2",
+		PriceData: types.PriceData{
+			ModelRatio:      2.5,
+			CompletionRatio: 6,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1.3,
+			},
+		},
+		StartTime: time.Now(),
+	}
+
+	usage := &dto.Usage{
+		PromptTokens:     420,
+		CompletionTokens: 31706,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	// (420 input tokens * $5 / 1M + 31706 output tokens * $30 / 1M) * group 1.3
+	// = $1.239264, i.e. 619632 quota when QuotaPerUnit is 500000.
+	require.Equal(t, 619632, summary.Quota)
+}
+
 func TestCalculateTextQuotaSummaryUsesAnthropicUsageSemanticFromUpstreamUsage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
