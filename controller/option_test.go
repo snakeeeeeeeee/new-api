@@ -31,6 +31,7 @@ func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.True(t, listResp.Success, listResp.Message)
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.smart_strategy_enabled"`)
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.consecutive_failure_threshold"`)
+	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.cluster_degraded_weight_percent"`)
 	require.Contains(t, string(listResp.Data), `"key":"LogConsumeExcludedUserIDs"`)
 
 	updatePayload := []byte(`{"key":"aggregate_group.consecutive_failure_threshold","value":"4"}`)
@@ -44,6 +45,31 @@ func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.NoError(t, common.Unmarshal(updateRecorder.Body.Bytes(), &updateResp))
 	require.True(t, updateResp.Success, updateResp.Message)
 	require.Equal(t, 4, setting.AggregateGroupFailureThreshold)
+
+	percentPayload := []byte(`{"key":"aggregate_group.cluster_degraded_weight_percent","value":"35"}`)
+	percentRecorder := httptest.NewRecorder()
+	percentCtx, _ := gin.CreateTestContext(percentRecorder)
+	percentCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(percentPayload))
+	percentCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(percentCtx)
+
+	var percentResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(percentRecorder.Body.Bytes(), &percentResp))
+	require.True(t, percentResp.Success, percentResp.Message)
+	require.Equal(t, 35, setting.AggregateGroupClusterDegradedWeightPct)
+
+	invalidPercentPayload := []byte(`{"key":"aggregate_group.cluster_degraded_weight_percent","value":"101"}`)
+	invalidPercentRecorder := httptest.NewRecorder()
+	invalidPercentCtx, _ := gin.CreateTestContext(invalidPercentRecorder)
+	invalidPercentCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(invalidPercentPayload))
+	invalidPercentCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(invalidPercentCtx)
+
+	var invalidPercentResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(invalidPercentRecorder.Body.Bytes(), &invalidPercentResp))
+	require.False(t, invalidPercentResp.Success)
+	require.Contains(t, invalidPercentResp.Message, "1 到 100")
+	require.Equal(t, 35, setting.AggregateGroupClusterDegradedWeightPct)
 
 	switchPayload := []byte(`{"key":"aggregate_group.smart_strategy_enabled","value":true}`)
 	switchRecorder := httptest.NewRecorder()

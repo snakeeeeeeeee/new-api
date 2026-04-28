@@ -13,6 +13,7 @@ const aggregateGroupRuntimeStateTTL = 24 * time.Hour
 type AggregateGroupRuntimeState struct {
 	ActiveIndex   int    `json:"active_index"`
 	ActiveGroup   string `json:"active_group"`
+	RoutingMode   string `json:"routing_mode,omitempty"`
 	LastFailAt    int64  `json:"last_fail_at"`
 	LastSuccessAt int64  `json:"last_success_at"`
 	LastSwitchAt  int64  `json:"last_switch_at"`

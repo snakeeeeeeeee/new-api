@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -31,8 +32,10 @@ func prepareAggregateGroupServiceTest(t *testing.T) {
 	originalSmartStrategyEnabled := setting.AggregateGroupSmartStrategyEnabled
 	originalFailureThreshold := setting.AggregateGroupFailureThreshold
 	originalDegradeDurationSeconds := setting.AggregateGroupDegradeDurationSeconds
+	originalClusterDegradedWeightPercent := setting.AggregateGroupClusterDegradedWeightPct
 	originalSlowRequestThreshold := setting.AggregateGroupSlowRequestThreshold
 	originalConsecutiveSlowLimit := setting.AggregateGroupConsecutiveSlowLimit
+	originalAffinitySetting := *operation_setting.GetChannelAffinitySetting()
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组","svip":"SVIP分组"}`))
 	t.Cleanup(func() {
 		model.DB.Exec("DELETE FROM aggregate_group_targets")
@@ -42,13 +45,20 @@ func prepareAggregateGroupServiceTest(t *testing.T) {
 		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalGroups))
 		aggregateGroupRuntimeStateMemory = sync.Map{}
 		aggregateGroupRouteStrategyStateMemory = sync.Map{}
+		aggregateRouteRPMMemoryMu.Lock()
+		aggregateRouteRPMMemoryData = map[string]aggregateRouteRPMMemoryEntry{}
+		aggregateRouteRPMMemoryMu.Unlock()
+		aggregateRouteRPMNow = time.Now
+		ClearAggregateRouteAffinityCacheAll()
 		common.MemoryCacheEnabled = false
 		common.RetryTimes = originalRetryTimes
 		setting.AggregateGroupSmartStrategyEnabled = originalSmartStrategyEnabled
 		setting.AggregateGroupFailureThreshold = originalFailureThreshold
 		setting.AggregateGroupDegradeDurationSeconds = originalDegradeDurationSeconds
+		setting.AggregateGroupClusterDegradedWeightPct = originalClusterDegradedWeightPercent
 		setting.AggregateGroupSlowRequestThreshold = originalSlowRequestThreshold
 		setting.AggregateGroupConsecutiveSlowLimit = originalConsecutiveSlowLimit
+		*operation_setting.GetChannelAffinitySetting() = originalAffinitySetting
 	})
 }
 
@@ -63,18 +73,43 @@ func seedAggregateGroup(t *testing.T, name string, ratio float64, recoveryInterv
 		RecoveryIntervalSeconds: recoveryInterval,
 	}
 	require.NoError(t, group.SetVisibleUserGroups(visibleUserGroups))
-	require.NoError(t, group.InsertWithTargets(NormalizeAggregateTargets(targets)))
+	normalizedTargets := NormalizeAggregateTargets(targets)
+	require.NoError(t, group.InsertWithTargets(normalizedTargets))
+	group.Targets = normalizedTargets
+	return group
+}
+
+func seedAggregateGroupWithWeightedTargets(t *testing.T, name string, routingMode string, smartRouting bool, targets []model.AggregateGroupTarget) *model.AggregateGroup {
+	t.Helper()
+	group := &model.AggregateGroup{
+		Name:                    name,
+		DisplayName:             name + "-display",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1,
+		RoutingMode:             routingMode,
+		SmartRoutingEnabled:     smartRouting,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 10,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
+	normalizedTargets := NormalizeAggregateTargetsWithWeights(targets)
+	require.NoError(t, group.InsertWithTargets(normalizedTargets))
+	group.Targets = normalizedTargets
 	return group
 }
 
 func seedAggregateAbilityChannel(t *testing.T, id int, group string, modelName string, priority int64) {
+	seedAggregateAbilityChannelWithStatus(t, id, group, modelName, priority, common.ChannelStatusEnabled)
+}
+
+func seedAggregateAbilityChannelWithStatus(t *testing.T, id int, group string, modelName string, priority int64, status int) {
 	t.Helper()
 	weight := uint(10)
 	channel := &model.Channel{
 		Id:          id,
 		Name:        group + "-channel",
 		Key:         "sk-test",
-		Status:      common.ChannelStatusEnabled,
+		Status:      status,
 		Group:       group,
 		Models:      modelName,
 		Priority:    &priority,
@@ -173,6 +208,65 @@ func TestCacheGetRandomSatisfiedChannelUsesAggregateFallbackAndRecovery(t *testi
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	require.Equal(t, "default", selectedGroup)
+}
+
+func TestFailoverIgnoresClusterRuntimeStateAfterRoutingModeSwitch(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+
+	require.NoError(t, SetAggregateGroupRuntimeState("enterprise-stable", "gpt-4.1", &AggregateGroupRuntimeState{
+		ActiveIndex:   1,
+		ActiveGroup:   "vip",
+		RoutingMode:   model.AggregateGroupRoutingModeCluster,
+		LastSuccessAt: common.GetTimestamp(),
+		LastSwitchAt:  common.GetTimestamp(),
+		ActiveSinceAt: common.GetTimestamp(),
+	}))
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "enterprise-stable",
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, 0, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateStartIndex))
+}
+
+func TestFailoverIgnoresLegacyRuntimeStateWithoutFailureTime(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+
+	require.NoError(t, SetAggregateGroupRuntimeState("enterprise-stable", "gpt-4.1", &AggregateGroupRuntimeState{
+		ActiveIndex:   1,
+		ActiveGroup:   "vip",
+		LastSuccessAt: common.GetTimestamp(),
+		LastSwitchAt:  common.GetTimestamp(),
+		ActiveSinceAt: common.GetTimestamp(),
+	}))
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "enterprise-stable",
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, 0, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateStartIndex))
 }
 
 func TestPrepareAggregateGroupRetrySwitchesToNextRealGroup(t *testing.T) {
@@ -648,4 +742,637 @@ func TestAggregateSmartStrategyStillSkipsUnsupportedModelByExistingAbilityLookup
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	require.Equal(t, "vip", selectedGroup)
+}
+
+func TestAggregateGroupDefaultRoutingModeKeepsFailoverSelection(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	seedAggregateGroup(t, "enterprise-stable", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "enterprise-stable",
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, model.AggregateGroupRoutingModeFailover, common.GetContextKeyString(ctx, constant.ContextKeyAggregateRoutingMode))
+}
+
+func TestAggregateClusterSelectsWeightedSupportedRouteAndSkipsUnsupportedModel(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	seedAggregateGroupWithWeightedTargets(t, "cluster-route", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+		{RealGroup: "svip", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1003, "svip", "claude-haiku-4-5", 10)
+
+	for i := 0; i < 10; i++ {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+			Ctx:        ctx,
+			TokenGroup: "cluster-route",
+			ModelName:  "gpt-4.1",
+			Retry:      common.GetPointer(0),
+		})
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		require.Equal(t, "vip", selectedGroup)
+		require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyRouteGroupIndex))
+	}
+}
+
+func TestAggregateClusterManuallyDisabledRouteIsHardUnavailable(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-hard-unavailable", model.AggregateGroupRoutingModeCluster, true, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	seedAggregateAbilityChannelWithStatus(t, 1001, "default", "gpt-4.1", 10, common.ChannelStatusManuallyDisabled)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+
+	_, candidates, err := buildAggregateClusterRouteCandidates(ctx, group, "gpt-4.1", true, false)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.Equal(t, "vip", candidates[0].Target.RealGroup)
+}
+
+func TestAggregateClusterSmartStrategyReducesDegradedRouteWeightInsteadOfSkipping(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	setting.AggregateGroupSmartStrategyEnabled = true
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-reduced", model.AggregateGroupRoutingModeCluster, true, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		DegradedUntil: common.GetTimestamp() + 600,
+	}))
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+
+	_, candidates, err := buildAggregateClusterRouteCandidates(ctx, group, "gpt-4.1", true, false)
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+	require.Equal(t, "default", candidates[0].Target.RealGroup)
+	require.True(t, candidates[0].IsDegraded)
+	require.Equal(t, 100, candidates[0].Weight)
+	require.Equal(t, 20, candidates[0].EffectiveWeight)
+	require.Equal(t, "vip", candidates[1].Target.RealGroup)
+	require.False(t, candidates[1].IsDegraded)
+	require.Equal(t, 0, candidates[1].EffectiveWeight)
+}
+
+func TestAggregateClusterSmartStrategyUsesConfiguredDegradedWeightPercent(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	setting.AggregateGroupSmartStrategyEnabled = true
+	setting.AggregateGroupClusterDegradedWeightPct = 35
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-configured-reduced", model.AggregateGroupRoutingModeCluster, true, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(101)},
+	})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		DegradedUntil: common.GetTimestamp() + 600,
+	}))
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	_, candidates, err := buildAggregateClusterRouteCandidates(ctx, group, "gpt-4.1", true, false)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.True(t, candidates[0].IsDegraded)
+	require.Equal(t, 101, candidates[0].Weight)
+	require.Equal(t, 36, candidates[0].EffectiveWeight)
+}
+
+func TestAggregateClusterZeroWeightDegradedRouteKeepsZeroEffectiveWeight(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	setting.AggregateGroupSmartStrategyEnabled = true
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-zero-reduced", model.AggregateGroupRoutingModeCluster, true, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		DegradedUntil: common.GetTimestamp() + 600,
+	}))
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	_, candidates, err := buildAggregateClusterRouteCandidates(ctx, group, "gpt-4.1", true, false)
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+	require.Equal(t, "default", candidates[0].Target.RealGroup)
+	require.True(t, candidates[0].IsDegraded)
+	require.Equal(t, 0, candidates[0].Weight)
+	require.Equal(t, 0, candidates[0].EffectiveWeight)
+	require.Equal(t, "vip", candidates[1].Target.RealGroup)
+	require.Equal(t, 100, candidates[1].EffectiveWeight)
+}
+
+func TestAggregateClusterDegradedRouteEffectiveWeightRestoresAfterWindow(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	setting.AggregateGroupSmartStrategyEnabled = true
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-recovered-weight", model.AggregateGroupRoutingModeCluster, true, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		ConsecutiveFailures: 2,
+		DegradedUntil:       common.GetTimestamp() - 1,
+		LastTriggerReason:   AggregateSmartTriggerReasonConsecutiveFailures,
+		LastTriggerAt:       common.GetTimestamp() - 10,
+	}))
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	_, candidates, err := buildAggregateClusterRouteCandidates(ctx, group, "gpt-4.1", true, false)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	require.False(t, candidates[0].IsDegraded)
+	require.Equal(t, 100, candidates[0].Weight)
+	require.Equal(t, 100, candidates[0].EffectiveWeight)
+}
+
+func TestAggregateClusterRouteAffinityStableReducesDegradedAndUpdatesOnSuccess(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	setting.AggregateGroupSmartStrategyEnabled = true
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-affinity", model.AggregateGroupRoutingModeCluster, true, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
+
+	buildCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+		return ctx
+	}
+
+	firstCtx := buildCtx()
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})))
+
+	secondCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+
+	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		DegradedUntil: common.GetTimestamp() + 600,
+	}))
+
+	thirdCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        thirdCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+	require.Empty(t, common.GetContextKeyString(thirdCtx, constant.ContextKeyAggregateRouteAffinityHit))
+	RecordAggregateRouteSuccess(thirdCtx, "gpt-4.1")
+
+	loadedGroup, err = model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})))
+
+	require.NoError(t, ResetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default"))
+	fourthCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        fourthCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+}
+
+func TestAggregateClusterRouteAffinityRecoveryIntervalAllowsWeightedReselect(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-affinity-ttl", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	loadedGroup.RecoveryIntervalSeconds = 1
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})))
+
+	seedAggregateAbilityChannel(t, 1101, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1102, "vip", "gpt-4.1", 10)
+
+	buildCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+		return ctx
+	}
+
+	firstCtx := buildCtx()
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err = model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	loadedGroup.RecoveryIntervalSeconds = 1
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})))
+
+	secondCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+
+	time.Sleep(1100 * time.Millisecond)
+
+	thirdCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        thirdCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+}
+
+func TestAggregateClusterRouteAffinitySuccessDoesNotExtendRecoveryInterval(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-affinity-no-slide", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	loadedGroup.RecoveryIntervalSeconds = 1
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})))
+
+	seedAggregateAbilityChannel(t, 1301, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1302, "vip", "gpt-4.1", 10)
+
+	buildCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+		return ctx
+	}
+
+	firstCtx := buildCtx()
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	time.Sleep(650 * time.Millisecond)
+
+	loadedGroup, err = model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	loadedGroup.RecoveryIntervalSeconds = 1
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})))
+
+	secondCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(secondCtx, "gpt-4.1")
+
+	time.Sleep(500 * time.Millisecond)
+
+	thirdCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        thirdCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+}
+
+func TestAggregateClusterRouteAffinityHitDoesNotRewriteAfterExpiry(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-affinity-inflight-expiry", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	loadedGroup.RecoveryIntervalSeconds = 1
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})))
+
+	seedAggregateAbilityChannel(t, 1401, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1402, "vip", "gpt-4.1", 10)
+
+	buildCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+		return ctx
+	}
+
+	firstCtx := buildCtx()
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err = model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	loadedGroup.RecoveryIntervalSeconds = 1
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})))
+
+	secondCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, "default", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
+
+	time.Sleep(1100 * time.Millisecond)
+	RecordAggregateRouteSuccess(secondCtx, "gpt-4.1")
+
+	thirdCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        thirdCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+}
+
+func TestAggregateClusterRouteAffinityIsScopedByModel(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-affinity-model", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	seedAggregateAbilityChannel(t, 1201, "default", "gpt-4.1,gpt-5", 10)
+	seedAggregateAbilityChannel(t, 1202, "vip", "gpt-4.1,gpt-5", 10)
+
+	buildCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+		return ctx
+	}
+
+	firstCtx := buildCtx()
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})))
+
+	secondCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-5",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+}
+
+func TestAggregateClusterRetryExhaustionSwitchesToAnotherRoute(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 1
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-retry", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1002, "default", "gpt-4.1", 0)
+	seedAggregateAbilityChannel(t, 1003, "vip", "gpt-4.1", 10)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	retry := 0
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1001, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+
+	transition := PrepareAggregateGroupRetry(ctx, retry, "gpt-4.1", common.RetryTimes)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.True(t, transition.WithinCurrentGroup)
+	require.Equal(t, "default", transition.NextGroup)
+
+	retry = 1
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1002, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+
+	transition = PrepareAggregateGroupRetry(ctx, retry, "gpt-4.1", common.RetryTimes)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.False(t, transition.WithinCurrentGroup)
+	require.Equal(t, "vip", transition.NextGroup)
+	require.Equal(t, 1, transition.NextIndex)
+}
+
+func TestAggregateRouteRPMCountsRecentWindowOnly(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.RedisEnabled = false
+
+	base := time.Unix(2000, 0)
+	aggregateRouteRPMNow = func() time.Time { return base.Add(-61 * time.Second) }
+	recordAggregateRouteRPM("cluster-route", "gpt-4.1", "default", aggregateRouteRPMMetricAttempt)
+	recordAggregateRouteRPM("cluster-route", "gpt-4.1", "default", aggregateRouteRPMMetricFailure)
+
+	aggregateRouteRPMNow = func() time.Time { return base }
+	recordAggregateRouteRPM("cluster-route", "gpt-4.1", "default", aggregateRouteRPMMetricAttempt)
+	recordAggregateRouteRPM("cluster-route", "gpt-4.1", "default", aggregateRouteRPMMetricSuccess)
+
+	stats := GetAggregateRouteRPMStats("cluster-route", "gpt-4.1", "default")
+	require.Equal(t, 1, stats.RPM)
+	require.Equal(t, 1, stats.SuccessRPM)
+	require.Equal(t, 0, stats.FailureRPM)
+
+	aggregateRouteRPMNow = func() time.Time { return base.Add(59 * time.Second) }
+	stats = GetAggregateRouteRPMStats("cluster-route", "gpt-4.1", "default")
+	require.Equal(t, 1, stats.RPM)
+	require.Equal(t, 1, stats.SuccessRPM)
+
+	aggregateRouteRPMNow = func() time.Time { return base.Add(61 * time.Second) }
+	stats = GetAggregateRouteRPMStats("cluster-route", "gpt-4.1", "default")
+	require.Equal(t, 0, stats.RPM)
+	require.Equal(t, 0, stats.SuccessRPM)
+	require.Equal(t, 0, stats.FailureRPM)
 }

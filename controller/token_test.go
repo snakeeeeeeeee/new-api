@@ -281,7 +281,7 @@ func TestAddTokenAllowsVisibleAggregateGroup(t *testing.T) {
 		t.Fatalf("failed to set visible groups: %v", err)
 	}
 	if err := aggregateGroup.InsertWithTargets([]model.AggregateGroupTarget{
-		{RealGroup: "default", OrderIndex: 0},
+		{RealGroup: "default", OrderIndex: 0, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
 	}); err != nil {
 		t.Fatalf("failed to create aggregate group: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestAddTokenAllowsRealGroupWhenAggregateVisible(t *testing.T) {
 		t.Fatalf("failed to set visible groups: %v", err)
 	}
 	if err := aggregateGroup.InsertWithTargets([]model.AggregateGroupTarget{
-		{RealGroup: "default", OrderIndex: 0},
+		{RealGroup: "default", OrderIndex: 0, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
 	}); err != nil {
 		t.Fatalf("failed to create aggregate group: %v", err)
 	}

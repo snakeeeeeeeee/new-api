@@ -14,6 +14,7 @@ import (
 
 type aggregateGroupTargetRequest struct {
 	RealGroup string `json:"real_group"`
+	Weight    *int   `json:"weight"`
 }
 
 type aggregateGroupUpsertRequest struct {
@@ -23,6 +24,7 @@ type aggregateGroupUpsertRequest struct {
 	Description             string                        `json:"description"`
 	Status                  int                           `json:"status"`
 	GroupRatio              float64                       `json:"group_ratio"`
+	RoutingMode             string                        `json:"routing_mode"`
 	SmartRoutingEnabled     bool                          `json:"smart_routing_enabled"`
 	RecoveryEnabled         bool                          `json:"recovery_enabled"`
 	RecoveryIntervalSeconds int                           `json:"recovery_interval_seconds"`
@@ -38,6 +40,7 @@ type aggregateGroupResponse struct {
 	Description             string                       `json:"description"`
 	Status                  int                          `json:"status"`
 	GroupRatio              float64                      `json:"group_ratio"`
+	RoutingMode             string                       `json:"routing_mode"`
 	SmartRoutingEnabled     bool                         `json:"smart_routing_enabled"`
 	RecoveryEnabled         bool                         `json:"recovery_enabled"`
 	RecoveryIntervalSeconds int                          `json:"recovery_interval_seconds"`
@@ -77,6 +80,7 @@ func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupRes
 		Description:             group.Description,
 		Status:                  group.Status,
 		GroupRatio:              group.GroupRatio,
+		RoutingMode:             group.GetRoutingMode(),
 		SmartRoutingEnabled:     group.SmartRoutingEnabled,
 		RecoveryEnabled:         group.RecoveryEnabled,
 		RecoveryIntervalSeconds: group.RecoveryIntervalSeconds,
@@ -98,6 +102,25 @@ func buildAggregateTargetNames(targets []aggregateGroupTargetRequest) []string {
 		realGroups = append(realGroups, realGroup)
 	}
 	return realGroups
+}
+
+func buildAggregateTargets(targets []aggregateGroupTargetRequest) []model.AggregateGroupTarget {
+	modelTargets := make([]model.AggregateGroupTarget, 0, len(targets))
+	for _, target := range targets {
+		realGroup := strings.TrimSpace(target.RealGroup)
+		if realGroup == "" {
+			continue
+		}
+		weight := model.AggregateGroupTargetDefaultWeight
+		if target.Weight != nil {
+			weight = *target.Weight
+		}
+		modelTargets = append(modelTargets, model.AggregateGroupTarget{
+			RealGroup: realGroup,
+			Weight:    common.GetPointer(weight),
+		})
+	}
+	return modelTargets
 }
 
 func GetAggregateGroups(c *gin.Context) {
@@ -188,6 +211,7 @@ func CreateAggregateGroup(c *gin.Context) {
 		Description:             req.Description,
 		Status:                  req.Status,
 		GroupRatio:              req.GroupRatio,
+		RoutingMode:             req.RoutingMode,
 		SmartRoutingEnabled:     req.SmartRoutingEnabled,
 		RecoveryEnabled:         req.RecoveryEnabled,
 		RecoveryIntervalSeconds: req.RecoveryIntervalSeconds,
@@ -195,6 +219,11 @@ func CreateAggregateGroup(c *gin.Context) {
 	}
 	targetGroupNames := buildAggregateTargetNames(req.Targets)
 	if err := service.ValidateAggregateGroupConfig(group, req.VisibleUserGroups, targetGroupNames); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	targets := buildAggregateTargets(req.Targets)
+	if err := service.ValidateAggregateTargetWeights(targets); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -209,7 +238,7 @@ func CreateAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := group.InsertWithTargets(service.NormalizeAggregateTargets(targetGroupNames)); err != nil {
+	if err := group.InsertWithTargets(service.NormalizeAggregateTargetsWithWeights(targets)); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -241,6 +270,7 @@ func UpdateAggregateGroup(c *gin.Context) {
 		Description:             req.Description,
 		Status:                  req.Status,
 		GroupRatio:              req.GroupRatio,
+		RoutingMode:             req.RoutingMode,
 		SmartRoutingEnabled:     req.SmartRoutingEnabled,
 		RecoveryEnabled:         req.RecoveryEnabled,
 		RecoveryIntervalSeconds: req.RecoveryIntervalSeconds,
@@ -248,6 +278,11 @@ func UpdateAggregateGroup(c *gin.Context) {
 	}
 	targetGroupNames := buildAggregateTargetNames(req.Targets)
 	if err := service.ValidateAggregateGroupConfig(group, req.VisibleUserGroups, targetGroupNames); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	targets := buildAggregateTargets(req.Targets)
+	if err := service.ValidateAggregateTargetWeights(targets); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -262,7 +297,7 @@ func UpdateAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := group.UpdateWithTargets(service.NormalizeAggregateTargets(targetGroupNames)); err != nil {
+	if err := group.UpdateWithTargets(service.NormalizeAggregateTargetsWithWeights(targets)); err != nil {
 		common.ApiError(c, err)
 		return
 	}

@@ -19,9 +19,15 @@ type AggregateGroupRuntimeActiveRouteView struct {
 type AggregateGroupRuntimeRouteView struct {
 	RouteGroup          string `json:"route_group"`
 	RouteIndex          int    `json:"route_index"`
+	Weight              int    `json:"weight"`
+	EffectiveWeight     int    `json:"effective_weight"`
 	IsActive            bool   `json:"is_active"`
 	IsDegraded          bool   `json:"is_degraded"`
+	IsSoftFallback      bool   `json:"is_soft_fallback"`
 	PriorityCount       int    `json:"priority_count"`
+	RPM                 int    `json:"rpm"`
+	SuccessRPM          int    `json:"success_rpm"`
+	FailureRPM          int    `json:"failure_rpm"`
 	DegradedUntil       int64  `json:"degraded_until"`
 	ConsecutiveFailures int    `json:"consecutive_failures"`
 	ConsecutiveSlows    int    `json:"consecutive_slows"`
@@ -68,16 +74,23 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 	}
 
 	now := common.GetTimestamp()
+	isClusterMode := group.GetRoutingMode() == model.AggregateGroupRoutingModeCluster
+	healthySupportedCount := 0
 	for index, target := range group.Targets {
 		routeView := &AggregateGroupRuntimeRouteView{
 			RouteGroup: target.RealGroup,
 			RouteIndex: index,
+			Weight:     target.GetWeight(),
 		}
 		priorityCount, err := model.GetSatisfiedChannelPriorityCount(target.RealGroup, modelName)
 		if err != nil {
 			return nil, err
 		}
 		routeView.PriorityCount = priorityCount
+		rpmStats := GetAggregateRouteRPMStats(group.Name, modelName, target.RealGroup)
+		routeView.RPM = rpmStats.RPM
+		routeView.SuccessRPM = rpmStats.SuccessRPM
+		routeView.FailureRPM = rpmStats.FailureRPM
 		if hasActiveState {
 			if strings.TrimSpace(activeState.ActiveGroup) != "" {
 				routeView.IsActive = activeState.ActiveGroup == target.RealGroup
@@ -101,7 +114,30 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 			routeView.LastTriggerReason = state.LastTriggerReason
 			routeView.LastTriggerAt = state.LastTriggerAt
 		}
+		if routeView.PriorityCount > 0 {
+			if isClusterMode {
+				routeView.EffectiveWeight = calculateAggregateClusterEffectiveWeight(routeView.Weight, routeView.IsDegraded)
+			} else {
+				routeView.EffectiveWeight = routeView.Weight
+			}
+		}
+		if routeView.PriorityCount > 0 && !routeView.IsDegraded {
+			healthySupportedCount++
+		}
 		runtimeView.Routes = append(runtimeView.Routes, routeView)
+	}
+	if isClusterMode && healthySupportedCount == 0 {
+		for _, routeView := range runtimeView.Routes {
+			lastRouteActivityAt := routeView.LastSuccessAt
+			if routeView.LastFailureAt > lastRouteActivityAt {
+				lastRouteActivityAt = routeView.LastFailureAt
+			}
+			routeView.IsSoftFallback = routeView.IsDegraded &&
+				routeView.PriorityCount > 0 &&
+				routeView.RPM > 0 &&
+				routeView.LastTriggerAt > 0 &&
+				lastRouteActivityAt > routeView.LastTriggerAt
+		}
 	}
 
 	return runtimeView, nil

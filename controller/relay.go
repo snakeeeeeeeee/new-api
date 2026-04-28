@@ -517,6 +517,7 @@ func buildAggregateRelayErrorLog(c *gin.Context, err *types.NewAPIError) string 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
 	if common.GetContextKeyString(c, constant.ContextKeyAggregateGroup) != "" {
 		logger.LogError(c, buildAggregateChannelErrorLog(c, channelError, err))
+		service.RecordAggregateRouteRPMFailure(c, c.GetString("original_model"))
 	} else {
 		logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	}

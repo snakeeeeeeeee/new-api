@@ -151,9 +151,47 @@ func NormalizeAggregateTargets(realGroups []string) []model.AggregateGroupTarget
 		targets = append(targets, model.AggregateGroupTarget{
 			RealGroup:  group,
 			OrderIndex: len(targets),
+			Weight:     common.GetPointer(model.AggregateGroupTargetDefaultWeight),
 		})
 	}
 	return targets
+}
+
+func NormalizeAggregateTargetsWithWeights(inputTargets []model.AggregateGroupTarget) []model.AggregateGroupTarget {
+	targets := make([]model.AggregateGroupTarget, 0, len(inputTargets))
+	seen := make(map[string]struct{})
+	for _, target := range inputTargets {
+		realGroup := strings.TrimSpace(target.RealGroup)
+		if realGroup == "" {
+			continue
+		}
+		if _, ok := seen[realGroup]; ok {
+			continue
+		}
+		seen[realGroup] = struct{}{}
+		weight := model.AggregateGroupTargetDefaultWeight
+		if target.Weight != nil {
+			weight = *target.Weight
+		}
+		if weight < 0 {
+			weight = 0
+		}
+		targets = append(targets, model.AggregateGroupTarget{
+			RealGroup:  realGroup,
+			OrderIndex: len(targets),
+			Weight:     common.GetPointer(weight),
+		})
+	}
+	return targets
+}
+
+func ValidateAggregateTargetWeights(targets []model.AggregateGroupTarget) error {
+	for _, target := range targets {
+		if target.Weight != nil && *target.Weight < 0 {
+			return fmt.Errorf("真实分组 %s 权重不能小于 0", strings.TrimSpace(target.RealGroup))
+		}
+	}
+	return nil
 }
 
 func ValidateAggregateGroupConfig(group *model.AggregateGroup, visibleUserGroups []string, realGroups []string) error {
@@ -164,6 +202,7 @@ func ValidateAggregateGroupConfig(group *model.AggregateGroup, visibleUserGroups
 	group.DisplayName = strings.TrimSpace(group.DisplayName)
 	group.Description = strings.TrimSpace(group.Description)
 	group.RetryStatusCodes = strings.TrimSpace(group.RetryStatusCodes)
+	group.RoutingMode = strings.TrimSpace(group.RoutingMode)
 	if group.Name == "" {
 		return errors.New("聚合分组名称不能为空")
 	}
@@ -179,6 +218,10 @@ func ValidateAggregateGroupConfig(group *model.AggregateGroup, visibleUserGroups
 	if group.GroupRatio < 0 {
 		return errors.New("聚合分组倍率不能小于 0")
 	}
+	if !model.IsValidAggregateGroupRoutingMode(group.RoutingMode) {
+		return errors.New("聚合分组路由模式无效")
+	}
+	group.RoutingMode = model.NormalizeAggregateGroupRoutingMode(group.RoutingMode)
 	if group.RecoveryEnabled && group.RecoveryIntervalSeconds <= 0 {
 		return errors.New("恢复间隔必须大于 0")
 	}

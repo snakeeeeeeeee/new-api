@@ -530,10 +530,10 @@ func ApplyChannelAffinityOverrideTemplate(c *gin.Context, paramOverride map[stri
 	return mergedParam, true
 }
 
-func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup string) (int, bool) {
+func resolveChannelAffinityMeta(c *gin.Context, modelName string, usingGroup string) (channelAffinityMeta, string, bool) {
 	setting := operation_setting.GetChannelAffinitySetting()
-	if setting == nil || !setting.Enabled {
-		return 0, false
+	if c == nil || setting == nil || !setting.Enabled {
+		return channelAffinityMeta{}, "", false
 	}
 	path := ""
 	if c != nil && c.Request != nil && c.Request.URL != nil {
@@ -576,7 +576,7 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 		}
 		cacheKeySuffix := buildChannelAffinityCacheKeySuffix(rule, usingGroup, affinityValue)
 		cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
-		setChannelAffinityContext(c, channelAffinityMeta{
+		meta := channelAffinityMeta{
 			CacheKey:       cacheKeyFull,
 			TTLSeconds:     ttlSeconds,
 			RuleName:       rule.Name,
@@ -590,18 +590,28 @@ func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup 
 			UsingGroup:     usingGroup,
 			ModelName:      modelName,
 			RequestPath:    path,
-		})
+		}
+		setChannelAffinityContext(c, meta)
 
-		cache := getChannelAffinityCache()
-		channelID, found, err := cache.Get(cacheKeySuffix)
-		if err != nil {
-			common.SysError(fmt.Sprintf("channel affinity cache get failed: key=%s, err=%v", cacheKeyFull, err))
-			return 0, false
-		}
-		if found {
-			return channelID, true
-		}
+		return meta, cacheKeySuffix, true
+	}
+	return channelAffinityMeta{}, "", false
+}
+
+func GetPreferredChannelByAffinity(c *gin.Context, modelName string, usingGroup string) (int, bool) {
+	meta, cacheKeySuffix, ok := resolveChannelAffinityMeta(c, modelName, usingGroup)
+	if !ok {
 		return 0, false
+	}
+
+	cache := getChannelAffinityCache()
+	channelID, found, err := cache.Get(cacheKeySuffix)
+	if err != nil {
+		common.SysError(fmt.Sprintf("channel affinity cache get failed: key=%s, err=%v", meta.CacheKey, err))
+		return 0, false
+	}
+	if found {
+		return channelID, true
 	}
 	return 0, false
 }

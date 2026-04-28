@@ -288,6 +288,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "aggregate_group.cluster_degraded_weight_percent":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue <= 0 || intValue > 100 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "Cluster 降级有效权重比例必须在 1 到 100 之间",
+			})
+			return
+		}
 	case "aggregate_group.slow_request_threshold_seconds":
 		intValue, parseErr := strconv.Atoi(option.Value.(string))
 		if parseErr != nil || intValue <= 0 {

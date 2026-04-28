@@ -1,4 +1,4 @@
-# 聚合分组 V1 设计说明
+# 聚合分组设计说明
 
 ## 目标
 
@@ -8,6 +8,9 @@
 - token 可以绑定真实分组或聚合分组
 - 企业用户创建 token 时只看到聚合分组
 - 聚合分组内部按真实分组顺序选路、失败切换、懒恢复
+- 聚合分组支持单组切换 `failover` / `cluster` 路由模式
+- `cluster` 模式下多个子分组可同时承接流量，并通过 route affinity 降低用户频繁跳组导致的缓存损失
+- 运行态展示每个子分组最近 60 秒 RPM
 - 最终计费倍率固定取聚合分组倍率，不跟随底层真实组倍率变化
 
 ## 范围与边界
@@ -18,6 +21,11 @@ V1 已实现：
 - 聚合分组绑定多个真实分组并支持顺序
 - 请求按聚合分组展开真实分组链路
 - 请求失败后沿用现有 retry 机制在真实分组链路内继续 fallback
+- 默认 `routing_mode=failover`，已有聚合分组保持原 `A -> B -> C` 行为
+- 可将单个聚合分组切换为 `cluster`，按子分组权重分发请求
+- `cluster` 模式使用平台用户 ID 做聚合层子分组亲和：`aggregate_group + model + user_id -> route_group`
+- target 支持 `weight`，默认 100，允许 0 表示不参与普通加权但仍可被保留和亲和命中
+- 运行态按 `aggregate_group + model + route_group` 汇总最近 60 秒 `attempt/success/failure` RPM
 - 聚合分组运行时状态按 `聚合分组 + 模型` 维度存储
 - 恢复采用懒恢复，不引入后台扫描任务
 - 聚合分组倍率覆盖最终 group ratio
@@ -43,6 +51,8 @@ V1 不做：
 - `description`
 - `status`
 - `group_ratio`
+- `routing_mode`
+- `smart_routing_enabled`
 - `recovery_enabled`
 - `recovery_interval_seconds`
 - `retry_status_codes`
@@ -63,12 +73,36 @@ V1 不做：
 - `aggregate_group_id`
 - `real_group`
 - `order_index`
+- `weight`
 
 说明：
 
 - 一个聚合分组至少有一个 target
 - `real_group` 只能引用真实分组，不能引用聚合分组
 - `order_index` 表示链路优先级，值越小优先级越高
+- `weight` 表示 `cluster` 模式下的加权分发权重，默认 100；允许配置为 0
+
+### 路由模式
+
+`aggregate_groups.routing_mode` 当前支持：
+
+- `failover`
+  - 默认值，兼容所有已有线上聚合分组
+  - 按 target 顺序形成 `A -> B -> C` 链路
+  - 懒恢复、智能策略、组内 retry、fallback 语义保持不变
+- `cluster`
+  - 多个真实子分组同时参与承接流量
+  - 首先按平台用户 ID、聚合分组名和模型名读取 route affinity，命中且目标子分组可用时优先使用该子分组
+  - 未命中亲和时，从支持当前模型且有可用 channel 的子分组中按 `effective_weight` 加权随机选择
+  - 智能策略触发的 degraded 子分组不再直接剔除，而是临时降权参与选择：`effective_weight=max(1, weight*cluster_degraded_weight_percent%)`
+  - 如果原始 `weight=0`，degraded 期间 `effective_weight` 仍为 0，不因为降权变成 1
+  - 手动禁用、无可用 channel、不支持当前模型仍属于硬不可用，不进入候选
+  - `Fallback` 只用于运行态展示：当健康候选为空且降级节点仍在兜底接流量时标记，不代表路由强行跳过其他健康节点
+  - 当前子分组内部仍按现有 `common.RetryTimes` 与 priority 层级重试；耗尽后从本次请求尚未尝试过的其他子分组中继续按权重选择
+  - 成功后写入独立 route affinity：`aggregate_group + model + user_id -> route_group`
+  - `recovery_enabled / recovery_interval_seconds` 在 cluster 下控制 route affinity 的回流周期；开启时 TTL 使用恢复间隔，关闭时长期粘住直到目标不可用或降级
+
+route affinity 不复用已有 channel affinity 的 `channel_id` 缓存，独立 namespace 为 `new-api:aggregate_route_affinity:v2`。聚合层只关心平台用户 ID、聚合分组和模型；请求体里的 `prompt_cache_key`、`metadata.user_id` 等字段继续留给 channel affinity 处理“子分组内部选择具体上游号池”的问题。
 
 ## 运行时设计
 
@@ -147,6 +181,7 @@ flowchart TD
 - `ContextKeyAggregateStartIndex` 保存本次请求开始时的优先级起点
 - `ContextKeyAggregateRetryIndex` 保存失败后下一次 retry 应从哪个真实分组继续
 - `ContextKeyAggregateSmartRouting` 保存当前请求是否启用聚合智能策略
+- 聚合运行态会记录产生它的 `routing_mode`，避免 `cluster` 的活跃子分组污染切回 `failover` 后的链式起点
 
 ### 选路策略
 
@@ -159,16 +194,38 @@ flowchart TD
 - 当前真实分组上游返回“可重试失败”时，下一次 retry 从下一个真实分组开始，而不是重新回到当前真实分组
 - 切到下一个真实分组后，该真实分组内部始终从自己的最高优先级开始选路
 - 若当前真实分组内部存在更低优先级可用渠道，则会先在当前真实分组内继续尝试下一优先级，再切换到下一个真实分组
+- 若聚合分组从 `cluster` 切回 `failover`，`failover` 会忽略 `cluster` 产生的运行态；对于旧版本遗留的 `active_index > 0` 且 `last_fail_at = 0` 状态，也会从链路头部重新开始，避免卡在禁用的后序节点上
+
+`cluster` 模式下，选路顺序变为：
+
+- 使用 `aggregate_group + model + user_id` 解析 route affinity，命中且 route 可用时直接选中
+- 如果 route affinity 命中的子分组正处于智能降级窗口，则不直接固定命中，而是作为降权候选参与本轮加权选择
+- 未命中时构造候选子分组：
+  - 必须支持当前模型
+  - 必须存在可用 channel
+  - 手动禁用的子分组不进入候选
+  - 智能策略启用时，临时降级子分组仍进入候选，但 `effective_weight=max(1, weight*cluster_degraded_weight_percent%)`
+  - 权重为 0 的子分组不参与普通加权随机，降级后仍保持 `effective_weight=0`；当所有候选权重都为 0 时退化为均匀随机
+- 本次请求内跨子分组 retry 会记录已尝试 route，避免反复冲击同一个失败子分组
+- 首次成功或切换子分组成功时写入 route affinity，使后续同一用户、同一模型优先回到成功的子分组
+- 若后续仍命中同一子分组，成功不会继续延长 route affinity TTL；`recovery_interval_seconds` 到期后会重新按权重选择
+- 若请求开始时命中旧 route affinity，但请求完成时 TTL 已过期，成功回写也不会把旧 route 重新续期，避免稳定流量把低权重 fallback 子分组长期粘住
 
 ### 智能策略 V1
 
 - 智能策略只有在以下两个条件同时满足时才会生效：
   - 全局 `aggregate_group.smart_strategy_enabled = true`
   - 当前聚合分组 `smart_routing_enabled = true`
-- 智能策略不改数据库中配置的真实分组顺序，只在运行时临时跳过已降级的真实分组
-- 当前实现是“软跳过”：
+- 智能策略不改数据库中配置的真实分组顺序，只在运行时改变已降级真实分组的参与方式
+- `failover` 当前实现是“软跳过”：
   - 先尝试跳过处于临时降级窗口的真实分组
   - 如果优先遍历一轮后没有选中任何渠道，则回退到原始真实组链路再尝试一次，避免直接把旧逻辑硬改成强熔断
+- `cluster` 当前实现是“降权而非直接跳过”：
+  - degraded 子分组仍参与候选，但使用 `effective_weight=max(1, weight*cluster_degraded_weight_percent%)`
+  - `cluster_degraded_weight_percent` 由全局智能策略配置项 `aggregate_group.cluster_degraded_weight_percent` 控制，默认 20，取值范围 1 到 100
+  - `weight=0` 的 degraded 子分组继续保持 `effective_weight=0`
+  - 降级窗口到期后恢复为原始 `weight`
+  - 该策略只影响智能策略触发的 degraded 状态，不改变手动禁用、无可用 channel、不支持模型等硬不可用判断
 - 不支持模型负缓存未引入：
   - 现有 `abilities` 选路本身已会按 `group + model` 过滤不支持该模型的真实分组
   - 因此第一版不额外增加“不支持模型禁用多久”逻辑
@@ -202,17 +259,20 @@ flowchart TD
 
 - 懒恢复（旧逻辑）
   - 由聚合分组自身 `recovery_enabled / recovery_interval_seconds` 控制
-  - 作用是决定“下一次请求从哪个真实分组开始尝试”
+  - `failover` 下作用是决定“下一次请求从哪个真实分组开始尝试”
   - 例如降级到第二真实组后，恢复间隔到了，就会重新从第一个真实组开始探测
+  - `cluster` 下作用是决定“用户-模型到子分组的亲和多久允许重新按权重选择”
+  - 例如用户从便宜高权重子分组 A 故障迁移到 B 后，恢复间隔到期才允许重新按权重回流到 A
 - 智能降级恢复（新逻辑）
   - 由全局 `aggregate_group.degrade_duration_seconds` 控制
-  - 作用是决定“某个真实分组对某个模型是否仍应被临时跳过”
-  - 降级窗口到期后，该真实分组会重新参与优先遍历，并打印 `aggregate smart strategy recovered route`
+  - `failover` 下作用是决定“某个真实分组对某个模型是否仍应被临时跳过”
+  - `cluster` 下作用是决定“某个真实分组对某个模型是否仍应按配置比例降权”
+  - 降级窗口到期后，该真实分组恢复原始权重或优先级，并打印 `aggregate smart strategy recovered route`
 
 两者叠加后的实际语义是：
 
 - 懒恢复负责“恢复起始优先级”
-- 智能降级负责“该优先级对应的真实分组当前是否应优先跳过”
+- 智能降级负责“该优先级对应的真实分组当前是否应跳过（failover）或降权（cluster）”
 
 ### 聚合分组级重试状态码规则
 
@@ -253,10 +313,27 @@ flowchart TD
 - `aggregate_group.smart_strategy_enabled`
 - `aggregate_group.consecutive_failure_threshold`
 - `aggregate_group.degrade_duration_seconds`
+- `aggregate_group.cluster_degraded_weight_percent`
 - `aggregate_group.slow_request_threshold_seconds`
 - `aggregate_group.consecutive_slow_threshold`
 
 这些配置只影响已开启 `smart_routing_enabled` 的聚合分组。
+
+### 实时 RPM
+
+运行态新增子分组级实时 RPM：
+
+- 维度：`aggregate_group + model + route_group`
+- 指标：
+  - `rpm`：最近 60 秒 attempt 数
+  - `success_rpm`：最近 60 秒 success 数
+  - `failure_rpm`：最近 60 秒 failure 数
+- Redis 可用时写 Redis 秒级 bucket，TTL 120 秒
+- Redis 不可用时使用进程内内存 map，按同样窗口汇总
+- RPM 只用于展示，当前版本不参与路由决策
+- 运行态 route 节点返回 `weight / effective_weight / is_degraded`
+- `cluster` 模式下 degraded 节点默认展示为 `Reduced`，表示仍按有效权重参与分发
+- `cluster` 模式下如果节点处于智能降级，且降级触发后仍有成功或失败活动，运行态会返回 `is_soft_fallback=true`，前端展示为 `Fallback`，表示健康候选为空时软回退到了该节点
 
 ## 计费规则
 
@@ -329,11 +406,13 @@ flowchart TD
   - `route_group`
   - `route_group_index`
   - `aggregate_start_index`
+  - `aggregate_routing_mode`
 - 运行时日志额外打印聚合 fallback 链路，例如：
   - `aggregate fallback retry: aggregate_group=... failed_group=A next_group=B`
   - `aggregate fallback exhausted: aggregate_group=... failed_group=B no next route group`
 - 智能策略日志额外打印：
   - `aggregate smart strategy skipped degraded route: ...`
+  - `aggregate cluster smart strategy reduced degraded route: ...`
   - `aggregate smart degrade by consecutive failures: ...`
   - `aggregate smart degrade by consecutive slow requests: ...`
   - `aggregate smart strategy recovered route: ...`
@@ -350,7 +429,14 @@ flowchart TD
 - `聚合分组` 独立后台菜单页
 - 列表页支持查看倍率、可见用户组、真实分组链与恢复策略
 - SideSheet 支持创建/编辑
-- 真实分组链支持顺序调整
+- SideSheet 支持选择 `failover` / `cluster`
+- 真实分组链支持顺序调整和子分组权重配置
+- 运行态抽屉按路由模式切换拓扑：
+  - `failover` 继续展示链式拓扑
+  - `cluster` 展示请求入口到纵向子分组节点的集群拓扑
+- 拓扑节点展示 RPM；`cluster` 模式下节点 `In Use` 表示该节点最近 60 秒 RPM 大于 0，可多个节点同时处于使用中；`Reduced` 表示节点已被智能策略降权但仍按有效权重参与分发；`Fallback` 表示节点已降级但因无健康候选仍被软回退使用
+- 拓扑支持从抽屉打开弹窗放大查看，绿色流动线表示请求正在进入对应 `In Use`、`Reduced` 或 `Fallback` 子分组
+- 节点详情展示 RPM、成功 RPM、失败 RPM、原始权重、有效权重、降级状态等信息
 
 修改页面：
 
@@ -372,6 +458,14 @@ flowchart TD
 - token 创建允许聚合分组
 - token 创建拒绝已隐藏真实分组
 - 聚合分组 CRUD 控制器入口
+- 未设置 `routing_mode` 的旧聚合分组仍按 `failover` 选路
+- `cluster` 按权重选择可用子分组并跳过不支持当前模型的子分组
+- route affinity 按 `aggregate_group + model + user_id` 稳定回到同一子分组，命中已降级子分组时不直接固定，按降权后的候选规则重新选择并在成功后更新
+- `cluster` 的 route affinity TTL 复用 `recovery_interval_seconds`，过期后允许重新按权重选择
+- `cluster` 当前子分组耗尽组内 retry 后切换到其他未尝试子分组
+- RPM 仅汇总最近 60 秒窗口，过期 bucket 不返回
+- `cluster` 中 degraded 子分组使用 `effective_weight=max(1, weight*cluster_degraded_weight_percent%)`，`weight=0` 仍保持 0
+- 手动禁用、无可用 channel、不支持模型的子分组仍不进入 cluster 候选
 
 回归验证：
 

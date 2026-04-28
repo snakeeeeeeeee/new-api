@@ -75,7 +75,7 @@ func resolveAggregateGroupStartIndex(ctx *gin.Context, aggregateGroup *model.Agg
 
 	startIndex := 0
 	state, err := GetAggregateGroupRuntimeState(aggregateGroup.Name, modelName)
-	if err == nil && state != nil && state.ActiveIndex >= 0 && state.ActiveIndex < len(aggregateGroup.Targets) {
+	if err == nil && shouldUseAggregateFailoverRuntimeState(state, len(aggregateGroup.Targets)) {
 		startIndex = state.ActiveIndex
 		if aggregateGroup.RecoveryEnabled && startIndex > 0 && state.LastFailAt > 0 {
 			if common.GetTimestamp()-state.LastFailAt >= int64(aggregateGroup.RecoveryIntervalSeconds) {
@@ -85,6 +85,19 @@ func resolveAggregateGroupStartIndex(ctx *gin.Context, aggregateGroup *model.Agg
 	}
 	setAggregateGroupStartIndexes(ctx, startIndex)
 	return startIndex, retryBase
+}
+
+func shouldUseAggregateFailoverRuntimeState(state *AggregateGroupRuntimeState, targetCount int) bool {
+	if state == nil || state.ActiveIndex < 0 || state.ActiveIndex >= targetCount {
+		return false
+	}
+	if state.RoutingMode != "" && state.RoutingMode != model.AggregateGroupRoutingModeFailover {
+		return false
+	}
+	if state.ActiveIndex > 0 && state.LastFailAt <= 0 {
+		return false
+	}
+	return true
 }
 
 func selectAggregateGroupChannelFromIndex(param *RetryParam, aggregateGroup *model.AggregateGroup, startIndex int, retryBase int, skipDegraded bool) (*model.Channel, string, error) {
@@ -132,6 +145,7 @@ func selectAggregateGroupChannelFromIndex(param *RetryParam, aggregateGroup *mod
 		common.SetContextKey(param.Ctx, constant.ContextKeyRouteGroup, target.RealGroup)
 		common.SetContextKey(param.Ctx, constant.ContextKeyRouteGroupIndex, i)
 		common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRetryBase, groupRetryBase)
+		RecordAggregateRouteRPMAttempt(param.Ctx, param.ModelName, target.RealGroup)
 		return channel, target.RealGroup, nil
 	}
 
@@ -143,13 +157,21 @@ func selectAggregateGroupChannel(param *RetryParam, aggregateGroup *model.Aggreg
 		return nil, "", fmt.Errorf("invalid aggregate group route param")
 	}
 
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateGroup, aggregateGroup.Name)
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateSmartRouting, IsAggregateSmartRoutingEnabled(aggregateGroup))
+	routingMode := aggregateGroup.GetRoutingMode()
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRoutingMode, routingMode)
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRecoveryEnabled, aggregateGroup.RecoveryEnabled)
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRecoveryInterval, aggregateGroup.RecoveryIntervalSeconds)
+
+	if routingMode == model.AggregateGroupRoutingModeCluster {
+		return selectAggregateGroupClusterChannel(param, aggregateGroup)
+	}
+
 	startIndex, retryBase := resolveAggregateGroupStartIndex(param.Ctx, aggregateGroup, param.ModelName)
 	if startIndex >= len(aggregateGroup.Targets) {
 		return nil, "", nil
 	}
-
-	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateGroup, aggregateGroup.Name)
-	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateSmartRouting, IsAggregateSmartRoutingEnabled(aggregateGroup))
 
 	if IsAggregateSmartRoutingEnabled(aggregateGroup) {
 		channel, group, err := selectAggregateGroupChannelFromIndex(param, aggregateGroup, startIndex, retryBase, true)
@@ -187,6 +209,10 @@ func PrepareAggregateGroupRetry(c *gin.Context, currentRetry int, modelName stri
 		AggregateGroup: aggregateGroupName,
 		FailedGroup:    failedGroup,
 		FailedIndex:    failedIndex,
+	}
+
+	if aggregateGroup.GetRoutingMode() == model.AggregateGroupRoutingModeCluster {
+		return prepareAggregateClusterRetry(c, aggregateGroup, transition, currentRetry, modelName, maxInternalRetries)
 	}
 
 	priorityCount, err := model.GetSatisfiedChannelPriorityCount(failedGroup, modelName)
@@ -235,6 +261,10 @@ func RecordAggregateRouteSuccess(c *gin.Context, modelName string) {
 		initialStartIndex = startIndex
 	}
 	now := common.GetTimestamp()
+	routingMode := common.GetContextKeyString(c, constant.ContextKeyAggregateRoutingMode)
+	if routingMode == "" {
+		routingMode = model.AggregateGroupRoutingModeFailover
+	}
 
 	state, _ := GetAggregateGroupRuntimeState(aggregateGroup, modelName)
 	previousActiveGroup := ""
@@ -243,6 +273,7 @@ func RecordAggregateRouteSuccess(c *gin.Context, modelName string) {
 	newState := &AggregateGroupRuntimeState{
 		ActiveIndex:   routeGroupIndex,
 		ActiveGroup:   routeGroup,
+		RoutingMode:   routingMode,
 		LastSuccessAt: now,
 	}
 	if state != nil {
@@ -267,6 +298,10 @@ func RecordAggregateRouteSuccess(c *gin.Context, modelName string) {
 		newState.LastSwitchAt = now
 	}
 	_ = SetAggregateGroupRuntimeState(aggregateGroup, modelName, newState)
+	RecordAggregateRouteRPMSuccess(c, modelName, routeGroup)
+	if routingMode == model.AggregateGroupRoutingModeCluster {
+		RecordAggregateRouteAffinity(c, modelName, aggregateGroup, routeGroup)
+	}
 	RecordAggregateRouteSmartSuccess(c, modelName, routeGroup)
 }
 
@@ -283,4 +318,7 @@ func AppendAggregateGroupAdminInfo(c *gin.Context, adminInfo map[string]interfac
 	adminInfo["route_group"] = routeGroup
 	adminInfo["route_group_index"] = common.GetContextKeyInt(c, constant.ContextKeyRouteGroupIndex)
 	adminInfo["aggregate_start_index"] = common.GetContextKeyInt(c, constant.ContextKeyAggregateStartIndex)
+	if routingMode := common.GetContextKeyString(c, constant.ContextKeyAggregateRoutingMode); routingMode != "" {
+		adminInfo["aggregate_routing_mode"] = routingMode
+	}
 }

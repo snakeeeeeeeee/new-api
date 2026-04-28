@@ -11,6 +11,11 @@ import (
 const (
 	AggregateGroupStatusEnabled  = 1
 	AggregateGroupStatusDisabled = 2
+
+	AggregateGroupRoutingModeFailover = "failover"
+	AggregateGroupRoutingModeCluster  = "cluster"
+
+	AggregateGroupTargetDefaultWeight = 100
 )
 
 type AggregateGroup struct {
@@ -20,6 +25,7 @@ type AggregateGroup struct {
 	Description             string                 `json:"description,omitempty" gorm:"type:varchar(255)"`
 	Status                  int                    `json:"status" gorm:"default:1;index"`
 	GroupRatio              float64                `json:"group_ratio" gorm:"default:1"`
+	RoutingMode             string                 `json:"routing_mode" gorm:"size:32;default:failover"`
 	SmartRoutingEnabled     bool                   `json:"smart_routing_enabled" gorm:"default:false"`
 	RecoveryEnabled         bool                   `json:"recovery_enabled" gorm:"default:true"`
 	RecoveryIntervalSeconds int                    `json:"recovery_interval_seconds" gorm:"default:300"`
@@ -36,10 +42,39 @@ type AggregateGroupTarget struct {
 	AggregateGroupId int    `json:"aggregate_group_id" gorm:"index;uniqueIndex:uk_aggregate_group_target"`
 	RealGroup        string `json:"real_group" gorm:"size:64;not null;uniqueIndex:uk_aggregate_group_target"`
 	OrderIndex       int    `json:"order_index" gorm:"index"`
+	Weight           *int   `json:"weight" gorm:"default:100"`
 }
 
 func (g *AggregateGroup) IsEnabled() bool {
 	return g != nil && g.Status == AggregateGroupStatusEnabled
+}
+
+func NormalizeAggregateGroupRoutingMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case AggregateGroupRoutingModeCluster:
+		return AggregateGroupRoutingModeCluster
+	default:
+		return AggregateGroupRoutingModeFailover
+	}
+}
+
+func IsValidAggregateGroupRoutingMode(mode string) bool {
+	mode = strings.TrimSpace(mode)
+	return mode == "" || mode == AggregateGroupRoutingModeFailover || mode == AggregateGroupRoutingModeCluster
+}
+
+func (g *AggregateGroup) GetRoutingMode() string {
+	if g == nil {
+		return AggregateGroupRoutingModeFailover
+	}
+	return NormalizeAggregateGroupRoutingMode(g.RoutingMode)
+}
+
+func (t *AggregateGroupTarget) GetWeight() int {
+	if t == nil || t.Weight == nil {
+		return AggregateGroupTargetDefaultWeight
+	}
+	return *t.Weight
 }
 
 func (g *AggregateGroup) GetVisibleUserGroups() []string {
@@ -121,6 +156,7 @@ func (g *AggregateGroup) UpdateWithTargets(targets []AggregateGroupTarget) error
 			"description":               g.Description,
 			"status":                    g.Status,
 			"group_ratio":               g.GroupRatio,
+			"routing_mode":              g.RoutingMode,
 			"smart_routing_enabled":     g.SmartRoutingEnabled,
 			"recovery_enabled":          g.RecoveryEnabled,
 			"recovery_interval_seconds": g.RecoveryIntervalSeconds,

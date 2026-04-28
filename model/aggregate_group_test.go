@@ -17,6 +17,10 @@ func prepareAggregateGroupModelTest(t *testing.T) {
 	})
 }
 
+func aggregateTargetWeightForTest(weight int) *int {
+	return &weight
+}
+
 func TestAggregateGroupVisibleUserGroupsRoundTrip(t *testing.T) {
 	prepareAggregateGroupModelTest(t)
 
@@ -30,16 +34,19 @@ func TestAggregateGroupVisibleUserGroupsRoundTrip(t *testing.T) {
 	}
 	require.NoError(t, group.SetVisibleUserGroups([]string{"vip", "svip"}))
 	require.NoError(t, group.InsertWithTargets([]AggregateGroupTarget{
-		{RealGroup: "default", OrderIndex: 0},
-		{RealGroup: "vip", OrderIndex: 1},
+		{RealGroup: "default", OrderIndex: 0, Weight: aggregateTargetWeightForTest(AggregateGroupTargetDefaultWeight)},
+		{RealGroup: "vip", OrderIndex: 1, Weight: aggregateTargetWeightForTest(AggregateGroupTargetDefaultWeight)},
 	}))
 
 	loaded, err := GetAggregateGroupByName("enterprise-stable", true)
 	require.NoError(t, err)
 	require.Equal(t, []string{"vip", "svip"}, loaded.GetVisibleUserGroups())
+	require.Equal(t, AggregateGroupRoutingModeFailover, loaded.GetRoutingMode())
 	require.Len(t, loaded.Targets, 2)
 	require.Equal(t, "default", loaded.Targets[0].RealGroup)
+	require.Equal(t, AggregateGroupTargetDefaultWeight, loaded.Targets[0].GetWeight())
 	require.Equal(t, "vip", loaded.Targets[1].RealGroup)
+	require.Equal(t, AggregateGroupTargetDefaultWeight, loaded.Targets[1].GetWeight())
 }
 
 func TestDeleteAggregateGroupByIDDeletesTargets(t *testing.T) {
@@ -55,7 +62,7 @@ func TestDeleteAggregateGroupByIDDeletesTargets(t *testing.T) {
 	}
 	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
 	require.NoError(t, group.InsertWithTargets([]AggregateGroupTarget{
-		{RealGroup: "default", OrderIndex: 0},
+		{RealGroup: "default", OrderIndex: 0, Weight: aggregateTargetWeightForTest(AggregateGroupTargetDefaultWeight)},
 	}))
 
 	require.NoError(t, DeleteAggregateGroupByID(group.Id))

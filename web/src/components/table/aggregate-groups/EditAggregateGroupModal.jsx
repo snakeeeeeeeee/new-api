@@ -54,6 +54,7 @@ const defaultInputs = {
   description: '',
   status: 1,
   group_ratio: 1,
+  routing_mode: 'failover',
   smart_routing_enabled: false,
   recovery_enabled: true,
   recovery_interval_seconds: 300,
@@ -76,6 +77,7 @@ const EditAggregateGroupModal = ({
   const [inputs, setInputs] = useState(defaultInputs);
 
   const isEdit = editingGroup?.id !== undefined;
+  const isClusterMode = inputs.routing_mode === 'cluster';
 
   useEffect(() => {
     if (!visible) {
@@ -103,6 +105,7 @@ const EditAggregateGroupModal = ({
           description: data.description || '',
           status: data.status || 1,
           group_ratio: data.group_ratio === undefined ? 1 : data.group_ratio,
+          routing_mode: data.routing_mode || 'failover',
           smart_routing_enabled:
             data.smart_routing_enabled === undefined
               ? false
@@ -115,7 +118,13 @@ const EditAggregateGroupModal = ({
               : data.recovery_interval_seconds,
           retry_status_codes: data.retry_status_codes || '',
           visible_user_groups: data.visible_user_groups || [],
-          targets: (data.targets || []).map((item) => item.real_group),
+          targets: (data.targets || []).map((item) => ({
+            real_group: item.real_group,
+            weight:
+              item.weight === undefined || item.weight === null
+                ? 100
+                : item.weight,
+          })),
         });
       } catch (error) {
         showError(error?.message || t('获取聚合分组详情失败'));
@@ -127,13 +136,20 @@ const EditAggregateGroupModal = ({
     loadDetail();
   }, [visible, isEdit, editingGroup?.id, t]);
 
+  const selectedTargetValues = useMemo(
+    () => inputs.targets.map((target) => target.real_group),
+    [inputs.targets],
+  );
+
   const availableTargetOptions = useMemo(() => {
-    const selected = new Set(inputs.targets);
+    const selected = new Set(selectedTargetValues);
     return (realGroupOptions || []).map((option) => ({
       ...option,
-      disabled: selected.has(option.value) && !inputs.targets.includes(option.value),
+      disabled:
+        selected.has(option.value) &&
+        !selectedTargetValues.includes(option.value),
     }));
-  }, [inputs.targets, realGroupOptions]);
+  }, [realGroupOptions, selectedTargetValues]);
 
   const updateField = (field, value) => {
     setInputs((prev) => ({
@@ -166,6 +182,45 @@ const EditAggregateGroupModal = ({
     }));
   };
 
+  const updateTargetSelection = (values) => {
+    setInputs((prev) => {
+      const targetMap = new Map(
+        prev.targets.map((target) => [target.real_group, target]),
+      );
+      return {
+        ...prev,
+        targets: (values || []).map((realGroup) => {
+          const previous = targetMap.get(realGroup);
+          if (previous) {
+            return previous;
+          }
+          return {
+            real_group: realGroup,
+            weight: 100,
+          };
+        }),
+      };
+    });
+  };
+
+  const updateTargetWeight = (index, value) => {
+    setInputs((prev) => {
+      const nextTargets = prev.targets.map((target, currentIndex) => {
+        if (currentIndex !== index) {
+          return target;
+        }
+        return {
+          ...target,
+          weight: Math.max(0, Number(value || 0)),
+        };
+      });
+      return {
+        ...prev,
+        targets: nextTargets,
+      };
+    });
+  };
+
   const handleSubmit = async () => {
     setLoading(true);
     try {
@@ -176,12 +231,16 @@ const EditAggregateGroupModal = ({
         description: inputs.description.trim(),
         status: inputs.status,
         group_ratio: Number(inputs.group_ratio),
+        routing_mode: inputs.routing_mode || 'failover',
         smart_routing_enabled: inputs.smart_routing_enabled,
         recovery_enabled: inputs.recovery_enabled,
         recovery_interval_seconds: Number(inputs.recovery_interval_seconds),
         retry_status_codes: inputs.retry_status_codes.trim(),
         visible_user_groups: inputs.visible_user_groups,
-        targets: inputs.targets.map((real_group) => ({ real_group })),
+        targets: inputs.targets.map((target) => ({
+          real_group: target.real_group,
+          weight: Number(target.weight || 0),
+        })),
       };
       const res = isEdit
         ? await API.put('/api/aggregate_group', payload)
@@ -302,6 +361,22 @@ const EditAggregateGroupModal = ({
             </Col>
             <Col span={8}>
               <div className='mb-2'>
+                <Text strong>{t('路由模式')}</Text>
+              </div>
+              <Select
+                value={inputs.routing_mode}
+                onChange={(value) =>
+                  updateField('routing_mode', value || 'failover')
+                }
+                optionList={[
+                  { label: 'Failover', value: 'failover' },
+                  { label: 'Cluster', value: 'cluster' },
+                ]}
+                style={{ width: '100%' }}
+              />
+            </Col>
+            <Col span={8}>
+              <div className='mb-2'>
                 <Text strong>{t('启用状态')}</Text>
               </div>
               <Switch
@@ -353,9 +428,7 @@ const EditAggregateGroupModal = ({
                 placeholder={t('留空沿用系统规则，例如：401,403,429,500-599')}
               />
               <div className='mt-1 text-xs text-gray-500'>
-                {t(
-                  '仅对当前聚合分组生效；填写后覆盖系统默认重试状态码规则。',
-                )}
+                {t('仅对当前聚合分组生效；填写后覆盖系统默认重试状态码规则。')}
               </div>
             </Col>
             <Col span={12}>
@@ -384,7 +457,13 @@ const EditAggregateGroupModal = ({
             <div>
               <Text className='text-lg font-medium'>{t('真实分组链')}</Text>
               <div className='text-xs text-gray-600'>
-                {t('选择真实分组并按顺序排列，顶部优先级最高')}
+                {isClusterMode
+                  ? t(
+                      'Cluster 模式按相对权重分发；例如 100/200 约等于 1:2。0 不参与普通加权随机，亲和命中或全 0 回退时仍可能被尝试。',
+                    )
+                  : t(
+                      'Failover 模式按顺序失败切换；权重只保存配置但不参与路由，切换到 Cluster 后可编辑。',
+                    )}
               </div>
             </div>
           </div>
@@ -393,23 +472,39 @@ const EditAggregateGroupModal = ({
           </div>
           <Select
             placeholder={t('选择真实分组')}
-            value={inputs.targets}
-            onChange={(value) => updateField('targets', value || [])}
+            value={selectedTargetValues}
+            onChange={updateTargetSelection}
             optionList={availableTargetOptions}
             multiple
             style={{ width: '100%' }}
           />
           <div className='flex flex-col gap-2 mt-3'>
             {inputs.targets.map((target, index) => (
-              <Card key={target} className='!rounded-xl border !shadow-none'>
-                <div className='flex items-center justify-between gap-2'>
+              <Card
+                key={target.real_group}
+                className='!rounded-xl border !shadow-none'
+              >
+                <div className='flex items-center justify-between gap-2 flex-wrap'>
                   <Space>
                     <Tag color='blue' shape='circle'>
                       {index + 1}
                     </Tag>
-                    <Text strong>{target}</Text>
+                    <Text strong>{target.real_group}</Text>
                   </Space>
                   <Space>
+                    <div className='flex items-center gap-2'>
+                      <Text type='secondary' className='text-xs'>
+                        {t('权重')}
+                      </Text>
+                      <InputNumber
+                        min={0}
+                        value={target.weight}
+                        onChange={(value) => updateTargetWeight(index, value)}
+                        disabled={!isClusterMode}
+                        aria-label={t('Cluster 权重')}
+                        style={{ width: 104 }}
+                      />
+                    </div>
                     <Button
                       theme='borderless'
                       icon={<IconArrowUp />}

@@ -33,6 +33,7 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 	originalSmartStrategyEnabled := setting.AggregateGroupSmartStrategyEnabled
 	originalFailureThreshold := setting.AggregateGroupFailureThreshold
 	originalDegradeDurationSeconds := setting.AggregateGroupDegradeDurationSeconds
+	originalClusterDegradedWeightPercent := setting.AggregateGroupClusterDegradedWeightPct
 	originalSlowRequestThreshold := setting.AggregateGroupSlowRequestThreshold
 	originalConsecutiveSlowLimit := setting.AggregateGroupConsecutiveSlowLimit
 
@@ -48,8 +49,10 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 		setting.AggregateGroupSmartStrategyEnabled = originalSmartStrategyEnabled
 		setting.AggregateGroupFailureThreshold = originalFailureThreshold
 		setting.AggregateGroupDegradeDurationSeconds = originalDegradeDurationSeconds
+		setting.AggregateGroupClusterDegradedWeightPct = originalClusterDegradedWeightPercent
 		setting.AggregateGroupSlowRequestThreshold = originalSlowRequestThreshold
 		setting.AggregateGroupConsecutiveSlowLimit = originalConsecutiveSlowLimit
+		service.ClearAggregateRouteAffinityCacheAll()
 		sqlDB, err := db.DB()
 		if err == nil {
 			_ = sqlDB.Close()
@@ -85,12 +88,13 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 		"description":"for enterprise",
 		"status":1,
 		"group_ratio":1.5,
+		"routing_mode":"cluster",
 		"smart_routing_enabled":true,
 		"recovery_enabled":true,
 		"recovery_interval_seconds":300,
 		"retry_status_codes":"401,429,500-599",
 		"visible_user_groups":["vip"],
-		"targets":[{"real_group":"default"},{"real_group":"vip"}]
+		"targets":[{"real_group":"default","weight":50},{"real_group":"vip","weight":150}]
 	}`)
 
 	createRecorder := httptest.NewRecorder()
@@ -115,6 +119,35 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"real_group":"default"`)
 	require.Contains(t, string(listResp.Data), `"retry_status_codes":"401,429,500-599"`)
 	require.Contains(t, string(listResp.Data), `"smart_routing_enabled":true`)
+	require.Contains(t, string(listResp.Data), `"routing_mode":"cluster"`)
+	require.Contains(t, string(listResp.Data), `"weight":150`)
+}
+
+func TestCreateAggregateGroupRejectsNegativeTargetWeight(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+
+	payload := []byte(`{
+		"name":"enterprise-stable",
+		"display_name":"企业稳定组",
+		"status":1,
+		"group_ratio":1.5,
+		"routing_mode":"cluster",
+		"recovery_enabled":true,
+		"recovery_interval_seconds":300,
+		"visible_user_groups":["vip"],
+		"targets":[{"real_group":"default","weight":-1}]
+	}`)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/aggregate_group", bytes.NewReader(payload))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	CreateAggregateGroup(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "权重不能小于 0")
 }
 
 func TestCreateAggregateGroupRejectsInvalidRetryStatusCodes(t *testing.T) {
@@ -159,8 +192,8 @@ func TestGetChannelRetryDoesNotReuseInitialSelectedChannelForAggregateGroup(t *t
 	}
 	require.NoError(t, group.SetVisibleUserGroups([]string{"svip"}))
 	require.NoError(t, group.InsertWithTargets([]model.AggregateGroupTarget{
-		{RealGroup: "kiro2", OrderIndex: 0},
-		{RealGroup: "kiro1", OrderIndex: 1},
+		{RealGroup: "kiro2", OrderIndex: 0, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
+		{RealGroup: "kiro1", OrderIndex: 1, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
 	}))
 
 	weight := uint(10)
@@ -230,14 +263,15 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 		DisplayName:             "Runtime HA",
 		Status:                  model.AggregateGroupStatusEnabled,
 		GroupRatio:              1,
+		RoutingMode:             model.AggregateGroupRoutingModeCluster,
 		SmartRoutingEnabled:     true,
 		RecoveryEnabled:         true,
 		RecoveryIntervalSeconds: 300,
 	}
 	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
 	require.NoError(t, group.InsertWithTargets([]model.AggregateGroupTarget{
-		{RealGroup: "default", OrderIndex: 0},
-		{RealGroup: "vip", OrderIndex: 1},
+		{RealGroup: "default", OrderIndex: 0, Weight: common.GetPointer(50)},
+		{RealGroup: "vip", OrderIndex: 1, Weight: common.GetPointer(150)},
 	}))
 
 	seedAggregateGroupControllerAbilityChannel(t, 1001, "default", "z-model", 0)
@@ -256,12 +290,19 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 		DegradedUntil:     common.GetTimestamp() + 600,
 		LastFailureAt:     now,
 		LastTriggerReason: service.AggregateSmartTriggerReasonConsecutiveFailures,
-		LastTriggerAt:     now,
+		LastTriggerAt:     now - 10,
 	}))
 	require.NoError(t, service.SetAggregateGroupRouteStrategyState(group.Name, "a-model", "vip", &service.AggregateGroupRouteStrategyState{
 		ConsecutiveSlows: 1,
 		LastSuccessAt:    now,
 	}))
+	rpmRecorder := httptest.NewRecorder()
+	rpmCtx, _ := gin.CreateTestContext(rpmRecorder)
+	common.SetContextKey(rpmCtx, constant.ContextKeyAggregateGroup, group.Name)
+	common.SetContextKey(rpmCtx, constant.ContextKeyRouteGroup, "default")
+	service.RecordAggregateRouteRPMAttempt(rpmCtx, "a-model", "default")
+	service.RecordAggregateRouteRPMSuccess(rpmCtx, "a-model", "default")
+	service.RecordAggregateRouteRPMFailure(rpmCtx, "a-model")
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -278,6 +319,7 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 	require.True(t, resp.Success, resp.Message)
 	require.Equal(t, []string{"a-model", "z-model"}, resp.Data.Models)
 	require.Equal(t, "a-model", resp.Data.SelectedModel)
+	require.Equal(t, model.AggregateGroupRoutingModeCluster, resp.Data.AggregateGroup.RoutingMode)
 	require.True(t, resp.Data.SmartStrategy.EffectiveEnabled)
 	require.NotNil(t, resp.Data.Runtime)
 	require.NotNil(t, resp.Data.Runtime.ActiveRoute)
@@ -285,12 +327,21 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 	require.Equal(t, now, resp.Data.Runtime.ActiveRoute.ActiveSinceAt)
 	require.Len(t, resp.Data.Runtime.Routes, 2)
 	require.Equal(t, "default", resp.Data.Runtime.Routes[0].RouteGroup)
+	require.Equal(t, 50, resp.Data.Runtime.Routes[0].Weight)
+	require.Equal(t, 10, resp.Data.Runtime.Routes[0].EffectiveWeight)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].PriorityCount)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].RPM)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].SuccessRPM)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].FailureRPM)
 	require.True(t, resp.Data.Runtime.Routes[0].IsDegraded)
+	require.False(t, resp.Data.Runtime.Routes[0].IsSoftFallback)
 	require.Equal(t, service.AggregateSmartTriggerReasonConsecutiveFailures, resp.Data.Runtime.Routes[0].LastTriggerReason)
 	require.Equal(t, "vip", resp.Data.Runtime.Routes[1].RouteGroup)
+	require.Equal(t, 150, resp.Data.Runtime.Routes[1].Weight)
+	require.Equal(t, 150, resp.Data.Runtime.Routes[1].EffectiveWeight)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[1].PriorityCount)
 	require.True(t, resp.Data.Runtime.Routes[1].IsActive)
+	require.False(t, resp.Data.Runtime.Routes[1].IsSoftFallback)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[1].ConsecutiveSlows)
 }
 
@@ -307,7 +358,7 @@ func TestGetAggregateGroupRuntimeRejectsModelOutsideAggregateGroup(t *testing.T)
 	}
 	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
 	require.NoError(t, group.InsertWithTargets([]model.AggregateGroupTarget{
-		{RealGroup: "default", OrderIndex: 0},
+		{RealGroup: "default", OrderIndex: 0, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
 	}))
 	seedAggregateGroupControllerAbilityChannel(t, 1001, "default", "a-model", 0)
 
@@ -336,8 +387,8 @@ func TestGetAggregateGroupRuntimeHandlesAggregateGroupWithoutModels(t *testing.T
 	}
 	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
 	require.NoError(t, group.InsertWithTargets([]model.AggregateGroupTarget{
-		{RealGroup: "default", OrderIndex: 0},
-		{RealGroup: "vip", OrderIndex: 1},
+		{RealGroup: "default", OrderIndex: 0, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
+		{RealGroup: "vip", OrderIndex: 1, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
 	}))
 
 	recorder := httptest.NewRecorder()
@@ -371,8 +422,8 @@ func TestGetAggregateGroupRuntimeMarksRouteUnavailableWhenSubGroupDoesNotSupport
 	}
 	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
 	require.NoError(t, group.InsertWithTargets([]model.AggregateGroupTarget{
-		{RealGroup: "default", OrderIndex: 0},
-		{RealGroup: "vip", OrderIndex: 1},
+		{RealGroup: "default", OrderIndex: 0, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
+		{RealGroup: "vip", OrderIndex: 1, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
 	}))
 
 	seedAggregateGroupControllerAbilityChannel(t, 1001, "default", "claude-haiku-4-5", 0)
