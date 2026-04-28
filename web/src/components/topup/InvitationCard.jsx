@@ -38,6 +38,7 @@ import {
   Zap,
 } from 'lucide-react';
 import InviteDetailsModal from './modals/InviteDetailsModal';
+import InviteCommissionSummary from './InviteCommissionSummary';
 
 const { Text } = Typography;
 
@@ -369,6 +370,8 @@ const InvitationCard = ({
               </Text>
             </div>
           </Card>
+
+          <InviteCommissionSummary t={t} />
 
           {boundInviteCode && (
             <Card

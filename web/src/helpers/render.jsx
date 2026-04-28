@@ -75,6 +75,7 @@ import {
   Package,
   Server,
   CalendarClock,
+  HandCoins,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -139,6 +140,8 @@ export function getLucideIcon(key, selected = false) {
     case 'invite_code':
     case 'redemption':
       return <Gift {...commonProps} color={iconColor} />;
+    case 'invite_commission':
+      return <HandCoins {...commonProps} color={iconColor} />;
     case 'user':
     case 'personal':
       return <User {...commonProps} color={iconColor} />;

@@ -241,6 +241,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
+	params.Other = AttachInviteCommissionSnapshotToLogOther(params.Other, params.Group, params.Quota)
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -300,6 +301,9 @@ type RecordTaskBillingLogParams struct {
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled {
 		return
+	}
+	if params.LogType == LogTypeConsume {
+		params.Other = AttachInviteCommissionSnapshotToLogOther(params.Other, params.Group, params.Quota)
 	}
 	username, _ := GetUsernameById(params.UserId, false)
 	tokenName := ""

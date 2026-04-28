@@ -35,6 +35,7 @@ import Channel from './pages/Channel';
 import Token from './pages/Token';
 import Redemption from './pages/Redemption';
 import InviteCode from './pages/InviteCode';
+import InviteCommission from './pages/InviteCommission';
 import TopUp from './pages/TopUp';
 import Log from './pages/Log';
 import Chat from './pages/Chat';
@@ -171,6 +172,14 @@ function App() {
           element={
             <AdminRoute>
               <InviteCode />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/invite-commission'
+          element={
+            <AdminRoute>
+              <InviteCommission />
             </AdminRoute>
           }
         />

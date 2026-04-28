@@ -33,7 +33,7 @@ func TestMain(m *testing.M) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 
-	if err := db.AutoMigrate(&Task{}, &User{}, &Token{}, &Log{}, &Channel{}, &InviteCode{}, &TopUp{}); err != nil {
+	if err := db.AutoMigrate(&Task{}, &User{}, &Token{}, &Log{}, &Channel{}, &AggregateGroup{}, &AggregateGroupTarget{}, &InviteCode{}, &TopUp{}, &Redemption{}, &SubscriptionPlan{}, &SubscriptionOrder{}, &UserSubscription{}, &InviteCommissionUserConfig{}, &Option{}); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
 
@@ -42,14 +42,28 @@ func TestMain(m *testing.M) {
 
 func truncateTables(t *testing.T) {
 	t.Helper()
+	common.OptionMapRWMutex.Lock()
+	delete(common.OptionMap, InviteCommissionSettingsOptionKey)
+	common.OptionMapRWMutex.Unlock()
 	t.Cleanup(func() {
 		DB.Exec("DELETE FROM tasks")
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM tokens")
 		DB.Exec("DELETE FROM logs")
 		DB.Exec("DELETE FROM channels")
+		DB.Exec("DELETE FROM aggregate_group_targets")
+		DB.Exec("DELETE FROM aggregate_groups")
 		DB.Exec("DELETE FROM invite_codes")
 		DB.Exec("DELETE FROM top_ups")
+		DB.Exec("DELETE FROM redemptions")
+		DB.Exec("DELETE FROM subscription_plans")
+		DB.Exec("DELETE FROM subscription_orders")
+		DB.Exec("DELETE FROM user_subscriptions")
+		DB.Exec("DELETE FROM invite_commission_user_configs")
+		DB.Exec("DELETE FROM options")
+		common.OptionMapRWMutex.Lock()
+		delete(common.OptionMap, InviteCommissionSettingsOptionKey)
+		common.OptionMapRWMutex.Unlock()
 	})
 }
 

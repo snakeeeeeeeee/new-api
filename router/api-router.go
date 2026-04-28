@@ -306,6 +306,22 @@ func SetApiRouter(router *gin.Engine) {
 			inviteCodeRoute.PUT("/", controller.UpdateInviteCode)
 			inviteCodeRoute.DELETE("/:id", controller.DeleteInviteCode)
 		}
+		inviteCommissionRoute := apiRouter.Group("/invite_commission")
+		{
+			inviteCommissionRoute.GET("/self/report", middleware.UserAuth(), controller.GetInviteCommissionSelfReport)
+			inviteCommissionAdminRoute := inviteCommissionRoute.Group("/")
+			inviteCommissionAdminRoute.Use(middleware.AdminAuth())
+			{
+				inviteCommissionAdminRoute.GET("/settings", controller.GetInviteCommissionSettings)
+				inviteCommissionAdminRoute.PUT("/settings", controller.UpdateInviteCommissionSettings)
+				inviteCommissionAdminRoute.GET("/user_configs", controller.GetInviteCommissionUserConfigs)
+				inviteCommissionAdminRoute.PUT("/user_configs/:user_id", controller.UpdateInviteCommissionUserConfig)
+				inviteCommissionAdminRoute.GET("/group_profit_rules", controller.GetInviteCommissionGroupProfitRules)
+				inviteCommissionAdminRoute.PUT("/group_profit_rules", controller.UpdateInviteCommissionGroupProfitRule)
+				inviteCommissionAdminRoute.DELETE("/group_profit_rules", controller.DeleteInviteCommissionGroupProfitRule)
+				inviteCommissionAdminRoute.GET("/admin/report", controller.GetInviteCommissionAdminReport)
+			}
+		}
 		logRoute := apiRouter.Group("/log")
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
 		logRoute.GET("/dashboard", middleware.AdminAuth(), controller.GetLogsDashboard)

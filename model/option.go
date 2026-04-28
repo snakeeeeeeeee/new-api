@@ -171,6 +171,7 @@ func InitOptionMap() {
 	common.OptionMap["aggregate_group.slow_request_threshold_seconds"] = strconv.Itoa(setting.AggregateGroupSlowRequestThreshold)
 	common.OptionMap["aggregate_group.consecutive_slow_threshold"] = strconv.Itoa(setting.AggregateGroupConsecutiveSlowLimit)
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
+	common.OptionMap[InviteCommissionSettingsOptionKey] = DefaultInviteCommissionSettingsJSONString()
 
 	// 自动添加所有注册的模型配置
 	modelConfigs := config.GlobalConfig.ExportAllConfigs()
@@ -226,6 +227,9 @@ func UpdateOption(key string, value string) error {
 func updateOptionMap(key string, value string) (err error) {
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
 	previousValue, hadPrevious := common.OptionMap[key]
 	defer func() {
 		if err != nil {

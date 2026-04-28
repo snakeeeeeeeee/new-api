@@ -42,6 +42,11 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	if info.PriceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
 	}
+	adminInfo := make(map[string]interface{})
+	AppendAggregateGroupAdminInfo(c, adminInfo)
+	if len(adminInfo) > 0 {
+		other["admin_info"] = adminInfo
+	}
 	if info.IsModelMapped {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
