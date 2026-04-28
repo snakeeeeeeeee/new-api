@@ -163,6 +163,7 @@ func selectAggregateGroupChannel(param *RetryParam, aggregateGroup *model.Aggreg
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRoutingMode, routingMode)
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRecoveryEnabled, aggregateGroup.RecoveryEnabled)
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRecoveryInterval, aggregateGroup.RecoveryIntervalSeconds)
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateClusterAffinityTTL, aggregateGroup.GetClusterAffinityTTLSeconds())
 
 	if routingMode == model.AggregateGroupRoutingModeCluster {
 		return selectAggregateGroupClusterChannel(param, aggregateGroup)

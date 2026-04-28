@@ -25,12 +25,15 @@ import {
   Col,
   Input,
   InputNumber,
+  Modal,
   Row,
   Select,
   SideSheet,
   Space,
   Switch,
   Tag,
+  Tabs,
+  TabPane,
   TextArea,
   Typography,
 } from '@douyinfe/semi-ui';
@@ -41,11 +44,16 @@ import {
   IconSave,
   IconServer,
 } from '@douyinfe/semi-icons';
-import { API, showError, showSuccess } from '../../../helpers';
+import { API, selectFilter, showError, showSuccess } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 
 const { Text, Title } = Typography;
+
+const routingModeLabels = {
+  failover: 'Failover 故障转移',
+  cluster: 'Cluster 集群分发',
+};
 
 const defaultInputs = {
   id: undefined,
@@ -58,6 +66,7 @@ const defaultInputs = {
   smart_routing_enabled: false,
   recovery_enabled: true,
   recovery_interval_seconds: 300,
+  cluster_affinity_ttl_seconds: 300,
   retry_status_codes: '',
   visible_user_groups: [],
   targets: [],
@@ -116,6 +125,10 @@ const EditAggregateGroupModal = ({
             data.recovery_interval_seconds === undefined
               ? 300
               : data.recovery_interval_seconds,
+          cluster_affinity_ttl_seconds:
+            data.cluster_affinity_ttl_seconds === undefined
+              ? 300
+              : data.cluster_affinity_ttl_seconds,
           retry_status_codes: data.retry_status_codes || '',
           visible_user_groups: data.visible_user_groups || [],
           targets: (data.targets || []).map((item) => ({
@@ -156,6 +169,26 @@ const EditAggregateGroupModal = ({
       ...prev,
       [field]: value,
     }));
+  };
+
+  const handleRoutingModeChange = (key) => {
+    const nextMode = key || 'failover';
+    const currentMode = inputs.routing_mode || 'failover';
+    if (nextMode === currentMode) {
+      return;
+    }
+    Modal.confirm({
+      title: t('确认切换路由模式？'),
+      content: t(
+        '确认后表单将切换为 {{mode}} 配置；提交保存后，聚合分组将以 {{mode}} 模式运行。',
+        {
+          mode: t(routingModeLabels[nextMode] || nextMode),
+        },
+      ),
+      okText: t('确认切换'),
+      cancelText: t('取消'),
+      onOk: () => updateField('routing_mode', nextMode),
+    });
   };
 
   const moveTarget = (index, direction) => {
@@ -221,6 +254,122 @@ const EditAggregateGroupModal = ({
     });
   };
 
+  const renderRetryStatusCodes = () => (
+    <Col xs={24} sm={12}>
+      <div className='mb-2'>
+        <Text strong>{t('聚合重试状态码')}</Text>
+      </div>
+      <Input
+        value={inputs.retry_status_codes}
+        onChange={(value) => updateField('retry_status_codes', value)}
+        placeholder={t('留空沿用系统规则，例如：401,403,429,500-599')}
+      />
+      <div className='mt-1 text-xs text-gray-500'>
+        {t('仅对当前聚合分组生效；填写后覆盖系统默认重试状态码规则。')}
+      </div>
+    </Col>
+  );
+
+  const renderTargetList = () => (
+    <div className='mt-4'>
+      <div className='mb-2'>
+        <Text strong>{t('添加真实分组')}</Text>
+      </div>
+      <Select
+        placeholder={t('选择真实分组')}
+        value={selectedTargetValues}
+        onChange={updateTargetSelection}
+        optionList={availableTargetOptions}
+        multiple
+        filter={selectFilter}
+        searchPosition='dropdown'
+        autoClearSearchValue={false}
+        style={{ width: '100%' }}
+      />
+
+      <div className='mt-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600'>
+        {isClusterMode
+          ? t(
+              '权重表示相对流量比例，例如 100/200 约等于 1:2；0 表示不参与普通加权随机。顺序会保留，用于切回 Failover 后的链路顺序。',
+            )
+          : t(
+              'Failover 按列表顺序形成 A -> B -> C 链路；权重在该模式不参与路由，因此不会显示权重编辑。',
+            )}
+      </div>
+
+      <div className='flex flex-col gap-2 mt-3'>
+        {inputs.targets.length === 0 ? (
+          <div className='rounded-lg border border-dashed border-gray-200 bg-white px-3 py-4 text-center text-sm text-gray-500'>
+            {t('请选择至少一个真实分组')}
+          </div>
+        ) : (
+          inputs.targets.map((target, index) => (
+            <div
+              key={target.real_group}
+              className='rounded-lg border border-gray-200 bg-white px-3 py-3'
+            >
+              <div className='flex items-center justify-between gap-3 flex-wrap'>
+                <Space>
+                  <Tag color={isClusterMode ? 'green' : 'blue'} shape='circle'>
+                    {index + 1}
+                  </Tag>
+                  <div>
+                    <Text strong>{target.real_group}</Text>
+                    <div className='text-xs text-gray-500'>
+                      {isClusterMode ? t('子分组节点') : t('链路节点')}
+                    </div>
+                  </div>
+                </Space>
+                <Space align='center'>
+                  {isClusterMode && (
+                    <div className='flex items-center gap-2'>
+                      <div className='text-right leading-tight'>
+                        <Text type='secondary' className='text-xs'>
+                          {t('权重')}
+                        </Text>
+                        <div className='text-[11px] text-gray-500'>
+                          {t('越大流量越多')}
+                        </div>
+                      </div>
+                      <InputNumber
+                        min={0}
+                        value={target.weight}
+                        onChange={(value) => updateTargetWeight(index, value)}
+                        aria-label={t('Cluster 权重')}
+                        style={{ width: 104 }}
+                      />
+                    </div>
+                  )}
+                  <Button
+                    theme='borderless'
+                    icon={<IconArrowUp />}
+                    disabled={index === 0}
+                    onClick={() => moveTarget(index, -1)}
+                    aria-label={t('上移真实分组')}
+                  />
+                  <Button
+                    theme='borderless'
+                    icon={<IconArrowDown />}
+                    disabled={index === inputs.targets.length - 1}
+                    onClick={() => moveTarget(index, 1)}
+                    aria-label={t('下移真实分组')}
+                  />
+                  <Button
+                    theme='borderless'
+                    type='danger'
+                    icon={<IconClose />}
+                    onClick={() => removeTarget(index)}
+                    aria-label={t('移除真实分组')}
+                  />
+                </Space>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+
   const handleSubmit = async () => {
     setLoading(true);
     try {
@@ -235,6 +384,9 @@ const EditAggregateGroupModal = ({
         smart_routing_enabled: inputs.smart_routing_enabled,
         recovery_enabled: inputs.recovery_enabled,
         recovery_interval_seconds: Number(inputs.recovery_interval_seconds),
+        cluster_affinity_ttl_seconds: Number(
+          inputs.cluster_affinity_ttl_seconds || 300,
+        ),
         retry_status_codes: inputs.retry_status_codes.trim(),
         visible_user_groups: inputs.visible_user_groups,
         targets: inputs.targets.map((target) => ({
@@ -264,7 +416,7 @@ const EditAggregateGroupModal = ({
       visible={visible}
       onCancel={onClose}
       placement='right'
-      width={isMobile ? '100%' : 720}
+      width={isMobile ? '100%' : 760}
       bodyStyle={{ padding: '0' }}
       closeIcon={null}
       title={
@@ -303,7 +455,7 @@ const EditAggregateGroupModal = ({
       }
     >
       <div className='p-2'>
-        <Card className='!rounded-2xl shadow-sm border-0'>
+        <Card className='!rounded-lg shadow-sm border-0'>
           <div className='flex items-center mb-2'>
             <Avatar size='small' color='blue' className='mr-2 shadow-md'>
               <IconServer size={16} />
@@ -316,7 +468,7 @@ const EditAggregateGroupModal = ({
             </div>
           </div>
           <Row gutter={12}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <div className='mb-2'>
                 <Text strong>{t('分组名称')}</Text>
               </div>
@@ -326,7 +478,7 @@ const EditAggregateGroupModal = ({
                 placeholder={t('请输入唯一分组名称')}
               />
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <div className='mb-2'>
                 <Text strong>{t('显示名称')}</Text>
               </div>
@@ -347,7 +499,7 @@ const EditAggregateGroupModal = ({
                 autosize
               />
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={8}>
               <div className='mb-2'>
                 <Text strong>{t('聚合倍率')}</Text>
               </div>
@@ -359,23 +511,7 @@ const EditAggregateGroupModal = ({
                 style={{ width: '100%' }}
               />
             </Col>
-            <Col span={8}>
-              <div className='mb-2'>
-                <Text strong>{t('路由模式')}</Text>
-              </div>
-              <Select
-                value={inputs.routing_mode}
-                onChange={(value) =>
-                  updateField('routing_mode', value || 'failover')
-                }
-                optionList={[
-                  { label: 'Failover', value: 'failover' },
-                  { label: 'Cluster', value: 'cluster' },
-                ]}
-                style={{ width: '100%' }}
-              />
-            </Col>
-            <Col span={8}>
+            <Col xs={12} sm={8}>
               <div className='mb-2'>
                 <Text strong>{t('启用状态')}</Text>
               </div>
@@ -384,7 +520,7 @@ const EditAggregateGroupModal = ({
                 onChange={(checked) => updateField('status', checked ? 1 : 2)}
               />
             </Col>
-            <Col span={8}>
+            <Col xs={12} sm={8}>
               <div className='mb-2'>
                 <Text strong>{t('当前分组启用智能策略')}</Text>
               </div>
@@ -395,43 +531,7 @@ const EditAggregateGroupModal = ({
                 }
               />
             </Col>
-            <Col span={8}>
-              <div className='mb-2'>
-                <Text strong>{t('懒恢复')}</Text>
-              </div>
-              <Switch
-                checked={inputs.recovery_enabled}
-                onChange={(checked) => updateField('recovery_enabled', checked)}
-              />
-            </Col>
-            <Col span={12}>
-              <div className='mb-2'>
-                <Text strong>{t('恢复间隔（秒）')}</Text>
-              </div>
-              <InputNumber
-                min={1}
-                value={inputs.recovery_interval_seconds}
-                onChange={(value) =>
-                  updateField('recovery_interval_seconds', value)
-                }
-                disabled={!inputs.recovery_enabled}
-                style={{ width: '100%' }}
-              />
-            </Col>
-            <Col span={12}>
-              <div className='mb-2'>
-                <Text strong>{t('聚合重试状态码')}</Text>
-              </div>
-              <Input
-                value={inputs.retry_status_codes}
-                onChange={(value) => updateField('retry_status_codes', value)}
-                placeholder={t('留空沿用系统规则，例如：401,403,429,500-599')}
-              />
-              <div className='mt-1 text-xs text-gray-500'>
-                {t('仅对当前聚合分组生效；填写后覆盖系统默认重试状态码规则。')}
-              </div>
-            </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <div className='mb-2'>
                 <Text strong>{t('可见用户组')}</Text>
               </div>
@@ -443,91 +543,106 @@ const EditAggregateGroupModal = ({
                 }
                 optionList={userGroupOptions}
                 multiple
+                filter={selectFilter}
+                searchPosition='dropdown'
+                autoClearSearchValue={false}
                 style={{ width: '100%' }}
               />
             </Col>
           </Row>
         </Card>
 
-        <Card className='!rounded-2xl shadow-sm border-0 mt-3'>
+        <Card className='!rounded-lg shadow-sm border-0 mt-3'>
           <div className='flex items-center mb-2'>
             <Avatar size='small' color='green' className='mr-2 shadow-md'>
               <IconServer size={16} />
             </Avatar>
             <div>
-              <Text className='text-lg font-medium'>{t('真实分组链')}</Text>
+              <Text className='text-lg font-medium'>{t('路由模式配置')}</Text>
               <div className='text-xs text-gray-600'>
-                {isClusterMode
-                  ? t(
-                      'Cluster 模式按相对权重分发；例如 100/200 约等于 1:2。0 不参与普通加权随机，亲和命中或全 0 回退时仍可能被尝试。',
-                    )
-                  : t(
-                      'Failover 模式按顺序失败切换；权重只保存配置但不参与路由，切换到 Cluster 后可编辑。',
-                    )}
+                {t('选择当前聚合分组的子分组路由方式，并配置对应参数')}
               </div>
             </div>
           </div>
-          <div className='mb-2'>
-            <Text strong>{t('添加真实分组')}</Text>
-          </div>
-          <Select
-            placeholder={t('选择真实分组')}
-            value={selectedTargetValues}
-            onChange={updateTargetSelection}
-            optionList={availableTargetOptions}
-            multiple
-            style={{ width: '100%' }}
-          />
-          <div className='flex flex-col gap-2 mt-3'>
-            {inputs.targets.map((target, index) => (
-              <Card
-                key={target.real_group}
-                className='!rounded-xl border !shadow-none'
-              >
-                <div className='flex items-center justify-between gap-2 flex-wrap'>
-                  <Space>
-                    <Tag color='blue' shape='circle'>
-                      {index + 1}
-                    </Tag>
-                    <Text strong>{target.real_group}</Text>
-                  </Space>
-                  <Space>
-                    <div className='flex items-center gap-2'>
-                      <Text type='secondary' className='text-xs'>
-                        {t('权重')}
-                      </Text>
-                      <InputNumber
-                        min={0}
-                        value={target.weight}
-                        onChange={(value) => updateTargetWeight(index, value)}
-                        disabled={!isClusterMode}
-                        aria-label={t('Cluster 权重')}
-                        style={{ width: 104 }}
-                      />
-                    </div>
-                    <Button
-                      theme='borderless'
-                      icon={<IconArrowUp />}
-                      disabled={index === 0}
-                      onClick={() => moveTarget(index, -1)}
-                    />
-                    <Button
-                      theme='borderless'
-                      icon={<IconArrowDown />}
-                      disabled={index === inputs.targets.length - 1}
-                      onClick={() => moveTarget(index, 1)}
-                    />
-                    <Button
-                      theme='borderless'
-                      type='danger'
-                      icon={<IconClose />}
-                      onClick={() => removeTarget(index)}
-                    />
-                  </Space>
+          <Tabs
+            activeKey={inputs.routing_mode || 'failover'}
+            onChange={handleRoutingModeChange}
+            type='button'
+          >
+            <TabPane itemKey='failover' tab={t('Failover 故障转移')}>
+              <div className='mt-3'>
+                <div className='rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700'>
+                  {t(
+                    'Failover 按真实分组顺序失败切换，适合主备高可用；旧聚合分组默认保持该模式。',
+                  )}
                 </div>
-              </Card>
-            ))}
-          </div>
+                <Row gutter={12} className='mt-3'>
+                  <Col xs={12} sm={8}>
+                    <div className='mb-2'>
+                      <Text strong>{t('懒恢复')}</Text>
+                    </div>
+                    <Switch
+                      checked={inputs.recovery_enabled}
+                      onChange={(checked) =>
+                        updateField('recovery_enabled', checked)
+                      }
+                    />
+                    <div className='mt-1 text-xs text-gray-500'>
+                      {t('开启后按恢复间隔回到链路头部重试')}
+                    </div>
+                  </Col>
+                  <Col xs={24} sm={8}>
+                    <div className='mb-2'>
+                      <Text strong>{t('恢复间隔（秒）')}</Text>
+                    </div>
+                    <InputNumber
+                      min={1}
+                      value={inputs.recovery_interval_seconds}
+                      onChange={(value) =>
+                        updateField('recovery_interval_seconds', value)
+                      }
+                      disabled={!inputs.recovery_enabled}
+                      style={{ width: '100%' }}
+                    />
+                    <div className='mt-1 text-xs text-gray-500'>
+                      {t('仅 Failover 懒恢复使用')}
+                    </div>
+                  </Col>
+                  {renderRetryStatusCodes()}
+                </Row>
+                {renderTargetList()}
+              </div>
+            </TabPane>
+            <TabPane itemKey='cluster' tab={t('Cluster 集群分发')}>
+              <div className='mt-3'>
+                <div className='rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700'>
+                  {t(
+                    'Cluster 让多个子分组同时承接流量；同一用户在亲和保持时间内尽量固定到同一可用子分组。',
+                  )}
+                </div>
+                <Row gutter={12} className='mt-3'>
+                  <Col xs={24} sm={12}>
+                    <div className='mb-2'>
+                      <Text strong>{t('Cluster 亲和保持时间（秒）')}</Text>
+                    </div>
+                    <InputNumber
+                      min={1}
+                      value={inputs.cluster_affinity_ttl_seconds}
+                      onChange={(value) =>
+                        updateField('cluster_affinity_ttl_seconds', value || 300)
+                      }
+                      style={{ width: '100%' }}
+                    />
+                    <div className='mt-1 text-xs text-gray-500'>
+                      {t('同一用户尽量固定到同一子分组的时间，到期后重新按权重选择。')}
+                    </div>
+                  </Col>
+                  {renderRetryStatusCodes()}
+                </Row>
+                {renderTargetList()}
+              </div>
+            </TabPane>
+          </Tabs>
         </Card>
       </div>
     </SideSheet>

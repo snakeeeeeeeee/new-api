@@ -225,6 +225,7 @@ func ValidateAggregateGroupConfig(group *model.AggregateGroup, visibleUserGroups
 	if group.RecoveryEnabled && group.RecoveryIntervalSeconds <= 0 {
 		return errors.New("恢复间隔必须大于 0")
 	}
+	group.ClusterAffinityTTLSeconds = model.NormalizeAggregateGroupClusterAffinityTTLSeconds(group.ClusterAffinityTTLSeconds)
 	if group.RetryStatusCodes != "" {
 		if _, err := operation_setting.ParseHTTPStatusCodeRanges(group.RetryStatusCodes); err != nil {
 			return fmt.Errorf("聚合分组重试状态码规则无效: %w", err)

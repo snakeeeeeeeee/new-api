@@ -92,6 +92,7 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 		"smart_routing_enabled":true,
 		"recovery_enabled":true,
 		"recovery_interval_seconds":300,
+		"cluster_affinity_ttl_seconds":120,
 		"retry_status_codes":"401,429,500-599",
 		"visible_user_groups":["vip"],
 		"targets":[{"real_group":"default","weight":50},{"real_group":"vip","weight":150}]
@@ -120,6 +121,7 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"retry_status_codes":"401,429,500-599"`)
 	require.Contains(t, string(listResp.Data), `"smart_routing_enabled":true`)
 	require.Contains(t, string(listResp.Data), `"routing_mode":"cluster"`)
+	require.Contains(t, string(listResp.Data), `"cluster_affinity_ttl_seconds":120`)
 	require.Contains(t, string(listResp.Data), `"weight":150`)
 }
 

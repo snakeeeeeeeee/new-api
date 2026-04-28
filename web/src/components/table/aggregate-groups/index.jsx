@@ -58,6 +58,11 @@ const defaultStrategyInputs = {
   'aggregate_group.consecutive_slow_threshold': 3,
 };
 
+const isUserVisibleGroup = (group) =>
+  group === 'default' || String(group || '').startsWith('UserGroup-');
+
+const isRealRouteGroup = (group) => !isUserVisibleGroup(group);
+
 const AggregateGroupsPage = () => {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
@@ -107,8 +112,12 @@ const AggregateGroupsPage = () => {
         label: group,
         value: group,
       }));
-      setRealGroupOptions(options);
-      setUserGroupOptions(options);
+      setRealGroupOptions(
+        options.filter((option) => isRealRouteGroup(option.value)),
+      );
+      setUserGroupOptions(
+        options.filter((option) => isUserVisibleGroup(option.value)),
+      );
     } catch (error) {
       showError(error?.message || t('获取分组选项失败'));
     }
@@ -210,6 +219,18 @@ const AggregateGroupsPage = () => {
         render: (_, record) => (
           <Space>
             <Text strong>{record.name}</Text>
+            <Tag
+              color={
+                (record.routing_mode || 'failover') === 'cluster'
+                  ? 'green'
+                  : 'blue'
+              }
+              size='small'
+            >
+              {(record.routing_mode || 'failover') === 'cluster'
+                ? t('Cluster 集群')
+                : t('Failover 故障转移')}
+            </Tag>
             <Tag color='blue' shape='circle'>
               {record.display_name}
             </Tag>

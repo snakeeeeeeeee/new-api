@@ -23,7 +23,7 @@ V1 已实现：
 - 请求失败后沿用现有 retry 机制在真实分组链路内继续 fallback
 - 默认 `routing_mode=failover`，已有聚合分组保持原 `A -> B -> C` 行为
 - 可将单个聚合分组切换为 `cluster`，按子分组权重分发请求
-- `cluster` 模式使用平台用户 ID 做聚合层子分组亲和：`aggregate_group + model + user_id -> route_group`
+- `cluster` 模式使用平台用户 ID 做聚合层子分组亲和：`aggregate_group + user_id -> route_group`；选中前仍校验该子分组是否支持当前模型
 - target 支持 `weight`，默认 100，允许 0 表示不参与普通加权但仍可被保留和亲和命中
 - 运行态按 `aggregate_group + model + route_group` 汇总最近 60 秒 `attempt/success/failure` RPM
 - 聚合分组运行时状态按 `聚合分组 + 模型` 维度存储
@@ -55,6 +55,7 @@ V1 不做：
 - `smart_routing_enabled`
 - `recovery_enabled`
 - `recovery_interval_seconds`
+- `cluster_affinity_ttl_seconds`
 - `retry_status_codes`
 - `visible_user_groups`
 - `created_time`
@@ -66,6 +67,7 @@ V1 不做：
 - `visible_user_groups` 使用 `TEXT` 存 JSON 数组，兼容 SQLite / MySQL / PostgreSQL
 - `retry_status_codes` 使用 `TEXT` 存状态码范围字符串，例如 `401,403,429,500-599`
 - `status` 使用启用/禁用整型状态，风格与现有模型一致
+- `cluster_affinity_ttl_seconds` 表示 `cluster` 模式下同一平台用户尽量固定到同一子分组的时间，默认 300 秒；`failover` 下不生效
 
 ### `aggregate_group_targets`
 
@@ -92,17 +94,17 @@ V1 不做：
   - 懒恢复、智能策略、组内 retry、fallback 语义保持不变
 - `cluster`
   - 多个真实子分组同时参与承接流量
-  - 首先按平台用户 ID、聚合分组名和模型名读取 route affinity，命中且目标子分组可用时优先使用该子分组
+  - 首先按平台用户 ID 和聚合分组名读取 route affinity，命中且目标子分组支持当前模型并可用时优先使用该子分组
   - 未命中亲和时，从支持当前模型且有可用 channel 的子分组中按 `effective_weight` 加权随机选择
   - 智能策略触发的 degraded 子分组不再直接剔除，而是临时降权参与选择：`effective_weight=max(1, weight*cluster_degraded_weight_percent%)`
   - 如果原始 `weight=0`，degraded 期间 `effective_weight` 仍为 0，不因为降权变成 1
   - 手动禁用、无可用 channel、不支持当前模型仍属于硬不可用，不进入候选
   - `Fallback` 只用于运行态展示：当健康候选为空且降级节点仍在兜底接流量时标记，不代表路由强行跳过其他健康节点
   - 当前子分组内部仍按现有 `common.RetryTimes` 与 priority 层级重试；耗尽后从本次请求尚未尝试过的其他子分组中继续按权重选择
-  - 成功后写入独立 route affinity：`aggregate_group + model + user_id -> route_group`
-  - `recovery_enabled / recovery_interval_seconds` 在 cluster 下控制 route affinity 的回流周期；开启时 TTL 使用恢复间隔，关闭时长期粘住直到目标不可用或降级
+  - 成功后写入独立 route affinity：`aggregate_group + user_id -> route_group`
+  - `cluster_affinity_ttl_seconds` 控制 route affinity 的保持时间，默认 300 秒；到期后允许重新按当前权重选择
 
-route affinity 不复用已有 channel affinity 的 `channel_id` 缓存，独立 namespace 为 `new-api:aggregate_route_affinity:v2`。聚合层只关心平台用户 ID、聚合分组和模型；请求体里的 `prompt_cache_key`、`metadata.user_id` 等字段继续留给 channel affinity 处理“子分组内部选择具体上游号池”的问题。
+route affinity 不复用已有 channel affinity 的 `channel_id` 缓存，独立 namespace 为 `new-api:aggregate_route_affinity:v3`。聚合层只关心平台用户 ID 和聚合分组，模型只作为子分组能力校验条件；请求体里的 `prompt_cache_key`、`metadata.user_id` 等字段继续留给 channel affinity 处理“子分组内部选择具体上游号池”的问题。
 
 ## 运行时设计
 
@@ -198,7 +200,7 @@ flowchart TD
 
 `cluster` 模式下，选路顺序变为：
 
-- 使用 `aggregate_group + model + user_id` 解析 route affinity，命中且 route 可用时直接选中
+- 使用 `aggregate_group + user_id` 解析 route affinity，命中且 route 支持当前模型并可用时直接选中
 - 如果 route affinity 命中的子分组正处于智能降级窗口，则不直接固定命中，而是作为降权候选参与本轮加权选择
 - 未命中时构造候选子分组：
   - 必须支持当前模型
@@ -207,8 +209,8 @@ flowchart TD
   - 智能策略启用时，临时降级子分组仍进入候选，但 `effective_weight=max(1, weight*cluster_degraded_weight_percent%)`
   - 权重为 0 的子分组不参与普通加权随机，降级后仍保持 `effective_weight=0`；当所有候选权重都为 0 时退化为均匀随机
 - 本次请求内跨子分组 retry 会记录已尝试 route，避免反复冲击同一个失败子分组
-- 首次成功或切换子分组成功时写入 route affinity，使后续同一用户、同一模型优先回到成功的子分组
-- 若后续仍命中同一子分组，成功不会继续延长 route affinity TTL；`recovery_interval_seconds` 到期后会重新按权重选择
+- 首次成功或切换子分组成功时写入 route affinity，使后续同一用户优先回到成功的子分组；用户切换模型时，如果原子分组支持该模型，也会继续复用
+- 若后续仍命中同一子分组，成功不会继续延长 route affinity TTL；`cluster_affinity_ttl_seconds` 到期后会重新按权重选择
 - 若请求开始时命中旧 route affinity，但请求完成时 TTL 已过期，成功回写也不会把旧 route 重新续期，避免稳定流量把低权重 fallback 子分组长期粘住
 
 ### 智能策略 V1
@@ -255,14 +257,16 @@ flowchart TD
 
 ### 两层恢复语义
 
-当前聚合分组存在两套恢复语义，作用不同：
+当前聚合分组存在三套恢复 / 回流语义，作用不同：
 
 - 懒恢复（旧逻辑）
   - 由聚合分组自身 `recovery_enabled / recovery_interval_seconds` 控制
   - `failover` 下作用是决定“下一次请求从哪个真实分组开始尝试”
   - 例如降级到第二真实组后，恢复间隔到了，就会重新从第一个真实组开始探测
-  - `cluster` 下作用是决定“用户-模型到子分组的亲和多久允许重新按权重选择”
-  - 例如用户从便宜高权重子分组 A 故障迁移到 B 后，恢复间隔到期才允许重新按权重回流到 A
+- Cluster route affinity（新逻辑）
+  - 由聚合分组自身 `cluster_affinity_ttl_seconds` 控制，默认 300 秒
+  - `cluster` 下作用是决定“用户到子分组的亲和多久允许重新按权重选择”
+  - 例如用户从便宜高权重子分组 A 故障迁移到 B 后，亲和保持时间到期才允许重新按权重回流到 A
 - 智能降级恢复（新逻辑）
   - 由全局 `aggregate_group.degrade_duration_seconds` 控制
   - `failover` 下作用是决定“某个真实分组对某个模型是否仍应被临时跳过”
@@ -429,8 +433,14 @@ flowchart TD
 - `聚合分组` 独立后台菜单页
 - 列表页支持查看倍率、可见用户组、真实分组链与恢复策略
 - SideSheet 支持创建/编辑
-- SideSheet 支持选择 `failover` / `cluster`
-- 真实分组链支持顺序调整和子分组权重配置
+- SideSheet 按“基础信息 + 路由模式配置”组织表单；`failover` / `cluster` 使用 Tabs 分开展示，避免恢复、亲和、权重等不同语义混在一起
+- `failover` tab 展示懒恢复、恢复间隔、重试状态码和真实分组链，权重不参与该模式且不显示权重编辑
+- `cluster` tab 展示亲和保持时间、重试状态码和子分组权重配置，并说明权重是相对流量比例，`100/200` 约等于 `1:2`，`0` 不参与普通加权随机
+- 真实分组链支持顺序调整；cluster 下保留顺序配置，便于切回 failover 时沿用链路顺序
+- 列表页在聚合分组名称旁展示当前路由模式标签，便于快速区分 `failover` / `cluster`
+- 编辑抽屉切换 `failover` / `cluster` 前会弹出确认；确认后表单切换到对应配置，提交保存后才改变实际运行模式
+- `可见用户组` 候选仅展示 `default` 和 `UserGroup-*`，并支持搜索
+- `添加真实分组` 候选过滤掉 `default` 和 `UserGroup-*`，并支持搜索，避免把用户身份组误选为路由 target
 - 运行态抽屉按路由模式切换拓扑：
   - `failover` 继续展示链式拓扑
   - `cluster` 展示请求入口到纵向子分组节点的集群拓扑
@@ -460,8 +470,8 @@ flowchart TD
 - 聚合分组 CRUD 控制器入口
 - 未设置 `routing_mode` 的旧聚合分组仍按 `failover` 选路
 - `cluster` 按权重选择可用子分组并跳过不支持当前模型的子分组
-- route affinity 按 `aggregate_group + model + user_id` 稳定回到同一子分组，命中已降级子分组时不直接固定，按降权后的候选规则重新选择并在成功后更新
-- `cluster` 的 route affinity TTL 复用 `recovery_interval_seconds`，过期后允许重新按权重选择
+- route affinity 按 `aggregate_group + user_id` 稳定回到同一子分组，命中不支持当前模型或已降级子分组时不直接固定，按候选规则重新选择并在成功后更新
+- `cluster` 的 route affinity TTL 使用 `cluster_affinity_ttl_seconds`，默认 300 秒，过期后允许重新按权重选择
 - `cluster` 当前子分组耗尽组内 retry 后切换到其他未尝试子分组
 - RPM 仅汇总最近 60 秒窗口，过期 bucket 不返回
 - `cluster` 中 degraded 子分组使用 `effective_weight=max(1, weight*cluster_degraded_weight_percent%)`，`weight=0` 仍保持 0

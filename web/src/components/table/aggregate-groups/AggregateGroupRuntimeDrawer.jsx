@@ -1277,6 +1277,18 @@ const AggregateGroupRuntimeDrawer = ({
                           })
                         : t('关闭'),
                     },
+                    ...(isClusterMode
+                      ? [
+                          {
+                            key: t('亲和保持时间'),
+                            value: t('{{seconds}} 秒', {
+                              seconds:
+                                runtimeGroup?.cluster_affinity_ttl_seconds ||
+                                300,
+                            }),
+                          },
+                        ]
+                      : []),
                     {
                       key: t('当前模型'),
                       value: selectedModel || '-',

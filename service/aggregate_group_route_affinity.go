@@ -8,13 +8,14 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/cachex"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/hot"
 )
 
-const aggregateRouteAffinityCacheNamespace = "new-api:aggregate_route_affinity:v2"
+const aggregateRouteAffinityCacheNamespace = "new-api:aggregate_route_affinity:v3"
 
 var (
 	aggregateRouteAffinityCacheOnce sync.Once
@@ -53,19 +54,19 @@ func getAggregateRouteAffinityCache() *cachex.HybridCache[string] {
 	return aggregateRouteAffinityCache
 }
 
-func buildAggregateRouteAffinityKey(c *gin.Context, aggregateGroup string, modelName string) string {
-	if c == nil || strings.TrimSpace(aggregateGroup) == "" || strings.TrimSpace(modelName) == "" {
+func buildAggregateRouteAffinityKey(c *gin.Context, aggregateGroup string) string {
+	if c == nil || strings.TrimSpace(aggregateGroup) == "" {
 		return ""
 	}
 	userID := common.GetContextKeyInt(c, constant.ContextKeyUserId)
 	if userID <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s\n%s\nuser:%d", aggregateGroup, modelName, userID)
+	return fmt.Sprintf("%s\nuser:%d", aggregateGroup, userID)
 }
 
 func GetAggregateRouteAffinity(c *gin.Context, modelName string, aggregateGroup string) (string, bool) {
-	key := buildAggregateRouteAffinityKey(c, aggregateGroup, modelName)
+	key := buildAggregateRouteAffinityKey(c, aggregateGroup)
 	if key == "" {
 		return "", false
 	}
@@ -80,15 +81,11 @@ func GetAggregateRouteAffinity(c *gin.Context, modelName string, aggregateGroup 
 
 func resolveAggregateRouteAffinityTTL(c *gin.Context) time.Duration {
 	if c == nil {
-		return 0
+		return time.Duration(model.AggregateGroupClusterAffinityTTLDefaultSeconds) * time.Second
 	}
-	if !common.GetContextKeyBool(c, constant.ContextKeyAggregateRecoveryEnabled) {
-		return 0
-	}
-	interval := common.GetContextKeyInt(c, constant.ContextKeyAggregateRecoveryInterval)
-	if interval <= 0 {
-		return 0
-	}
+	interval := model.NormalizeAggregateGroupClusterAffinityTTLSeconds(
+		common.GetContextKeyInt(c, constant.ContextKeyAggregateClusterAffinityTTL),
+	)
 	return time.Duration(interval) * time.Second
 }
 
@@ -97,21 +94,21 @@ func RecordAggregateRouteAffinity(c *gin.Context, modelName string, aggregateGro
 	if routeGroup == "" {
 		return
 	}
-	key := buildAggregateRouteAffinityKey(c, aggregateGroup, modelName)
+	key := buildAggregateRouteAffinityKey(c, aggregateGroup)
 	if key == "" {
 		return
 	}
-	if common.GetContextKeyBool(c, constant.ContextKeyAggregateRecoveryEnabled) &&
-		common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityHit) == routeGroup {
+	affinityTTL := resolveAggregateRouteAffinityTTL(c)
+	if common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityHit) == routeGroup {
 		return
 	}
 	currentRouteGroup, found, err := getAggregateRouteAffinityCache().Get(key)
 	if err != nil {
 		common.SysError(fmt.Sprintf("aggregate route affinity cache get before set failed: aggregate_group=%s, model=%s, err=%v", aggregateGroup, modelName, err))
-	} else if found && strings.TrimSpace(currentRouteGroup) == routeGroup && common.GetContextKeyBool(c, constant.ContextKeyAggregateRecoveryEnabled) {
+	} else if found && strings.TrimSpace(currentRouteGroup) == routeGroup {
 		return
 	}
-	if err := getAggregateRouteAffinityCache().SetWithTTL(key, routeGroup, resolveAggregateRouteAffinityTTL(c)); err != nil {
+	if err := getAggregateRouteAffinityCache().SetWithTTL(key, routeGroup, affinityTTL); err != nil {
 		common.SysError(fmt.Sprintf("aggregate route affinity cache set failed: aggregate_group=%s, model=%s, route_group=%s, err=%v", aggregateGroup, modelName, routeGroup, err))
 	}
 }

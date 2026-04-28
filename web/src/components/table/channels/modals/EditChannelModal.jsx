@@ -3503,6 +3503,9 @@ const EditChannelModal = (props) => {
                       '请在系统设置页面编辑分组倍率以添加新的分组：',
                     )}
                     optionList={groupOptions}
+                    filter={selectFilter}
+                    autoClearSearchValue={false}
+                    searchPosition='dropdown'
                     style={{ width: '100%' }}
                     position='top'
                     onChange={(value) => handleInputChange('groups', value)}

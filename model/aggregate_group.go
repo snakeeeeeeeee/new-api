@@ -15,26 +15,28 @@ const (
 	AggregateGroupRoutingModeFailover = "failover"
 	AggregateGroupRoutingModeCluster  = "cluster"
 
-	AggregateGroupTargetDefaultWeight = 100
+	AggregateGroupTargetDefaultWeight              = 100
+	AggregateGroupClusterAffinityTTLDefaultSeconds = 300
 )
 
 type AggregateGroup struct {
-	Id                      int                    `json:"id"`
-	Name                    string                 `json:"name" gorm:"size:64;not null;uniqueIndex:uk_aggregate_group_name,where:deleted_at IS NULL"`
-	DisplayName             string                 `json:"display_name" gorm:"size:128;not null"`
-	Description             string                 `json:"description,omitempty" gorm:"type:varchar(255)"`
-	Status                  int                    `json:"status" gorm:"default:1;index"`
-	GroupRatio              float64                `json:"group_ratio" gorm:"default:1"`
-	RoutingMode             string                 `json:"routing_mode" gorm:"size:32;default:failover"`
-	SmartRoutingEnabled     bool                   `json:"smart_routing_enabled" gorm:"default:false"`
-	RecoveryEnabled         bool                   `json:"recovery_enabled" gorm:"default:true"`
-	RecoveryIntervalSeconds int                    `json:"recovery_interval_seconds" gorm:"default:300"`
-	RetryStatusCodes        string                 `json:"retry_status_codes" gorm:"type:text"`
-	VisibleUserGroups       string                 `json:"-" gorm:"type:text"`
-	CreatedTime             int64                  `json:"created_time" gorm:"bigint"`
-	UpdatedTime             int64                  `json:"updated_time" gorm:"bigint"`
-	DeletedAt               gorm.DeletedAt         `json:"-" gorm:"index"`
-	Targets                 []AggregateGroupTarget `json:"targets,omitempty" gorm:"foreignKey:AggregateGroupId"`
+	Id                        int                    `json:"id"`
+	Name                      string                 `json:"name" gorm:"size:64;not null;uniqueIndex:uk_aggregate_group_name,where:deleted_at IS NULL"`
+	DisplayName               string                 `json:"display_name" gorm:"size:128;not null"`
+	Description               string                 `json:"description,omitempty" gorm:"type:varchar(255)"`
+	Status                    int                    `json:"status" gorm:"default:1;index"`
+	GroupRatio                float64                `json:"group_ratio" gorm:"default:1"`
+	RoutingMode               string                 `json:"routing_mode" gorm:"size:32;default:failover"`
+	SmartRoutingEnabled       bool                   `json:"smart_routing_enabled" gorm:"default:false"`
+	RecoveryEnabled           bool                   `json:"recovery_enabled" gorm:"default:true"`
+	RecoveryIntervalSeconds   int                    `json:"recovery_interval_seconds" gorm:"default:300"`
+	ClusterAffinityTTLSeconds int                    `json:"cluster_affinity_ttl_seconds" gorm:"default:300"`
+	RetryStatusCodes          string                 `json:"retry_status_codes" gorm:"type:text"`
+	VisibleUserGroups         string                 `json:"-" gorm:"type:text"`
+	CreatedTime               int64                  `json:"created_time" gorm:"bigint"`
+	UpdatedTime               int64                  `json:"updated_time" gorm:"bigint"`
+	DeletedAt                 gorm.DeletedAt         `json:"-" gorm:"index"`
+	Targets                   []AggregateGroupTarget `json:"targets,omitempty" gorm:"foreignKey:AggregateGroupId"`
 }
 
 type AggregateGroupTarget struct {
@@ -75,6 +77,20 @@ func (t *AggregateGroupTarget) GetWeight() int {
 		return AggregateGroupTargetDefaultWeight
 	}
 	return *t.Weight
+}
+
+func NormalizeAggregateGroupClusterAffinityTTLSeconds(seconds int) int {
+	if seconds <= 0 {
+		return AggregateGroupClusterAffinityTTLDefaultSeconds
+	}
+	return seconds
+}
+
+func (g *AggregateGroup) GetClusterAffinityTTLSeconds() int {
+	if g == nil {
+		return AggregateGroupClusterAffinityTTLDefaultSeconds
+	}
+	return NormalizeAggregateGroupClusterAffinityTTLSeconds(g.ClusterAffinityTTLSeconds)
 }
 
 func (g *AggregateGroup) GetVisibleUserGroups() []string {
@@ -151,18 +167,19 @@ func (g *AggregateGroup) UpdateWithTargets(targets []AggregateGroupTarget) error
 	g.UpdatedTime = common.GetTimestamp()
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&AggregateGroup{}).Where("id = ?", g.Id).Updates(map[string]interface{}{
-			"name":                      g.Name,
-			"display_name":              g.DisplayName,
-			"description":               g.Description,
-			"status":                    g.Status,
-			"group_ratio":               g.GroupRatio,
-			"routing_mode":              g.RoutingMode,
-			"smart_routing_enabled":     g.SmartRoutingEnabled,
-			"recovery_enabled":          g.RecoveryEnabled,
-			"recovery_interval_seconds": g.RecoveryIntervalSeconds,
-			"retry_status_codes":        g.RetryStatusCodes,
-			"visible_user_groups":       g.VisibleUserGroups,
-			"updated_time":              g.UpdatedTime,
+			"name":                         g.Name,
+			"display_name":                 g.DisplayName,
+			"description":                  g.Description,
+			"status":                       g.Status,
+			"group_ratio":                  g.GroupRatio,
+			"routing_mode":                 g.RoutingMode,
+			"smart_routing_enabled":        g.SmartRoutingEnabled,
+			"recovery_enabled":             g.RecoveryEnabled,
+			"recovery_interval_seconds":    g.RecoveryIntervalSeconds,
+			"cluster_affinity_ttl_seconds": g.ClusterAffinityTTLSeconds,
+			"retry_status_codes":           g.RetryStatusCodes,
+			"visible_user_groups":          g.VisibleUserGroups,
+			"updated_time":                 g.UpdatedTime,
 		}).Error; err != nil {
 			return err
 		}

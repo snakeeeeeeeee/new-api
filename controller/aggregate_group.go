@@ -18,37 +18,39 @@ type aggregateGroupTargetRequest struct {
 }
 
 type aggregateGroupUpsertRequest struct {
-	Id                      int                           `json:"id"`
-	Name                    string                        `json:"name"`
-	DisplayName             string                        `json:"display_name"`
-	Description             string                        `json:"description"`
-	Status                  int                           `json:"status"`
-	GroupRatio              float64                       `json:"group_ratio"`
-	RoutingMode             string                        `json:"routing_mode"`
-	SmartRoutingEnabled     bool                          `json:"smart_routing_enabled"`
-	RecoveryEnabled         bool                          `json:"recovery_enabled"`
-	RecoveryIntervalSeconds int                           `json:"recovery_interval_seconds"`
-	RetryStatusCodes        string                        `json:"retry_status_codes"`
-	VisibleUserGroups       []string                      `json:"visible_user_groups"`
-	Targets                 []aggregateGroupTargetRequest `json:"targets"`
+	Id                        int                           `json:"id"`
+	Name                      string                        `json:"name"`
+	DisplayName               string                        `json:"display_name"`
+	Description               string                        `json:"description"`
+	Status                    int                           `json:"status"`
+	GroupRatio                float64                       `json:"group_ratio"`
+	RoutingMode               string                        `json:"routing_mode"`
+	SmartRoutingEnabled       bool                          `json:"smart_routing_enabled"`
+	RecoveryEnabled           bool                          `json:"recovery_enabled"`
+	RecoveryIntervalSeconds   int                           `json:"recovery_interval_seconds"`
+	ClusterAffinityTTLSeconds int                           `json:"cluster_affinity_ttl_seconds"`
+	RetryStatusCodes          string                        `json:"retry_status_codes"`
+	VisibleUserGroups         []string                      `json:"visible_user_groups"`
+	Targets                   []aggregateGroupTargetRequest `json:"targets"`
 }
 
 type aggregateGroupResponse struct {
-	Id                      int                          `json:"id"`
-	Name                    string                       `json:"name"`
-	DisplayName             string                       `json:"display_name"`
-	Description             string                       `json:"description"`
-	Status                  int                          `json:"status"`
-	GroupRatio              float64                      `json:"group_ratio"`
-	RoutingMode             string                       `json:"routing_mode"`
-	SmartRoutingEnabled     bool                         `json:"smart_routing_enabled"`
-	RecoveryEnabled         bool                         `json:"recovery_enabled"`
-	RecoveryIntervalSeconds int                          `json:"recovery_interval_seconds"`
-	RetryStatusCodes        string                       `json:"retry_status_codes"`
-	VisibleUserGroups       []string                     `json:"visible_user_groups"`
-	Targets                 []model.AggregateGroupTarget `json:"targets"`
-	CreatedTime             int64                        `json:"created_time"`
-	UpdatedTime             int64                        `json:"updated_time"`
+	Id                        int                          `json:"id"`
+	Name                      string                       `json:"name"`
+	DisplayName               string                       `json:"display_name"`
+	Description               string                       `json:"description"`
+	Status                    int                          `json:"status"`
+	GroupRatio                float64                      `json:"group_ratio"`
+	RoutingMode               string                       `json:"routing_mode"`
+	SmartRoutingEnabled       bool                         `json:"smart_routing_enabled"`
+	RecoveryEnabled           bool                         `json:"recovery_enabled"`
+	RecoveryIntervalSeconds   int                          `json:"recovery_interval_seconds"`
+	ClusterAffinityTTLSeconds int                          `json:"cluster_affinity_ttl_seconds"`
+	RetryStatusCodes          string                       `json:"retry_status_codes"`
+	VisibleUserGroups         []string                     `json:"visible_user_groups"`
+	Targets                   []model.AggregateGroupTarget `json:"targets"`
+	CreatedTime               int64                        `json:"created_time"`
+	UpdatedTime               int64                        `json:"updated_time"`
 }
 
 type aggregateGroupSmartStrategyResponse struct {
@@ -74,21 +76,22 @@ func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupRes
 		targets = append(targets, target)
 	}
 	return &aggregateGroupResponse{
-		Id:                      group.Id,
-		Name:                    group.Name,
-		DisplayName:             group.DisplayName,
-		Description:             group.Description,
-		Status:                  group.Status,
-		GroupRatio:              group.GroupRatio,
-		RoutingMode:             group.GetRoutingMode(),
-		SmartRoutingEnabled:     group.SmartRoutingEnabled,
-		RecoveryEnabled:         group.RecoveryEnabled,
-		RecoveryIntervalSeconds: group.RecoveryIntervalSeconds,
-		RetryStatusCodes:        group.RetryStatusCodes,
-		VisibleUserGroups:       group.GetVisibleUserGroups(),
-		Targets:                 targets,
-		CreatedTime:             group.CreatedTime,
-		UpdatedTime:             group.UpdatedTime,
+		Id:                        group.Id,
+		Name:                      group.Name,
+		DisplayName:               group.DisplayName,
+		Description:               group.Description,
+		Status:                    group.Status,
+		GroupRatio:                group.GroupRatio,
+		RoutingMode:               group.GetRoutingMode(),
+		SmartRoutingEnabled:       group.SmartRoutingEnabled,
+		RecoveryEnabled:           group.RecoveryEnabled,
+		RecoveryIntervalSeconds:   group.RecoveryIntervalSeconds,
+		ClusterAffinityTTLSeconds: group.GetClusterAffinityTTLSeconds(),
+		RetryStatusCodes:          group.RetryStatusCodes,
+		VisibleUserGroups:         group.GetVisibleUserGroups(),
+		Targets:                   targets,
+		CreatedTime:               group.CreatedTime,
+		UpdatedTime:               group.UpdatedTime,
 	}
 }
 
@@ -206,16 +209,17 @@ func CreateAggregateGroup(c *gin.Context) {
 		req.Status = model.AggregateGroupStatusEnabled
 	}
 	group := &model.AggregateGroup{
-		Name:                    req.Name,
-		DisplayName:             req.DisplayName,
-		Description:             req.Description,
-		Status:                  req.Status,
-		GroupRatio:              req.GroupRatio,
-		RoutingMode:             req.RoutingMode,
-		SmartRoutingEnabled:     req.SmartRoutingEnabled,
-		RecoveryEnabled:         req.RecoveryEnabled,
-		RecoveryIntervalSeconds: req.RecoveryIntervalSeconds,
-		RetryStatusCodes:        req.RetryStatusCodes,
+		Name:                      req.Name,
+		DisplayName:               req.DisplayName,
+		Description:               req.Description,
+		Status:                    req.Status,
+		GroupRatio:                req.GroupRatio,
+		RoutingMode:               req.RoutingMode,
+		SmartRoutingEnabled:       req.SmartRoutingEnabled,
+		RecoveryEnabled:           req.RecoveryEnabled,
+		RecoveryIntervalSeconds:   req.RecoveryIntervalSeconds,
+		ClusterAffinityTTLSeconds: req.ClusterAffinityTTLSeconds,
+		RetryStatusCodes:          req.RetryStatusCodes,
 	}
 	targetGroupNames := buildAggregateTargetNames(req.Targets)
 	if err := service.ValidateAggregateGroupConfig(group, req.VisibleUserGroups, targetGroupNames); err != nil {
@@ -264,17 +268,18 @@ func UpdateAggregateGroup(c *gin.Context) {
 		req.Status = model.AggregateGroupStatusEnabled
 	}
 	group := &model.AggregateGroup{
-		Id:                      req.Id,
-		Name:                    req.Name,
-		DisplayName:             req.DisplayName,
-		Description:             req.Description,
-		Status:                  req.Status,
-		GroupRatio:              req.GroupRatio,
-		RoutingMode:             req.RoutingMode,
-		SmartRoutingEnabled:     req.SmartRoutingEnabled,
-		RecoveryEnabled:         req.RecoveryEnabled,
-		RecoveryIntervalSeconds: req.RecoveryIntervalSeconds,
-		RetryStatusCodes:        req.RetryStatusCodes,
+		Id:                        req.Id,
+		Name:                      req.Name,
+		DisplayName:               req.DisplayName,
+		Description:               req.Description,
+		Status:                    req.Status,
+		GroupRatio:                req.GroupRatio,
+		RoutingMode:               req.RoutingMode,
+		SmartRoutingEnabled:       req.SmartRoutingEnabled,
+		RecoveryEnabled:           req.RecoveryEnabled,
+		RecoveryIntervalSeconds:   req.RecoveryIntervalSeconds,
+		ClusterAffinityTTLSeconds: req.ClusterAffinityTTLSeconds,
+		RetryStatusCodes:          req.RetryStatusCodes,
 	}
 	targetGroupNames := buildAggregateTargetNames(req.Targets)
 	if err := service.ValidateAggregateGroupConfig(group, req.VisibleUserGroups, targetGroupNames); err != nil {

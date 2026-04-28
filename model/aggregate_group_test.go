@@ -42,6 +42,7 @@ func TestAggregateGroupVisibleUserGroupsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"vip", "svip"}, loaded.GetVisibleUserGroups())
 	require.Equal(t, AggregateGroupRoutingModeFailover, loaded.GetRoutingMode())
+	require.Equal(t, AggregateGroupClusterAffinityTTLDefaultSeconds, loaded.GetClusterAffinityTTLSeconds())
 	require.Len(t, loaded.Targets, 2)
 	require.Equal(t, "default", loaded.Targets[0].RealGroup)
 	require.Equal(t, AggregateGroupTargetDefaultWeight, loaded.Targets[0].GetWeight())

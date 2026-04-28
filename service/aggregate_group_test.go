@@ -1027,7 +1027,7 @@ func TestAggregateClusterRouteAffinityStableReducesDegradedAndUpdatesOnSuccess(t
 	require.Equal(t, "vip", selectedGroup)
 }
 
-func TestAggregateClusterRouteAffinityRecoveryIntervalAllowsWeightedReselect(t *testing.T) {
+func TestAggregateClusterRouteAffinityTTLAllowsWeightedReselect(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	common.MemoryCacheEnabled = false
 
@@ -1037,7 +1037,7 @@ func TestAggregateClusterRouteAffinityRecoveryIntervalAllowsWeightedReselect(t *
 	})
 	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
 	require.NoError(t, err)
-	loadedGroup.RecoveryIntervalSeconds = 1
+	loadedGroup.ClusterAffinityTTLSeconds = 1
 	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
 		{RealGroup: "default", Weight: common.GetPointer(100)},
 		{RealGroup: "vip", Weight: common.GetPointer(0)},
@@ -1067,7 +1067,7 @@ func TestAggregateClusterRouteAffinityRecoveryIntervalAllowsWeightedReselect(t *
 
 	loadedGroup, err = model.GetAggregateGroupByID(group.Id)
 	require.NoError(t, err)
-	loadedGroup.RecoveryIntervalSeconds = 1
+	loadedGroup.ClusterAffinityTTLSeconds = 1
 	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
 		{RealGroup: "default", Weight: common.GetPointer(0)},
 		{RealGroup: "vip", Weight: common.GetPointer(100)},
@@ -1098,7 +1098,23 @@ func TestAggregateClusterRouteAffinityRecoveryIntervalAllowsWeightedReselect(t *
 	require.Equal(t, "vip", selectedGroup)
 }
 
-func TestAggregateClusterRouteAffinitySuccessDoesNotExtendRecoveryInterval(t *testing.T) {
+func TestAggregateRouteAffinityTTLUsesClusterConfig(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRecoveryEnabled, false)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRecoveryInterval, 1)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateClusterAffinityTTL, 45)
+
+	require.Equal(t, 45*time.Second, resolveAggregateRouteAffinityTTL(ctx))
+
+	rec = httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(rec)
+	require.Equal(t, time.Duration(model.AggregateGroupClusterAffinityTTLDefaultSeconds)*time.Second, resolveAggregateRouteAffinityTTL(ctx))
+}
+
+func TestAggregateClusterRouteAffinitySuccessDoesNotExtendTTL(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	common.MemoryCacheEnabled = false
 
@@ -1108,7 +1124,7 @@ func TestAggregateClusterRouteAffinitySuccessDoesNotExtendRecoveryInterval(t *te
 	})
 	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
 	require.NoError(t, err)
-	loadedGroup.RecoveryIntervalSeconds = 1
+	loadedGroup.ClusterAffinityTTLSeconds = 1
 	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
 		{RealGroup: "default", Weight: common.GetPointer(100)},
 		{RealGroup: "vip", Weight: common.GetPointer(0)},
@@ -1140,7 +1156,7 @@ func TestAggregateClusterRouteAffinitySuccessDoesNotExtendRecoveryInterval(t *te
 
 	loadedGroup, err = model.GetAggregateGroupByID(group.Id)
 	require.NoError(t, err)
-	loadedGroup.RecoveryIntervalSeconds = 1
+	loadedGroup.ClusterAffinityTTLSeconds = 1
 	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
 		{RealGroup: "default", Weight: common.GetPointer(0)},
 		{RealGroup: "vip", Weight: common.GetPointer(100)},
@@ -1182,7 +1198,7 @@ func TestAggregateClusterRouteAffinityHitDoesNotRewriteAfterExpiry(t *testing.T)
 	})
 	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
 	require.NoError(t, err)
-	loadedGroup.RecoveryIntervalSeconds = 1
+	loadedGroup.ClusterAffinityTTLSeconds = 1
 	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
 		{RealGroup: "default", Weight: common.GetPointer(100)},
 		{RealGroup: "vip", Weight: common.GetPointer(0)},
@@ -1212,7 +1228,7 @@ func TestAggregateClusterRouteAffinityHitDoesNotRewriteAfterExpiry(t *testing.T)
 
 	loadedGroup, err = model.GetAggregateGroupByID(group.Id)
 	require.NoError(t, err)
-	loadedGroup.RecoveryIntervalSeconds = 1
+	loadedGroup.ClusterAffinityTTLSeconds = 1
 	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
 		{RealGroup: "default", Weight: common.GetPointer(0)},
 		{RealGroup: "vip", Weight: common.GetPointer(100)},
@@ -1245,11 +1261,11 @@ func TestAggregateClusterRouteAffinityHitDoesNotRewriteAfterExpiry(t *testing.T)
 	require.Equal(t, "vip", selectedGroup)
 }
 
-func TestAggregateClusterRouteAffinityIsScopedByModel(t *testing.T) {
+func TestAggregateClusterRouteAffinityFollowsUserAcrossSupportedModels(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	common.MemoryCacheEnabled = false
 
-	group := seedAggregateGroupWithWeightedTargets(t, "cluster-affinity-model", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-affinity-user-model", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
 		{RealGroup: "default", Weight: common.GetPointer(100)},
 		{RealGroup: "vip", Weight: common.GetPointer(0)},
 	})
@@ -1291,7 +1307,58 @@ func TestAggregateClusterRouteAffinityIsScopedByModel(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, "default", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
+}
+
+func TestAggregateClusterRouteAffinitySkipsUserRouteWhenModelUnsupported(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-affinity-user-unsupported", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	seedAggregateAbilityChannel(t, 1251, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1252, "vip", "gpt-5", 10)
+
+	buildCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+		return ctx
+	}
+
+	firstCtx := buildCtx()
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})))
+
+	secondCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-5",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
 	require.Equal(t, "vip", selectedGroup)
+	require.Empty(t, common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
 }
 
 func TestAggregateClusterRetryExhaustionSwitchesToAnotherRoute(t *testing.T) {
