@@ -130,7 +130,7 @@ func selectAggregateGroupChannelFromIndex(param *RetryParam, aggregateGroup *mod
 		if err != nil {
 			return nil, target.RealGroup, err
 		}
-		if priorityCount > 0 && priorityRetry >= priorityCount {
+		if priorityCount <= 0 {
 			continue
 		}
 
@@ -222,7 +222,7 @@ func PrepareAggregateGroupRetry(c *gin.Context, currentRetry int, modelName stri
 		if priorityRetry < 0 {
 			priorityRetry = 0
 		}
-		if priorityRetry < maxInternalRetries && priorityRetry+1 < priorityCount {
+		if priorityRetry < maxInternalRetries {
 			transition.HasNext = true
 			transition.WithinCurrentGroup = true
 			transition.NextGroup = failedGroup

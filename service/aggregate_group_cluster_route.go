@@ -184,7 +184,7 @@ func selectAggregateClusterChannelFromIndex(param *RetryParam, aggregateGroup *m
 	if err != nil {
 		return nil, target.RealGroup, err
 	}
-	if priorityCount <= 0 || priorityRetry >= priorityCount {
+	if priorityCount <= 0 {
 		return nil, target.RealGroup, nil
 	}
 	channel, err := model.GetRandomSatisfiedChannel(target.RealGroup, param.ModelName, priorityRetry)
@@ -251,7 +251,7 @@ func prepareAggregateClusterRetry(c *gin.Context, aggregateGroup *model.Aggregat
 		if priorityRetry < 0 {
 			priorityRetry = 0
 		}
-		if priorityRetry < maxInternalRetries && priorityRetry+1 < priorityCount {
+		if priorityRetry < maxInternalRetries {
 			transition.HasNext = true
 			transition.WithinCurrentGroup = true
 			transition.NextGroup = transition.FailedGroup

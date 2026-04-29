@@ -1414,6 +1414,107 @@ func TestAggregateClusterRetryExhaustionSwitchesToAnotherRoute(t *testing.T) {
 	require.Equal(t, 1, transition.NextIndex)
 }
 
+func TestAggregateFailoverRetriesSinglePriorityRouteBeforeFallback(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 2
+
+	group := seedAggregateGroup(t, "failover-single-priority-retry", 1, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1101, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1102, "vip", "gpt-4.1", 10)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	for retry := 0; retry <= common.RetryTimes; retry++ {
+		channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+			Ctx:        ctx,
+			TokenGroup: group.Name,
+			ModelName:  "gpt-4.1",
+			Retry:      &retry,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		require.Equal(t, 1101, channel.Id)
+		require.Equal(t, "default", selectedGroup)
+
+		transition := PrepareAggregateGroupRetry(ctx, retry, "gpt-4.1", common.RetryTimes)
+		require.NotNil(t, transition)
+		require.True(t, transition.HasNext)
+		if retry < common.RetryTimes {
+			require.True(t, transition.WithinCurrentGroup)
+			require.Equal(t, "default", transition.NextGroup)
+			continue
+		}
+		require.False(t, transition.WithinCurrentGroup)
+		require.Equal(t, "vip", transition.NextGroup)
+		require.Equal(t, 1, transition.NextIndex)
+	}
+
+	retry := common.RetryTimes + 1
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1102, channel.Id)
+	require.Equal(t, "vip", selectedGroup)
+}
+
+func TestAggregateClusterRetriesSinglePriorityRouteBeforeFallback(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 2
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-single-priority-retry", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	seedAggregateAbilityChannel(t, 1201, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1202, "vip", "gpt-4.1", 10)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	for retry := 0; retry <= common.RetryTimes; retry++ {
+		channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+			Ctx:        ctx,
+			TokenGroup: group.Name,
+			ModelName:  "gpt-4.1",
+			Retry:      &retry,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, channel)
+		require.Equal(t, 1201, channel.Id)
+		require.Equal(t, "default", selectedGroup)
+
+		transition := PrepareAggregateGroupRetry(ctx, retry, "gpt-4.1", common.RetryTimes)
+		require.NotNil(t, transition)
+		require.True(t, transition.HasNext)
+		if retry < common.RetryTimes {
+			require.True(t, transition.WithinCurrentGroup)
+			require.Equal(t, "default", transition.NextGroup)
+			continue
+		}
+		require.False(t, transition.WithinCurrentGroup)
+		require.Equal(t, "vip", transition.NextGroup)
+		require.Equal(t, 1, transition.NextIndex)
+	}
+
+	retry := common.RetryTimes + 1
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1202, channel.Id)
+	require.Equal(t, "vip", selectedGroup)
+}
+
 func TestAggregateRouteRPMCountsRecentWindowOnly(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	common.RedisEnabled = false
