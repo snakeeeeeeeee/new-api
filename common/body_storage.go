@@ -25,6 +25,26 @@ type BodyStorage interface {
 // ErrStorageClosed 存储已关闭错误
 var ErrStorageClosed = fmt.Errorf("body storage is closed")
 
+const (
+	bodyReadBufferSize       = 32 * 1024
+	maxPooledBodyBufferBytes = 4 << 20
+)
+
+var (
+	pooledBodyBufferPool = sync.Pool{
+		New: func() any {
+			buffer := make([]byte, 0, bodyReadBufferSize)
+			return &buffer
+		},
+	}
+	bodyReadBufferPool = sync.Pool{
+		New: func() any {
+			buffer := make([]byte, bodyReadBufferSize)
+			return &buffer
+		},
+	}
+)
+
 // memoryStorage 内存存储实现
 type memoryStorage struct {
 	data   []byte
@@ -85,6 +105,140 @@ func (m *memoryStorage) Size() int64 {
 }
 
 func (m *memoryStorage) IsDisk() bool {
+	return false
+}
+
+// pooledMemoryStorage reuses the backing buffer for request bodies read from streams.
+type pooledMemoryStorage struct {
+	buffer *([]byte)
+	data   []byte
+	reader *bytes.Reader
+	size   int64
+	closed int32
+	mu     sync.Mutex
+}
+
+func newPooledMemoryStorage(buffer *([]byte)) *pooledMemoryStorage {
+	data := *buffer
+	size := int64(len(data))
+	IncrementMemoryBuffers(size)
+	return &pooledMemoryStorage{
+		buffer: buffer,
+		data:   data,
+		reader: bytes.NewReader(data),
+		size:   size,
+	}
+}
+
+func newPooledMemoryStorageFromReader(reader io.Reader, contentLength int64, maxBytes int64) (*pooledMemoryStorage, error) {
+	if contentLength > maxBytes {
+		return nil, ErrRequestBodyTooLarge
+	}
+
+	buffer := acquirePooledBodyBuffer(contentLength)
+	readBufferPtr := bodyReadBufferPool.Get().(*[]byte)
+	readBuffer := *readBufferPtr
+	defer func() {
+		clear(readBuffer)
+		*readBufferPtr = readBuffer
+		bodyReadBufferPool.Put(readBufferPtr)
+	}()
+
+	data := (*buffer)[:0]
+	for {
+		n, readErr := reader.Read(readBuffer)
+		if n > 0 {
+			if int64(len(data)+n) > maxBytes {
+				releasePooledBodyBuffer(buffer)
+				return nil, ErrRequestBodyTooLarge
+			}
+			data = append(data, readBuffer[:n]...)
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			releasePooledBodyBuffer(buffer)
+			return nil, readErr
+		}
+	}
+
+	*buffer = data
+	return newPooledMemoryStorage(buffer), nil
+}
+
+func acquirePooledBodyBuffer(expectedSize int64) *([]byte) {
+	buffer := pooledBodyBufferPool.Get().(*[]byte)
+	data := *buffer
+	if expectedSize > 0 && expectedSize <= maxPooledBodyBufferBytes && int64(cap(data)) < expectedSize {
+		data = make([]byte, 0, int(expectedSize))
+	} else {
+		data = data[:0]
+	}
+	*buffer = data
+	return buffer
+}
+
+func releasePooledBodyBuffer(buffer *([]byte)) {
+	if buffer == nil {
+		return
+	}
+	data := *buffer
+	clear(data)
+	if cap(data) > maxPooledBodyBufferBytes {
+		*buffer = nil
+		return
+	}
+	data = data[:0]
+	*buffer = data
+	pooledBodyBufferPool.Put(buffer)
+}
+
+func (m *pooledMemoryStorage) Read(p []byte) (n int, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if atomic.LoadInt32(&m.closed) == 1 {
+		return 0, ErrStorageClosed
+	}
+	return m.reader.Read(p)
+}
+
+func (m *pooledMemoryStorage) Seek(offset int64, whence int) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if atomic.LoadInt32(&m.closed) == 1 {
+		return 0, ErrStorageClosed
+	}
+	return m.reader.Seek(offset, whence)
+}
+
+func (m *pooledMemoryStorage) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if atomic.CompareAndSwapInt32(&m.closed, 0, 1) {
+		DecrementMemoryBuffers(m.size)
+		releasePooledBodyBuffer(m.buffer)
+		m.buffer = nil
+		m.data = nil
+		m.reader = bytes.NewReader(nil)
+	}
+	return nil
+}
+
+func (m *pooledMemoryStorage) Bytes() ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if atomic.LoadInt32(&m.closed) == 1 {
+		return nil, ErrStorageClosed
+	}
+	return m.data, nil
+}
+
+func (m *pooledMemoryStorage) Size() int64 {
+	return m.size
+}
+
+func (m *pooledMemoryStorage) IsDisk() bool {
 	return false
 }
 
@@ -280,25 +434,31 @@ func CreateBodyStorageFromReader(reader io.Reader, contentLength int64, maxBytes
 		return storage, nil
 	}
 
-	// 使用内存读取
-	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	// 使用池化内存读取，避免每次请求都分配完整 body slice。
+	storage, err := newPooledMemoryStorageFromReader(reader, contentLength, maxBytes)
 	if err != nil {
 		return nil, err
-	}
-	if int64(len(data)) > maxBytes {
-		return nil, ErrRequestBodyTooLarge
 	}
 
-	storage, err := CreateBodyStorage(data)
-	if err != nil {
-		return nil, err
+	size := storage.Size()
+	if IsDiskCacheEnabled() &&
+		size >= threshold &&
+		IsDiskCacheAvailable(size) {
+		data, bytesErr := storage.Bytes()
+		if bytesErr != nil {
+			storage.Close()
+			return nil, bytesErr
+		}
+		diskStorage, diskErr := newDiskStorage(data, GetDiskCachePath())
+		if diskErr == nil {
+			storage.Close()
+			IncrementDiskCacheHits()
+			return diskStorage, nil
+		}
+		// 与 CreateBodyStorage 保持一致：磁盘失败时回退到内存存储。
+		SysError(fmt.Sprintf("failed to create disk storage, falling back to memory: %v", diskErr))
 	}
-	// 如果最终使用内存存储，记录内存缓存命中
-	if !storage.IsDisk() {
-		IncrementMemoryCacheHits()
-	} else {
-		IncrementDiskCacheHits()
-	}
+	IncrementMemoryCacheHits()
 	return storage, nil
 }
 

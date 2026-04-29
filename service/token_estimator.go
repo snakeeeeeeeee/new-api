@@ -1,9 +1,9 @@
 package service
 
 import (
+	"context"
 	"math"
 	"strings"
-	"sync"
 	"unicode"
 )
 
@@ -44,14 +44,13 @@ var (
 			Word: 1.02, Number: 1.55, CJK: 0.85, Symbol: 0.4, MathSymbol: 2.68, URLDelim: 1.0, AtSign: 2.0, Emoji: 2.12, Newline: 0.5, Space: 0.42, BasePad: 0,
 		},
 	}
-	multipliersLock sync.RWMutex
+
+	mathSymbolLookup = buildRuneLookup("∑∫∂√∞≤≥≠≈±×÷∈∉∋∌⊂⊃⊆⊇∪∩∧∨¬∀∃∄∅∆∇∝∟∠∡∢°′″‴⁺⁻⁼⁽⁾ⁿ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎²³¹⁴⁵⁶⁷⁸⁹⁰")
+	urlDelimLookup   = buildASCIILookup("/:?&=;#%")
 )
 
 // getMultipliers 根据厂商获取权重配置
 func getMultipliers(p Provider) multipliers {
-	multipliersLock.RLock()
-	defer multipliersLock.RUnlock()
-
 	switch p {
 	case Gemini:
 		return multipliersMap[Gemini]
@@ -67,7 +66,23 @@ func getMultipliers(p Provider) multipliers {
 
 // EstimateToken 计算 Token 数量
 func EstimateToken(provider Provider, text string) int {
+	return EstimateTokenContext(context.Background(), provider, text)
+}
+
+// EstimateTokenContext 计算 Token 数量，并在请求取消/超时时尽早停止。
+func EstimateTokenContext(ctx context.Context, provider Provider, text string) int {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return 0
+	}
+
 	m := getMultipliers(provider)
+	if isASCIIText(text) {
+		return estimateTokenASCII(ctx, m, text)
+	}
+
 	var count float64
 
 	// 状态机变量
@@ -79,7 +94,13 @@ func EstimateToken(provider Provider, text string) int {
 	)
 	currentWordType := None
 
+	index := 0
 	for _, r := range text {
+		if index&255 == 0 && ctx.Err() != nil {
+			return 0
+		}
+		index++
+
 		// 1. 处理空格和换行符
 		if unicode.IsSpace(r) {
 			currentWordType = None
@@ -147,6 +168,96 @@ func EstimateToken(provider Provider, text string) int {
 	return int(math.Ceil(count)) + m.BasePad
 }
 
+func estimateTokenASCII(ctx context.Context, m multipliers, text string) int {
+	var count float64
+
+	type WordType int
+	const (
+		None WordType = iota
+		Latin
+		Number
+	)
+	currentWordType := None
+
+	for i := 0; i < len(text); i++ {
+		if i&1023 == 0 && ctx.Err() != nil {
+			return 0
+		}
+
+		b := text[i]
+		if b == '\n' || b == '\t' {
+			currentWordType = None
+			count += m.Newline
+			continue
+		}
+		if b == ' ' || b == '\r' || b == '\v' || b == '\f' {
+			currentWordType = None
+			count += m.Space
+			continue
+		}
+
+		if isASCIIAlphaNumeric(b) {
+			newType := Latin
+			if b >= '0' && b <= '9' {
+				newType = Number
+			}
+			if currentWordType == None || currentWordType != newType {
+				if newType == Number {
+					count += m.Number
+				} else {
+					count += m.Word
+				}
+				currentWordType = newType
+			}
+			continue
+		}
+
+		currentWordType = None
+		if b == '@' {
+			count += m.AtSign
+		} else if urlDelimLookup[b] {
+			count += m.URLDelim
+		} else {
+			count += m.Symbol
+		}
+	}
+
+	return int(math.Ceil(count)) + m.BasePad
+}
+
+func isASCIIText(text string) bool {
+	for i := 0; i < len(text); i++ {
+		if text[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIIAlphaNumeric(b byte) bool {
+	return (b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9')
+}
+
+func buildRuneLookup(symbols string) map[rune]struct{} {
+	lookup := make(map[rune]struct{}, len(symbols))
+	for _, r := range symbols {
+		lookup[r] = struct{}{}
+	}
+	return lookup
+}
+
+func buildASCIILookup(symbols string) [128]bool {
+	var lookup [128]bool
+	for i := 0; i < len(symbols); i++ {
+		if symbols[i] < 128 {
+			lookup[symbols[i]] = true
+		}
+	}
+	return lookup
+}
+
 // 辅助：判断是否为 CJK 字符
 func isCJK(r rune) bool {
 	return unicode.Is(unicode.Han, r) ||
@@ -176,15 +287,8 @@ func isEmoji(r rune) bool {
 
 // 辅助：判断是否为数学符号
 func isMathSymbol(r rune) bool {
-	// 数学运算符和符号
-	// 基本数学符号：∑ ∫ ∂ √ ∞ ≤ ≥ ≠ ≈ ± × ÷
-	// 上下标数字：² ³ ¹ ⁴ ⁵ ⁶ ⁷ ⁸ ⁹ ⁰
-	// 希腊字母等也常用于数学
-	mathSymbols := "∑∫∂√∞≤≥≠≈±×÷∈∉∋∌⊂⊃⊆⊇∪∩∧∨¬∀∃∄∅∆∇∝∟∠∡∢°′″‴⁺⁻⁼⁽⁾ⁿ₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎²³¹⁴⁵⁶⁷⁸⁹⁰"
-	for _, m := range mathSymbols {
-		if r == m {
-			return true
-		}
+	if _, ok := mathSymbolLookup[r]; ok {
+		return true
 	}
 	// Mathematical Operators (U+2200–U+22FF)
 	if r >= 0x2200 && r <= 0x22FF {
@@ -203,17 +307,17 @@ func isMathSymbol(r rune) bool {
 
 // 辅助：判断是否为URL分隔符（tokenizer对这些优化较好）
 func isURLDelim(r rune) bool {
-	// URL中常见的分隔符，tokenizer通常优化处理
-	urlDelims := "/:?&=;#%"
-	for _, d := range urlDelims {
-		if r == d {
-			return true
-		}
+	if r < 128 {
+		return urlDelimLookup[r]
 	}
 	return false
 }
 
 func EstimateTokenByModel(model, text string) int {
+	return EstimateTokenByModelContext(context.Background(), model, text)
+}
+
+func EstimateTokenByModelContext(ctx context.Context, model, text string) int {
 	// strings.Contains(model, "gpt-4o")
 	if text == "" {
 		return 0
@@ -221,10 +325,10 @@ func EstimateTokenByModel(model, text string) int {
 
 	model = strings.ToLower(model)
 	if strings.Contains(model, "gemini") {
-		return EstimateToken(Gemini, text)
+		return EstimateTokenContext(ctx, Gemini, text)
 	} else if strings.Contains(model, "claude") {
-		return EstimateToken(Claude, text)
+		return EstimateTokenContext(ctx, Claude, text)
 	} else {
-		return EstimateToken(OpenAI, text)
+		return EstimateTokenContext(ctx, OpenAI, text)
 	}
 }

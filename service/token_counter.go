@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -224,7 +225,7 @@ func EstimateRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *rela
 	if meta.TokenType == types.TokenTypeTextNumber {
 		tkm += utf8.RuneCountInString(meta.CombineText)
 	} else {
-		tkm += CountTextToken(meta.CombineText, model)
+		tkm += CountTextTokenContext(c.Request.Context(), meta.CombineText, model)
 	}
 
 	if info.RelayFormat == types.RelayFormatOpenAI {
@@ -398,14 +399,32 @@ func CountAudioTokenOutput(audioBase64 string, audioFormat string) (int, error) 
 
 // CountTextToken 统计文本的token数量，仅OpenAI模型使用tokenizer，其余模型使用估算
 func CountTextToken(text string, model string) int {
+	return CountTextTokenContext(context.Background(), text, model)
+}
+
+// CountTextTokenContext 统计文本 token 数量，并允许调用方用 context 取消大文本统计。
+func CountTextTokenContext(ctx context.Context, text string, model string) int {
 	if text == "" {
+		return 0
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
 		return 0
 	}
 	if common.IsOpenAITextModel(model) {
 		tokenEncoder := getTokenEncoder(model)
-		return getTokenNum(tokenEncoder, text)
+		tkm, err := getTokenNumContext(ctx, tokenEncoder, text)
+		if err == nil {
+			return tkm
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return 0
+		}
+		return EstimateTokenByModelContext(ctx, model, text)
 	} else {
-		// 非openai模型，使用tiktoken-go计算没有意义，使用估算节省资源
-		return EstimateTokenByModel(model, text)
+		// 非 OpenAI 模型使用估算，避免用 OpenAI tokenizer 得到误导性结果。
+		return EstimateTokenByModelContext(ctx, model, text)
 	}
 }

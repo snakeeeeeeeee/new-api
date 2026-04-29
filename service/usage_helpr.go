@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
@@ -21,9 +23,13 @@ import (
 
 func ResponseText2Usage(c *gin.Context, responseText string, modeName string, promptTokens int) *dto.Usage {
 	common.SetContextKey(c, constant.ContextKeyLocalCountTokens, true)
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
 	usage := &dto.Usage{}
 	usage.PromptTokens = promptTokens
-	usage.CompletionTokens = EstimateTokenByModel(modeName, responseText)
+	usage.CompletionTokens = EstimateTokenByModelContext(ctx, modeName, responseText)
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	return usage
 }

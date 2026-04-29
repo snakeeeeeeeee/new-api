@@ -1,11 +1,12 @@
 package service
 
 import (
+	"context"
 	"sync"
 
+	"github.com/Calcium-Ion/tokenizer"
+	"github.com/Calcium-Ion/tokenizer/codec"
 	"github.com/QuantumNous/new-api/common"
-	"github.com/tiktoken-go/tokenizer"
-	"github.com/tiktoken-go/tokenizer/codec"
 )
 
 // tokenEncoderMap won't grow after initialization
@@ -45,6 +46,9 @@ func getTokenEncoder(model string) tokenizer.Codec {
 	modelCodec, err := tokenizer.ForModel(tokenizer.Model(model))
 	if err != nil {
 		// Cache the default encoder for this model to avoid repeated failures
+		if defaultTokenEncoder == nil {
+			defaultTokenEncoder = codec.NewCl100kBase()
+		}
 		tokenEncoderMap[model] = defaultTokenEncoder
 		return defaultTokenEncoder
 	}
@@ -55,9 +59,19 @@ func getTokenEncoder(model string) tokenizer.Codec {
 }
 
 func getTokenNum(tokenEncoder tokenizer.Codec, text string) int {
-	if text == "" {
-		return 0
-	}
-	tkm, _ := tokenEncoder.Count(text)
+	tkm, _ := getTokenNumContext(context.Background(), tokenEncoder, text)
 	return tkm
+}
+
+func getTokenNumContext(ctx context.Context, tokenEncoder tokenizer.Codec, text string) (int, error) {
+	if text == "" {
+		return 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if tokenEncoder == nil {
+		tokenEncoder = codec.NewCl100kBase()
+	}
+	return tokenEncoder.Count(ctx, text)
 }
