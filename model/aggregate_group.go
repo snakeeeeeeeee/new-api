@@ -15,8 +15,16 @@ const (
 	AggregateGroupRoutingModeFailover = "failover"
 	AggregateGroupRoutingModeCluster  = "cluster"
 
+	AggregateGroupRouteAffinityStrategyPlatformUser = "platform_user"
+	AggregateGroupRouteAffinityStrategyRequestFirst = "request_first"
+	AggregateGroupRouteAffinityStrategyRequestOnly  = "request_only"
+	AggregateGroupRouteAffinityStrategyOff          = "off"
+
 	AggregateGroupTargetDefaultWeight              = 100
 	AggregateGroupClusterAffinityTTLDefaultSeconds = 300
+
+	AggregateGroupClientTypeClaudeCodeCLI      = "claude_code_cli"
+	AggregateGroupClientRoutePoolClaudeCodeCLI = "claude_code_cli"
 )
 
 type AggregateGroup struct {
@@ -31,8 +39,11 @@ type AggregateGroup struct {
 	RecoveryEnabled           bool                   `json:"recovery_enabled" gorm:"default:true"`
 	RecoveryIntervalSeconds   int                    `json:"recovery_interval_seconds" gorm:"default:300"`
 	ClusterAffinityTTLSeconds int                    `json:"cluster_affinity_ttl_seconds" gorm:"default:300"`
+	RouteAffinityStrategy     string                 `json:"route_affinity_strategy" gorm:"size:32;default:platform_user"`
+	RouteAffinityKeySources   string                 `json:"-" gorm:"type:text"`
 	RetryStatusCodes          string                 `json:"retry_status_codes" gorm:"type:text"`
 	VisibleUserGroups         string                 `json:"-" gorm:"type:text"`
+	ClientRoutePools          string                 `json:"-" gorm:"type:text"`
 	CreatedTime               int64                  `json:"created_time" gorm:"bigint"`
 	UpdatedTime               int64                  `json:"updated_time" gorm:"bigint"`
 	DeletedAt                 gorm.DeletedAt         `json:"-" gorm:"index"`
@@ -45,6 +56,28 @@ type AggregateGroupTarget struct {
 	RealGroup        string `json:"real_group" gorm:"size:64;not null;uniqueIndex:uk_aggregate_group_target"`
 	OrderIndex       int    `json:"order_index" gorm:"index"`
 	Weight           *int   `json:"weight" gorm:"default:100"`
+}
+
+type AggregateGroupClientRoutePools struct {
+	Enabled       bool                          `json:"enabled"`
+	ClaudeCodeCLI AggregateGroupClientRoutePool `json:"claude_code_cli"`
+}
+
+type AggregateGroupClientRoutePool struct {
+	Enabled           bool                                  `json:"enabled"`
+	FallbackToDefault *bool                                 `json:"fallback_to_default"`
+	Targets           []AggregateGroupClientRoutePoolTarget `json:"targets"`
+}
+
+type AggregateGroupClientRoutePoolTarget struct {
+	RealGroup string `json:"real_group"`
+	Weight    *int   `json:"weight"`
+}
+
+type AggregateGroupRouteAffinityKeySource struct {
+	Type string `json:"type"`
+	Key  string `json:"key,omitempty"`
+	Path string `json:"path,omitempty"`
 }
 
 func (g *AggregateGroup) IsEnabled() bool {
@@ -72,11 +105,54 @@ func (g *AggregateGroup) GetRoutingMode() string {
 	return NormalizeAggregateGroupRoutingMode(g.RoutingMode)
 }
 
+func NormalizeAggregateGroupRouteAffinityStrategy(strategy string) string {
+	switch strings.TrimSpace(strategy) {
+	case AggregateGroupRouteAffinityStrategyRequestFirst:
+		return AggregateGroupRouteAffinityStrategyRequestFirst
+	case AggregateGroupRouteAffinityStrategyRequestOnly:
+		return AggregateGroupRouteAffinityStrategyRequestOnly
+	case AggregateGroupRouteAffinityStrategyOff:
+		return AggregateGroupRouteAffinityStrategyOff
+	default:
+		return AggregateGroupRouteAffinityStrategyPlatformUser
+	}
+}
+
+func IsValidAggregateGroupRouteAffinityStrategy(strategy string) bool {
+	strategy = strings.TrimSpace(strategy)
+	return strategy == "" ||
+		strategy == AggregateGroupRouteAffinityStrategyPlatformUser ||
+		strategy == AggregateGroupRouteAffinityStrategyRequestFirst ||
+		strategy == AggregateGroupRouteAffinityStrategyRequestOnly ||
+		strategy == AggregateGroupRouteAffinityStrategyOff
+}
+
+func (g *AggregateGroup) GetRouteAffinityStrategy() string {
+	if g == nil {
+		return AggregateGroupRouteAffinityStrategyPlatformUser
+	}
+	return NormalizeAggregateGroupRouteAffinityStrategy(g.RouteAffinityStrategy)
+}
+
 func (t *AggregateGroupTarget) GetWeight() int {
 	if t == nil || t.Weight == nil {
 		return AggregateGroupTargetDefaultWeight
 	}
 	return *t.Weight
+}
+
+func (t *AggregateGroupClientRoutePoolTarget) GetWeight() int {
+	if t == nil || t.Weight == nil {
+		return AggregateGroupTargetDefaultWeight
+	}
+	return *t.Weight
+}
+
+func (p *AggregateGroupClientRoutePool) GetFallbackToDefault() bool {
+	if p == nil || p.FallbackToDefault == nil {
+		return true
+	}
+	return *p.FallbackToDefault
 }
 
 func NormalizeAggregateGroupClusterAffinityTTLSeconds(seconds int) int {
@@ -103,6 +179,63 @@ func (g *AggregateGroup) GetVisibleUserGroups() []string {
 		return []string{}
 	}
 	return groups
+}
+
+func (g *AggregateGroup) GetRouteAffinityKeySources() []AggregateGroupRouteAffinityKeySource {
+	if g == nil || strings.TrimSpace(g.RouteAffinityKeySources) == "" {
+		return []AggregateGroupRouteAffinityKeySource{}
+	}
+	var sources []AggregateGroupRouteAffinityKeySource
+	if err := common.UnmarshalJsonStr(g.RouteAffinityKeySources, &sources); err != nil {
+		common.SysError("failed to unmarshal aggregate group route affinity key sources: " + err.Error())
+		return []AggregateGroupRouteAffinityKeySource{}
+	}
+	return sources
+}
+
+func NormalizeAggregateGroupClientRoutePools(config AggregateGroupClientRoutePools) AggregateGroupClientRoutePools {
+	if config.ClaudeCodeCLI.FallbackToDefault == nil {
+		config.ClaudeCodeCLI.FallbackToDefault = common.GetPointer(true)
+	}
+	if config.ClaudeCodeCLI.Targets == nil {
+		config.ClaudeCodeCLI.Targets = []AggregateGroupClientRoutePoolTarget{}
+	}
+	return config
+}
+
+func (g *AggregateGroup) GetClientRoutePools() AggregateGroupClientRoutePools {
+	if g == nil || strings.TrimSpace(g.ClientRoutePools) == "" {
+		return NormalizeAggregateGroupClientRoutePools(AggregateGroupClientRoutePools{})
+	}
+	var config AggregateGroupClientRoutePools
+	if err := common.UnmarshalJsonStr(g.ClientRoutePools, &config); err != nil {
+		common.SysError("failed to unmarshal aggregate group client route pools: " + err.Error())
+		return NormalizeAggregateGroupClientRoutePools(AggregateGroupClientRoutePools{})
+	}
+	return NormalizeAggregateGroupClientRoutePools(config)
+}
+
+func (g *AggregateGroup) SetClientRoutePools(config AggregateGroupClientRoutePools) error {
+	config = NormalizeAggregateGroupClientRoutePools(config)
+	jsonBytes, err := common.Marshal(config)
+	if err != nil {
+		return err
+	}
+	g.ClientRoutePools = string(jsonBytes)
+	return nil
+}
+
+func (g *AggregateGroup) SetRouteAffinityKeySources(sources []AggregateGroupRouteAffinityKeySource) error {
+	if len(sources) == 0 {
+		g.RouteAffinityKeySources = ""
+		return nil
+	}
+	jsonBytes, err := common.Marshal(sources)
+	if err != nil {
+		return err
+	}
+	g.RouteAffinityKeySources = string(jsonBytes)
+	return nil
 }
 
 func (g *AggregateGroup) SetVisibleUserGroups(groups []string) error {
@@ -177,8 +310,11 @@ func (g *AggregateGroup) UpdateWithTargets(targets []AggregateGroupTarget) error
 			"recovery_enabled":             g.RecoveryEnabled,
 			"recovery_interval_seconds":    g.RecoveryIntervalSeconds,
 			"cluster_affinity_ttl_seconds": g.ClusterAffinityTTLSeconds,
+			"route_affinity_strategy":      g.RouteAffinityStrategy,
+			"route_affinity_key_sources":   g.RouteAffinityKeySources,
 			"retry_status_codes":           g.RetryStatusCodes,
 			"visible_user_groups":          g.VisibleUserGroups,
+			"client_route_pools":           g.ClientRoutePools,
 			"updated_time":                 g.UpdatedTime,
 		}).Error; err != nil {
 			return err

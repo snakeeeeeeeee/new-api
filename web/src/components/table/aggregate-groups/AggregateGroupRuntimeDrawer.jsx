@@ -66,6 +66,9 @@ const isRouteRecentlyUsed = (route) => {
   return (route?.rpm ?? 0) > 0;
 };
 
+const getRuntimeRouteKey = (route) =>
+  `${route?.route_pool || 'default'}::${route?.route_group || ''}`;
+
 const getRouteStatusConfig = (route, t, routingMode = 'failover') => {
   if ((route?.priority_count ?? 0) <= 0) {
     return { color: 'grey', text: 'Unavailable' };
@@ -240,7 +243,7 @@ const AggregateClusterTopologyCanvas = ({
       width: nodeWidth,
       height: nodeHeight,
       centerY: y + nodeHeight / 2,
-      isSelected: selectedRouteKey === route.route_group,
+      isSelected: selectedRouteKey === getRuntimeRouteKey(route),
       visualStyle: getRouteVisualStyle(route, t, 'cluster'),
       isFlowing: isClusterRouteFlowing(route),
     };
@@ -254,7 +257,7 @@ const AggregateClusterTopologyCanvas = ({
     const c1X = startX + lineGap * 0.42;
     const c2X = endX - lineGap * 0.42;
     return {
-      id: `${idPrefix}-flow-${node.route.route_index}-${index}`,
+      id: `${idPrefix}-flow-${getRuntimeRouteKey(node.route)}-${index}`,
       path: `M ${startX} ${startY} C ${c1X} ${startY}, ${c2X} ${endY}, ${endX} ${endY}`,
       isFlowing: node.isFlowing,
     };
@@ -462,16 +465,16 @@ const AggregateClusterTopologyCanvas = ({
 
           return (
             <g
-              key={`${node.route.route_group}-${node.route.route_index}`}
+              key={getRuntimeRouteKey(node.route)}
               role='button'
               tabIndex={0}
               aria-label={`${node.route.route_group} ${statusText}`}
               style={{ cursor: 'pointer' }}
-              onClick={() => onSelectRoute(node.route.route_group)}
+              onClick={() => onSelectRoute(getRuntimeRouteKey(node.route))}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
-                  onSelectRoute(node.route.route_group);
+                  onSelectRoute(getRuntimeRouteKey(node.route));
                 }
               }}
             >
@@ -674,7 +677,7 @@ const AggregateTopologyCanvas = ({
       height: nodeHeight,
       centerX: x + nodeWidth / 2,
       centerY: y + nodeHeight / 2,
-      isSelected: selectedRouteKey === route.route_group,
+      isSelected: selectedRouteKey === getRuntimeRouteKey(route),
       visualStyle: getRouteVisualStyle(route, t, routingMode),
     };
   });
@@ -860,16 +863,16 @@ const AggregateTopologyCanvas = ({
 
           return (
             <g
-              key={`${node.route.route_group}-${node.route.route_index}`}
+              key={getRuntimeRouteKey(node.route)}
               role='button'
               tabIndex={0}
               aria-label={`${node.route.route_group} ${statusText}`}
               style={{ cursor: 'pointer' }}
-              onClick={() => onSelectRoute(node.route.route_group)}
+              onClick={() => onSelectRoute(getRuntimeRouteKey(node.route))}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
-                  onSelectRoute(node.route.route_group);
+                  onSelectRoute(getRuntimeRouteKey(node.route));
                 }
               }}
             >
@@ -1071,10 +1074,13 @@ const AggregateGroupRuntimeDrawer = ({
       setRuntimeData(data);
       setSelectedModel(data?.selected_model || '');
       const nextSelectedRoute =
-        data?.runtime?.routes?.find((route) => route?.is_active)?.route_group ||
-        data?.runtime?.routes?.[0]?.route_group ||
-        '';
-      setSelectedRouteKey(nextSelectedRoute);
+        data?.runtime?.routes?.find((route) => route?.is_active) ||
+        data?.runtime?.routes?.[0] ||
+        data?.runtime?.client_route_pools?.[0]?.routes?.[0] ||
+        null;
+      setSelectedRouteKey(
+        nextSelectedRoute ? getRuntimeRouteKey(nextSelectedRoute) : '',
+      );
     } catch (error) {
       showError(error?.message || t('获取聚合分组运行态失败'));
     } finally {
@@ -1124,27 +1130,38 @@ const AggregateGroupRuntimeDrawer = ({
   const smartStrategy = runtimeData?.smart_strategy;
   const runtime = runtimeData?.runtime;
   const activeRoute = runtime?.active_route;
+  const clientRoutePools = useMemo(
+    () => runtime?.client_route_pools || [],
+    [runtime?.client_route_pools],
+  );
+  const allRuntimeRoutes = useMemo(() => {
+    const routes = [...(runtime?.routes || [])];
+    clientRoutePools.forEach((pool) => {
+      routes.push(...(pool?.routes || []));
+    });
+    return routes;
+  }, [runtime?.routes, clientRoutePools]);
   const models = useMemo(
     () => runtimeData?.models || [],
     [runtimeData?.models],
   );
   const selectedRoute = useMemo(() => {
-    if (!runtime?.routes?.length) {
+    if (!allRuntimeRoutes.length) {
       return null;
     }
     return (
-      runtime.routes.find((route) => route.route_group === selectedRouteKey) ||
-      runtime.routes[0]
+      allRuntimeRoutes.find(
+        (route) => getRuntimeRouteKey(route) === selectedRouteKey,
+      ) || allRuntimeRoutes[0]
     );
-  }, [runtime?.routes, selectedRouteKey]);
+  }, [allRuntimeRoutes, selectedRouteKey]);
   const degradedRouteCount = useMemo(
-    () => runtime?.routes?.filter((route) => route.is_degraded).length || 0,
-    [runtime?.routes],
+    () => allRuntimeRoutes.filter((route) => route.is_degraded).length || 0,
+    [allRuntimeRoutes],
   );
   const routeTotalRPM = useMemo(
-    () =>
-      runtime?.routes?.reduce((sum, route) => sum + (route?.rpm || 0), 0) || 0,
-    [runtime?.routes],
+    () => allRuntimeRoutes.reduce((sum, route) => sum + (route?.rpm || 0), 0),
+    [allRuntimeRoutes],
   );
 
   return (
@@ -1382,7 +1399,7 @@ const AggregateGroupRuntimeDrawer = ({
                     <div className={isMobile ? '' : ''}>
                       <AggregateTopologyCanvas
                         routes={runtime.routes || []}
-                        selectedRouteKey={selectedRoute?.route_group}
+                        selectedRouteKey={selectedRouteKey}
                         onSelectRoute={setSelectedRouteKey}
                         isMobile={isMobile}
                         reducedMotion={reducedMotion}
@@ -1393,12 +1410,77 @@ const AggregateGroupRuntimeDrawer = ({
                     </div>
                   </Card>
 
+                  {clientRoutePools.length ? (
+                    <Card className='border-0 shadow-sm'>
+                      <div className='flex items-center justify-between gap-2 mb-3'>
+                        <div>
+                          <Text strong>{t('客户端专用流量池')}</Text>
+                          <div className='text-xs text-gray-600 mt-1'>
+                            {t(
+                              '专用池与默认流量池分开展示；Failover 按顺序，Cluster 按专用权重。',
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className='space-y-4'>
+                        {clientRoutePools.map((pool) => (
+                          <div
+                            key={pool.pool_name}
+                            className='rounded-lg border border-gray-100 bg-gray-50 px-3 py-3'
+                          >
+                            <div className='flex items-center justify-between gap-2 mb-2 flex-wrap'>
+                              <Space>
+                                <Tag color='blue' shape='circle'>
+                                  {pool.client_type === 'claude_code_cli'
+                                    ? 'Claude CLI'
+                                    : pool.client_type}
+                                </Tag>
+                                <Text strong>{pool.pool_name}</Text>
+                              </Space>
+                              <Space>
+                                {renderSwitchTag(pool.enabled, t)}
+                                <Tag
+                                  color={
+                                    pool.fallback_to_default ? 'green' : 'grey'
+                                  }
+                                >
+                                  {pool.fallback_to_default
+                                    ? t('回退默认池')
+                                    : t('不回退')}
+                                </Tag>
+                              </Space>
+                            </div>
+                            {pool.routes?.length ? (
+                              <AggregateTopologyCanvas
+                                routes={pool.routes || []}
+                                selectedRouteKey={selectedRouteKey}
+                                onSelectRoute={setSelectedRouteKey}
+                                isMobile={isMobile}
+                                reducedMotion={reducedMotion}
+                                routingMode={routingMode}
+                                idPrefix={`aggregate-client-pool-${pool.pool_name}`}
+                                t={t}
+                              />
+                            ) : (
+                              <Empty description={t('当前专用池暂无节点')} />
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+                  ) : null}
+
                   <Card className='border-0 shadow-sm'>
                     <div className='flex items-center justify-between gap-2 mb-3'>
                       <div>
                         <Text strong>{t('节点详情')}</Text>
                         <div className='text-xs text-gray-600 mt-1'>
                           {selectedRoute?.route_group || t('未选择节点')}
+                          {selectedRoute?.route_pool ? (
+                            <Tag color='blue' className='ml-2'>
+                              {selectedRoute.route_pool}
+                            </Tag>
+                          ) : null}
                         </div>
                       </div>
                       {selectedRoute ? (
@@ -1418,6 +1500,10 @@ const AggregateGroupRuntimeDrawer = ({
                     {selectedRoute ? (
                       <Descriptions
                         data={[
+                          {
+                            key: t('流量池'),
+                            value: selectedRoute.route_pool || t('默认流量池'),
+                          },
                           {
                             key: 'RPM',
                             value: selectedRoute.rpm ?? 0,
@@ -1576,7 +1662,7 @@ const AggregateGroupRuntimeDrawer = ({
         </div>
         <AggregateTopologyCanvas
           routes={runtime?.routes || []}
-          selectedRouteKey={selectedRoute?.route_group}
+          selectedRouteKey={selectedRouteKey}
           onSelectRoute={setSelectedRouteKey}
           isMobile={isMobile}
           reducedMotion={reducedMotion}

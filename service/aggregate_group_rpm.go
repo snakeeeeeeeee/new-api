@@ -17,7 +17,7 @@ import (
 const (
 	aggregateRouteRPMWindowSeconds = int64(60)
 	aggregateRouteRPMTTL           = 120 * time.Second
-	aggregateRouteRPMRedisPrefix   = "new-api:aggregate_route_rpm:v1"
+	aggregateRouteRPMRedisPrefix   = "new-api:aggregate_route_rpm:v2"
 
 	aggregateRouteRPMMetricAttempt = "attempt"
 	aggregateRouteRPMMetricSuccess = "success"
@@ -41,12 +41,13 @@ var (
 	aggregateRouteRPMMemoryData = map[string]aggregateRouteRPMMemoryEntry{}
 )
 
-func buildAggregateRouteRPMBaseKey(groupName string, modelName string, routeGroup string) string {
-	return common.Sha1([]byte(groupName + "\n" + modelName + "\n" + routeGroup))
+func buildAggregateRouteRPMBaseKey(groupName string, modelName string, routePool string, routeGroup string) string {
+	routePool = normalizeAggregateClusterRoutePool(routePool)
+	return common.Sha1([]byte(groupName + "\n" + modelName + "\n" + routePool + "\n" + routeGroup))
 }
 
-func buildAggregateRouteRPMKey(groupName string, modelName string, routeGroup string, metric string, unixSecond int64) string {
-	return fmt.Sprintf("%s:%s:%s:%d", aggregateRouteRPMRedisPrefix, buildAggregateRouteRPMBaseKey(groupName, modelName, routeGroup), metric, unixSecond)
+func buildAggregateRouteRPMKey(groupName string, modelName string, routePool string, routeGroup string, metric string, unixSecond int64) string {
+	return fmt.Sprintf("%s:%s:%s:%d", aggregateRouteRPMRedisPrefix, buildAggregateRouteRPMBaseKey(groupName, modelName, routePool, routeGroup), metric, unixSecond)
 }
 
 func RecordAggregateRouteRPMAttempt(c *gin.Context, modelName string, routeGroup string) {
@@ -70,16 +71,22 @@ func recordAggregateRouteRPMFromContext(c *gin.Context, modelName string, routeG
 	if aggregateGroup == "" {
 		return
 	}
-	recordAggregateRouteRPM(aggregateGroup, modelName, routeGroup, metric)
+	routePool := common.GetContextKeyString(c, constant.ContextKeyAggregateRoutePool)
+	recordAggregateRouteRPMForPool(aggregateGroup, modelName, routePool, routeGroup, metric)
 }
 
 func recordAggregateRouteRPM(groupName string, modelName string, routeGroup string, metric string) {
+	recordAggregateRouteRPMForPool(groupName, modelName, aggregateClusterDefaultRoutePool, routeGroup, metric)
+}
+
+func recordAggregateRouteRPMForPool(groupName string, modelName string, routePool string, routeGroup string, metric string) {
 	if groupName == "" || modelName == "" || routeGroup == "" || metric == "" {
 		return
 	}
+	routePool = normalizeAggregateClusterRoutePool(routePool)
 	now := aggregateRouteRPMNow()
 	second := now.Unix()
-	key := buildAggregateRouteRPMKey(groupName, modelName, routeGroup, metric, second)
+	key := buildAggregateRouteRPMKey(groupName, modelName, routePool, routeGroup, metric, second)
 	if common.RedisEnabled && common.RDB != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -101,36 +108,41 @@ func recordAggregateRouteRPM(groupName string, modelName string, routeGroup stri
 }
 
 func GetAggregateRouteRPMStats(groupName string, modelName string, routeGroup string) AggregateRouteRPMStats {
+	return GetAggregateRouteRPMStatsForPool(groupName, modelName, aggregateClusterDefaultRoutePool, routeGroup)
+}
+
+func GetAggregateRouteRPMStatsForPool(groupName string, modelName string, routePool string, routeGroup string) AggregateRouteRPMStats {
 	return AggregateRouteRPMStats{
-		RPM:        int(sumAggregateRouteRPM(groupName, modelName, routeGroup, aggregateRouteRPMMetricAttempt)),
-		SuccessRPM: int(sumAggregateRouteRPM(groupName, modelName, routeGroup, aggregateRouteRPMMetricSuccess)),
-		FailureRPM: int(sumAggregateRouteRPM(groupName, modelName, routeGroup, aggregateRouteRPMMetricFailure)),
+		RPM:        int(sumAggregateRouteRPM(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricAttempt)),
+		SuccessRPM: int(sumAggregateRouteRPM(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricSuccess)),
+		FailureRPM: int(sumAggregateRouteRPM(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricFailure)),
 	}
 }
 
-func sumAggregateRouteRPM(groupName string, modelName string, routeGroup string, metric string) int64 {
+func sumAggregateRouteRPM(groupName string, modelName string, routePool string, routeGroup string, metric string) int64 {
 	if groupName == "" || modelName == "" || routeGroup == "" || metric == "" {
 		return 0
 	}
+	routePool = normalizeAggregateClusterRoutePool(routePool)
 	now := aggregateRouteRPMNow().Unix()
 	from := now - aggregateRouteRPMWindowSeconds + 1
 	if common.RedisEnabled && common.RDB != nil {
-		total, ok := sumAggregateRouteRPMRedis(groupName, modelName, routeGroup, metric, from, now)
+		total, ok := sumAggregateRouteRPMRedis(groupName, modelName, routePool, routeGroup, metric, from, now)
 		if ok {
 			return total
 		}
 	}
-	return sumAggregateRouteRPMMemory(groupName, modelName, routeGroup, metric, from, now)
+	return sumAggregateRouteRPMMemory(groupName, modelName, routePool, routeGroup, metric, from, now)
 }
 
-func sumAggregateRouteRPMRedis(groupName string, modelName string, routeGroup string, metric string, from int64, to int64) (int64, bool) {
+func sumAggregateRouteRPMRedis(groupName string, modelName string, routePool string, routeGroup string, metric string, from int64, to int64) (int64, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	pipe := common.RDB.Pipeline()
 	cmds := make([]*redis.StringCmd, 0, to-from+1)
 	for second := from; second <= to; second++ {
-		cmds = append(cmds, pipe.Get(ctx, buildAggregateRouteRPMKey(groupName, modelName, routeGroup, metric, second)))
+		cmds = append(cmds, pipe.Get(ctx, buildAggregateRouteRPMKey(groupName, modelName, routePool, routeGroup, metric, second)))
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return 0, false
@@ -153,14 +165,14 @@ func sumAggregateRouteRPMRedis(groupName string, modelName string, routeGroup st
 	return total, true
 }
 
-func sumAggregateRouteRPMMemory(groupName string, modelName string, routeGroup string, metric string, from int64, to int64) int64 {
+func sumAggregateRouteRPMMemory(groupName string, modelName string, routePool string, routeGroup string, metric string, from int64, to int64) int64 {
 	aggregateRouteRPMMemoryMu.Lock()
 	defer aggregateRouteRPMMemoryMu.Unlock()
 	cleanupAggregateRouteRPMMemoryLocked(to)
 
 	total := int64(0)
 	for second := from; second <= to; second++ {
-		key := buildAggregateRouteRPMKey(groupName, modelName, routeGroup, metric, second)
+		key := buildAggregateRouteRPMKey(groupName, modelName, routePool, routeGroup, metric, second)
 		entry, ok := aggregateRouteRPMMemoryData[key]
 		if !ok || entry.ExpiresAt <= to {
 			continue

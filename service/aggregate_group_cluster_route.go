@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -12,9 +13,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const aggregateClusterDefaultRoutePool = "default"
+
 type aggregateClusterRouteCandidate struct {
 	Target          model.AggregateGroupTarget
 	Index           int
+	RoutePool       string
 	PriorityCount   int
 	IsDegraded      bool
 	Weight          int
@@ -34,6 +38,23 @@ func calculateAggregateClusterEffectiveWeight(weight int, isDegraded bool) int {
 		return 1
 	}
 	return reducedWeight
+}
+
+func normalizeAggregateClusterRoutePool(routePool string) string {
+	routePool = strings.TrimSpace(routePool)
+	if routePool == "" {
+		return aggregateClusterDefaultRoutePool
+	}
+	return routePool
+}
+
+func buildAggregateRouteAttemptKey(routePool string, routeGroup string) string {
+	routePool = normalizeAggregateClusterRoutePool(routePool)
+	routeGroup = strings.TrimSpace(routeGroup)
+	if routeGroup == "" {
+		return ""
+	}
+	return routePool + "\n" + routeGroup
 }
 
 func getAggregateAttemptedRouteIndexes(ctx *gin.Context) map[int]bool {
@@ -67,11 +88,65 @@ func isAggregateRouteAttempted(ctx *gin.Context, index int) bool {
 	return getAggregateAttemptedRouteIndexes(ctx)[index]
 }
 
-func buildAggregateClusterRouteCandidates(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, skipDegraded bool, excludeAttempted bool) ([]aggregateClusterRouteCandidate, []aggregateClusterRouteCandidate, error) {
-	healthyCandidates := make([]aggregateClusterRouteCandidate, 0, len(aggregateGroup.Targets))
-	supportedCandidates := make([]aggregateClusterRouteCandidate, 0, len(aggregateGroup.Targets))
-	for index, target := range aggregateGroup.Targets {
-		if excludeAttempted && isAggregateRouteAttempted(ctx, index) {
+func getAggregateAttemptedRouteKeys(ctx *gin.Context) map[string]bool {
+	if ctx == nil {
+		return map[string]bool{}
+	}
+	value, ok := common.GetContextKey(ctx, constant.ContextKeyAggregateAttemptedRouteKeys)
+	if !ok {
+		return map[string]bool{}
+	}
+	attempted, ok := value.(map[string]bool)
+	if !ok || attempted == nil {
+		return map[string]bool{}
+	}
+	return attempted
+}
+
+func markAggregateRouteKeyAttempted(ctx *gin.Context, routePool string, routeGroup string) {
+	if ctx == nil {
+		return
+	}
+	key := buildAggregateRouteAttemptKey(routePool, routeGroup)
+	if key == "" {
+		return
+	}
+	attempted := getAggregateAttemptedRouteKeys(ctx)
+	attempted[key] = true
+	common.SetContextKey(ctx, constant.ContextKeyAggregateAttemptedRouteKeys, attempted)
+}
+
+func isAggregateRouteKeyAttempted(ctx *gin.Context, routePool string, routeGroup string) bool {
+	key := buildAggregateRouteAttemptKey(routePool, routeGroup)
+	if key == "" {
+		return false
+	}
+	return getAggregateAttemptedRouteKeys(ctx)[key]
+}
+
+func markAggregateRouteCandidateAttempted(ctx *gin.Context, candidate aggregateClusterRouteCandidate) {
+	markAggregateRouteKeyAttempted(ctx, candidate.RoutePool, candidate.Target.RealGroup)
+	if normalizeAggregateClusterRoutePool(candidate.RoutePool) == aggregateClusterDefaultRoutePool {
+		markAggregateRouteAttempted(ctx, candidate.Index)
+	}
+}
+
+func isAggregateRouteCandidateAttempted(ctx *gin.Context, routePool string, index int, routeGroup string) bool {
+	if isAggregateRouteKeyAttempted(ctx, routePool, routeGroup) {
+		return true
+	}
+	if normalizeAggregateClusterRoutePool(routePool) == aggregateClusterDefaultRoutePool && isAggregateRouteAttempted(ctx, index) {
+		return true
+	}
+	return false
+}
+
+func buildAggregateClusterRouteCandidatesFromTargets(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, routePool string, targets []model.AggregateGroupTarget, skipDegraded bool, excludeAttempted bool) ([]aggregateClusterRouteCandidate, []aggregateClusterRouteCandidate, error) {
+	routePool = normalizeAggregateClusterRoutePool(routePool)
+	healthyCandidates := make([]aggregateClusterRouteCandidate, 0, len(targets))
+	supportedCandidates := make([]aggregateClusterRouteCandidate, 0, len(targets))
+	for index, target := range targets {
+		if excludeAttempted && isAggregateRouteCandidateAttempted(ctx, routePool, index, target.RealGroup) {
 			continue
 		}
 		priorityCount, err := model.GetSatisfiedChannelPriorityCount(target.RealGroup, modelName)
@@ -84,6 +159,7 @@ func buildAggregateClusterRouteCandidates(ctx *gin.Context, aggregateGroup *mode
 		candidate := aggregateClusterRouteCandidate{
 			Target:        target,
 			Index:         index,
+			RoutePool:     routePool,
 			PriorityCount: priorityCount,
 			Weight:        target.GetWeight(),
 		}
@@ -110,6 +186,13 @@ func buildAggregateClusterRouteCandidates(ctx *gin.Context, aggregateGroup *mode
 		}
 	}
 	return healthyCandidates, supportedCandidates, nil
+}
+
+func buildAggregateClusterRouteCandidates(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, skipDegraded bool, excludeAttempted bool) ([]aggregateClusterRouteCandidate, []aggregateClusterRouteCandidate, error) {
+	if aggregateGroup == nil {
+		return nil, nil, fmt.Errorf("aggregate group is nil")
+	}
+	return buildAggregateClusterRouteCandidatesFromTargets(ctx, aggregateGroup, modelName, aggregateClusterDefaultRoutePool, aggregateGroup.Targets, skipDegraded, excludeAttempted)
 }
 
 func findAggregateClusterCandidateByRoute(candidates []aggregateClusterRouteCandidate, routeGroup string) (aggregateClusterRouteCandidate, bool) {
@@ -147,8 +230,8 @@ func pickAggregateClusterCandidateByWeight(candidates []aggregateClusterRouteCan
 	return candidates[len(candidates)-1], true
 }
 
-func chooseAggregateClusterRouteCandidate(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, skipDegraded bool, excludeAttempted bool, affinityRouteGroup string) (aggregateClusterRouteCandidate, bool, bool, error) {
-	healthyCandidates, supportedCandidates, err := buildAggregateClusterRouteCandidates(ctx, aggregateGroup, modelName, skipDegraded, excludeAttempted)
+func chooseAggregateClusterRouteCandidateFromTargets(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, routePool string, targets []model.AggregateGroupTarget, skipDegraded bool, excludeAttempted bool, affinityRouteGroup string) (aggregateClusterRouteCandidate, bool, bool, error) {
+	healthyCandidates, supportedCandidates, err := buildAggregateClusterRouteCandidatesFromTargets(ctx, aggregateGroup, modelName, routePool, targets, skipDegraded, excludeAttempted)
 	if err != nil {
 		return aggregateClusterRouteCandidate{}, false, false, err
 	}
@@ -171,11 +254,102 @@ func chooseAggregateClusterRouteCandidate(ctx *gin.Context, aggregateGroup *mode
 	return candidate, ok, false, nil
 }
 
+func chooseAggregateClusterRouteCandidate(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, skipDegraded bool, excludeAttempted bool, affinityRouteGroup string) (aggregateClusterRouteCandidate, bool, bool, error) {
+	return chooseAggregateClusterRouteCandidateFromTargets(ctx, aggregateGroup, modelName, aggregateClusterDefaultRoutePool, aggregateGroup.Targets, skipDegraded, excludeAttempted, affinityRouteGroup)
+}
+
+func aggregateClientRoutePoolTargetsToClusterTargets(inputTargets []model.AggregateGroupClientRoutePoolTarget) []model.AggregateGroupTarget {
+	targets := make([]model.AggregateGroupTarget, 0, len(inputTargets))
+	for _, target := range inputTargets {
+		realGroup := strings.TrimSpace(target.RealGroup)
+		if realGroup == "" {
+			continue
+		}
+		weight := model.AggregateGroupTargetDefaultWeight
+		if target.Weight != nil {
+			weight = *target.Weight
+		}
+		targets = append(targets, model.AggregateGroupTarget{
+			RealGroup:  realGroup,
+			OrderIndex: len(targets),
+			Weight:     common.GetPointer(weight),
+		})
+	}
+	return targets
+}
+
+func setAggregateClientRouteContext(ctx *gin.Context, clientType string, routePool string, routeTarget string, fallback bool) {
+	if ctx == nil || strings.TrimSpace(clientType) == "" || strings.TrimSpace(routePool) == "" {
+		return
+	}
+	common.SetContextKey(ctx, constant.ContextKeyAggregateClientType, clientType)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateClientRoutePool, routePool)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateClientRouteFallback, fallback)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateClientRouteTarget, strings.TrimSpace(routeTarget))
+}
+
+func setAggregateClusterNextRetryRoute(ctx *gin.Context, candidate aggregateClusterRouteCandidate, retryBase int) {
+	if ctx == nil {
+		return
+	}
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryRoutePool, normalizeAggregateClusterRoutePool(candidate.RoutePool))
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryRouteGroup, candidate.Target.RealGroup)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryIndex, candidate.Index)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, retryBase)
+}
+
+func resolveExplicitAggregateRetryRoute(ctx *gin.Context) (string, string, int, bool) {
+	if ctx == nil {
+		return "", "", -1, false
+	}
+	routeGroup := strings.TrimSpace(common.GetContextKeyString(ctx, constant.ContextKeyAggregateRetryRouteGroup))
+	if routeGroup == "" {
+		return "", "", -1, false
+	}
+	routePool := normalizeAggregateClusterRoutePool(common.GetContextKeyString(ctx, constant.ContextKeyAggregateRetryRoutePool))
+	index := -1
+	if retryIndex, ok := resolveExplicitAggregateRetryIndex(ctx); ok {
+		index = retryIndex
+	}
+	return routePool, routeGroup, index, true
+}
+
+func findExplicitAggregateClusterCandidate(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, routePool string, routeGroup string, routeIndex int, skipDegraded bool) (aggregateClusterRouteCandidate, bool, error) {
+	var targets []model.AggregateGroupTarget
+	routePool = normalizeAggregateClusterRoutePool(routePool)
+	if routePool == model.AggregateGroupClientRoutePoolClaudeCodeCLI {
+		targets = aggregateClientRoutePoolTargetsToClusterTargets(aggregateGroup.GetClientRoutePools().ClaudeCodeCLI.Targets)
+	} else {
+		targets = aggregateGroup.Targets
+	}
+	_, supportedCandidates, err := buildAggregateClusterRouteCandidatesFromTargets(ctx, aggregateGroup, modelName, routePool, targets, skipDegraded, false)
+	if err != nil {
+		return aggregateClusterRouteCandidate{}, false, err
+	}
+	if routeGroup != "" {
+		candidate, ok := findAggregateClusterCandidateByRoute(supportedCandidates, routeGroup)
+		return candidate, ok, nil
+	}
+	if routeIndex >= 0 && routeIndex < len(supportedCandidates) {
+		return supportedCandidates[routeIndex], true, nil
+	}
+	return aggregateClusterRouteCandidate{}, false, nil
+}
+
 func selectAggregateClusterChannelFromIndex(param *RetryParam, aggregateGroup *model.AggregateGroup, index int, retryBase int) (*model.Channel, string, error) {
 	if index < 0 || index >= len(aggregateGroup.Targets) {
 		return nil, "", nil
 	}
-	target := aggregateGroup.Targets[index]
+	candidate := aggregateClusterRouteCandidate{
+		Target:    aggregateGroup.Targets[index],
+		Index:     index,
+		RoutePool: aggregateClusterDefaultRoutePool,
+	}
+	return selectAggregateClusterChannelFromCandidate(param, aggregateGroup, candidate, retryBase)
+}
+
+func selectAggregateClusterChannelFromCandidate(param *RetryParam, aggregateGroup *model.AggregateGroup, candidate aggregateClusterRouteCandidate, retryBase int) (*model.Channel, string, error) {
+	target := candidate.Target
 	priorityRetry := param.GetRetry() - retryBase
 	if priorityRetry < 0 {
 		priorityRetry = 0
@@ -194,27 +368,129 @@ func selectAggregateClusterChannelFromIndex(param *RetryParam, aggregateGroup *m
 	if channel == nil {
 		return nil, target.RealGroup, nil
 	}
-	setAggregateGroupStartIndexes(param.Ctx, index)
+	setAggregateGroupStartIndexes(param.Ctx, candidate.Index)
 	common.SetContextKey(param.Ctx, constant.ContextKeyRouteGroup, target.RealGroup)
-	common.SetContextKey(param.Ctx, constant.ContextKeyRouteGroupIndex, index)
+	common.SetContextKey(param.Ctx, constant.ContextKeyRouteGroupIndex, candidate.Index)
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRoutePool, normalizeAggregateClusterRoutePool(candidate.RoutePool))
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRetryBase, retryBase)
-	markAggregateRouteAttempted(param.Ctx, index)
+	if common.GetContextKeyBool(param.Ctx, constant.ContextKeyAggregateClientRouteFallback) {
+		if clientType := common.GetContextKeyString(param.Ctx, constant.ContextKeyAggregateClientType); clientType != "" {
+			setAggregateClientRouteContext(param.Ctx, clientType, common.GetContextKeyString(param.Ctx, constant.ContextKeyAggregateClientRoutePool), target.RealGroup, true)
+		}
+	}
+	markAggregateRouteCandidateAttempted(param.Ctx, candidate)
 	RecordAggregateRouteRPMAttempt(param.Ctx, param.ModelName, target.RealGroup)
 	return channel, target.RealGroup, nil
 }
 
+type aggregateClientRoutePoolSelection struct {
+	ClientType string
+	PoolName   string
+	Pool       model.AggregateGroupClientRoutePool
+	Detection  AggregateClientDetection
+}
+
+func resolveAggregateClientRoutePoolSelection(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string) (aggregateClientRoutePoolSelection, bool) {
+	if ctx == nil || aggregateGroup == nil {
+		return aggregateClientRoutePoolSelection{}, false
+	}
+	config := aggregateGroup.GetClientRoutePools()
+	if !config.Enabled || !config.ClaudeCodeCLI.Enabled {
+		return aggregateClientRoutePoolSelection{}, false
+	}
+	detection := DetectAggregateClientType(ctx, modelName)
+	if !detection.Matched || detection.ClientType != model.AggregateGroupClientTypeClaudeCodeCLI {
+		return aggregateClientRoutePoolSelection{}, false
+	}
+	return aggregateClientRoutePoolSelection{
+		ClientType: model.AggregateGroupClientTypeClaudeCodeCLI,
+		PoolName:   model.AggregateGroupClientRoutePoolClaudeCodeCLI,
+		Pool:       config.ClaudeCodeCLI,
+		Detection:  detection,
+	}, true
+}
+
+func selectAggregateClientRoutePoolChannel(param *RetryParam, aggregateGroup *model.AggregateGroup, selection aggregateClientRoutePoolSelection, skipDegraded bool) (*model.Channel, string, error) {
+	targets := aggregateClientRoutePoolTargetsToClusterTargets(selection.Pool.Targets)
+	if len(targets) == 0 {
+		return nil, "", nil
+	}
+	affinityRouteGroup := ""
+	if routeGroup, ok := GetAggregateRouteAffinityForPool(param.Ctx, param.ModelName, aggregateGroup.Name, selection.PoolName); ok {
+		affinityRouteGroup = routeGroup
+	}
+	candidate, ok, usedAffinity, err := chooseAggregateClusterRouteCandidateFromTargets(param.Ctx, aggregateGroup, param.ModelName, selection.PoolName, targets, skipDegraded, true, affinityRouteGroup)
+	if err != nil || !ok {
+		return nil, "", err
+	}
+	if usedAffinity {
+		common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRouteAffinityHit, candidate.Target.RealGroup)
+	}
+	retryBase := param.GetRetry()
+	setAggregateClientRouteContext(param.Ctx, selection.ClientType, selection.PoolName, candidate.Target.RealGroup, false)
+	channel, group, err := selectAggregateClusterChannelFromCandidate(param, aggregateGroup, candidate, retryBase)
+	if err != nil || channel != nil {
+		return channel, group, err
+	}
+	markAggregateRouteCandidateAttempted(param.Ctx, candidate)
+
+	candidate, ok, _, err = chooseAggregateClusterRouteCandidateFromTargets(param.Ctx, aggregateGroup, param.ModelName, selection.PoolName, targets, skipDegraded, true, "")
+	if err != nil || !ok {
+		return nil, "", err
+	}
+	setAggregateClientRouteContext(param.Ctx, selection.ClientType, selection.PoolName, candidate.Target.RealGroup, false)
+	return selectAggregateClusterChannelFromCandidate(param, aggregateGroup, candidate, retryBase)
+}
+
 func selectAggregateGroupClusterChannel(param *RetryParam, aggregateGroup *model.AggregateGroup) (*model.Channel, string, error) {
 	skipDegraded := IsAggregateSmartRoutingEnabled(aggregateGroup)
-	if retryIndex, ok := resolveExplicitAggregateRetryIndex(param.Ctx); ok {
+	explicitRouteHandled := false
+	if retryPool, retryRouteGroup, retryIndex, ok := resolveExplicitAggregateRetryRoute(param.Ctx); ok {
+		explicitRouteHandled = true
 		retryBase := param.GetRetry()
 		if base, ok := resolveExplicitAggregateRetryBase(param.Ctx); ok {
 			retryBase = base
 		}
-		channel, group, err := selectAggregateClusterChannelFromIndex(param, aggregateGroup, retryIndex, retryBase)
+		candidate, found, err := findExplicitAggregateClusterCandidate(param.Ctx, aggregateGroup, param.ModelName, retryPool, retryRouteGroup, retryIndex, skipDegraded)
+		if err != nil {
+			return nil, retryRouteGroup, err
+		}
+		if found {
+			if retryPool == model.AggregateGroupClientRoutePoolClaudeCodeCLI {
+				setAggregateClientRouteContext(param.Ctx, model.AggregateGroupClientTypeClaudeCodeCLI, retryPool, candidate.Target.RealGroup, false)
+			}
+			channel, group, err := selectAggregateClusterChannelFromCandidate(param, aggregateGroup, candidate, retryBase)
+			if err != nil || channel != nil {
+				return channel, group, err
+			}
+			markAggregateRouteCandidateAttempted(param.Ctx, candidate)
+		}
+	}
+
+	if !explicitRouteHandled {
+		if retryIndex, ok := resolveExplicitAggregateRetryIndex(param.Ctx); ok {
+			retryBase := param.GetRetry()
+			if base, ok := resolveExplicitAggregateRetryBase(param.Ctx); ok {
+				retryBase = base
+			}
+			channel, group, err := selectAggregateClusterChannelFromIndex(param, aggregateGroup, retryIndex, retryBase)
+			if err != nil || channel != nil {
+				return channel, group, err
+			}
+			markAggregateRouteAttempted(param.Ctx, retryIndex)
+		}
+	}
+
+	if selection, ok := resolveAggregateClientRoutePoolSelection(param.Ctx, aggregateGroup, param.ModelName); ok {
+		channel, group, err := selectAggregateClientRoutePoolChannel(param, aggregateGroup, selection, skipDegraded)
 		if err != nil || channel != nil {
 			return channel, group, err
 		}
-		markAggregateRouteAttempted(param.Ctx, retryIndex)
+		if !selection.Pool.GetFallbackToDefault() {
+			setAggregateClientRouteContext(param.Ctx, selection.ClientType, selection.PoolName, "", false)
+			return nil, "", nil
+		}
+		setAggregateClientRouteContext(param.Ctx, selection.ClientType, selection.PoolName, "", true)
 	}
 
 	affinityRouteGroup := ""
@@ -244,6 +520,7 @@ func selectAggregateGroupClusterChannel(param *RetryParam, aggregateGroup *model
 
 func prepareAggregateClusterRetry(c *gin.Context, aggregateGroup *model.AggregateGroup, transition *AggregateRetryTransition, currentRetry int, modelName string, maxInternalRetries int) *AggregateRetryTransition {
 	failedIndex := transition.FailedIndex
+	currentRoutePool := normalizeAggregateClusterRoutePool(common.GetContextKeyString(c, constant.ContextKeyAggregateRoutePool))
 	retryBase, _ := resolveExplicitAggregateRetryBase(c)
 	priorityCount, err := model.GetSatisfiedChannelPriorityCount(transition.FailedGroup, modelName)
 	if err == nil && priorityCount > 0 {
@@ -256,14 +533,57 @@ func prepareAggregateClusterRetry(c *gin.Context, aggregateGroup *model.Aggregat
 			transition.WithinCurrentGroup = true
 			transition.NextGroup = transition.FailedGroup
 			transition.NextIndex = failedIndex
-			common.SetContextKey(c, constant.ContextKeyAggregateRetryIndex, failedIndex)
-			common.SetContextKey(c, constant.ContextKeyAggregateRetryBase, retryBase)
+			setAggregateClusterNextRetryRoute(c, aggregateClusterRouteCandidate{
+				Target: model.AggregateGroupTarget{
+					RealGroup: transition.FailedGroup,
+				},
+				Index:     failedIndex,
+				RoutePool: currentRoutePool,
+			}, retryBase)
 			return transition
 		}
 	}
 
-	markAggregateRouteAttempted(c, failedIndex)
 	skipDegraded := IsAggregateSmartRoutingEnabled(aggregateGroup)
+	markAggregateRouteKeyAttempted(c, currentRoutePool, transition.FailedGroup)
+	if currentRoutePool == aggregateClusterDefaultRoutePool {
+		markAggregateRouteAttempted(c, failedIndex)
+	}
+	if currentRoutePool == model.AggregateGroupClientRoutePoolClaudeCodeCLI {
+		clientConfig := aggregateGroup.GetClientRoutePools().ClaudeCodeCLI
+		targets := aggregateClientRoutePoolTargetsToClusterTargets(clientConfig.Targets)
+		candidate, ok, _, err := chooseAggregateClusterRouteCandidateFromTargets(c, aggregateGroup, modelName, currentRoutePool, targets, skipDegraded, true, "")
+		if err != nil {
+			logger.LogError(c, "aggregate cluster client route pool retry choose route failed: "+err.Error())
+			return transition
+		}
+		if ok {
+			transition.HasNext = true
+			transition.NextGroup = candidate.Target.RealGroup
+			transition.NextIndex = candidate.Index
+			setAggregateClusterNextRetryRoute(c, candidate, currentRetry+1)
+			setAggregateClientRouteContext(c, model.AggregateGroupClientTypeClaudeCodeCLI, currentRoutePool, candidate.Target.RealGroup, false)
+			return transition
+		}
+		if !clientConfig.GetFallbackToDefault() {
+			return transition
+		}
+		setAggregateClientRouteContext(c, model.AggregateGroupClientTypeClaudeCodeCLI, currentRoutePool, "", true)
+		candidate, ok, _, err = chooseAggregateClusterRouteCandidate(c, aggregateGroup, modelName, skipDegraded, true, "")
+		if err != nil {
+			logger.LogError(c, "aggregate cluster client route pool fallback choose route failed: "+err.Error())
+			return transition
+		}
+		if !ok {
+			return transition
+		}
+		transition.HasNext = true
+		transition.NextGroup = candidate.Target.RealGroup
+		transition.NextIndex = candidate.Index
+		setAggregateClusterNextRetryRoute(c, candidate, currentRetry+1)
+		return transition
+	}
+
 	candidate, ok, _, err := chooseAggregateClusterRouteCandidate(c, aggregateGroup, modelName, skipDegraded, true, "")
 	if err != nil {
 		logger.LogError(c, "aggregate cluster retry choose route failed: "+err.Error())
@@ -275,7 +595,6 @@ func prepareAggregateClusterRetry(c *gin.Context, aggregateGroup *model.Aggregat
 	transition.HasNext = true
 	transition.NextGroup = candidate.Target.RealGroup
 	transition.NextIndex = candidate.Index
-	common.SetContextKey(c, constant.ContextKeyAggregateRetryIndex, candidate.Index)
-	common.SetContextKey(c, constant.ContextKeyAggregateRetryBase, currentRetry+1)
+	setAggregateClusterNextRetryRoute(c, candidate, currentRetry+1)
 	return transition
 }

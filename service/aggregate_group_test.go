@@ -2,6 +2,7 @@ package service
 
 import (
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -118,6 +119,74 @@ func seedAggregateAbilityChannelWithStatus(t *testing.T, id int, group string, m
 	}
 	require.NoError(t, model.DB.Create(channel).Error)
 	require.NoError(t, channel.AddAbilities(nil))
+}
+
+func buildAggregateClaudeCLIContext(t *testing.T, body string) *gin.Context {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest("POST", "/v1/messages?beta=true", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Request.Header.Set("User-Agent", "claude-cli/2.1.116 (external, sdk-cli)")
+	ctx.Request.Header.Set("X-App", "cli")
+	ctx.Request.Header.Set("Anthropic-Beta", "claude-code-20990101,interleaved-thinking-2025-05-14")
+	common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+	return ctx
+}
+
+func buildAggregateNormalClaudeContext(t *testing.T, body string) *gin.Context {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest("POST", "/v1/messages?beta=true", strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Request.Header.Set("User-Agent", "normal-client/1.0")
+	common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+	return ctx
+}
+
+func buildAggregateRequestAffinityContext(t *testing.T, path string, body string, userID int) *gin.Context {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest("POST", path, strings.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	if userID > 0 {
+		common.SetContextKey(ctx, constant.ContextKeyUserId, userID)
+	}
+	return ctx
+}
+
+func configureAggregateRouteAffinity(t *testing.T, group *model.AggregateGroup, strategy string, sources []model.AggregateGroupRouteAffinityKeySource) *model.AggregateGroup {
+	t.Helper()
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	loadedGroup.RouteAffinityStrategy = strategy
+	normalizedSources, err := NormalizeAndValidateAggregateRouteAffinityKeySources(sources)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.SetRouteAffinityKeySources(normalizedSources))
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights(loadedGroup.Targets)))
+	reloadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	return reloadedGroup
+}
+
+func configureAggregateClaudeCLIPool(t *testing.T, group *model.AggregateGroup, enabled bool, fallbackToDefault bool, targets []model.AggregateGroupClientRoutePoolTarget) *model.AggregateGroup {
+	t.Helper()
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.SetClientRoutePools(model.AggregateGroupClientRoutePools{
+		Enabled: enabled,
+		ClaudeCodeCLI: model.AggregateGroupClientRoutePool{
+			Enabled:           enabled,
+			FallbackToDefault: common.GetPointer(fallbackToDefault),
+			Targets:           targets,
+		},
+	}))
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights(loadedGroup.Targets)))
+	reloadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	return reloadedGroup
 }
 
 func enableAggregateGroupSmartRouting(t *testing.T, group *model.AggregateGroup) {
@@ -1361,6 +1430,180 @@ func TestAggregateClusterRouteAffinitySkipsUserRouteWhenModelUnsupported(t *test
 	require.Empty(t, common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
 }
 
+func TestAggregateClusterRequestOnlyAffinityUsesRequestIdentifierAndSkipsWhenMissing(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-request-only-affinity", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	group = configureAggregateRouteAffinity(t, group, model.AggregateGroupRouteAffinityStrategyRequestOnly, nil)
+	seedAggregateAbilityChannel(t, 1261, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1262, "vip", "gpt-4.1", 10)
+
+	buildCtx := func(affinityKey string) *gin.Context {
+		body := `{"model":"gpt-4.1"}`
+		if affinityKey != "" {
+			body = `{"model":"gpt-4.1","metadata":{"aggregate_route_affinity_key":"` + affinityKey + `"}}`
+		}
+		return buildAggregateRequestAffinityContext(t, "/v1/chat/completions", body, 42)
+	}
+
+	firstCtx := buildCtx("person-a")
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})))
+
+	secondCtx := buildCtx("person-a")
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, "default", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
+	require.Equal(t, "gjson", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinitySourceType))
+	require.Equal(t, "metadata.aggregate_route_affinity_key", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinitySourcePath))
+
+	thirdCtx := buildCtx("person-b")
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        thirdCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+	require.Empty(t, common.GetContextKeyString(thirdCtx, constant.ContextKeyAggregateRouteAffinityHit))
+
+	missingCtx := buildCtx("")
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        missingCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+	require.Equal(t, model.AggregateGroupRouteAffinityStrategyRequestOnly, common.GetContextKeyString(missingCtx, constant.ContextKeyAggregateRouteAffinityStrategy))
+	require.Empty(t, common.GetContextKeyString(missingCtx, constant.ContextKeyAggregateRouteAffinityKeyFP))
+}
+
+func TestAggregateClusterRequestFirstFallsBackToPlatformUser(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-request-first-affinity", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	group = configureAggregateRouteAffinity(t, group, model.AggregateGroupRouteAffinityStrategyRequestFirst, nil)
+	seedAggregateAbilityChannel(t, 1271, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1272, "vip", "gpt-4.1", 10)
+
+	firstCtx := buildAggregateRequestAffinityContext(t, "/v1/chat/completions", `{"model":"gpt-4.1"}`, 42)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, "platform_user", common.GetContextKeyString(firstCtx, constant.ContextKeyAggregateRouteAffinitySourceType))
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})))
+
+	secondCtx := buildAggregateRequestAffinityContext(t, "/v1/chat/completions", `{"model":"gpt-4.1"}`, 42)
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, "default", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
+}
+
+func TestAggregateClusterCustomHeaderRouteAffinitySource(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-header-affinity", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+	group = configureAggregateRouteAffinity(t, group, model.AggregateGroupRouteAffinityStrategyRequestOnly, []model.AggregateGroupRouteAffinityKeySource{
+		{Type: "header", Key: "X-Org-User"},
+	})
+	seedAggregateAbilityChannel(t, 1281, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1282, "vip", "gpt-4.1", 10)
+
+	firstCtx := buildAggregateRequestAffinityContext(t, "/v1/chat/completions", `{"model":"gpt-4.1"}`, 42)
+	firstCtx.Request.Header.Set("X-Org-User", "person-a")
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})))
+
+	secondCtx := buildAggregateRequestAffinityContext(t, "/v1/chat/completions", `{"model":"gpt-4.1"}`, 42)
+	secondCtx.Request.Header.Set("X-Org-User", "person-a")
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, "default", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
+	require.Equal(t, "header", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinitySourceType))
+	require.Equal(t, "X-Org-User", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinitySourceKey))
+}
+
 func TestAggregateClusterRetryExhaustionSwitchesToAnotherRoute(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	common.MemoryCacheEnabled = false
@@ -1515,6 +1758,574 @@ func TestAggregateClusterRetriesSinglePriorityRouteBeforeFallback(t *testing.T) 
 	require.Equal(t, "vip", selectedGroup)
 }
 
+func TestDetectAggregateClientTypeClaudeCodeCLI(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+
+	body := `{"model":"claude-sonnet-4-6","metadata":{"user_id":"user-42"}}`
+	ctx := buildAggregateClaudeCLIContext(t, body)
+	detection := DetectAggregateClientType(ctx, "claude-sonnet-4-6")
+	require.True(t, detection.Matched)
+	require.Equal(t, model.AggregateGroupClientTypeClaudeCodeCLI, detection.ClientType)
+	require.True(t, detection.UserAgentClaudeCLI)
+	require.True(t, detection.XAppCLI)
+	require.True(t, detection.AnthropicBetaClaudeCode)
+	require.True(t, detection.HasMetadataUserID)
+
+	ctx = buildAggregateNormalClaudeContext(t, body)
+	detection = DetectAggregateClientType(ctx, "claude-sonnet-4-6")
+	require.False(t, detection.Matched)
+
+	ctx = buildAggregateClaudeCLIContext(t, body)
+	detection = DetectAggregateClientType(ctx, "gpt-4.1")
+	require.False(t, detection.Matched)
+
+	rec := httptest.NewRecorder()
+	ctx, _ = gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	ctx.Request.Header.Set("User-Agent", "claude-cli/2.1.116")
+	detection = DetectAggregateClientType(ctx, "claude-sonnet-4-6")
+	require.False(t, detection.Matched)
+}
+
+func TestAggregateClientRoutePoolConfigValidation(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	seedAggregateGroup(t, "nested-aggregate", 1, 10, []string{"vip"}, []string{"default"})
+
+	_, err := NormalizeAndValidateAggregateClientRoutePools(model.AggregateGroupClientRoutePools{
+		Enabled: true,
+		ClaudeCodeCLI: model.AggregateGroupClientRoutePool{
+			Enabled: true,
+			Targets: []model.AggregateGroupClientRoutePoolTarget{
+				{RealGroup: "vip", Weight: common.GetPointer(-1)},
+			},
+		},
+	})
+	require.Error(t, err)
+
+	_, err = NormalizeAndValidateAggregateClientRoutePools(model.AggregateGroupClientRoutePools{
+		Enabled: true,
+		ClaudeCodeCLI: model.AggregateGroupClientRoutePool{
+			Enabled: true,
+			Targets: []model.AggregateGroupClientRoutePoolTarget{
+				{RealGroup: "vip", Weight: common.GetPointer(100)},
+				{RealGroup: "vip", Weight: common.GetPointer(200)},
+			},
+		},
+	})
+	require.Error(t, err)
+
+	_, err = NormalizeAndValidateAggregateClientRoutePools(model.AggregateGroupClientRoutePools{
+		Enabled: true,
+		ClaudeCodeCLI: model.AggregateGroupClientRoutePool{
+			Enabled: true,
+			Targets: []model.AggregateGroupClientRoutePoolTarget{
+				{RealGroup: "nested-aggregate", Weight: common.GetPointer(100)},
+			},
+		},
+	})
+	require.Error(t, err)
+
+	config, err := NormalizeAndValidateAggregateClientRoutePools(model.AggregateGroupClientRoutePools{})
+	require.NoError(t, err)
+	require.False(t, config.Enabled)
+	require.True(t, config.ClaudeCodeCLI.GetFallbackToDefault())
+	require.Empty(t, config.ClaudeCodeCLI.Targets)
+}
+
+func TestAggregateClusterClaudeCLIRoutesToDedicatedPoolOnlyWhenEnabled(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-client-pool", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1301, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1302, "svip", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(100)},
+	})
+
+	cliCtx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        cliCtx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1302, channel.Id)
+	require.Equal(t, "svip", selectedGroup)
+	require.Equal(t, model.AggregateGroupClientTypeClaudeCodeCLI, common.GetContextKeyString(cliCtx, constant.ContextKeyAggregateClientType))
+	require.Equal(t, model.AggregateGroupClientRoutePoolClaudeCodeCLI, common.GetContextKeyString(cliCtx, constant.ContextKeyAggregateRoutePool))
+	require.False(t, common.GetContextKeyBool(cliCtx, constant.ContextKeyAggregateClientRouteFallback))
+
+	normalCtx := buildAggregateNormalClaudeContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"normal-user"}}`)
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        normalCtx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1301, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+	require.Empty(t, common.GetContextKeyString(normalCtx, constant.ContextKeyAggregateClientType))
+
+	group = configureAggregateClaudeCLIPool(t, group, false, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(100)},
+	})
+	disabledCtx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        disabledCtx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1301, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+}
+
+func TestAggregateFailoverClaudeCLIRoutesToDedicatedPoolWhenEnabled(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "failover-client-pool", model.AggregateGroupRoutingModeFailover, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1311, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1312, "svip", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(100)},
+	})
+
+	ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1312, channel.Id)
+	require.Equal(t, "svip", selectedGroup)
+	require.Equal(t, model.AggregateGroupRoutingModeFailover, common.GetContextKeyString(ctx, constant.ContextKeyAggregateRoutingMode))
+	require.Equal(t, model.AggregateGroupClientTypeClaudeCodeCLI, common.GetContextKeyString(ctx, constant.ContextKeyAggregateClientType))
+	require.Equal(t, model.AggregateGroupClientRoutePoolClaudeCodeCLI, common.GetContextKeyString(ctx, constant.ContextKeyAggregateRoutePool))
+	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyAggregateClientRouteFallback))
+
+	normalCtx := buildAggregateNormalClaudeContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"normal-user"}}`)
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        normalCtx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1311, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+	require.Empty(t, common.GetContextKeyString(normalCtx, constant.ContextKeyAggregateClientType))
+}
+
+func TestAggregateFailoverClaudeCLIPoolRetriesWithinPoolBeforeDefaultFallback(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 0
+
+	group := seedAggregateGroupWithWeightedTargets(t, "failover-client-pool-retry", model.AggregateGroupRoutingModeFailover, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1313, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1314, "svip", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1315, "vip", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})
+
+	ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	retry := 0
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1314, channel.Id)
+	require.Equal(t, "svip", selectedGroup)
+
+	transition := PrepareAggregateGroupRetry(ctx, retry, "claude-sonnet-4-6", common.RetryTimes)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.False(t, transition.WithinCurrentGroup)
+	require.Equal(t, "vip", transition.NextGroup)
+
+	retry = 1
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1315, channel.Id)
+	require.Equal(t, "vip", selectedGroup)
+
+	transition = PrepareAggregateGroupRetry(ctx, retry, "claude-sonnet-4-6", common.RetryTimes)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.False(t, transition.WithinCurrentGroup)
+	require.Equal(t, "default", transition.NextGroup)
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyAggregateClientRouteFallback))
+
+	retry = 2
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1313, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, aggregateClusterDefaultRoutePool, common.GetContextKeyString(ctx, constant.ContextKeyAggregateRoutePool))
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyAggregateClientRouteFallback))
+}
+
+func TestAggregateFailoverClaudeCLIPoolRuntimeStateIsIndependentFromDefaultPool(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "failover-client-pool-runtime", model.AggregateGroupRoutingModeFailover, true, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "normal-next", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1316, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1317, "normal-next", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1318, "cli-a", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1319, "cli-b", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "cli-a", Weight: common.GetPointer(100)},
+		{RealGroup: "cli-b", Weight: common.GetPointer(100)},
+	})
+
+	ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, group.Name)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRoutingMode, model.AggregateGroupRoutingModeFailover)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRoutePool, model.AggregateGroupClientRoutePoolClaudeCodeCLI)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateClientType, model.AggregateGroupClientTypeClaudeCodeCLI)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateClientRoutePool, model.AggregateGroupClientRoutePoolClaudeCodeCLI)
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "cli-b")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 1)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateStartIndex, 1)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateInitialStartIndex, 0)
+	RecordAggregateRouteSuccess(ctx, "claude-sonnet-4-6")
+
+	defaultState, err := GetAggregateGroupRuntimeState(group.Name, "claude-sonnet-4-6")
+	require.NoError(t, err)
+	require.Nil(t, defaultState)
+	poolState, err := GetAggregateGroupRuntimeStateForPool(group.Name, "claude-sonnet-4-6", model.AggregateGroupClientRoutePoolClaudeCodeCLI)
+	require.NoError(t, err)
+	require.NotNil(t, poolState)
+	require.Equal(t, 1, poolState.ActiveIndex)
+	require.Equal(t, "cli-b", poolState.ActiveGroup)
+
+	normalCtx := buildAggregateNormalClaudeContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"normal-user"}}`)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        normalCtx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1316, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+}
+
+func TestAggregateClusterClaudeCLIPoolSkipsUnsupportedAndDisabledTargets(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-client-pool-filter", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1321, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1322, "vip", "gpt-4.1", 10)
+	seedAggregateAbilityChannelWithStatus(t, 1323, "svip", "claude-sonnet-4-6", 10, common.ChannelStatusManuallyDisabled)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+		{RealGroup: "svip", Weight: common.GetPointer(100)},
+	})
+
+	ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1321, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyAggregateClientRouteFallback))
+}
+
+func TestAggregateClusterClaudeCLIPoolUsesReducedWeightForDegradedRoute(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	setting.AggregateGroupSmartStrategyEnabled = true
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-client-pool-reduced", model.AggregateGroupRoutingModeCluster, true, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1331, "vip", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1332, "svip", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+		{RealGroup: "svip", Weight: common.GetPointer(0)},
+	})
+	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "claude-sonnet-4-6", "vip", &AggregateGroupRouteStrategyState{
+		DegradedUntil: common.GetTimestamp() + 600,
+	}))
+
+	ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1331, channel.Id)
+	require.Equal(t, "vip", selectedGroup)
+
+	targets := aggregateClientRoutePoolTargetsToClusterTargets(group.GetClientRoutePools().ClaudeCodeCLI.Targets)
+	_, candidates, err := buildAggregateClusterRouteCandidatesFromTargets(ctx, group, "claude-sonnet-4-6", model.AggregateGroupClientRoutePoolClaudeCodeCLI, targets, true, false)
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+	require.Equal(t, "vip", candidates[0].Target.RealGroup)
+	require.True(t, candidates[0].IsDegraded)
+	require.Equal(t, 20, candidates[0].EffectiveWeight)
+	require.Equal(t, "svip", candidates[1].Target.RealGroup)
+	require.Equal(t, 0, candidates[1].EffectiveWeight)
+}
+
+func TestAggregateClusterClaudeCLIPoolAffinityIsIndependentFromDefaultCluster(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-client-pool-affinity", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1341, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1342, "vip", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1343, "svip", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+
+	firstCLI := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCLI,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "svip", selectedGroup)
+	RecordAggregateRouteSuccess(firstCLI, "claude-sonnet-4-6")
+
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(0)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})
+	secondCLI := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCLI,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "svip", selectedGroup)
+	require.Equal(t, "svip", common.GetContextKeyString(secondCLI, constant.ContextKeyAggregateRouteAffinityHit))
+
+	normalCtx := buildAggregateNormalClaudeContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"normal-user"}}`)
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        normalCtx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1341, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+	require.Empty(t, common.GetContextKeyString(normalCtx, constant.ContextKeyAggregateRouteAffinityHit))
+}
+
+func TestAggregateClusterClaudeCLIPoolRetriesWithinPoolBeforeFallback(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 1
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-client-pool-retry", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1351, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1352, "svip", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1353, "svip", "claude-sonnet-4-6", 0)
+	seedAggregateAbilityChannel(t, 1354, "vip", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(0)},
+	})
+
+	ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	retry := 0
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1352, channel.Id)
+	require.Equal(t, "svip", selectedGroup)
+
+	transition := PrepareAggregateGroupRetry(ctx, retry, "claude-sonnet-4-6", common.RetryTimes)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.True(t, transition.WithinCurrentGroup)
+	require.Equal(t, "svip", transition.NextGroup)
+
+	retry = 1
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1353, channel.Id)
+	require.Equal(t, "svip", selectedGroup)
+
+	transition = PrepareAggregateGroupRetry(ctx, retry, "claude-sonnet-4-6", common.RetryTimes)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.False(t, transition.WithinCurrentGroup)
+	require.Equal(t, "vip", transition.NextGroup)
+
+	retry = 2
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1354, channel.Id)
+	require.Equal(t, "vip", selectedGroup)
+}
+
+func TestAggregateClusterClaudeCLIPoolFallbackToDefaultSwitch(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 0
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-client-pool-fallback", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1361, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1362, "svip", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(100)},
+	})
+
+	ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	retry := 0
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "svip", selectedGroup)
+
+	transition := PrepareAggregateGroupRetry(ctx, retry, "claude-sonnet-4-6", common.RetryTimes)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.False(t, transition.WithinCurrentGroup)
+	require.Equal(t, "default", transition.NextGroup)
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyAggregateClientRouteFallback))
+
+	retry = 1
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1361, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, aggregateClusterDefaultRoutePool, common.GetContextKeyString(ctx, constant.ContextKeyAggregateRoutePool))
+	require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyAggregateClientRouteFallback))
+}
+
+func TestAggregateClusterClaudeCLIPoolFallbackDisabledExhausts(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 0
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-client-pool-no-fallback", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1371, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1372, "svip", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, false, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(100)},
+	})
+
+	ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	retry := 0
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "svip", selectedGroup)
+
+	transition := PrepareAggregateGroupRetry(ctx, retry, "claude-sonnet-4-6", common.RetryTimes)
+	require.NotNil(t, transition)
+	require.False(t, transition.HasNext)
+	require.False(t, common.GetContextKeyBool(ctx, constant.ContextKeyAggregateClientRouteFallback))
+}
+
 func TestAggregateRouteRPMCountsRecentWindowOnly(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	common.RedisEnabled = false
@@ -1543,4 +2354,29 @@ func TestAggregateRouteRPMCountsRecentWindowOnly(t *testing.T) {
 	require.Equal(t, 0, stats.RPM)
 	require.Equal(t, 0, stats.SuccessRPM)
 	require.Equal(t, 0, stats.FailureRPM)
+}
+
+func TestAggregateRouteRPMStatsAreIsolatedByRoutePool(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.RedisEnabled = false
+
+	base := time.Unix(3000, 0)
+	aggregateRouteRPMNow = func() time.Time { return base }
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "cluster-route")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "shared-route")
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRoutePool, model.AggregateGroupClientRoutePoolClaudeCodeCLI)
+	RecordAggregateRouteRPMAttempt(ctx, "claude-sonnet-4-6", "shared-route")
+	RecordAggregateRouteRPMSuccess(ctx, "claude-sonnet-4-6", "shared-route")
+
+	defaultStats := GetAggregateRouteRPMStats("cluster-route", "claude-sonnet-4-6", "shared-route")
+	require.Equal(t, 0, defaultStats.RPM)
+	require.Equal(t, 0, defaultStats.SuccessRPM)
+
+	cliStats := GetAggregateRouteRPMStatsForPool("cluster-route", "claude-sonnet-4-6", model.AggregateGroupClientRoutePoolClaudeCodeCLI, "shared-route")
+	require.Equal(t, 1, cliStats.RPM)
+	require.Equal(t, 1, cliStats.SuccessRPM)
+	require.Equal(t, 0, cliStats.FailureRPM)
 }

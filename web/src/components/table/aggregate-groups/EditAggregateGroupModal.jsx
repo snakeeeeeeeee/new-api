@@ -23,6 +23,7 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Input,
   InputNumber,
   Modal,
@@ -41,6 +42,8 @@ import {
   IconArrowDown,
   IconArrowUp,
   IconClose,
+  IconDelete,
+  IconPlus,
   IconSave,
   IconServer,
 } from '@douyinfe/semi-icons';
@@ -55,6 +58,88 @@ const routingModeLabels = {
   cluster: 'Cluster 集群分发',
 };
 
+const routeAffinityStrategyOptions = [
+  {
+    label: '平台账号（兼容旧逻辑）',
+    value: 'platform_user',
+  },
+  {
+    label: '智能请求标识粘性（多人共用推荐）',
+    value: 'request_first',
+  },
+  {
+    label: '仅请求标识粘性（无标识则按权重）',
+    value: 'request_only',
+  },
+  {
+    label: '关闭亲和',
+    value: 'off',
+  },
+];
+
+const routeAffinitySourceTypes = [
+  { label: 'Header', value: 'header' },
+  { label: 'Query', value: 'query' },
+  { label: 'JSON Body', value: 'gjson' },
+  { label: 'Context Int', value: 'context_int' },
+  { label: 'Context String', value: 'context_string' },
+];
+
+const defaultRouteAffinityKeySources = () => [
+  { type: 'header', key: 'X-Aggregate-Affinity-Key' },
+  { type: 'query', key: 'aggregate_route_affinity_key' },
+  { type: 'gjson', path: 'metadata.aggregate_route_affinity_key' },
+  { type: 'gjson', path: 'metadata.user_id' },
+  { type: 'gjson', path: 'prompt_cache_key' },
+  { type: 'gjson', path: 'user' },
+  { type: 'gjson', path: 'cachedContent' },
+];
+
+const normalizeRouteAffinityKeySources = (value) => {
+  const sources = Array.isArray(value) && value.length > 0
+    ? value
+    : defaultRouteAffinityKeySources();
+  return sources
+    .map((source) => ({
+      type: source?.type || 'gjson',
+      key: source?.key || '',
+      path: source?.path || '',
+    }))
+    .filter((source) => source.type || source.key || source.path);
+};
+
+const defaultClientRoutePools = () => ({
+  enabled: false,
+  claude_code_cli: {
+    enabled: false,
+    fallback_to_default: true,
+    targets: [],
+  },
+});
+
+const normalizeClientRoutePools = (value) => {
+  const defaults = defaultClientRoutePools();
+  const claudeCodeCLI = value?.claude_code_cli || {};
+  return {
+    enabled: !!value?.enabled,
+    claude_code_cli: {
+      enabled: !!claudeCodeCLI.enabled,
+      fallback_to_default:
+        claudeCodeCLI.fallback_to_default === undefined ||
+        claudeCodeCLI.fallback_to_default === null
+          ? true
+          : !!claudeCodeCLI.fallback_to_default,
+      targets: (claudeCodeCLI.targets || []).map((target) => ({
+        real_group: target.real_group,
+        weight:
+          target.weight === undefined || target.weight === null
+            ? 100
+            : target.weight,
+      })),
+    },
+  };
+};
+
 const defaultInputs = {
   id: undefined,
   name: '',
@@ -67,9 +152,12 @@ const defaultInputs = {
   recovery_enabled: true,
   recovery_interval_seconds: 300,
   cluster_affinity_ttl_seconds: 300,
+  route_affinity_strategy: 'platform_user',
+  route_affinity_key_sources: defaultRouteAffinityKeySources(),
   retry_status_codes: '',
   visible_user_groups: [],
   targets: [],
+  client_route_pools: defaultClientRoutePools(),
 };
 
 const EditAggregateGroupModal = ({
@@ -84,6 +172,7 @@ const EditAggregateGroupModal = ({
   const isMobile = useIsMobile();
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState(defaultInputs);
+  const [affinityAdvancedActiveKey, setAffinityAdvancedActiveKey] = useState([]);
 
   const isEdit = editingGroup?.id !== undefined;
   const isClusterMode = inputs.routing_mode === 'cluster';
@@ -129,6 +218,11 @@ const EditAggregateGroupModal = ({
             data.cluster_affinity_ttl_seconds === undefined
               ? 300
               : data.cluster_affinity_ttl_seconds,
+          route_affinity_strategy:
+            data.route_affinity_strategy || 'platform_user',
+          route_affinity_key_sources: normalizeRouteAffinityKeySources(
+            data.route_affinity_key_sources,
+          ),
           retry_status_codes: data.retry_status_codes || '',
           visible_user_groups: data.visible_user_groups || [],
           targets: (data.targets || []).map((item) => ({
@@ -138,6 +232,9 @@ const EditAggregateGroupModal = ({
                 ? 100
                 : item.weight,
           })),
+          client_route_pools: normalizeClientRoutePools(
+            data.client_route_pools,
+          ),
         });
       } catch (error) {
         showError(error?.message || t('获取聚合分组详情失败'));
@@ -154,6 +251,18 @@ const EditAggregateGroupModal = ({
     [inputs.targets],
   );
 
+  const clientRoutePools = useMemo(
+    () => normalizeClientRoutePools(inputs.client_route_pools),
+    [inputs.client_route_pools],
+  );
+
+  const claudeCliPool = clientRoutePools.claude_code_cli;
+
+  const selectedClaudeCliTargetValues = useMemo(
+    () => claudeCliPool.targets.map((target) => target.real_group),
+    [claudeCliPool.targets],
+  );
+
   const availableTargetOptions = useMemo(() => {
     const selected = new Set(selectedTargetValues);
     return (realGroupOptions || []).map((option) => ({
@@ -168,6 +277,52 @@ const EditAggregateGroupModal = ({
     setInputs((prev) => ({
       ...prev,
       [field]: value,
+    }));
+  };
+
+  const updateRouteAffinitySource = (index, patch) => {
+    setInputs((prev) => ({
+      ...prev,
+      route_affinity_key_sources: prev.route_affinity_key_sources.map(
+        (source, currentIndex) => {
+          if (currentIndex !== index) {
+            return source;
+          }
+          const next = {
+            ...source,
+            ...patch,
+          };
+          if (patch.type && patch.type !== source.type) {
+            if (patch.type === 'gjson') {
+              next.path = source.path || source.key || '';
+              next.key = '';
+            } else {
+              next.key = source.key || source.path || '';
+              next.path = '';
+            }
+          }
+          return next;
+        },
+      ),
+    }));
+  };
+
+  const addRouteAffinitySource = () => {
+    setInputs((prev) => ({
+      ...prev,
+      route_affinity_key_sources: [
+        ...prev.route_affinity_key_sources,
+        { type: 'gjson', path: '' },
+      ],
+    }));
+  };
+
+  const removeRouteAffinitySource = (index) => {
+    setInputs((prev) => ({
+      ...prev,
+      route_affinity_key_sources: prev.route_affinity_key_sources.filter(
+        (_, currentIndex) => currentIndex !== index,
+      ),
     }));
   };
 
@@ -254,6 +409,82 @@ const EditAggregateGroupModal = ({
     });
   };
 
+  const updateClientRoutePools = (updater) => {
+    setInputs((prev) => {
+      const current = normalizeClientRoutePools(prev.client_route_pools);
+      const next =
+        typeof updater === 'function' ? updater(current) : updater || current;
+      return {
+        ...prev,
+        client_route_pools: normalizeClientRoutePools(next),
+      };
+    });
+  };
+
+  const updateClaudeCliPoolSelection = (values) => {
+    updateClientRoutePools((current) => {
+      const targetMap = new Map(
+        current.claude_code_cli.targets.map((target) => [
+          target.real_group,
+          target,
+        ]),
+      );
+      return {
+        ...current,
+        claude_code_cli: {
+          ...current.claude_code_cli,
+          targets: (values || []).map((realGroup) => {
+            const previous = targetMap.get(realGroup);
+            if (previous) {
+              return previous;
+            }
+            return {
+              real_group: realGroup,
+              weight: 100,
+            };
+          }),
+        },
+      };
+    });
+  };
+
+  const updateClaudeCliPoolWeight = (index, value) => {
+    updateClientRoutePools((current) => ({
+      ...current,
+      claude_code_cli: {
+        ...current.claude_code_cli,
+        targets: current.claude_code_cli.targets.map((target, targetIndex) => {
+          if (targetIndex !== index) {
+            return target;
+          }
+          return {
+            ...target,
+            weight: Math.max(0, Number(value || 0)),
+          };
+        }),
+      },
+    }));
+  };
+
+  const moveClaudeCliPoolTarget = (index, direction) => {
+    updateClientRoutePools((current) => {
+      const targets = [...current.claude_code_cli.targets];
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= targets.length) {
+        return current;
+      }
+      const [item] = targets.splice(index, 1);
+      targets.splice(nextIndex, 0, item);
+      return {
+        ...current,
+        claude_code_cli: {
+          ...current.claude_code_cli,
+          targets,
+        },
+      };
+    });
+  };
+
   const renderRetryStatusCodes = () => (
     <Col xs={24} sm={12}>
       <div className='mb-2'>
@@ -269,6 +500,147 @@ const EditAggregateGroupModal = ({
       </div>
     </Col>
   );
+
+  const renderRouteAffinityConfig = () => {
+    const strategy = inputs.route_affinity_strategy || 'platform_user';
+    const requestMode =
+      strategy === 'request_first' || strategy === 'request_only';
+    return (
+      <div className='mt-4 rounded-lg border border-gray-100 bg-white px-3 py-3'>
+        <div className='flex items-start justify-between gap-3 flex-wrap'>
+          <div>
+            <Text strong>{t('子分组亲和策略')}</Text>
+            <div className='mt-1 text-xs text-gray-500'>
+              {t(
+                '用于决定同一用户或同一请求标识在亲和保持时间内尽量回到同一子分组。',
+              )}
+            </div>
+          </div>
+          <Select
+            value={strategy}
+            optionList={routeAffinityStrategyOptions.map((option) => ({
+              ...option,
+              label: t(option.label),
+            }))}
+            onChange={(value) =>
+              updateField('route_affinity_strategy', value || 'platform_user')
+            }
+            style={{ width: isMobile ? '100%' : 260 }}
+          />
+        </div>
+        <div className='mt-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600'>
+          {strategy === 'platform_user' &&
+            t('按平台账号 ID 亲和，完全兼容旧逻辑；一个 token 被多人共用时会被视为同一个账号。')}
+          {strategy === 'request_first' &&
+            t('自动识别请求里的用户/会话标识，识别不到再按平台账号；适合多人共用同一个 Key 的场景。')}
+          {strategy === 'request_only' &&
+            t('只使用请求里的用户/会话标识；识别不到时不会强行粘住，继续按权重选择。')}
+          {strategy === 'off' &&
+            t('关闭子分组亲和，每次都按当前候选和权重选择。')}
+        </div>
+
+        {requestMode && (
+          <div className='mt-3'>
+            <div className='rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700'>
+              {t(
+                '系统会自动识别 Claude / OpenAI / Codex / Gemini 常见用户或会话标识；一般无需修改高级来源。',
+              )}
+            </div>
+            <Collapse
+              keepDOM
+              className='mt-3'
+              activeKey={affinityAdvancedActiveKey}
+              onChange={(activeKey) => {
+                const keys = Array.isArray(activeKey) ? activeKey : [activeKey];
+                setAffinityAdvancedActiveKey(keys.filter(Boolean));
+              }}
+            >
+              <Collapse.Panel
+                header={t('高级：自定义请求标识来源')}
+                itemKey='sources'
+              >
+                <div className='flex items-center justify-between gap-3 flex-wrap'>
+                  <div>
+                    <Text strong>{t('请求标识来源')}</Text>
+                    <div className='mt-1 text-xs text-gray-500'>
+                      {t(
+                        '按顺序提取，命中第一个非空值；以后新增平台通常只需要补一个 Header、Query 或 JSON path。',
+                      )}
+                    </div>
+                  </div>
+                  <Button
+                    icon={<IconPlus />}
+                    theme='light'
+                    onClick={addRouteAffinitySource}
+                  >
+                    {t('添加来源')}
+                  </Button>
+                </div>
+                <div className='flex flex-col gap-2 mt-3'>
+                  {inputs.route_affinity_key_sources.length === 0 ? (
+                    <div className='rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-center text-sm text-gray-500'>
+                      {t('未配置请求标识来源，将使用系统默认来源')}
+                    </div>
+                  ) : (
+                    inputs.route_affinity_key_sources.map((source, index) => {
+                      const isGjson = source.type === 'gjson';
+                      return (
+                        <div
+                          key={`${source.type}-${source.key}-${source.path}-${index}`}
+                          className='rounded-lg border border-gray-200 bg-gray-50 px-3 py-3'
+                        >
+                          <div className='flex items-center gap-2 flex-wrap'>
+                            <Tag color='green' shape='circle'>
+                              {index + 1}
+                            </Tag>
+                            <Select
+                              value={source.type || 'gjson'}
+                              optionList={routeAffinitySourceTypes.map((option) => ({
+                                ...option,
+                                label: t(option.label),
+                              }))}
+                              onChange={(value) =>
+                                updateRouteAffinitySource(index, {
+                                  type: value || 'gjson',
+                                })
+                              }
+                              style={{ width: 150 }}
+                            />
+                            <Input
+                              value={isGjson ? source.path : source.key}
+                              onChange={(value) =>
+                                updateRouteAffinitySource(
+                                  index,
+                                  isGjson ? { path: value } : { key: value },
+                                )
+                              }
+                              placeholder={
+                                isGjson
+                                  ? 'metadata.user_id'
+                                  : 'X-Aggregate-Affinity-Key'
+                              }
+                              style={{ flex: 1, minWidth: 220 }}
+                            />
+                            <Button
+                              theme='borderless'
+                              type='danger'
+                              icon={<IconDelete />}
+                              onClick={() => removeRouteAffinitySource(index)}
+                              aria-label={t('删除请求标识来源')}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </Collapse.Panel>
+            </Collapse>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderTargetList = () => (
     <div className='mt-4'>
@@ -370,6 +742,184 @@ const EditAggregateGroupModal = ({
     </div>
   );
 
+  const renderClientRoutePools = () => (
+    <div className='mt-5 border-t border-gray-100 pt-4'>
+      <div className='flex items-start justify-between gap-3 flex-wrap'>
+        <div>
+          <Text strong>{t('客户端专用流量池')}</Text>
+          <div className='mt-1 text-xs text-gray-500'>
+            {t(
+              '识别到指定客户端后优先进入专用池；Failover 下按专用池顺序故障转移，Cluster 下按专用权重分发。',
+            )}
+          </div>
+        </div>
+        <Switch
+          checked={clientRoutePools.enabled}
+          onChange={(checked) =>
+            updateClientRoutePools((current) => ({
+              ...current,
+              enabled: checked,
+            }))
+          }
+        />
+      </div>
+
+      <div className='mt-3 rounded-lg border border-gray-200 bg-white px-3 py-3'>
+        <div className='flex items-start justify-between gap-3 flex-wrap'>
+          <div>
+            <Text strong>{t('Claude Code CLI 定向池')}</Text>
+            <div className='mt-1 text-xs text-gray-500'>
+              {t(
+                '命中条件为 /v1/messages、Claude 模型、User-Agent 包含 claude-cli/；当前模式下跟随上方 Failover 或 Cluster 选路。',
+              )}
+            </div>
+          </div>
+          <Switch
+            checked={claudeCliPool.enabled}
+            disabled={!clientRoutePools.enabled}
+            onChange={(checked) =>
+              updateClientRoutePools((current) => ({
+                ...current,
+                claude_code_cli: {
+                  ...current.claude_code_cli,
+                  enabled: checked,
+                },
+              }))
+            }
+          />
+        </div>
+
+        <Row gutter={12} className='mt-3'>
+          <Col xs={24} sm={12}>
+            <div className='mb-2'>
+              <Text strong>{t('专用池目标子分组')}</Text>
+            </div>
+            <Select
+              placeholder={t('选择 Claude CLI 专用真实分组')}
+              value={selectedClaudeCliTargetValues}
+              onChange={updateClaudeCliPoolSelection}
+              optionList={realGroupOptions || []}
+              multiple
+              filter={selectFilter}
+              searchPosition='dropdown'
+              autoClearSearchValue={false}
+              disabled={!clientRoutePools.enabled || !claudeCliPool.enabled}
+              style={{ width: '100%' }}
+            />
+            <div className='mt-1 text-xs text-gray-500'>
+              {t('专用池与默认流量池互相独立；Failover 使用列表顺序，Cluster 使用专用权重。')}
+            </div>
+          </Col>
+          <Col xs={24} sm={12}>
+            <div className='mb-2'>
+              <Text strong>{t('专用池不可用时回退默认池')}</Text>
+            </div>
+            <Switch
+              checked={claudeCliPool.fallback_to_default}
+              disabled={!clientRoutePools.enabled || !claudeCliPool.enabled}
+              onChange={(checked) =>
+                updateClientRoutePools((current) => ({
+                  ...current,
+                  claude_code_cli: {
+                    ...current.claude_code_cli,
+                    fallback_to_default: checked,
+                  },
+                }))
+              }
+            />
+            <div className='mt-1 text-xs text-gray-500'>
+              {t('开启后专用池无可用节点或耗尽时继续走默认流量池；关闭则直接返回无可用路由。')}
+            </div>
+          </Col>
+        </Row>
+
+        <div className='flex flex-col gap-2 mt-3'>
+          {claudeCliPool.targets.length === 0 ? (
+            <div className='rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-center text-sm text-gray-500'>
+              {t('未选择 Claude CLI 专用子分组')}
+            </div>
+          ) : (
+            claudeCliPool.targets.map((target, index) => (
+              <div
+                key={target.real_group}
+                className='rounded-lg border border-gray-200 bg-gray-50 px-3 py-3'
+              >
+                <div className='flex items-center justify-between gap-3 flex-wrap'>
+                  <Space>
+                    <Tag color='blue' shape='circle'>
+                      CLI
+                    </Tag>
+                    <div>
+                      <Text strong>{target.real_group}</Text>
+                      <div className='text-xs text-gray-500'>
+                        {t('Claude CLI 专用池节点')}
+                      </div>
+                    </div>
+                  </Space>
+                  <div className='flex items-center gap-2'>
+                    {isClusterMode ? (
+                      <>
+                        <div className='text-right leading-tight'>
+                          <Text type='secondary' className='text-xs'>
+                            {t('专用权重')}
+                          </Text>
+                          <div className='text-[11px] text-gray-500'>
+                            {t('仅 Cluster 专用池内生效')}
+                          </div>
+                        </div>
+                        <InputNumber
+                          min={0}
+                          value={target.weight}
+                          onChange={(value) =>
+                            updateClaudeCliPoolWeight(index, value)
+                          }
+                          disabled={!clientRoutePools.enabled || !claudeCliPool.enabled}
+                          aria-label={t('Claude CLI 专用池权重')}
+                          style={{ width: 112 }}
+                        />
+                      </>
+                    ) : (
+                      <div className='text-right leading-tight'>
+                        <Text type='secondary' className='text-xs'>
+                          {t('链路顺序')}
+                        </Text>
+                        <div className='text-[11px] text-gray-500'>
+                          {index + 1}
+                        </div>
+                      </div>
+                    )}
+                    <Button
+                      theme='borderless'
+                      icon={<IconArrowUp />}
+                      disabled={
+                        !clientRoutePools.enabled ||
+                        !claudeCliPool.enabled ||
+                        index === 0
+                      }
+                      onClick={() => moveClaudeCliPoolTarget(index, -1)}
+                      aria-label={t('上移 Claude CLI 专用子分组')}
+                    />
+                    <Button
+                      theme='borderless'
+                      icon={<IconArrowDown />}
+                      disabled={
+                        !clientRoutePools.enabled ||
+                        !claudeCliPool.enabled ||
+                        index === claudeCliPool.targets.length - 1
+                      }
+                      onClick={() => moveClaudeCliPoolTarget(index, 1)}
+                      aria-label={t('下移 Claude CLI 专用子分组')}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   const handleSubmit = async () => {
     setLoading(true);
     try {
@@ -387,12 +937,28 @@ const EditAggregateGroupModal = ({
         cluster_affinity_ttl_seconds: Number(
           inputs.cluster_affinity_ttl_seconds || 300,
         ),
+        route_affinity_strategy:
+          inputs.route_affinity_strategy || 'platform_user',
+        route_affinity_key_sources: normalizeRouteAffinityKeySources(
+          inputs.route_affinity_key_sources,
+        ),
         retry_status_codes: inputs.retry_status_codes.trim(),
         visible_user_groups: inputs.visible_user_groups,
         targets: inputs.targets.map((target) => ({
           real_group: target.real_group,
           weight: Number(target.weight || 0),
         })),
+        client_route_pools: {
+          enabled: clientRoutePools.enabled,
+          claude_code_cli: {
+            enabled: claudeCliPool.enabled,
+            fallback_to_default: claudeCliPool.fallback_to_default,
+            targets: claudeCliPool.targets.map((target) => ({
+              real_group: target.real_group,
+              weight: Number(target.weight || 0),
+            })),
+          },
+        },
       };
       const res = isEdit
         ? await API.put('/api/aggregate_group', payload)
@@ -607,12 +1173,12 @@ const EditAggregateGroupModal = ({
                     <div className='mt-1 text-xs text-gray-500'>
                       {t('仅 Failover 懒恢复使用')}
                     </div>
-                  </Col>
-                  {renderRetryStatusCodes()}
-                </Row>
-                {renderTargetList()}
-              </div>
-            </TabPane>
+	                  </Col>
+	                  {renderRetryStatusCodes()}
+	                </Row>
+	                {renderTargetList()}
+	              </div>
+	            </TabPane>
             <TabPane itemKey='cluster' tab={t('Cluster 集群分发')}>
               <div className='mt-3'>
                 <div className='rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700'>
@@ -637,12 +1203,14 @@ const EditAggregateGroupModal = ({
                       {t('同一用户尽量固定到同一子分组的时间，到期后重新按权重选择。')}
                     </div>
                   </Col>
-                  {renderRetryStatusCodes()}
-                </Row>
-                {renderTargetList()}
-              </div>
-            </TabPane>
+	                  {renderRetryStatusCodes()}
+	                </Row>
+	                {renderRouteAffinityConfig()}
+	                {renderTargetList()}
+	              </div>
+	            </TabPane>
           </Tabs>
+          {renderClientRoutePools()}
         </Card>
       </div>
     </SideSheet>

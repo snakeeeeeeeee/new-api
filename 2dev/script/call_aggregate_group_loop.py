@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 DEFAULT_MODEL_POOL = ["claude-opus-4-6", "claude-sonnet-4-6"]
 OPENAI_CHAT_ENDPOINT = "/v1/chat/completions"
 CLAUDE_MESSAGES_ENDPOINT = "/v1/messages"
+NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def normalize_base_url(base_url):
@@ -152,7 +153,7 @@ def request_json(method, url, token, body=None, timeout=120, extra_headers=None)
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     started_at = time.monotonic()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with NO_PROXY_OPENER.open(req, timeout=timeout) as resp:
             parsed, text = decode_response_body(resp.read())
             elapsed_ms = int((time.monotonic() - started_at) * 1000)
             return {

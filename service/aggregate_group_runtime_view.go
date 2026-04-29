@@ -19,6 +19,7 @@ type AggregateGroupRuntimeActiveRouteView struct {
 type AggregateGroupRuntimeRouteView struct {
 	RouteGroup          string `json:"route_group"`
 	RouteIndex          int    `json:"route_index"`
+	RoutePool           string `json:"route_pool,omitempty"`
 	Weight              int    `json:"weight"`
 	EffectiveWeight     int    `json:"effective_weight"`
 	IsActive            bool   `json:"is_active"`
@@ -38,9 +39,18 @@ type AggregateGroupRuntimeRouteView struct {
 	LastTriggerAt       int64  `json:"last_trigger_at"`
 }
 
+type AggregateGroupRuntimeClientRoutePoolView struct {
+	PoolName          string                            `json:"pool_name"`
+	ClientType        string                            `json:"client_type"`
+	Enabled           bool                              `json:"enabled"`
+	FallbackToDefault bool                              `json:"fallback_to_default"`
+	Routes            []*AggregateGroupRuntimeRouteView `json:"routes"`
+}
+
 type AggregateGroupRuntimeView struct {
-	ActiveRoute *AggregateGroupRuntimeActiveRouteView `json:"active_route,omitempty"`
-	Routes      []*AggregateGroupRuntimeRouteView     `json:"routes"`
+	ActiveRoute      *AggregateGroupRuntimeActiveRouteView       `json:"active_route,omitempty"`
+	Routes           []*AggregateGroupRuntimeRouteView           `json:"routes"`
+	ClientRoutePools []*AggregateGroupRuntimeClientRoutePoolView `json:"client_route_pools,omitempty"`
 }
 
 func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName string) (*AggregateGroupRuntimeView, error) {
@@ -75,27 +85,30 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 
 	now := common.GetTimestamp()
 	isClusterMode := group.GetRoutingMode() == model.AggregateGroupRoutingModeCluster
-	healthySupportedCount := 0
-	for index, target := range group.Targets {
+	buildRouteView := func(routePool string, index int, target model.AggregateGroupTarget, routeActiveState *AggregateGroupRuntimeState, hasRouteActiveState bool) (*AggregateGroupRuntimeRouteView, error) {
 		routeView := &AggregateGroupRuntimeRouteView{
 			RouteGroup: target.RealGroup,
 			RouteIndex: index,
+			RoutePool:  routePool,
 			Weight:     target.GetWeight(),
+		}
+		if routePool == aggregateClusterDefaultRoutePool {
+			routeView.RoutePool = ""
 		}
 		priorityCount, err := model.GetSatisfiedChannelPriorityCount(target.RealGroup, modelName)
 		if err != nil {
 			return nil, err
 		}
 		routeView.PriorityCount = priorityCount
-		rpmStats := GetAggregateRouteRPMStats(group.Name, modelName, target.RealGroup)
+		rpmStats := GetAggregateRouteRPMStatsForPool(group.Name, modelName, routePool, target.RealGroup)
 		routeView.RPM = rpmStats.RPM
 		routeView.SuccessRPM = rpmStats.SuccessRPM
 		routeView.FailureRPM = rpmStats.FailureRPM
-		if hasActiveState {
-			if strings.TrimSpace(activeState.ActiveGroup) != "" {
-				routeView.IsActive = activeState.ActiveGroup == target.RealGroup
+		if hasRouteActiveState {
+			if strings.TrimSpace(routeActiveState.ActiveGroup) != "" {
+				routeView.IsActive = routeActiveState.ActiveGroup == target.RealGroup
 			} else {
-				routeView.IsActive = activeState.ActiveIndex == index
+				routeView.IsActive = routeActiveState.ActiveIndex == index
 			}
 		}
 
@@ -121,6 +134,15 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 				routeView.EffectiveWeight = routeView.Weight
 			}
 		}
+		return routeView, nil
+	}
+
+	healthySupportedCount := 0
+	for index, target := range group.Targets {
+		routeView, err := buildRouteView(aggregateClusterDefaultRoutePool, index, target, activeState, hasActiveState)
+		if err != nil {
+			return nil, err
+		}
 		if routeView.PriorityCount > 0 && !routeView.IsDegraded {
 			healthySupportedCount++
 		}
@@ -138,6 +160,35 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 				routeView.LastTriggerAt > 0 &&
 				lastRouteActivityAt > routeView.LastTriggerAt
 		}
+	}
+	clientRoutePools := group.GetClientRoutePools()
+	if clientRoutePools.Enabled && clientRoutePools.ClaudeCodeCLI.Enabled {
+		poolView := &AggregateGroupRuntimeClientRoutePoolView{
+			PoolName:          model.AggregateGroupClientRoutePoolClaudeCodeCLI,
+			ClientType:        model.AggregateGroupClientTypeClaudeCodeCLI,
+			Enabled:           clientRoutePools.ClaudeCodeCLI.Enabled,
+			FallbackToDefault: clientRoutePools.ClaudeCodeCLI.GetFallbackToDefault(),
+			Routes:            make([]*AggregateGroupRuntimeRouteView, 0, len(clientRoutePools.ClaudeCodeCLI.Targets)),
+		}
+		poolActiveState, err := GetAggregateGroupRuntimeStateForPool(group.Name, modelName, model.AggregateGroupClientRoutePoolClaudeCodeCLI)
+		if err != nil {
+			return nil, err
+		}
+		hasPoolActiveState := poolActiveState != nil &&
+			(strings.TrimSpace(poolActiveState.ActiveGroup) != "" ||
+				poolActiveState.LastFailAt > 0 ||
+				poolActiveState.LastSuccessAt > 0 ||
+				poolActiveState.LastSwitchAt > 0 ||
+				poolActiveState.ActiveSinceAt > 0)
+		targets := aggregateClientRoutePoolTargetsToClusterTargets(clientRoutePools.ClaudeCodeCLI.Targets)
+		for index, target := range targets {
+			routeView, err := buildRouteView(model.AggregateGroupClientRoutePoolClaudeCodeCLI, index, target, poolActiveState, hasPoolActiveState)
+			if err != nil {
+				return nil, err
+			}
+			poolView.Routes = append(poolView.Routes, routeView)
+		}
+		runtimeView.ClientRoutePools = append(runtimeView.ClientRoutePools, poolView)
 	}
 
 	return runtimeView, nil

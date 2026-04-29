@@ -18,39 +18,45 @@ type aggregateGroupTargetRequest struct {
 }
 
 type aggregateGroupUpsertRequest struct {
-	Id                        int                           `json:"id"`
-	Name                      string                        `json:"name"`
-	DisplayName               string                        `json:"display_name"`
-	Description               string                        `json:"description"`
-	Status                    int                           `json:"status"`
-	GroupRatio                float64                       `json:"group_ratio"`
-	RoutingMode               string                        `json:"routing_mode"`
-	SmartRoutingEnabled       bool                          `json:"smart_routing_enabled"`
-	RecoveryEnabled           bool                          `json:"recovery_enabled"`
-	RecoveryIntervalSeconds   int                           `json:"recovery_interval_seconds"`
-	ClusterAffinityTTLSeconds int                           `json:"cluster_affinity_ttl_seconds"`
-	RetryStatusCodes          string                        `json:"retry_status_codes"`
-	VisibleUserGroups         []string                      `json:"visible_user_groups"`
-	Targets                   []aggregateGroupTargetRequest `json:"targets"`
+	Id                        int                                          `json:"id"`
+	Name                      string                                       `json:"name"`
+	DisplayName               string                                       `json:"display_name"`
+	Description               string                                       `json:"description"`
+	Status                    int                                          `json:"status"`
+	GroupRatio                float64                                      `json:"group_ratio"`
+	RoutingMode               string                                       `json:"routing_mode"`
+	SmartRoutingEnabled       bool                                         `json:"smart_routing_enabled"`
+	RecoveryEnabled           bool                                         `json:"recovery_enabled"`
+	RecoveryIntervalSeconds   int                                          `json:"recovery_interval_seconds"`
+	ClusterAffinityTTLSeconds int                                          `json:"cluster_affinity_ttl_seconds"`
+	RouteAffinityStrategy     string                                       `json:"route_affinity_strategy"`
+	RouteAffinityKeySources   []model.AggregateGroupRouteAffinityKeySource `json:"route_affinity_key_sources"`
+	RetryStatusCodes          string                                       `json:"retry_status_codes"`
+	VisibleUserGroups         []string                                     `json:"visible_user_groups"`
+	Targets                   []aggregateGroupTargetRequest                `json:"targets"`
+	ClientRoutePools          model.AggregateGroupClientRoutePools         `json:"client_route_pools"`
 }
 
 type aggregateGroupResponse struct {
-	Id                        int                          `json:"id"`
-	Name                      string                       `json:"name"`
-	DisplayName               string                       `json:"display_name"`
-	Description               string                       `json:"description"`
-	Status                    int                          `json:"status"`
-	GroupRatio                float64                      `json:"group_ratio"`
-	RoutingMode               string                       `json:"routing_mode"`
-	SmartRoutingEnabled       bool                         `json:"smart_routing_enabled"`
-	RecoveryEnabled           bool                         `json:"recovery_enabled"`
-	RecoveryIntervalSeconds   int                          `json:"recovery_interval_seconds"`
-	ClusterAffinityTTLSeconds int                          `json:"cluster_affinity_ttl_seconds"`
-	RetryStatusCodes          string                       `json:"retry_status_codes"`
-	VisibleUserGroups         []string                     `json:"visible_user_groups"`
-	Targets                   []model.AggregateGroupTarget `json:"targets"`
-	CreatedTime               int64                        `json:"created_time"`
-	UpdatedTime               int64                        `json:"updated_time"`
+	Id                        int                                          `json:"id"`
+	Name                      string                                       `json:"name"`
+	DisplayName               string                                       `json:"display_name"`
+	Description               string                                       `json:"description"`
+	Status                    int                                          `json:"status"`
+	GroupRatio                float64                                      `json:"group_ratio"`
+	RoutingMode               string                                       `json:"routing_mode"`
+	SmartRoutingEnabled       bool                                         `json:"smart_routing_enabled"`
+	RecoveryEnabled           bool                                         `json:"recovery_enabled"`
+	RecoveryIntervalSeconds   int                                          `json:"recovery_interval_seconds"`
+	ClusterAffinityTTLSeconds int                                          `json:"cluster_affinity_ttl_seconds"`
+	RouteAffinityStrategy     string                                       `json:"route_affinity_strategy"`
+	RouteAffinityKeySources   []model.AggregateGroupRouteAffinityKeySource `json:"route_affinity_key_sources"`
+	RetryStatusCodes          string                                       `json:"retry_status_codes"`
+	VisibleUserGroups         []string                                     `json:"visible_user_groups"`
+	Targets                   []model.AggregateGroupTarget                 `json:"targets"`
+	ClientRoutePools          model.AggregateGroupClientRoutePools         `json:"client_route_pools"`
+	CreatedTime               int64                                        `json:"created_time"`
+	UpdatedTime               int64                                        `json:"updated_time"`
 }
 
 type aggregateGroupSmartStrategyResponse struct {
@@ -87,9 +93,12 @@ func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupRes
 		RecoveryEnabled:           group.RecoveryEnabled,
 		RecoveryIntervalSeconds:   group.RecoveryIntervalSeconds,
 		ClusterAffinityTTLSeconds: group.GetClusterAffinityTTLSeconds(),
+		RouteAffinityStrategy:     group.GetRouteAffinityStrategy(),
+		RouteAffinityKeySources:   group.GetRouteAffinityKeySources(),
 		RetryStatusCodes:          group.RetryStatusCodes,
 		VisibleUserGroups:         group.GetVisibleUserGroups(),
 		Targets:                   targets,
+		ClientRoutePools:          group.GetClientRoutePools(),
 		CreatedTime:               group.CreatedTime,
 		UpdatedTime:               group.UpdatedTime,
 	}
@@ -219,6 +228,7 @@ func CreateAggregateGroup(c *gin.Context) {
 		RecoveryEnabled:           req.RecoveryEnabled,
 		RecoveryIntervalSeconds:   req.RecoveryIntervalSeconds,
 		ClusterAffinityTTLSeconds: req.ClusterAffinityTTLSeconds,
+		RouteAffinityStrategy:     req.RouteAffinityStrategy,
 		RetryStatusCodes:          req.RetryStatusCodes,
 	}
 	targetGroupNames := buildAggregateTargetNames(req.Targets)
@@ -231,6 +241,11 @@ func CreateAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	clientRoutePools, err := service.NormalizeAndValidateAggregateClientRoutePools(req.ClientRoutePools)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if dup, err := model.IsAggregateGroupNameDuplicated(0, group.Name); err != nil {
 		common.ApiError(c, err)
 		return
@@ -239,6 +254,19 @@ func CreateAggregateGroup(c *gin.Context) {
 		return
 	}
 	if err := group.SetVisibleUserGroups(req.VisibleUserGroups); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := group.SetClientRoutePools(clientRoutePools); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	routeAffinityKeySources, err := service.NormalizeAndValidateAggregateRouteAffinityKeySources(req.RouteAffinityKeySources)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := group.SetRouteAffinityKeySources(routeAffinityKeySources); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -279,6 +307,7 @@ func UpdateAggregateGroup(c *gin.Context) {
 		RecoveryEnabled:           req.RecoveryEnabled,
 		RecoveryIntervalSeconds:   req.RecoveryIntervalSeconds,
 		ClusterAffinityTTLSeconds: req.ClusterAffinityTTLSeconds,
+		RouteAffinityStrategy:     req.RouteAffinityStrategy,
 		RetryStatusCodes:          req.RetryStatusCodes,
 	}
 	targetGroupNames := buildAggregateTargetNames(req.Targets)
@@ -291,6 +320,11 @@ func UpdateAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	clientRoutePools, err := service.NormalizeAndValidateAggregateClientRoutePools(req.ClientRoutePools)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if dup, err := model.IsAggregateGroupNameDuplicated(group.Id, group.Name); err != nil {
 		common.ApiError(c, err)
 		return
@@ -299,6 +333,19 @@ func UpdateAggregateGroup(c *gin.Context) {
 		return
 	}
 	if err := group.SetVisibleUserGroups(req.VisibleUserGroups); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := group.SetClientRoutePools(clientRoutePools); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	routeAffinityKeySources, err := service.NormalizeAndValidateAggregateRouteAffinityKeySources(req.RouteAffinityKeySources)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := group.SetRouteAffinityKeySources(routeAffinityKeySources); err != nil {
 		common.ApiError(c, err)
 		return
 	}

@@ -92,7 +92,7 @@ func GetModelsForGroup(group string) []string {
 	if aggregateGroup, ok := GetAggregateGroup(group, true); ok {
 		modelSet := make(map[string]struct{})
 		models := make([]string, 0)
-		for _, targetGroup := range aggregateGroup.GetTargetGroups() {
+		for _, targetGroup := range getAggregateGroupModelSourceGroups(aggregateGroup) {
 			for _, modelName := range model.GetGroupEnabledModels(targetGroup) {
 				if _, exists := modelSet[modelName]; exists {
 					continue
@@ -104,6 +104,35 @@ func GetModelsForGroup(group string) []string {
 		return models
 	}
 	return model.GetGroupEnabledModels(group)
+}
+
+func getAggregateGroupModelSourceGroups(aggregateGroup *model.AggregateGroup) []string {
+	if aggregateGroup == nil {
+		return []string{}
+	}
+	groups := make([]string, 0, len(aggregateGroup.Targets))
+	seen := make(map[string]struct{})
+	addGroup := func(group string) {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			return
+		}
+		if _, exists := seen[group]; exists {
+			return
+		}
+		seen[group] = struct{}{}
+		groups = append(groups, group)
+	}
+	for _, targetGroup := range aggregateGroup.GetTargetGroups() {
+		addGroup(targetGroup)
+	}
+	clientPools := aggregateGroup.GetClientRoutePools()
+	if clientPools.Enabled && clientPools.ClaudeCodeCLI.Enabled {
+		for _, target := range clientPools.ClaudeCodeCLI.Targets {
+			addGroup(target.RealGroup)
+		}
+	}
+	return groups
 }
 
 func MapVisibleModelGroups(userGroup string, realGroups []string) []string {
@@ -194,6 +223,91 @@ func ValidateAggregateTargetWeights(targets []model.AggregateGroupTarget) error 
 	return nil
 }
 
+func NormalizeAndValidateAggregateRouteAffinityKeySources(inputSources []model.AggregateGroupRouteAffinityKeySource) ([]model.AggregateGroupRouteAffinityKeySource, error) {
+	sources := make([]model.AggregateGroupRouteAffinityKeySource, 0, len(inputSources))
+	seen := make(map[string]struct{}, len(inputSources))
+	for _, source := range inputSources {
+		sourceType := strings.TrimSpace(source.Type)
+		key := strings.TrimSpace(source.Key)
+		path := strings.TrimSpace(source.Path)
+		if sourceType == "" && key == "" && path == "" {
+			continue
+		}
+		switch sourceType {
+		case "header", "query", "context_int", "context_string":
+			if key == "" {
+				return nil, fmt.Errorf("亲和来源 %s 缺少 key", sourceType)
+			}
+		case "gjson":
+			if path == "" {
+				return nil, errors.New("亲和来源 gjson 缺少 path")
+			}
+		default:
+			return nil, fmt.Errorf("亲和来源类型无效: %s", sourceType)
+		}
+		dedupeKey := sourceType + "\n" + key + "\n" + path
+		if _, exists := seen[dedupeKey]; exists {
+			continue
+		}
+		seen[dedupeKey] = struct{}{}
+		sources = append(sources, model.AggregateGroupRouteAffinityKeySource{
+			Type: sourceType,
+			Key:  key,
+			Path: path,
+		})
+	}
+	return sources, nil
+}
+
+func NormalizeAndValidateAggregateClientRoutePools(config model.AggregateGroupClientRoutePools) (model.AggregateGroupClientRoutePools, error) {
+	config = model.NormalizeAggregateGroupClientRoutePools(config)
+	normalizedTargets, err := normalizeAndValidateAggregateClientRoutePoolTargets(
+		model.AggregateGroupClientRoutePoolClaudeCodeCLI,
+		config.ClaudeCodeCLI.Targets,
+	)
+	if err != nil {
+		return config, err
+	}
+	config.ClaudeCodeCLI.Targets = normalizedTargets
+	return config, nil
+}
+
+func normalizeAndValidateAggregateClientRoutePoolTargets(poolName string, inputTargets []model.AggregateGroupClientRoutePoolTarget) ([]model.AggregateGroupClientRoutePoolTarget, error) {
+	targets := make([]model.AggregateGroupClientRoutePoolTarget, 0, len(inputTargets))
+	seen := make(map[string]struct{})
+	for _, target := range inputTargets {
+		realGroup := strings.TrimSpace(target.RealGroup)
+		if realGroup == "" {
+			continue
+		}
+		if _, exists := seen[realGroup]; exists {
+			return nil, fmt.Errorf("客户端专用流量池 %s 重复配置真实分组 %s", poolName, realGroup)
+		}
+		seen[realGroup] = struct{}{}
+		weight := model.AggregateGroupTargetDefaultWeight
+		if target.Weight != nil {
+			weight = *target.Weight
+		}
+		if weight < 0 {
+			return nil, fmt.Errorf("客户端专用流量池 %s 真实分组 %s 权重不能小于 0", poolName, realGroup)
+		}
+		if realGroup == "auto" {
+			return nil, fmt.Errorf("客户端专用流量池 %s 真实分组不能为 auto", poolName)
+		}
+		if !ratio_setting.ContainsGroupRatio(realGroup) {
+			return nil, fmt.Errorf("客户端专用流量池 %s 真实分组 %s 不存在", poolName, realGroup)
+		}
+		if IsAggregateGroup(realGroup) {
+			return nil, fmt.Errorf("客户端专用流量池 %s 真实分组 %s 不能引用聚合分组", poolName, realGroup)
+		}
+		targets = append(targets, model.AggregateGroupClientRoutePoolTarget{
+			RealGroup: realGroup,
+			Weight:    common.GetPointer(weight),
+		})
+	}
+	return targets, nil
+}
+
 func ValidateAggregateGroupConfig(group *model.AggregateGroup, visibleUserGroups []string, realGroups []string) error {
 	if group == nil {
 		return errors.New("聚合分组不能为空")
@@ -222,6 +336,10 @@ func ValidateAggregateGroupConfig(group *model.AggregateGroup, visibleUserGroups
 		return errors.New("聚合分组路由模式无效")
 	}
 	group.RoutingMode = model.NormalizeAggregateGroupRoutingMode(group.RoutingMode)
+	if !model.IsValidAggregateGroupRouteAffinityStrategy(group.RouteAffinityStrategy) {
+		return errors.New("聚合分组亲和策略无效")
+	}
+	group.RouteAffinityStrategy = model.NormalizeAggregateGroupRouteAffinityStrategy(group.RouteAffinityStrategy)
 	if group.RecoveryEnabled && group.RecoveryIntervalSeconds <= 0 {
 		return errors.New("恢复间隔必须大于 0")
 	}

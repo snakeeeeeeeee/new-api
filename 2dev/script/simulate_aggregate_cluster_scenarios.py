@@ -10,6 +10,7 @@ import urllib.request
 
 
 DEFAULT_TOKEN = "sk-codexclusterdev20260428token00000000000000000000"
+NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def shell_quote_sql(value):
@@ -266,13 +267,17 @@ class ScenarioEnv:
         self.restart_app()
 
     def clear_affinity(self):
-        self.redis(
-            "eval",
-            "local keys=redis.call('keys', ARGV[1]); for _,k in ipairs(keys) do redis.call('del', k) end; return #keys",
-            "0",
+        for pattern in [
             "new-api:aggregate_route_affinity:v2*",
-            check=False,
-        )
+            "new-api:aggregate_route_affinity:v3*",
+        ]:
+            self.redis(
+                "eval",
+                "local keys=redis.call('keys', ARGV[1]); for _,k in ipairs(keys) do redis.call('del', k) end; return #keys",
+                "0",
+                pattern,
+                check=False,
+            )
 
     def clear_smart_states(self):
         for key in self.smart_keys.values():
@@ -471,7 +476,7 @@ class ScenarioEnv:
         )
         started = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=self.args.request_timeout) as resp:
+            with NO_PROXY_OPENER.open(req, timeout=self.args.request_timeout) as resp:
                 parsed, text = decode_body(resp.read())
                 return {
                     "ok": 200 <= resp.status < 300,

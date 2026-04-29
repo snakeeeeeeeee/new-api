@@ -23,7 +23,7 @@ V1 已实现：
 - 请求失败后沿用现有 retry 机制在真实分组链路内继续 fallback
 - 默认 `routing_mode=failover`，已有聚合分组保持原 `A -> B -> C` 行为
 - 可将单个聚合分组切换为 `cluster`，按子分组权重分发请求
-- `cluster` 模式使用平台用户 ID 做聚合层子分组亲和：`aggregate_group + user_id -> route_group`；选中前仍校验该子分组是否支持当前模型
+- `cluster` 模式支持可配置聚合层子分组亲和策略，默认继续使用平台用户 ID；也可改为请求标识优先或仅请求标识
 - target 支持 `weight`，默认 100，允许 0 表示不参与普通加权但仍可被保留和亲和命中
 - 运行态按 `aggregate_group + model + route_group` 汇总最近 60 秒 `attempt/success/failure` RPM
 - 聚合分组运行时状态按 `聚合分组 + 模型` 维度存储
@@ -56,8 +56,11 @@ V1 不做：
 - `recovery_enabled`
 - `recovery_interval_seconds`
 - `cluster_affinity_ttl_seconds`
+- `route_affinity_strategy`
+- `route_affinity_key_sources`
 - `retry_status_codes`
 - `visible_user_groups`
+- `client_route_pools`
 - `created_time`
 - `updated_time`
 - `deleted_at`
@@ -67,7 +70,10 @@ V1 不做：
 - `visible_user_groups` 使用 `TEXT` 存 JSON 数组，兼容 SQLite / MySQL / PostgreSQL
 - `retry_status_codes` 使用 `TEXT` 存状态码范围字符串，例如 `401,403,429,500-599`
 - `status` 使用启用/禁用整型状态，风格与现有模型一致
-- `cluster_affinity_ttl_seconds` 表示 `cluster` 模式下同一平台用户尽量固定到同一子分组的时间，默认 300 秒；`failover` 下不生效
+- `cluster_affinity_ttl_seconds` 表示 `cluster` 模式下同一亲和 key 尽量固定到同一子分组的时间，默认 300 秒；`failover` 下不生效
+- `route_affinity_strategy` 控制 `cluster` 子分组亲和 key 的来源，默认 `platform_user`，兼容旧逻辑
+- `route_affinity_key_sources` 使用 `TEXT` 存 JSON 数组，配置 `request_first` / `request_only` 时从 Header、Query、JSON body 或上下文中提取请求标识
+- `client_route_pools` 使用 `TEXT` 存 JSON 配置；空字符串或空配置等价关闭，兼容旧数据
 
 ### `aggregate_group_targets`
 
@@ -94,17 +100,104 @@ V1 不做：
   - 懒恢复、智能策略、组内 retry、fallback 语义保持不变
 - `cluster`
   - 多个真实子分组同时参与承接流量
-  - 首先按平台用户 ID 和聚合分组名读取 route affinity，命中且目标子分组支持当前模型并可用时优先使用该子分组
+  - 首先按 `route_affinity_strategy` 生成 route affinity key，命中且目标子分组支持当前模型并可用时优先使用该子分组
   - 未命中亲和时，从支持当前模型且有可用 channel 的子分组中按 `effective_weight` 加权随机选择
   - 智能策略触发的 degraded 子分组不再直接剔除，而是临时降权参与选择：`effective_weight=max(1, weight*cluster_degraded_weight_percent%)`
   - 如果原始 `weight=0`，degraded 期间 `effective_weight` 仍为 0，不因为降权变成 1
   - 手动禁用、无可用 channel、不支持当前模型仍属于硬不可用，不进入候选
   - `Fallback` 只用于运行态展示：当健康候选为空且降级节点仍在兜底接流量时标记，不代表路由强行跳过其他健康节点
   - 当前子分组内部仍按现有 `common.RetryTimes` 与 priority 层级重试；耗尽后从本次请求尚未尝试过的其他子分组中继续按权重选择
-  - 成功后写入独立 route affinity：`aggregate_group + user_id -> route_group`
+  - 成功后按当前亲和策略写入独立 route affinity，例如 `aggregate_group + user_id -> route_group` 或 `aggregate_group + request_source + request_key_fp -> route_group`
   - `cluster_affinity_ttl_seconds` 控制 route affinity 的保持时间，默认 300 秒；到期后允许重新按当前权重选择
 
-route affinity 不复用已有 channel affinity 的 `channel_id` 缓存，独立 namespace 为 `new-api:aggregate_route_affinity:v3`。聚合层只关心平台用户 ID 和聚合分组，模型只作为子分组能力校验条件；请求体里的 `prompt_cache_key`、`metadata.user_id` 等字段继续留给 channel affinity 处理“子分组内部选择具体上游号池”的问题。
+route affinity 不复用已有 channel affinity 的 `channel_id` 缓存，独立 namespace 为 `new-api:aggregate_route_affinity:v3`。聚合层只决定“请求落到哪个子分组”，channel affinity 继续处理“子分组内部选择具体上游号池”。两层可以读取同一个请求字段，但写入的缓存 namespace 和路由对象不同。
+
+### Cluster Route Affinity 策略
+
+`route_affinity_strategy` 当前支持：
+
+- `platform_user`
+  - 默认值，兼容旧逻辑
+  - key 仍为 `aggregate_group + user_id`
+  - 适合一个平台账号 / token 对应一个真实使用人的场景
+- `request_first`
+  - 优先按 `route_affinity_key_sources` 从请求中提取用户或会话标识
+  - 提取不到请求标识时回退 `platform_user`
+  - 适合大多数客户端已经带 `metadata.user_id`、`prompt_cache_key`、`user` 或自定义 Header 的场景
+- `request_only`
+  - 只使用请求标识
+  - 提取不到请求标识时不读写 route affinity，当前请求直接按权重选路
+  - 适合一个平台 token 被多个人共用，且不希望无标识请求被统一粘到同一个子分组的场景
+- `off`
+  - 完全关闭聚合层 route affinity
+  - 每次按当前候选和权重重新选择
+
+`route_affinity_key_sources` 是有序数组，支持：
+
+```json
+[
+  { "type": "header", "key": "X-Aggregate-Affinity-Key" },
+  { "type": "query", "key": "aggregate_route_affinity_key" },
+  { "type": "gjson", "path": "metadata.aggregate_route_affinity_key" },
+  { "type": "gjson", "path": "metadata.user_id" },
+  { "type": "gjson", "path": "prompt_cache_key" },
+  { "type": "gjson", "path": "user" },
+  { "type": "gjson", "path": "cachedContent" }
+]
+```
+
+默认来源覆盖 Claude / Codex / OpenAI-compatible / Gemini 常见字段。Gemini 原生请求没有稳定终端用户 ID，`cachedContent` 只能作为缓存或会话维度的辅助亲和；如果要稳定区分企业内部多人共用一个 token，推荐客户端显式传 `X-Aggregate-Affinity-Key` 或 `metadata.aggregate_route_affinity_key`。新增平台通常只需要在聚合分组 UI 中补一个 Header、Query 或 JSON path，不需要改核心选路代码。
+
+### 客户端专用流量池
+
+聚合分组支持可选的客户端专用流量池，第一版只内置 `claude_code_cli`。该能力是流量分类层，`failover` / `cluster` 两种路由模式都支持：
+
+```json
+{
+  "enabled": true,
+  "claude_code_cli": {
+    "enabled": true,
+    "fallback_to_default": true,
+    "targets": [
+      {
+        "real_group": "claude-cli-a",
+        "weight": 100
+      }
+    ]
+  }
+}
+```
+
+说明：
+
+- 总开关和 `claude_code_cli.enabled` 都开启时才生效。
+- `routing_mode=failover` 时，CLI 请求先按专用池 target 顺序形成独立链路，例如 `CLI-A -> CLI-B`。
+- `routing_mode=cluster` 时，CLI 请求先在专用池 targets 内按专用权重加权选择。
+- 专用池跟随当前聚合分组路由模式，不额外引入“专用池自己的路由模式”配置。
+- Claude Code CLI 硬识别条件为：
+  - 请求路径为 `/v1/messages`
+  - 模型名以 `claude-` 开头
+  - `User-Agent` 包含 `claude-cli/`
+- `X-App=cli`、`Anthropic-Beta` 包含 `claude-code`、请求体 `metadata.user_id` 存在只作为辅助观测特征，不把固定 beta 日期写成硬条件。
+- 专用池 targets 独立于默认 `aggregate_group_targets`；同一真实分组允许同时存在于默认池和 CLI 专用池，并分别配置顺序和权重。
+- 专用池选路跟随当前模式：
+  - `failover`：模型支持、手动禁用/无 channel 过滤、智能策略临时跳过、按顺序失败切换
+  - `cluster`：模型支持、手动禁用/无 channel 过滤、智能降权后的 `effective_weight`、请求内 attempted route 去重
+- 专用池内部按当前真实分组的 `RetryTimes` 重试；耗尽后切换同池未尝试过的其他 target。
+- 专用池不可用或耗尽时：
+  - `fallback_to_default=true`：回退当前模式下的默认流量池
+  - `fallback_to_default=false`：直接返回无可用路由
+- `cluster` 模式下，专用池使用独立 route affinity key：`aggregate_group + pool + affinity_key -> route_group`，避免污染普通 cluster 的用户亲和；`affinity_key` 同样受 `route_affinity_strategy` 控制。
+- `failover` 模式下，专用池使用独立运行态 key，避免 CLI 专用池切换节点后污染普通默认链路的起点。
+- CLI 请求回退默认池只是兜底，不写普通 cluster affinity，也不更新默认 failover 运行态，避免一次专用池故障改变普通请求后续落点。
+- 消费日志和错误日志的 `admin_info` 增加：
+  - `client_type`
+  - `client_route_pool`
+  - `client_route_target`
+  - `client_route_fallback`
+  - `aggregate_route_pool`
+
+运行态接口在 `runtime.client_route_pools[]` 中单独返回专用池节点，不把它们伪装成默认池 `weight=0` 节点。前端在路由模式配置中单独展示客户端专用流量池；Failover 下展示链路顺序，Cluster 下展示专用权重。
 
 ## 运行时设计
 
@@ -201,7 +294,8 @@ flowchart TD
 
 `cluster` 模式下，选路顺序变为：
 
-- 使用 `aggregate_group + user_id` 解析 route affinity，命中且 route 支持当前模型并可用时直接选中
+- 按 `route_affinity_strategy` 解析 route affinity，命中且 route 支持当前模型并可用时直接选中
+- `platform_user` 使用平台用户 ID；`request_first` 优先使用请求标识并回退平台用户；`request_only` 没有请求标识时不写亲和；`off` 不使用 route affinity
 - 如果 route affinity 命中的子分组正处于智能降级窗口，则不直接固定命中，而是作为降权候选参与本轮加权选择
 - 未命中时构造候选子分组：
   - 必须支持当前模型
@@ -211,7 +305,7 @@ flowchart TD
   - 权重为 0 的子分组不参与普通加权随机，降级后仍保持 `effective_weight=0`；当所有候选权重都为 0 时退化为均匀随机
 - 选中子分组后，先按 `common.RetryTimes` 用完该子分组内部预算；预算耗尽后，再从本次请求尚未尝试过的其他子分组中继续按权重选择
 - 本次请求内跨子分组 retry 会记录已尝试 route，避免跨组 fallback 后反复冲击同一个失败子分组
-- 首次成功或切换子分组成功时写入 route affinity，使后续同一用户优先回到成功的子分组；用户切换模型时，如果原子分组支持该模型，也会继续复用
+- 首次成功或切换子分组成功时写入 route affinity，使后续同一平台用户或同一请求标识优先回到成功的子分组；用户切换模型时，如果原子分组支持该模型，也会继续复用
 - 若后续仍命中同一子分组，成功不会继续延长 route affinity TTL；`cluster_affinity_ttl_seconds` 到期后会重新按权重选择
 - 若请求开始时命中旧 route affinity，但请求完成时 TTL 已过期，成功回写也不会把旧 route 重新续期，避免稳定流量把低权重 fallback 子分组长期粘住
 
@@ -329,7 +423,7 @@ flowchart TD
 
 运行态新增子分组级实时 RPM：
 
-- 维度：`aggregate_group + model + route_group`
+- 维度：`aggregate_group + model + route_pool + route_group`
 - 指标：
   - `rpm`：最近 60 秒 attempt 数
   - `success_rpm`：最近 60 秒 success 数
@@ -339,6 +433,7 @@ flowchart TD
 - RPM 只用于展示，当前版本不参与路由决策
 - 运行态 route 节点返回 `weight / effective_weight / is_degraded`
 - `cluster` 模式下 degraded 节点默认展示为 `Reduced`，表示仍按有效权重参与分发
+- 同一真实分组如果同时存在于默认流量池和客户端专用流量池，RPM 按 `route_pool` 隔离展示，避免 CLI 专用池流量把默认池节点误标为 `In Use`
 - `cluster` 模式下如果节点处于智能降级，且降级触发后仍有成功或失败活动，运行态会返回 `is_soft_fallback=true`，前端展示为 `Fallback`，表示健康候选为空时软回退到了该节点
 
 ## 计费规则
@@ -437,7 +532,8 @@ flowchart TD
 - SideSheet 支持创建/编辑
 - SideSheet 按“基础信息 + 路由模式配置”组织表单；`failover` / `cluster` 使用 Tabs 分开展示，避免恢复、亲和、权重等不同语义混在一起
 - `failover` tab 展示懒恢复、恢复间隔、重试状态码和真实分组链，权重不参与该模式且不显示权重编辑
-- `cluster` tab 展示亲和保持时间、重试状态码和子分组权重配置，并说明权重是相对流量比例，`100/200` 约等于 `1:2`，`0` 不参与普通加权随机
+- `cluster` tab 展示亲和保持时间、亲和策略、重试状态码和子分组权重配置，并说明权重是相对流量比例，`100/200` 约等于 `1:2`，`0` 不参与普通加权随机
+- 请求标识来源属于高级配置，默认折叠在“高级：自定义请求标识来源”中；普通操作员只需要选择亲和策略，系统默认覆盖 Claude / OpenAI / Codex / Gemini 常见用户或会话标识
 - 真实分组链支持顺序调整；cluster 下保留顺序配置，便于切回 failover 时沿用链路顺序
 - 列表页在聚合分组名称旁展示当前路由模式标签，便于快速区分 `failover` / `cluster`
 - 编辑抽屉切换 `failover` / `cluster` 前会弹出确认；确认后表单切换到对应配置，提交保存后才改变实际运行模式
@@ -472,7 +568,7 @@ flowchart TD
 - 聚合分组 CRUD 控制器入口
 - 未设置 `routing_mode` 的旧聚合分组仍按 `failover` 选路
 - `cluster` 按权重选择可用子分组并跳过不支持当前模型的子分组
-- route affinity 按 `aggregate_group + user_id` 稳定回到同一子分组，命中不支持当前模型或已降级子分组时不直接固定，按候选规则重新选择并在成功后更新
+- route affinity 默认按 `aggregate_group + user_id` 稳定回到同一子分组，也可配置为请求标识优先或仅请求标识；命中不支持当前模型或已降级子分组时不直接固定，按候选规则重新选择并在成功后更新
 - `cluster` 的 route affinity TTL 使用 `cluster_affinity_ttl_seconds`，默认 300 秒，过期后允许重新按权重选择
 - `cluster` 当前子分组耗尽组内 retry 后切换到其他未尝试子分组
 - RPM 仅汇总最近 60 秒窗口，过期 bucket 不返回
@@ -483,6 +579,9 @@ flowchart TD
 
 - `go test ./...`
 - `bun run build`
+- `python3 2dev/script/simulate_aggregate_client_pool_scenarios.py --attempts-per-scenario 1 --strict`
+- `python3 2dev/script/simulate_aggregate_cluster_scenarios.py --attempts-per-scenario 1`
+- 本地验证脚本访问 `localhost` 时禁用系统代理，避免本机代理影响 Docker dev 验证结果。
 
 ### 待补充的联调与异常验证
 
