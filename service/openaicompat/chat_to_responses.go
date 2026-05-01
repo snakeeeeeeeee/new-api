@@ -73,6 +73,17 @@ func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat) jso
 	return textRaw
 }
 
+func convertChatServiceTierToResponsesServiceTier(serviceTier json.RawMessage) string {
+	if len(serviceTier) == 0 || string(serviceTier) == "null" {
+		return ""
+	}
+	var tier string
+	if err := common.Unmarshal(serviceTier, &tier); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(tier)
+}
+
 func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*dto.OpenAIResponsesRequest, error) {
 	if req == nil {
 		return nil, errors.New("request is nil")
@@ -386,6 +397,7 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		ParallelToolCalls: parallelToolCallsRaw,
 		Store:             req.Store,
 		Metadata:          req.Metadata,
+		ServiceTier:       convertChatServiceTierToResponsesServiceTier(req.ServiceTier),
 	}
 	if req.MaxTokens != nil || req.MaxCompletionTokens != nil {
 		out.MaxOutputTokens = lo.ToPtr(maxOutputTokens)

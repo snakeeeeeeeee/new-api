@@ -240,6 +240,11 @@ const EditChannelModal = (props) => {
     useState('');
   const [ollamaModalVisible, setOllamaModalVisible] = useState(false);
   const formApiRef = useRef(null);
+  const syncFormValues = (values) => {
+    // Semi Form only updates registered fields by default. Advanced settings are
+    // conditionally mounted, so keep their values in form state before opening.
+    formApiRef.current?.setValues(values, { isOverride: true });
+  };
   const [vertexKeys, setVertexKeys] = useState([]);
   const [vertexFileList, setVertexFileList] = useState([]);
   const vertexErroredNames = useRef(new Set()); // 避免重复报错
@@ -917,9 +922,7 @@ const EditChannelModal = (props) => {
 
       initialBaseUrlRef.current = data.base_url || '';
       setInputs(data);
-      if (formApiRef.current) {
-        formApiRef.current.setValues(data);
-      }
+      syncFormValues(data);
       if (data.auto_ban === 0) {
         setAutoBan(false);
       } else {
@@ -977,8 +980,15 @@ const EditChannelModal = (props) => {
         data.thinking_to_content ||
         data.pass_through_body_enabled ||
         data.force_format ||
+        data.allow_service_tier ||
+        data.disable_store ||
+        data.allow_safety_identifier ||
+        data.allow_include_obfuscation ||
+        data.allow_inference_geo ||
         data.claude_beta_query ||
-        data.system_prompt_override;
+        data.system_prompt_override ||
+        data.upstream_model_update_check_enabled ||
+        data.upstream_model_update_auto_sync_enabled;
       if (hasAdvancedValues) {
         setAdvancedSettingsOpen(true);
       }
@@ -1252,9 +1262,7 @@ const EditChannelModal = (props) => {
     if (!isEdit) {
       initialBaseUrlRef.current = '';
       setInputs(originInputs);
-      if (formApiRef.current) {
-        formApiRef.current.setValues(originInputs);
-      }
+      syncFormValues(originInputs);
       let localModels = getChannelModels(inputs.type);
       setBasicModels(localModels);
       setInputs((inputs) => ({ ...inputs, models: localModels }));
@@ -1262,10 +1270,18 @@ const EditChannelModal = (props) => {
   }, [props.editingChannel.id]);
 
   useEffect(() => {
-    if (formApiRef.current) {
-      formApiRef.current.setValues(inputs);
-    }
+    syncFormValues(inputs);
   }, [inputs]);
+
+  useEffect(() => {
+    if (!advancedSettingsOpen || !formApiRef.current) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      syncFormValues(inputs);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [advancedSettingsOpen, inputs]);
 
   useEffect(() => {
     setModelSearchValue('');
@@ -1273,7 +1289,7 @@ const EditChannelModal = (props) => {
       if (isEdit) {
         loadChannel();
       } else {
-        formApiRef.current?.setValues(getInitValues());
+        syncFormValues(getInitValues());
       }
       fetchModelGroups();
       // 重置手动输入模式状态
@@ -1472,7 +1488,8 @@ const EditChannelModal = (props) => {
 
   const submit = async () => {
     const formValues = formApiRef.current ? formApiRef.current.getValues() : {};
-    let localInputs = { ...formValues };
+    let localInputs = { ...inputs, ...formValues };
+    localInputs.type = Number(localInputs.type);
     localInputs.param_override = inputs.param_override;
 
     if (localInputs.type === 57) {
@@ -2143,6 +2160,7 @@ const EditChannelModal = (props) => {
                   <Form.Switch
                     field='upstream_model_update_check_enabled'
                     label={t('是否检测上游模型更新')}
+                    initValue={inputs.upstream_model_update_check_enabled === true}
                     checkedText={t('开')}
                     uncheckedText={t('关')}
                     onChange={(value) =>
@@ -2158,6 +2176,7 @@ const EditChannelModal = (props) => {
                   <Form.Switch
                     field='upstream_model_update_auto_sync_enabled'
                     label={t('是否自动同步上游模型更新')}
+                    initValue={inputs.upstream_model_update_auto_sync_enabled === true}
                     checkedText={t('开')}
                     uncheckedText={t('关')}
                     disabled={!inputs.upstream_model_update_check_enabled}
@@ -2412,10 +2431,10 @@ const EditChannelModal = (props) => {
                       <div className='mt-4 mb-2 text-sm font-medium text-gray-700'>
                         {t('字段透传控制')}
                       </div>
-                      <Form.Switch field='allow_service_tier' label={t('允许 service_tier 透传')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('allow_service_tier', value)} extraText={t('service_tier 字段用于指定服务层级，允许透传可能导致实际计费高于预期。默认关闭以避免额外费用')} />
-                      <Form.Switch field='disable_store' label={t('禁用 store 透传')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('disable_store', value)} extraText={t('store 字段用于授权 OpenAI 存储请求数据以评估和优化产品。默认关闭，开启后可能导致 Codex 无法正常使用')} />
-                      <Form.Switch field='allow_safety_identifier' label={t('允许 safety_identifier 透传')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('allow_safety_identifier', value)} extraText={t('safety_identifier 字段用于帮助 OpenAI 识别可能违反使用政策的应用程序用户。默认关闭以保护用户隐私')} />
-                      <Form.Switch field='allow_include_obfuscation' label={t('允许 stream_options.include_obfuscation 透传')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('allow_include_obfuscation', value)} extraText={t('include_obfuscation 用于控制 Responses 流混淆字段。默认关闭以避免客户端关闭该安全保护')} />
+                      <Form.Switch field='allow_service_tier' label={t('允许 service_tier 透传')} initValue={inputs.allow_service_tier === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('allow_service_tier', value)} extraText={t('service_tier 字段用于指定服务层级，允许透传可能导致实际计费高于预期。默认关闭以避免额外费用')} />
+                      <Form.Switch field='disable_store' label={t('禁用 store 透传')} initValue={inputs.disable_store === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('disable_store', value)} extraText={t('store 字段用于授权 OpenAI 存储请求数据以评估和优化产品。默认关闭，开启后可能导致 Codex 无法正常使用')} />
+                      <Form.Switch field='allow_safety_identifier' label={t('允许 safety_identifier 透传')} initValue={inputs.allow_safety_identifier === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('allow_safety_identifier', value)} extraText={t('safety_identifier 字段用于帮助 OpenAI 识别可能违反使用政策的应用程序用户。默认关闭以保护用户隐私')} />
+                      <Form.Switch field='allow_include_obfuscation' label={t('允许 stream_options.include_obfuscation 透传')} initValue={inputs.allow_include_obfuscation === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('allow_include_obfuscation', value)} extraText={t('include_obfuscation 用于控制 Responses 流混淆字段。默认关闭以避免客户端关闭该安全保护')} />
                     </>
                   )}
 
@@ -2424,8 +2443,8 @@ const EditChannelModal = (props) => {
                       <div className='mt-4 mb-2 text-sm font-medium text-gray-700'>
                         {t('字段透传控制')}
                       </div>
-                      <Form.Switch field='allow_service_tier' label={t('允许 service_tier 透传')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('allow_service_tier', value)} extraText={t('service_tier 字段用于指定服务层级，允许透传可能导致实际计费高于预期。默认关闭以避免额外费用')} />
-                      <Form.Switch field='allow_inference_geo' label={t('允许 inference_geo 透传')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('allow_inference_geo', value)} extraText={t('inference_geo 字段用于控制 Claude 数据驻留推理区域。默认关闭以避免未经授权透传地域信息')} />
+                      <Form.Switch field='allow_service_tier' label={t('允许 service_tier 透传')} initValue={inputs.allow_service_tier === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('allow_service_tier', value)} extraText={t('service_tier 字段用于指定服务层级，允许透传可能导致实际计费高于预期。默认关闭以避免额外费用')} />
+                      <Form.Switch field='allow_inference_geo' label={t('允许 inference_geo 透传')} initValue={inputs.allow_inference_geo === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('allow_inference_geo', value)} extraText={t('inference_geo 字段用于控制 Claude 数据驻留推理区域。默认关闭以避免未经授权透传地域信息')} />
                     </>
                   )}
                 </div>
@@ -2437,11 +2456,11 @@ const EditChannelModal = (props) => {
                   </Text>
 
                   {inputs.type === 14 && (
-                    <Form.Switch field='claude_beta_query' label={t('Claude 强制 beta=true')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_beta_query', value)} extraText={t('开启后，该渠道请求 Claude 时将强制追加 ?beta=true（无需客户端手动传参）')} />
+                    <Form.Switch field='claude_beta_query' label={t('Claude 强制 beta=true')} initValue={inputs.claude_beta_query === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_beta_query', value)} extraText={t('开启后，该渠道请求 Claude 时将强制追加 ?beta=true（无需客户端手动传参）')} />
                   )}
 
                   {inputs.type === 1 && (
-                    <Form.Switch field='force_format' label={t('强制格式化')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('force_format', value)} extraText={t('强制将响应格式化为 OpenAI 标准格式（只适用于OpenAI渠道类型）')} />
+                    <Form.Switch field='force_format' label={t('强制格式化')} initValue={inputs.force_format === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('force_format', value)} extraText={t('强制将响应格式化为 OpenAI 标准格式（只适用于OpenAI渠道类型）')} />
                   )}
 
                   {inputs.type === 1 && (
@@ -2449,6 +2468,7 @@ const EditChannelModal = (props) => {
                       field='image_response_adapter'
                       label={t('图片响应适配器')}
                       placeholder={t('默认无')}
+                      value={inputs.image_response_adapter || ''}
                       optionList={[
                         { label: t('无'), value: '' },
                         { label: 'CPA', value: 'cpa' },
@@ -2465,13 +2485,13 @@ const EditChannelModal = (props) => {
                     />
                   )}
 
-                  <Form.Switch field='thinking_to_content' label={t('思考内容转换')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('thinking_to_content', value)} extraText={t('将 reasoning_content 转换为 <think> 标签拼接到内容中')} />
-                  <Form.Switch field='pass_through_body_enabled' label={t('透传请求体')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('pass_through_body_enabled', value)} extraText={t('启用请求体透传功能')} />
+                  <Form.Switch field='thinking_to_content' label={t('思考内容转换')} initValue={inputs.thinking_to_content === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('thinking_to_content', value)} extraText={t('将 reasoning_content 转换为 <think> 标签拼接到内容中')} />
+                  <Form.Switch field='pass_through_body_enabled' label={t('透传请求体')} initValue={inputs.pass_through_body_enabled === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('pass_through_body_enabled', value)} extraText={t('启用请求体透传功能')} />
 
                   <Form.Input field='proxy' label={t('代理地址')} placeholder={t('例如: socks5://user:pass@host:port')} onChange={(value) => handleChannelSettingsChange('proxy', value)} showClear extraText={t('用于配置网络代理，支持 socks5 协议')} />
 
                   <Form.TextArea field='system_prompt' label={t('系统提示词')} placeholder={t('输入系统提示词，用户的系统提示词将优先于此设置')} onChange={(value) => handleChannelSettingsChange('system_prompt', value)} autosize showClear extraText={t('用户优先：如果用户在请求中指定了系统提示词，将优先使用用户的设置')} />
-                  <Form.Switch field='system_prompt_override' label={t('系统提示词拼接')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('system_prompt_override', value)} extraText={t('如果用户请求中包含系统提示词，则使用此设置拼接到用户的系统提示词前面')} />
+                  <Form.Switch field='system_prompt_override' label={t('系统提示词拼接')} initValue={inputs.system_prompt_override === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('system_prompt_override', value)} extraText={t('如果用户请求中包含系统提示词，则使用此设置拼接到用户的系统提示词前面')} />
                 </div>
               </div>
             );
