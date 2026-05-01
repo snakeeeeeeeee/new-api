@@ -83,6 +83,23 @@ const SummaryCard = ({ title, value, hint, icon }) => (
   </Card>
 );
 
+const ErrorMessageCell = ({ message, count, t }) => {
+  if (!message) {
+    return '-';
+  }
+
+  return (
+    <div className='max-w-[560px]'>
+      <div className='whitespace-normal break-words leading-5'>{message}</div>
+      {typeof count !== 'undefined' && (
+        <Text type='tertiary' className='text-xs'>
+          {t('次数')} {renderNumber(count || 0)}
+        </Text>
+      )}
+    </div>
+  );
+};
+
 const LogDashboardPage = () => {
   const { t } = useTranslation();
   const [activeWindow, setActiveWindow] = useState('1h');
@@ -315,17 +332,13 @@ const LogDashboardPage = () => {
       {
         title: t('Top 错误信息'),
         key: 'top_error_message',
-        render: (_, record) =>
-          record.top_error_message ? (
-            <div className='max-w-[320px]'>
-              <div className='truncate'>{record.top_error_message}</div>
-              <Text type='tertiary' className='text-xs'>
-                {t('次数')} {renderNumber(record.top_error_message_count || 0)}
-              </Text>
-            </div>
-          ) : (
-            '-'
-          ),
+        render: (_, record) => (
+          <ErrorMessageCell
+            message={record.top_error_message}
+            count={record.top_error_message_count}
+            t={t}
+          />
+        ),
       },
     ],
     [t],
@@ -399,17 +412,13 @@ const LogDashboardPage = () => {
       {
         title: t('Top 错误信息'),
         key: 'top_error_message',
-        render: (_, record) =>
-          record.top_error_message ? (
-            <div className='max-w-[320px]'>
-              <div className='truncate'>{record.top_error_message}</div>
-              <Text type='tertiary' className='text-xs'>
-                {t('次数')} {renderNumber(record.top_error_message_count || 0)}
-              </Text>
-            </div>
-          ) : (
-            '-'
-          ),
+        render: (_, record) => (
+          <ErrorMessageCell
+            message={record.top_error_message}
+            count={record.top_error_message_count}
+            t={t}
+          />
+        ),
       },
     ],
     [t],
@@ -421,7 +430,7 @@ const LogDashboardPage = () => {
         title: t('错误信息'),
         dataIndex: 'message',
         key: 'message',
-        render: (value) => <div className='max-w-[480px] break-words'>{value}</div>,
+        render: (value) => <ErrorMessageCell message={value} t={t} />,
       },
       {
         title: t('次数'),

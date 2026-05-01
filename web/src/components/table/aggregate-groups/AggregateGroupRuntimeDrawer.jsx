@@ -66,6 +66,17 @@ const isRouteRecentlyUsed = (route) => {
   return (route?.rpm ?? 0) > 0;
 };
 
+const formatRouteSuccessRate = (route) => {
+  const success = route?.success_rpm ?? 0;
+  const failure = route?.failure_rpm ?? 0;
+  const completed = success + failure;
+  if (completed <= 0) {
+    return '-';
+  }
+  const rate = (success / completed) * 100;
+  return `${Number.isInteger(rate) ? rate.toFixed(0) : rate.toFixed(1)}%`;
+};
+
 const getRuntimeRouteKey = (route) =>
   `${route?.route_pool || 'default'}::${route?.route_group || ''}`;
 
@@ -214,8 +225,8 @@ const AggregateClusterTopologyCanvas = ({
   idPrefix = 'aggregate-cluster',
   t,
 }) => {
-  const nodeWidth = expanded ? (isMobile ? 284 : 392) : isMobile ? 270 : 360;
-  const nodeHeight = expanded ? 152 : 140;
+  const nodeWidth = expanded ? (isMobile ? 300 : 456) : isMobile ? 292 : 420;
+  const nodeHeight = isMobile ? (expanded ? 202 : 188) : expanded ? 152 : 140;
   const nodeGap = expanded ? 24 : 18;
   const sourceWidth = isMobile ? 64 : 84;
   const sourceHeight = isMobile ? 78 : 94;
@@ -448,20 +459,37 @@ const AggregateClusterTopologyCanvas = ({
             node.route.route_group,
             isMobile ? 22 : expanded ? 36 : 30,
           );
-          const metricGap = isMobile ? 6 : 8;
-          const metricInset = 16;
-          const metricWidth =
-            (node.width - metricInset * 2 - metricGap * 2) / 3;
-          const metricY = node.y + node.height - 50;
-          const metricHeight = 34;
           const metrics = [
             { label: 'RPM', value: node.route.rpm ?? 0 },
             { label: t('成功'), value: node.route.success_rpm ?? 0 },
+            {
+              label: t('失败'),
+              value: node.route.failure_rpm ?? 0,
+              labelColor: '#b91c1c',
+              valueColor: '#dc2626',
+            },
+            {
+              label: t('成功率'),
+              value: formatRouteSuccessRate(node.route),
+            },
             {
               label: t('权重'),
               value: `${node.route.weight ?? 0}/${node.route.effective_weight ?? 0}`,
             },
           ];
+          const metricGap = isMobile ? 6 : 8;
+          const metricInset = 16;
+          const metricColumns = isMobile ? 3 : metrics.length;
+          const metricRows = Math.ceil(metrics.length / metricColumns);
+          const metricWidth =
+            (node.width - metricInset * 2 - metricGap * (metricColumns - 1)) /
+            metricColumns;
+          const metricHeight = isMobile ? 32 : 34;
+          const metricRowGap = isMobile ? 6 : 0;
+          const metricBlockHeight =
+            metricRows * metricHeight +
+            Math.max(metricRows - 1, 0) * metricRowGap;
+          const metricY = node.y + node.height - metricBlockHeight - 16;
 
           return (
             <g
@@ -555,13 +583,19 @@ const AggregateClusterTopologyCanvas = ({
               </text>
 
               {metrics.map((metric, index) => {
+                const metricColumn = index % metricColumns;
+                const metricRow = Math.floor(index / metricColumns);
                 const metricX =
-                  node.x + metricInset + index * (metricWidth + metricGap);
+                  node.x +
+                  metricInset +
+                  metricColumn * (metricWidth + metricGap);
+                const currentMetricY =
+                  metricY + metricRow * (metricHeight + metricRowGap);
                 return (
                   <g key={`${node.route.route_group}-${metric.label}`}>
                     <rect
                       x={metricX}
-                      y={metricY}
+                      y={currentMetricY}
                       width={metricWidth}
                       height={metricHeight}
                       rx='12'
@@ -570,19 +604,19 @@ const AggregateClusterTopologyCanvas = ({
                       strokeWidth='1'
                     />
                     <text
-                      x={metricX + 10}
-                      y={metricY + 13}
-                      fill='#64748b'
+                      x={metricX + 8}
+                      y={currentMetricY + 13}
+                      fill={metric.labelColor || '#64748b'}
                       fontSize='10'
                       fontWeight='600'
                     >
                       {metric.label}
                     </text>
                     <text
-                      x={metricX + 10}
-                      y={metricY + 29}
-                      fill='#0f172a'
-                      fontSize='14'
+                      x={metricX + 8}
+                      y={currentMetricY + 29}
+                      fill={metric.valueColor || '#0f172a'}
+                      fontSize='13'
                       fontWeight='700'
                     >
                       {metric.value}
@@ -1514,7 +1548,22 @@ const AggregateGroupRuntimeDrawer = ({
                           },
                           {
                             key: t('失败 RPM'),
-                            value: selectedRoute.failure_rpm ?? 0,
+                            value: (
+                              <Text
+                                strong={(selectedRoute.failure_rpm ?? 0) > 0}
+                                type={
+                                  (selectedRoute.failure_rpm ?? 0) > 0
+                                    ? 'danger'
+                                    : 'tertiary'
+                                }
+                              >
+                                {selectedRoute.failure_rpm ?? 0}
+                              </Text>
+                            ),
+                          },
+                          {
+                            key: t('成功率'),
+                            value: formatRouteSuccessRate(selectedRoute),
                           },
                           {
                             key: t('权重'),

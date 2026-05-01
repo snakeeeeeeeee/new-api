@@ -35,9 +35,11 @@ import {
   Button,
   Card,
   Col,
+  Input,
   InputNumber,
   Popconfirm,
   Row,
+  Select,
   Space,
   Spin,
   Switch,
@@ -46,6 +48,7 @@ import {
 } from '@douyinfe/semi-ui';
 import EditAggregateGroupModal from './EditAggregateGroupModal';
 import AggregateGroupRuntimeDrawer from './AggregateGroupRuntimeDrawer';
+import { Search } from 'lucide-react';
 
 const { Text } = Typography;
 
@@ -63,6 +66,14 @@ const isUserVisibleGroup = (group) =>
 
 const isRealRouteGroup = (group) => !isUserVisibleGroup(group);
 
+const normalizeSearchValue = (value) => String(value || '').toLowerCase();
+const defaultSearchFilters = {
+  aggregate: '',
+  target: '',
+  visibleGroup: '',
+  status: 'all',
+};
+
 const AggregateGroupsPage = () => {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
@@ -77,6 +88,7 @@ const AggregateGroupsPage = () => {
   const [strategyInputs, setStrategyInputs] = useState(defaultStrategyInputs);
   const [strategyInputsRow, setStrategyInputsRow] =
     useState(defaultStrategyInputs);
+  const [searchFilters, setSearchFilters] = useState(defaultSearchFilters);
 
   const loadGroups = async () => {
     setLoading(true);
@@ -209,6 +221,70 @@ const AggregateGroupsPage = () => {
       setOptionsLoading(false);
     }
   };
+
+  const updateSearchFilter = (key, value) => {
+    setSearchFilters((prev) => ({
+      ...prev,
+      [key]: value || '',
+    }));
+  };
+
+  const filteredGroups = useMemo(() => {
+    const aggregateKeyword = normalizeSearchValue(
+      searchFilters.aggregate.trim(),
+    );
+    const targetKeyword = normalizeSearchValue(searchFilters.target.trim());
+    const visibleGroupKeyword = normalizeSearchValue(
+      searchFilters.visibleGroup.trim(),
+    );
+    const statusFilter = searchFilters.status || 'all';
+
+    if (
+      !aggregateKeyword &&
+      !targetKeyword &&
+      !visibleGroupKeyword &&
+      statusFilter === 'all'
+    ) {
+      return groups;
+    }
+
+    return groups.filter((group) => {
+      if (statusFilter === 'enabled' && group.status !== 1) {
+        return false;
+      }
+      if (statusFilter === 'disabled' && group.status === 1) {
+        return false;
+      }
+
+      const aggregateText = [group.name, group.display_name]
+        .map(normalizeSearchValue)
+        .join(' ');
+      const targetText = (group.targets || [])
+        .map((target) => normalizeSearchValue(target.real_group))
+        .join(' ');
+      const visibleGroupText = (group.visible_user_groups || [])
+        .map(normalizeSearchValue)
+        .join(' ');
+
+      return (
+        (!aggregateKeyword || aggregateText.includes(aggregateKeyword)) &&
+        (!targetKeyword || targetText.includes(targetKeyword)) &&
+        (!visibleGroupKeyword ||
+          visibleGroupText.includes(visibleGroupKeyword))
+      );
+    });
+  }, [groups, searchFilters]);
+
+  const hasActiveSearchFilters = useMemo(
+    () =>
+      Boolean(
+        searchFilters.aggregate ||
+          searchFilters.target ||
+          searchFilters.visibleGroup ||
+          searchFilters.status !== 'all',
+      ),
+    [searchFilters],
+  );
 
   const columns = useMemo(
     () => [
@@ -364,22 +440,68 @@ const AggregateGroupsPage = () => {
       <CardPro
         type='type1'
         descriptionArea={
-          <div className='flex items-center justify-between gap-2 w-full'>
-            <div>
-              <Text strong>{t('聚合分组管理')}</Text>
-              <div className='text-xs text-gray-600 mt-1'>
-                {t('为提高可用性, 配置对外可见的逻辑分组与底层真实分组链路')}
+          <div className='flex flex-col gap-3 w-full'>
+            <div className='flex flex-col gap-3 md:flex-row md:items-center md:justify-between'>
+              <div className='min-w-0'>
+                <Text strong>{t('聚合分组管理')}</Text>
+                <div className='text-xs text-gray-600 mt-1'>
+                  {t('为提高可用性, 配置对外可见的逻辑分组与底层真实分组链路')}
+                </div>
               </div>
+              <Button
+                type='primary'
+                onClick={() => {
+                  setEditingGroup({ id: undefined });
+                  setShowEdit(true);
+                }}
+              >
+                {t('新增聚合分组')}
+              </Button>
             </div>
-            <Button
-              type='primary'
-              onClick={() => {
-                setEditingGroup({ id: undefined });
-                setShowEdit(true);
-              }}
-            >
-              {t('新增聚合分组')}
-            </Button>
+            <div className='grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4'>
+              <Input
+                prefix={<Search size={16} />}
+                showClear
+                value={searchFilters.aggregate}
+                onChange={(value) => updateSearchFilter('aggregate', value)}
+                placeholder={t('搜索聚合分组')}
+              />
+              <Input
+                prefix={<Search size={16} />}
+                showClear
+                value={searchFilters.target}
+                onChange={(value) => updateSearchFilter('target', value)}
+                placeholder={t('搜索真实分组链')}
+              />
+              <Input
+                prefix={<Search size={16} />}
+                showClear
+                value={searchFilters.visibleGroup}
+                onChange={(value) =>
+                  updateSearchFilter('visibleGroup', value)
+                }
+                placeholder={t('搜索可见用户组')}
+              />
+              <Select
+                value={searchFilters.status}
+                onChange={(value) =>
+                  updateSearchFilter('status', value || 'all')
+                }
+                style={{ width: '100%' }}
+              >
+                <Select.Option value='all'>{t('全部状态')}</Select.Option>
+                <Select.Option value='enabled'>{t('启用')}</Select.Option>
+                <Select.Option value='disabled'>{t('禁用')}</Select.Option>
+              </Select>
+            </div>
+            {hasActiveSearchFilters ? (
+              <Text type='tertiary' className='text-xs'>
+                {t('匹配 {{count}} / {{total}} 个', {
+                  count: filteredGroups.length,
+                  total: groups.length,
+                })}
+              </Text>
+            ) : null}
           </div>
         }
         t={t}
@@ -524,7 +646,7 @@ const AggregateGroupsPage = () => {
         <CardTable
           rowKey='id'
           columns={columns}
-          dataSource={groups}
+          dataSource={filteredGroups}
           loading={loading}
           hidePagination
         />
