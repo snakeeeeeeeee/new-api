@@ -215,7 +215,7 @@ func pickAggregateClusterCandidateByWeight(candidates []aggregateClusterRouteCan
 		}
 	}
 	if totalWeight <= 0 {
-		return candidates[common.GetRandomInt(len(candidates))], true
+		return aggregateClusterRouteCandidate{}, false
 	}
 	randomWeight := common.GetRandomInt(totalWeight)
 	for _, candidate := range candidates {
@@ -237,7 +237,9 @@ func chooseAggregateClusterRouteCandidateFromTargets(ctx *gin.Context, aggregate
 	}
 	if affinityRouteGroup != "" {
 		if candidate, ok := findAggregateClusterCandidateByRoute(healthyCandidates, affinityRouteGroup); ok {
-			return candidate, true, true, nil
+			if candidate.EffectiveWeight > 0 {
+				return candidate, true, true, nil
+			}
 		}
 	}
 	candidates := healthyCandidates
