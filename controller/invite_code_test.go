@@ -51,7 +51,7 @@ func setupInviteCodeControllerTestDB(t *testing.T) *gorm.DB {
 
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.InviteCode{}, &model.TopUp{}, &model.Token{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.InviteCode{}, &model.TopUp{}, &model.Token{}, &model.Log{}, &model.UserSubscription{}))
 
 	t.Cleanup(func() {
 		common.UsingSQLite = originalUsingSQLite

@@ -270,6 +270,16 @@ type SubscriptionSummary struct {
 	Subscription *UserSubscription `json:"subscription"`
 }
 
+type SubscriptionQuotaSummary struct {
+	ActiveCount     int   `json:"active_count"`
+	UnlimitedCount  int   `json:"unlimited_count"`
+	AmountTotal     int64 `json:"amount_total"`
+	AmountUsed      int64 `json:"amount_used"`
+	AmountRemain    int64 `json:"amount_remain"`
+	NextResetTime   int64 `json:"next_reset_time"`
+	EarliestEndTime int64 `json:"earliest_end_time"`
+}
+
 func calcPlanEndTime(start time.Time, plan *SubscriptionPlan) (int64, error) {
 	if plan == nil {
 		return 0, errors.New("plan is nil")
@@ -709,6 +719,119 @@ func buildSubscriptionSummaries(subs []UserSubscription) []SubscriptionSummary {
 		})
 	}
 	return result
+}
+
+func buildSubscriptionQuotaSummary(subs []UserSubscription) SubscriptionQuotaSummary {
+	summary := SubscriptionQuotaSummary{}
+	for _, sub := range subs {
+		summary.ActiveCount++
+		if sub.AmountTotal <= 0 {
+			summary.UnlimitedCount++
+		} else {
+			remain := sub.AmountTotal - sub.AmountUsed
+			if remain < 0 {
+				remain = 0
+			}
+			summary.AmountTotal += sub.AmountTotal
+			summary.AmountUsed += sub.AmountUsed
+			summary.AmountRemain += remain
+		}
+		if sub.NextResetTime > 0 && (summary.NextResetTime == 0 || sub.NextResetTime < summary.NextResetTime) {
+			summary.NextResetTime = sub.NextResetTime
+		}
+		if sub.EndTime > 0 && (summary.EarliestEndTime == 0 || sub.EndTime < summary.EarliestEndTime) {
+			summary.EarliestEndTime = sub.EndTime
+		}
+	}
+	return summary
+}
+
+func GetActiveSubscriptionQuotaSummary(userId int) (SubscriptionQuotaSummary, error) {
+	if userId <= 0 {
+		return SubscriptionQuotaSummary{}, errors.New("invalid userId")
+	}
+	now := common.GetTimestamp()
+	var subs []UserSubscription
+	err := DB.Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
+		Order("end_time asc, id asc").
+		Find(&subs).Error
+	if err != nil {
+		return SubscriptionQuotaSummary{}, err
+	}
+	return buildSubscriptionQuotaSummary(subs), nil
+}
+
+func GetActiveSubscriptionQuotaSummaryByUserIDs(userIds []int) (map[int]SubscriptionQuotaSummary, error) {
+	result := make(map[int]SubscriptionQuotaSummary)
+	if len(userIds) == 0 {
+		return result, nil
+	}
+	uniqueUserIds := make([]int, 0, len(userIds))
+	seen := make(map[int]bool, len(userIds))
+	for _, userId := range userIds {
+		if userId <= 0 || seen[userId] {
+			continue
+		}
+		seen[userId] = true
+		uniqueUserIds = append(uniqueUserIds, userId)
+	}
+	if len(uniqueUserIds) == 0 {
+		return result, nil
+	}
+	now := common.GetTimestamp()
+	var subs []UserSubscription
+	if err := DB.Where("user_id IN ? AND status = ? AND end_time > ?", uniqueUserIds, "active", now).
+		Order("user_id asc, end_time asc, id asc").
+		Find(&subs).Error; err != nil {
+		return nil, err
+	}
+	for _, sub := range subs {
+		summary := result[sub.UserId]
+		summary.ActiveCount++
+		if sub.AmountTotal <= 0 {
+			summary.UnlimitedCount++
+		} else {
+			remain := sub.AmountTotal - sub.AmountUsed
+			if remain < 0 {
+				remain = 0
+			}
+			summary.AmountTotal += sub.AmountTotal
+			summary.AmountUsed += sub.AmountUsed
+			summary.AmountRemain += remain
+		}
+		if sub.NextResetTime > 0 && (summary.NextResetTime == 0 || sub.NextResetTime < summary.NextResetTime) {
+			summary.NextResetTime = sub.NextResetTime
+		}
+		if sub.EndTime > 0 && (summary.EarliestEndTime == 0 || sub.EndTime < summary.EarliestEndTime) {
+			summary.EarliestEndTime = sub.EndTime
+		}
+		result[sub.UserId] = summary
+	}
+	return result, nil
+}
+
+func PopulateUsersSubscriptionQuotaSummary(users []*User) error {
+	if len(users) == 0 {
+		return nil
+	}
+	userIds := make([]int, 0, len(users))
+	for _, user := range users {
+		if user == nil || user.Id <= 0 {
+			continue
+		}
+		userIds = append(userIds, user.Id)
+	}
+	summaryByUserId, err := GetActiveSubscriptionQuotaSummaryByUserIDs(userIds)
+	if err != nil {
+		return err
+	}
+	for _, user := range users {
+		if user == nil {
+			continue
+		}
+		user.SubscriptionQuota = summaryByUserId[user.Id]
+	}
+	return nil
 }
 
 // AdminInvalidateUserSubscription marks a user subscription as cancelled and ends it immediately.

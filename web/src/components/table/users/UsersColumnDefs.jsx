@@ -35,6 +35,7 @@ import {
   renderPaymentAmount,
   renderQuota,
   renderQuotaWithAmount,
+  normalizeSubscriptionQuotaSummary,
 } from '../../../helpers';
 
 /**
@@ -170,6 +171,88 @@ const renderQuotaUsage = (text, record, t) => {
             format={() => `${percent.toFixed(0)}%`}
             style={{ width: '100%', marginTop: '1px', marginBottom: 0 }}
           />
+        </div>
+      </Tag>
+    </Popover>
+  );
+};
+
+const formatTimestamp = (timestamp) => {
+  if (!timestamp) return '-';
+  return new Date(timestamp * 1000).toLocaleString();
+};
+
+const renderSubscriptionQuota = (text, record, t) => {
+  const { Paragraph } = Typography;
+  const summary = normalizeSubscriptionQuotaSummary(record.subscription_quota);
+
+  if (!summary.hasActive) {
+    return (
+      <Tag color='white' shape='circle'>
+        {t('无生效订阅')}
+      </Tag>
+    );
+  }
+
+  const popoverContent = (
+    <div className='text-xs p-2'>
+      <Paragraph>
+        {t('生效订阅')}: {summary.activeCount}
+      </Paragraph>
+      {summary.hasUnlimited ? (
+        <Paragraph>
+          {t('不限额度订阅')}: {summary.unlimitedCount}
+        </Paragraph>
+      ) : null}
+      {summary.hasLimited ? (
+        <>
+          <Paragraph copyable={{ content: renderQuota(summary.amountRemain) }}>
+            {t('剩余额度')}: {`${renderQuota(summary.amountRemain)} (${summary.remainPercent.toFixed(0)}%)`}
+          </Paragraph>
+          <Paragraph copyable={{ content: renderQuota(summary.amountUsed) }}>
+            {t('已用额度')}: {`${renderQuota(summary.amountUsed)} (${summary.usagePercent.toFixed(0)}%)`}
+          </Paragraph>
+          <Paragraph copyable={{ content: renderQuota(summary.amountTotal) }}>
+            {t('总额度')}: {renderQuota(summary.amountTotal)}
+          </Paragraph>
+        </>
+      ) : null}
+      {summary.nextResetTime > 0 ? (
+        <Paragraph>
+          {t('下次重置')}: {formatTimestamp(summary.nextResetTime)}
+        </Paragraph>
+      ) : null}
+      {summary.earliestEndTime > 0 ? (
+        <Paragraph>
+          {t('最近到期')}: {formatTimestamp(summary.earliestEndTime)}
+        </Paragraph>
+      ) : null}
+    </div>
+  );
+
+  const label = summary.hasUnlimited
+    ? summary.hasLimited
+      ? `${t('不限')} + ${renderQuota(summary.amountRemain)}`
+      : t('不限')
+    : `${renderQuota(summary.amountRemain)} / ${renderQuota(summary.amountTotal)}`;
+
+  return (
+    <Popover content={popoverContent} position='top'>
+      <Tag color='white' shape='circle'>
+        <div className='flex flex-col items-end'>
+          <span className='text-xs leading-none'>{label}</span>
+          {summary.hasLimited ? (
+            <Progress
+              percent={summary.remainPercent}
+              aria-label='subscription quota remaining'
+              format={() => `${summary.remainPercent.toFixed(0)}%`}
+              orbitStroke='rgba(148, 163, 184, 0.38)'
+              stroke='#10b981'
+              strokeLinecap='round'
+              strokeWidth={3}
+              style={{ width: '100%', marginTop: '1px', marginBottom: 0 }}
+            />
+          ) : null}
         </div>
       </Tag>
     </Popover>
@@ -358,6 +441,11 @@ export const getUsersColumns = ({
       title: t('剩余额度/总额度'),
       key: 'quota_usage',
       render: (text, record) => renderQuotaUsage(text, record, t),
+    },
+    {
+      title: t('订阅额度'),
+      key: 'subscription_quota',
+      render: (text, record) => renderSubscriptionQuota(text, record, t),
     },
     {
       title: t('分组'),

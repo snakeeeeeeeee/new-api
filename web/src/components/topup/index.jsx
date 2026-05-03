@@ -384,6 +384,7 @@ const TopUp = () => {
         // All subscriptions (including expired)
         const allSubs = res.data.data?.all_subscriptions || [];
         setAllSubscriptions(allSubs);
+        await getUserQuota();
       }
     } catch (e) {
       // ignore

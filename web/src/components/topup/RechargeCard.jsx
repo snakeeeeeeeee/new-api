@@ -48,6 +48,7 @@ import {
 import { IconGift } from '@douyinfe/semi-icons';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
 import { getCurrencyConfig } from '../../helpers/render';
+import { normalizeSubscriptionQuotaSummary } from '../../helpers';
 import SubscriptionPlansCard from './SubscriptionPlansCard';
 
 const { Text } = Typography;
@@ -118,6 +119,21 @@ const RechargeCard = ({
       setActiveTab('topup');
     }
   }, [shouldShowSubscription, activeTab]);
+
+  const subscriptionQuotaSummary = normalizeSubscriptionQuotaSummary(
+    userState?.user?.subscription_quota,
+  );
+  const subscriptionQuotaLabel = subscriptionQuotaSummary.hasActive
+    ? subscriptionQuotaSummary.hasUnlimited
+      ? subscriptionQuotaSummary.hasLimited
+        ? `${t('不限')} + ${renderQuota(subscriptionQuotaSummary.amountRemain)}`
+        : t('不限')
+      : renderQuota(subscriptionQuotaSummary.amountRemain)
+    : '--';
+  const subscriptionRemainPercent = subscriptionQuotaSummary.hasLimited
+    ? subscriptionQuotaSummary.remainPercent
+    : 0;
+
   const topupContent = (
     <Space vertical style={{ width: '100%' }}>
       {/* 统计数据 */}
@@ -125,41 +141,48 @@ const RechargeCard = ({
         className='!rounded-xl w-full'
         cover={
           <div
-            className='relative h-30'
+            className='relative overflow-hidden'
             style={{
-              '--palette-primary-darkerChannel': '37 99 235',
-              backgroundImage: `linear-gradient(0deg, rgba(var(--palette-primary-darkerChannel) / 80%), rgba(var(--palette-primary-darkerChannel) / 80%)), url('/cover-4.webp')`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              backgroundRepeat: 'no-repeat',
+              background:
+                'linear-gradient(135deg, #f8fafc 0%, #eef8f2 48%, #f5f2ff 100%)',
+              borderBottom: '1px solid rgba(15, 23, 42, 0.08)',
             }}
           >
-            <div className='relative z-10 h-full flex flex-col justify-between p-4'>
-              <div className='flex justify-between items-center'>
-                <Text strong style={{ color: 'white', fontSize: '16px' }}>
+            <div
+              className='pointer-events-none absolute inset-x-0 top-0 h-1'
+              style={{
+                background:
+                  'linear-gradient(90deg, #10b981 0%, #38bdf8 52%, #8b5cf6 100%)',
+              }}
+            />
+            <div className='relative z-10 p-5 sm:p-6'>
+              <div className='mb-5 flex items-center justify-between'>
+                <Text strong style={{ color: '#0f172a', fontSize: '16px' }}>
                   {t('账户统计')}
                 </Text>
               </div>
 
               {/* 统计数据 */}
-              <div className='grid grid-cols-3 gap-6 mt-4'>
+              <div className='grid grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-4 sm:gap-x-8'>
                 {/* 当前余额 */}
-                <div className='text-center'>
-                  <div
-                    className='text-base sm:text-2xl font-bold mb-2'
-                    style={{ color: 'white' }}
-                  >
-                    {renderQuota(userState?.user?.quota)}
+                <div className='flex min-h-[88px] flex-col justify-between text-center sm:text-left'>
+                  <div className='flex h-[54px] flex-col justify-start'>
+                    <div
+                      className='break-words text-xl font-semibold leading-none tabular-nums sm:text-2xl'
+                      style={{ color: '#111827' }}
+                    >
+                      {renderQuota(userState?.user?.quota)}
+                    </div>
                   </div>
-                  <div className='flex items-center justify-center text-sm'>
+                  <div className='flex h-6 items-center justify-center text-sm sm:justify-start'>
                     <Wallet
                       size={14}
                       className='mr-1'
-                      style={{ color: 'rgba(255,255,255,0.8)' }}
+                      style={{ color: '#64748b' }}
                     />
                     <Text
                       style={{
-                        color: 'rgba(255,255,255,0.8)',
+                        color: '#64748b',
                         fontSize: '12px',
                       }}
                     >
@@ -169,22 +192,24 @@ const RechargeCard = ({
                 </div>
 
                 {/* 历史消耗 */}
-                <div className='text-center'>
-                  <div
-                    className='text-base sm:text-2xl font-bold mb-2'
-                    style={{ color: 'white' }}
-                  >
-                    {renderQuota(userState?.user?.used_quota)}
+                <div className='flex min-h-[88px] flex-col justify-between text-center sm:text-left'>
+                  <div className='flex h-[54px] flex-col justify-start'>
+                    <div
+                      className='break-words text-xl font-semibold leading-none tabular-nums sm:text-2xl'
+                      style={{ color: '#111827' }}
+                    >
+                      {renderQuota(userState?.user?.used_quota)}
+                    </div>
                   </div>
-                  <div className='flex items-center justify-center text-sm'>
+                  <div className='flex h-6 items-center justify-center text-sm sm:justify-start'>
                     <TrendingUp
                       size={14}
                       className='mr-1'
-                      style={{ color: 'rgba(255,255,255,0.8)' }}
+                      style={{ color: '#64748b' }}
                     />
                     <Text
                       style={{
-                        color: 'rgba(255,255,255,0.8)',
+                        color: '#64748b',
                         fontSize: '12px',
                       }}
                     >
@@ -194,26 +219,98 @@ const RechargeCard = ({
                 </div>
 
                 {/* 请求次数 */}
-                <div className='text-center'>
-                  <div
-                    className='text-base sm:text-2xl font-bold mb-2'
-                    style={{ color: 'white' }}
-                  >
-                    {userState?.user?.request_count || 0}
+                <div className='flex min-h-[88px] flex-col justify-between text-center sm:text-left'>
+                  <div className='flex h-[54px] flex-col justify-start'>
+                    <div
+                      className='break-words text-xl font-semibold leading-none tabular-nums sm:text-2xl'
+                      style={{ color: '#111827' }}
+                    >
+                      {userState?.user?.request_count || 0}
+                    </div>
                   </div>
-                  <div className='flex items-center justify-center text-sm'>
+                  <div className='flex h-6 items-center justify-center text-sm sm:justify-start'>
                     <BarChart2
                       size={14}
                       className='mr-1'
-                      style={{ color: 'rgba(255,255,255,0.8)' }}
+                      style={{ color: '#64748b' }}
                     />
                     <Text
                       style={{
-                        color: 'rgba(255,255,255,0.8)',
+                        color: '#64748b',
                         fontSize: '12px',
                       }}
                     >
                       {t('请求次数')}
+                    </Text>
+                  </div>
+                </div>
+
+                {/* 订阅额度 */}
+                <div className='flex min-h-[88px] flex-col justify-between text-center sm:text-left'>
+                  <div className='flex h-[54px] flex-col justify-start'>
+                    {subscriptionQuotaSummary.hasActive ? (
+                      <div className='mx-auto flex w-max max-w-full min-w-0 flex-col justify-start sm:mx-0'>
+                        <div
+                          className='whitespace-nowrap text-center text-lg font-semibold leading-none tabular-nums sm:text-left sm:text-xl'
+                          style={{ color: '#111827' }}
+                          title={
+                            subscriptionQuotaSummary.hasUnlimited
+                              ? subscriptionQuotaLabel
+                              : `${renderQuota(subscriptionQuotaSummary.amountRemain)} / ${renderQuota(subscriptionQuotaSummary.amountTotal)}`
+                          }
+                        >
+                          {subscriptionQuotaSummary.hasUnlimited
+                            ? subscriptionQuotaLabel
+                            : `${renderQuota(subscriptionQuotaSummary.amountRemain)} / ${renderQuota(subscriptionQuotaSummary.amountTotal)}`}
+                        </div>
+                        {subscriptionQuotaSummary.hasLimited ? (
+                          <div
+                            className='relative mt-2 h-1.5 w-full overflow-hidden rounded-full'
+                            aria-label='subscription quota remaining'
+                            style={{
+                              background:
+                                'linear-gradient(90deg, #ef4444 0%, #ef4444 33.333%, #f59e0b 33.333%, #f59e0b 66.666%, #10b981 66.666%, #10b981 100%)',
+                            }}
+                          >
+                            <div
+                              className='absolute inset-y-0 right-0 bg-slate-200/90'
+                              style={{
+                                width: `${100 - Math.min(100, Math.max(0, subscriptionRemainPercent))}%`,
+                              }}
+                            />
+                            <div
+                              className='absolute top-[1px] bottom-[1px] w-px rounded-full bg-white/90 shadow-[0_0_0_1px_rgba(15,23,42,0.08)]'
+                              style={{ left: '33.333%' }}
+                            />
+                            <div
+                              className='absolute top-[1px] bottom-[1px] w-px rounded-full bg-white/90 shadow-[0_0_0_1px_rgba(15,23,42,0.08)]'
+                              style={{ left: '66.666%' }}
+                            />
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div
+                        className='text-xl font-semibold leading-none sm:text-2xl'
+                        style={{ color: '#111827' }}
+                      >
+                        --
+                      </div>
+                    )}
+                  </div>
+                  <div className='flex h-6 items-center justify-center text-sm sm:justify-start'>
+                    <Sparkles
+                      size={14}
+                      className='mr-1'
+                      style={{ color: '#64748b' }}
+                    />
+                    <Text
+                      style={{
+                        color: '#64748b',
+                        fontSize: '12px',
+                      }}
+                    >
+                      {t('订阅额度')}
                     </Text>
                   </div>
                 </div>

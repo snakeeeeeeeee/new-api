@@ -245,6 +245,10 @@ func GetAllUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if err := model.PopulateUsersSubscriptionQuotaSummary(users); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(users)
@@ -263,6 +267,10 @@ func SearchUsers(c *gin.Context) {
 		return
 	}
 	if err := model.PopulateUsersInviteStats(users); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.PopulateUsersSubscriptionQuotaSummary(users); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -456,6 +464,13 @@ func GetSelf(c *gin.Context) {
 		responseData["invite_total_recharge_money"] = 0
 		responseData["invite_total_consume"] = 0
 	}
+
+	subscriptionQuota, err := model.GetActiveSubscriptionQuotaSummary(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	responseData["subscription_quota"] = subscriptionQuota
 
 	inviteCodes, inviteCodeCount, err := model.GetInviteCodesByOwnerUserID(id, 0, 5)
 	if err != nil {
