@@ -309,7 +309,7 @@ flowchart TD
 - 若后续仍命中同一子分组，成功不会继续延长 route affinity TTL；`cluster_affinity_ttl_seconds` 到期后会重新按权重选择
 - 若请求开始时命中旧 route affinity，但请求完成时 TTL 已过期，成功回写也不会把旧 route 重新续期，避免稳定流量把低权重 fallback 子分组长期粘住
 
-### 智能策略 V1
+### 智能策略 V2
 
 - 智能策略只有在以下两个条件同时满足时才会生效：
   - 全局 `aggregate_group.smart_strategy_enabled = true`
@@ -318,9 +318,12 @@ flowchart TD
 - `failover` 当前实现是“软跳过”：
   - 先尝试跳过处于临时降级窗口的真实分组
   - 如果优先遍历一轮后没有选中任何渠道，则回退到原始真实组链路再尝试一次，避免直接把旧逻辑硬改成强熔断
-- `cluster` 当前实现是“降权而非直接跳过”：
-  - degraded 子分组仍参与候选，但使用 `effective_weight=max(1, weight*cluster_degraded_weight_percent%)`
+- `cluster` 当前实现是“递减降权而非直接跳过”：
+  - degraded 子分组仍参与候选，但使用 `effective_weight=ceil(weight * pct^degrade_level)`；`pct` 来自 `cluster_degraded_weight_percent`
+  - `degrade_level=0` 表示健康；`1` 表示首次降级；`2+` 表示降级窗口内重复达到失败或慢请求阈值
   - `cluster_degraded_weight_percent` 由全局智能策略配置项 `aggregate_group.cluster_degraded_weight_percent` 控制，默认 20，取值范围 1 到 100
+  - 例如 `weight=100`、比例 20% 时，连续降级后有效权重为 `20 -> 4 -> 1`
+  - 正权重最低有效权重为 1
   - `weight=0` 的 degraded 子分组继续保持 `effective_weight=0`
   - 降级窗口到期后恢复为原始 `weight`
   - 该策略只影响智能策略触发的 degraded 状态，不改变手动禁用、无可用 channel、不支持模型等硬不可用判断
@@ -335,21 +338,30 @@ flowchart TD
 - `consecutive_failures`
 - `consecutive_slows`
 - `degraded_until`
+- `degrade_level`
+- `degraded_consecutive_failures`
+- `degraded_consecutive_slows`
 - `last_failure_at`
 - `last_slow_at`
+- `last_slow_reason`
 - `last_success_at`
 
 触发规则：
 
 - 连续失败达到阈值：
   - 命中当前聚合组允许继续 fallback 的错误后，累计 `consecutive_failures`
-  - 达到阈值后，将该真实分组对该模型临时降级 `degrade_duration_seconds`
+  - 达到阈值后，将该真实分组对该模型临时降级 `degrade_duration_seconds`，并把 `degrade_level` 提升到 1
+  - 如果已经处于降级窗口，继续累计 `degraded_consecutive_failures`；再次达到阈值时 `degrade_level + 1` 并刷新 `degraded_until`
 - 连续慢请求达到阈值：
   - 请求成功但耗时超过 `slow_request_threshold_seconds` 时，累计 `consecutive_slows`
-  - 达到阈值后，将该真实分组对该模型临时降级 `degrade_duration_seconds`
+  - 流式请求可额外配置 `slow_first_response_threshold_seconds`；首字耗时超过阈值时按慢请求计数，`last_slow_reason=first_response`
+  - 达到阈值后，将该真实分组对该模型临时降级 `degrade_duration_seconds`，并把 `degrade_level` 提升到 1
+  - 如果已经处于降级窗口，继续累计 `degraded_consecutive_slows`；再次达到阈值时 `degrade_level + 1` 并刷新 `degraded_until`
 - 成功后：
   - `consecutive_failures` 清零
   - 若本次不慢，`consecutive_slows` 清零
+  - 降级窗口内的成功不会重置 `degrade_level`，恢复仍由 `degraded_until` 到期控制
+  - 降级窗口到期后清空 `degrade_level`、`degraded_consecutive_failures` 和 `degraded_consecutive_slows`
 
 ### 两层恢复语义
 
@@ -415,6 +427,7 @@ flowchart TD
 - `aggregate_group.degrade_duration_seconds`
 - `aggregate_group.cluster_degraded_weight_percent`
 - `aggregate_group.slow_request_threshold_seconds`
+- `aggregate_group.slow_first_response_threshold_seconds`
 - `aggregate_group.consecutive_slow_threshold`
 
 这些配置只影响已开启 `smart_routing_enabled` 的聚合分组。
@@ -544,7 +557,7 @@ flowchart TD
   - `cluster` 展示请求入口到纵向子分组节点的集群拓扑
 - 拓扑节点展示 RPM；`cluster` 模式下节点 `In Use` 表示该节点最近 60 秒 RPM 大于 0，可多个节点同时处于使用中；`Reduced` 表示节点已被智能策略降权但仍按有效权重参与分发；`Fallback` 表示节点已降级但因无健康候选仍被软回退使用
 - 拓扑支持从抽屉打开弹窗放大查看，绿色流动线表示请求正在进入对应 `In Use`、`Reduced` 或 `Fallback` 子分组
-- 节点详情展示 RPM、成功 RPM、失败 RPM、原始权重、有效权重、降级状态等信息
+- 节点详情展示 RPM、成功 RPM、失败 RPM、原始权重、有效权重、降级层级、降级期间失败/慢请求计数、最近慢请求原因等信息
 
 修改页面：
 
@@ -572,7 +585,9 @@ flowchart TD
 - `cluster` 的 route affinity TTL 使用 `cluster_affinity_ttl_seconds`，默认 300 秒，过期后允许重新按权重选择
 - `cluster` 当前子分组耗尽组内 retry 后切换到其他未尝试子分组
 - RPM 仅汇总最近 60 秒窗口，过期 bucket 不返回
-- `cluster` 中 degraded 子分组使用 `effective_weight=max(1, weight*cluster_degraded_weight_percent%)`，`weight=0` 仍保持 0
+- `cluster` 中 degraded 子分组使用递减有效权重 `ceil(weight * pct^degrade_level)`，`weight=0` 仍保持 0
+- 降级期间重复失败或重复慢请求会继续提升 `degrade_level`；降级到期后恢复原始权重
+- 流式请求首字慢阈值只在 `stream=true` 时生效，非流式请求不会因为首字阈值触发慢请求计数
 - 手动禁用、无可用 channel、不支持模型的子分组仍不进入 cluster 候选
 
 回归验证：

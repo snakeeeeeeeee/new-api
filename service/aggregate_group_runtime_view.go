@@ -17,26 +17,30 @@ type AggregateGroupRuntimeActiveRouteView struct {
 }
 
 type AggregateGroupRuntimeRouteView struct {
-	RouteGroup          string `json:"route_group"`
-	RouteIndex          int    `json:"route_index"`
-	RoutePool           string `json:"route_pool,omitempty"`
-	Weight              int    `json:"weight"`
-	EffectiveWeight     int    `json:"effective_weight"`
-	IsActive            bool   `json:"is_active"`
-	IsDegraded          bool   `json:"is_degraded"`
-	IsSoftFallback      bool   `json:"is_soft_fallback"`
-	PriorityCount       int    `json:"priority_count"`
-	RPM                 int    `json:"rpm"`
-	SuccessRPM          int    `json:"success_rpm"`
-	FailureRPM          int    `json:"failure_rpm"`
-	DegradedUntil       int64  `json:"degraded_until"`
-	ConsecutiveFailures int    `json:"consecutive_failures"`
-	ConsecutiveSlows    int    `json:"consecutive_slows"`
-	LastFailureAt       int64  `json:"last_failure_at"`
-	LastSlowAt          int64  `json:"last_slow_at"`
-	LastSuccessAt       int64  `json:"last_success_at"`
-	LastTriggerReason   string `json:"last_trigger_reason"`
-	LastTriggerAt       int64  `json:"last_trigger_at"`
+	RouteGroup                  string `json:"route_group"`
+	RouteIndex                  int    `json:"route_index"`
+	RoutePool                   string `json:"route_pool,omitempty"`
+	Weight                      int    `json:"weight"`
+	EffectiveWeight             int    `json:"effective_weight"`
+	IsActive                    bool   `json:"is_active"`
+	IsDegraded                  bool   `json:"is_degraded"`
+	IsSoftFallback              bool   `json:"is_soft_fallback"`
+	PriorityCount               int    `json:"priority_count"`
+	RPM                         int    `json:"rpm"`
+	SuccessRPM                  int    `json:"success_rpm"`
+	FailureRPM                  int    `json:"failure_rpm"`
+	DegradedUntil               int64  `json:"degraded_until"`
+	ConsecutiveFailures         int    `json:"consecutive_failures"`
+	ConsecutiveSlows            int    `json:"consecutive_slows"`
+	DegradeLevel                int    `json:"degrade_level"`
+	DegradedConsecutiveFailures int    `json:"degraded_consecutive_failures"`
+	DegradedConsecutiveSlows    int    `json:"degraded_consecutive_slows"`
+	LastFailureAt               int64  `json:"last_failure_at"`
+	LastSlowAt                  int64  `json:"last_slow_at"`
+	LastSuccessAt               int64  `json:"last_success_at"`
+	LastTriggerReason           string `json:"last_trigger_reason"`
+	LastTriggerAt               int64  `json:"last_trigger_at"`
+	LastSlowReason              string `json:"last_slow_reason"`
 }
 
 type AggregateGroupRuntimeClientRoutePoolView struct {
@@ -121,15 +125,19 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 			routeView.DegradedUntil = state.DegradedUntil
 			routeView.ConsecutiveFailures = state.ConsecutiveFailures
 			routeView.ConsecutiveSlows = state.ConsecutiveSlows
+			routeView.DegradeLevel = state.DegradeLevel
+			routeView.DegradedConsecutiveFailures = state.DegradedConsecutiveFailures
+			routeView.DegradedConsecutiveSlows = state.DegradedConsecutiveSlows
 			routeView.LastFailureAt = state.LastFailureAt
 			routeView.LastSlowAt = state.LastSlowAt
 			routeView.LastSuccessAt = state.LastSuccessAt
 			routeView.LastTriggerReason = state.LastTriggerReason
 			routeView.LastTriggerAt = state.LastTriggerAt
+			routeView.LastSlowReason = state.LastSlowReason
 		}
 		if routeView.PriorityCount > 0 {
 			if isClusterMode {
-				routeView.EffectiveWeight = calculateAggregateClusterEffectiveWeight(routeView.Weight, routeView.IsDegraded)
+				routeView.EffectiveWeight = calculateAggregateClusterEffectiveWeight(routeView.Weight, routeView.DegradeLevel)
 			} else {
 				routeView.EffectiveWeight = routeView.Weight
 			}

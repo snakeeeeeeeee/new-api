@@ -648,6 +648,17 @@ func (info *RelayInfo) HasSendResponse() bool {
 	return info.FirstResponseTime.After(info.StartTime)
 }
 
+func (info *RelayInfo) FirstResponseLatencyMilliseconds() int64 {
+	if info == nil || !info.HasSendResponse() {
+		return 0
+	}
+	latency := info.FirstResponseTime.Sub(info.StartTime).Milliseconds()
+	if latency < 0 {
+		return 0
+	}
+	return latency
+}
+
 type TaskRelayInfo struct {
 	Action       string
 	OriginTaskID string

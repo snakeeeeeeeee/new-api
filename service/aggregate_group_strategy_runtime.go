@@ -11,19 +11,25 @@ import (
 const aggregateGroupRouteStrategyStateTTL = 24 * time.Hour
 
 type AggregateGroupRouteStrategyState struct {
-	ConsecutiveFailures int    `json:"consecutive_failures"`
-	ConsecutiveSlows    int    `json:"consecutive_slows"`
-	DegradedUntil       int64  `json:"degraded_until"`
-	LastFailureAt       int64  `json:"last_failure_at"`
-	LastSlowAt          int64  `json:"last_slow_at"`
-	LastSuccessAt       int64  `json:"last_success_at"`
-	LastTriggerReason   string `json:"last_trigger_reason"`
-	LastTriggerAt       int64  `json:"last_trigger_at"`
+	ConsecutiveFailures         int    `json:"consecutive_failures"`
+	ConsecutiveSlows            int    `json:"consecutive_slows"`
+	DegradedUntil               int64  `json:"degraded_until"`
+	DegradeLevel                int    `json:"degrade_level"`
+	DegradedConsecutiveFailures int    `json:"degraded_consecutive_failures"`
+	DegradedConsecutiveSlows    int    `json:"degraded_consecutive_slows"`
+	LastFailureAt               int64  `json:"last_failure_at"`
+	LastSlowAt                  int64  `json:"last_slow_at"`
+	LastSuccessAt               int64  `json:"last_success_at"`
+	LastTriggerReason           string `json:"last_trigger_reason"`
+	LastTriggerAt               int64  `json:"last_trigger_at"`
+	LastSlowReason              string `json:"last_slow_reason"`
 }
 
 const (
 	AggregateSmartTriggerReasonConsecutiveFailures = "consecutive_failures"
 	AggregateSmartTriggerReasonConsecutiveSlows    = "consecutive_slows"
+	AggregateSmartSlowReasonTotalTime              = "total_time"
+	AggregateSmartSlowReasonFirstResponse          = "first_response"
 )
 
 type aggregateGroupRouteStrategyStateEntry struct {

@@ -1,21 +1,23 @@
 package setting
 
 const (
-	DefaultAggregateGroupSmartStrategyEnabled     = false
-	DefaultAggregateGroupConsecutiveFailureLimit  = 2
-	DefaultAggregateGroupDegradeDurationSeconds   = 600
-	DefaultAggregateGroupClusterDegradedWeightPct = 20
-	DefaultAggregateGroupSlowRequestThreshold     = 30
-	DefaultAggregateGroupConsecutiveSlowThreshold = 3
+	DefaultAggregateGroupSmartStrategyEnabled       = false
+	DefaultAggregateGroupConsecutiveFailureLimit    = 2
+	DefaultAggregateGroupDegradeDurationSeconds     = 600
+	DefaultAggregateGroupClusterDegradedWeightPct   = 20
+	DefaultAggregateGroupSlowRequestThreshold       = 30
+	DefaultAggregateGroupSlowFirstResponseThreshold = 0
+	DefaultAggregateGroupConsecutiveSlowThreshold   = 3
 )
 
 var (
-	AggregateGroupSmartStrategyEnabled     = DefaultAggregateGroupSmartStrategyEnabled
-	AggregateGroupFailureThreshold         = DefaultAggregateGroupConsecutiveFailureLimit
-	AggregateGroupDegradeDurationSeconds   = DefaultAggregateGroupDegradeDurationSeconds
-	AggregateGroupClusterDegradedWeightPct = DefaultAggregateGroupClusterDegradedWeightPct
-	AggregateGroupSlowRequestThreshold     = DefaultAggregateGroupSlowRequestThreshold
-	AggregateGroupConsecutiveSlowLimit     = DefaultAggregateGroupConsecutiveSlowThreshold
+	AggregateGroupSmartStrategyEnabled       = DefaultAggregateGroupSmartStrategyEnabled
+	AggregateGroupFailureThreshold           = DefaultAggregateGroupConsecutiveFailureLimit
+	AggregateGroupDegradeDurationSeconds     = DefaultAggregateGroupDegradeDurationSeconds
+	AggregateGroupClusterDegradedWeightPct   = DefaultAggregateGroupClusterDegradedWeightPct
+	AggregateGroupSlowRequestThreshold       = DefaultAggregateGroupSlowRequestThreshold
+	AggregateGroupSlowFirstResponseThreshold = DefaultAggregateGroupSlowFirstResponseThreshold
+	AggregateGroupConsecutiveSlowLimit       = DefaultAggregateGroupConsecutiveSlowThreshold
 )
 
 func NormalizeAggregateGroupFailureThreshold(value int) int {
@@ -45,6 +47,13 @@ func NormalizeAggregateGroupClusterDegradedWeightPercent(value int) int {
 func NormalizeAggregateGroupSlowRequestThreshold(value int) int {
 	if value <= 0 {
 		return DefaultAggregateGroupSlowRequestThreshold
+	}
+	return value
+}
+
+func NormalizeAggregateGroupSlowFirstResponseThreshold(value int) int {
+	if value < 0 {
+		return DefaultAggregateGroupSlowFirstResponseThreshold
 	}
 	return value
 }

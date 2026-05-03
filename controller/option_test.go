@@ -32,6 +32,7 @@ func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.smart_strategy_enabled"`)
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.consecutive_failure_threshold"`)
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.cluster_degraded_weight_percent"`)
+	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.slow_first_response_threshold_seconds"`)
 	require.Contains(t, string(listResp.Data), `"key":"LogConsumeExcludedUserIDs"`)
 
 	updatePayload := []byte(`{"key":"aggregate_group.consecutive_failure_threshold","value":"4"}`)
@@ -70,6 +71,31 @@ func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.False(t, invalidPercentResp.Success)
 	require.Contains(t, invalidPercentResp.Message, "1 到 100")
 	require.Equal(t, 35, setting.AggregateGroupClusterDegradedWeightPct)
+
+	firstResponsePayload := []byte(`{"key":"aggregate_group.slow_first_response_threshold_seconds","value":"0"}`)
+	firstResponseRecorder := httptest.NewRecorder()
+	firstResponseCtx, _ := gin.CreateTestContext(firstResponseRecorder)
+	firstResponseCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(firstResponsePayload))
+	firstResponseCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(firstResponseCtx)
+
+	var firstResponseResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(firstResponseRecorder.Body.Bytes(), &firstResponseResp))
+	require.True(t, firstResponseResp.Success, firstResponseResp.Message)
+	require.Equal(t, 0, setting.AggregateGroupSlowFirstResponseThreshold)
+
+	invalidFirstResponsePayload := []byte(`{"key":"aggregate_group.slow_first_response_threshold_seconds","value":"-1"}`)
+	invalidFirstResponseRecorder := httptest.NewRecorder()
+	invalidFirstResponseCtx, _ := gin.CreateTestContext(invalidFirstResponseRecorder)
+	invalidFirstResponseCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(invalidFirstResponsePayload))
+	invalidFirstResponseCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(invalidFirstResponseCtx)
+
+	var invalidFirstResponseResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(invalidFirstResponseRecorder.Body.Bytes(), &invalidFirstResponseResp))
+	require.False(t, invalidFirstResponseResp.Success)
+	require.Contains(t, invalidFirstResponseResp.Message, "大于等于 0")
+	require.Equal(t, 0, setting.AggregateGroupSlowFirstResponseThreshold)
 
 	switchPayload := []byte(`{"key":"aggregate_group.smart_strategy_enabled","value":true}`)
 	switchRecorder := httptest.NewRecorder()

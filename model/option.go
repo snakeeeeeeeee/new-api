@@ -170,6 +170,7 @@ func InitOptionMap() {
 	common.OptionMap["aggregate_group.degrade_duration_seconds"] = strconv.Itoa(setting.AggregateGroupDegradeDurationSeconds)
 	common.OptionMap["aggregate_group.cluster_degraded_weight_percent"] = strconv.Itoa(setting.AggregateGroupClusterDegradedWeightPct)
 	common.OptionMap["aggregate_group.slow_request_threshold_seconds"] = strconv.Itoa(setting.AggregateGroupSlowRequestThreshold)
+	common.OptionMap["aggregate_group.slow_first_response_threshold_seconds"] = strconv.Itoa(setting.AggregateGroupSlowFirstResponseThreshold)
 	common.OptionMap["aggregate_group.consecutive_slow_threshold"] = strconv.Itoa(setting.AggregateGroupConsecutiveSlowLimit)
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
 
@@ -557,6 +558,11 @@ func updateOptionMap(key string, value string) (err error) {
 		intValue, _ := strconv.Atoi(value)
 		intValue = setting.NormalizeAggregateGroupSlowRequestThreshold(intValue)
 		setting.AggregateGroupSlowRequestThreshold = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
+	case "aggregate_group.slow_first_response_threshold_seconds":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupSlowFirstResponseThreshold(intValue)
+		setting.AggregateGroupSlowFirstResponseThreshold = intValue
 		common.OptionMap[key] = strconv.Itoa(intValue)
 	case "aggregate_group.consecutive_slow_threshold":
 		intValue, _ := strconv.Atoi(value)

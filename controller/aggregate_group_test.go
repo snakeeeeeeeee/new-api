@@ -35,6 +35,7 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 	originalDegradeDurationSeconds := setting.AggregateGroupDegradeDurationSeconds
 	originalClusterDegradedWeightPercent := setting.AggregateGroupClusterDegradedWeightPct
 	originalSlowRequestThreshold := setting.AggregateGroupSlowRequestThreshold
+	originalSlowFirstResponseThreshold := setting.AggregateGroupSlowFirstResponseThreshold
 	originalConsecutiveSlowLimit := setting.AggregateGroupConsecutiveSlowLimit
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
@@ -51,6 +52,7 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 		setting.AggregateGroupDegradeDurationSeconds = originalDegradeDurationSeconds
 		setting.AggregateGroupClusterDegradedWeightPct = originalClusterDegradedWeightPercent
 		setting.AggregateGroupSlowRequestThreshold = originalSlowRequestThreshold
+		setting.AggregateGroupSlowFirstResponseThreshold = originalSlowFirstResponseThreshold
 		setting.AggregateGroupConsecutiveSlowLimit = originalConsecutiveSlowLimit
 		service.ClearAggregateRouteAffinityCacheAll()
 		sqlDB, err := db.DB()
@@ -372,10 +374,13 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 		ActiveSinceAt: now,
 	}))
 	require.NoError(t, service.SetAggregateGroupRouteStrategyState(group.Name, "a-model", "default", &service.AggregateGroupRouteStrategyState{
-		DegradedUntil:     common.GetTimestamp() + 600,
-		LastFailureAt:     now,
-		LastTriggerReason: service.AggregateSmartTriggerReasonConsecutiveFailures,
-		LastTriggerAt:     now - 10,
+		DegradedUntil:               common.GetTimestamp() + 600,
+		DegradeLevel:                2,
+		DegradedConsecutiveFailures: 1,
+		LastFailureAt:               now,
+		LastSlowReason:              service.AggregateSmartSlowReasonFirstResponse,
+		LastTriggerReason:           service.AggregateSmartTriggerReasonConsecutiveFailures,
+		LastTriggerAt:               now - 10,
 	}))
 	require.NoError(t, service.SetAggregateGroupRouteStrategyState(group.Name, "a-model", "vip", &service.AggregateGroupRouteStrategyState{
 		ConsecutiveSlows: 1,
@@ -413,13 +418,16 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 	require.Len(t, resp.Data.Runtime.Routes, 2)
 	require.Equal(t, "default", resp.Data.Runtime.Routes[0].RouteGroup)
 	require.Equal(t, 50, resp.Data.Runtime.Routes[0].Weight)
-	require.Equal(t, 10, resp.Data.Runtime.Routes[0].EffectiveWeight)
+	require.Equal(t, 2, resp.Data.Runtime.Routes[0].EffectiveWeight)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].PriorityCount)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].RPM)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].SuccessRPM)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].FailureRPM)
 	require.True(t, resp.Data.Runtime.Routes[0].IsDegraded)
 	require.False(t, resp.Data.Runtime.Routes[0].IsSoftFallback)
+	require.Equal(t, 2, resp.Data.Runtime.Routes[0].DegradeLevel)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].DegradedConsecutiveFailures)
+	require.Equal(t, service.AggregateSmartSlowReasonFirstResponse, resp.Data.Runtime.Routes[0].LastSlowReason)
 	require.Equal(t, service.AggregateSmartTriggerReasonConsecutiveFailures, resp.Data.Runtime.Routes[0].LastTriggerReason)
 	require.Equal(t, "vip", resp.Data.Runtime.Routes[1].RouteGroup)
 	require.Equal(t, 150, resp.Data.Runtime.Routes[1].Weight)

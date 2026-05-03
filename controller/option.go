@@ -306,6 +306,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "aggregate_group.slow_first_response_threshold_seconds":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue < 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "首字慢阈值必须大于等于 0",
+			})
+			return
+		}
 	case "aggregate_group.consecutive_slow_threshold":
 		intValue, parseErr := strconv.Atoi(option.Value.(string))
 		if parseErr != nil || intValue <= 0 {

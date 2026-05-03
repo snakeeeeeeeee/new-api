@@ -21,23 +21,27 @@ type aggregateClusterRouteCandidate struct {
 	RoutePool       string
 	PriorityCount   int
 	IsDegraded      bool
+	DegradeLevel    int
 	Weight          int
 	EffectiveWeight int
 }
 
-func calculateAggregateClusterEffectiveWeight(weight int, isDegraded bool) int {
+func calculateAggregateClusterEffectiveWeight(weight int, degradeLevel int) int {
 	if weight <= 0 {
 		return 0
 	}
-	if !isDegraded {
+	if degradeLevel <= 0 {
 		return weight
 	}
 	percent := setting.NormalizeAggregateGroupClusterDegradedWeightPercent(setting.AggregateGroupClusterDegradedWeightPct)
-	reducedWeight := int(math.Ceil(float64(weight) * float64(percent) / 100))
-	if reducedWeight < 1 {
-		return 1
+	reducedWeight := float64(weight)
+	for i := 0; i < degradeLevel; i++ {
+		reducedWeight = math.Ceil(reducedWeight * float64(percent) / 100)
+		if reducedWeight <= 1 {
+			return 1
+		}
 	}
-	return reducedWeight
+	return int(reducedWeight)
 }
 
 func normalizeAggregateClusterRoutePool(routePool string) string {
@@ -176,10 +180,13 @@ func buildAggregateClusterRouteCandidatesFromTargets(ctx *gin.Context, aggregate
 			}
 			if degraded {
 				candidate.IsDegraded = true
-				logger.LogWarn(ctx, fmt.Sprintf("aggregate cluster smart strategy reduced degraded route: aggregate_group=%s, model=%s, route_group=%s(index=%d), weight=%d, effective_weight=%d, degraded_until=%d", aggregateGroup.Name, modelName, target.RealGroup, index, candidate.Weight, calculateAggregateClusterEffectiveWeight(candidate.Weight, true), state.DegradedUntil))
+				if state != nil {
+					candidate.DegradeLevel = state.DegradeLevel
+				}
+				logger.LogWarn(ctx, fmt.Sprintf("aggregate cluster smart strategy reduced degraded route: aggregate_group=%s, model=%s, route_group=%s(index=%d), weight=%d, effective_weight=%d, degrade_level=%d, degraded_until=%d", aggregateGroup.Name, modelName, target.RealGroup, index, candidate.Weight, calculateAggregateClusterEffectiveWeight(candidate.Weight, candidate.DegradeLevel), candidate.DegradeLevel, state.DegradedUntil))
 			}
 		}
-		candidate.EffectiveWeight = calculateAggregateClusterEffectiveWeight(candidate.Weight, candidate.IsDegraded)
+		candidate.EffectiveWeight = calculateAggregateClusterEffectiveWeight(candidate.Weight, candidate.DegradeLevel)
 		supportedCandidates = append(supportedCandidates, candidate)
 		if !candidate.IsDegraded {
 			healthyCandidates = append(healthyCandidates, candidate)

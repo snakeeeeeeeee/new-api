@@ -1,32 +1,37 @@
 {
-  "total": 9,
-  "passed": 9,
+  "total": 10,
+  "passed": 10,
   "failed": 0,
   "results": [
     {
       "name": "cluster healthy high-weight secondary is attempted",
       "passed": true,
-      "message": "route_group=claude-re-kiro-003, use_channel=['12'], log_id=1927"
+      "message": "route_group=claude-re-kiro-003, use_channel=['12'], log_id=33594"
     },
     {
       "name": "cluster degraded secondary is reduced and still attempted",
       "passed": true,
-      "message": "route_group=claude-re-kiro, use_channel=['12', '5'], log_id=1929"
+      "message": "route_group=claude-re-kiro-003, use_channel=['12'], log_id=33595"
+    },
+    {
+      "name": "cluster degraded secondary level 2 is recursively reduced",
+      "passed": true,
+      "message": "route_group=claude-re-kiro-003, use_channel=['12'], log_id=33596"
     },
     {
       "name": "cluster degraded secondary with weight 0 remains zero weight",
       "passed": true,
-      "message": "route_group=claude-re-kiro, use_channel=['5'], log_id=1930"
+      "message": "route_group=claude-re-kiro, use_channel=['5'], log_id=33597"
     },
     {
       "name": "cluster secondary manually disabled is hard unavailable",
       "passed": true,
-      "message": "route_group=claude-re-kiro, use_channel=['5'], log_id=1931"
+      "message": "route_group=claude-re-kiro, use_channel=['5'], log_id=33598"
     },
     {
       "name": "cluster primary manually disabled attempts secondary",
       "passed": true,
-      "message": "channel#12 attempted; upstream/client ended with status=500 error=HTTP 500"
+      "message": "route_group=claude-re-kiro-003, use_channel=['12'], log_id=33599"
     },
     {
       "name": "cluster both manually disabled returns 503",
@@ -36,17 +41,17 @@
     {
       "name": "failover still skips degraded primary and attempts secondary",
       "passed": true,
-      "message": "channel#12 attempted; upstream/client ended with status=500 error=HTTP 500"
+      "message": "route_group=claude-re-kiro-003, use_channel=['12'], log_id=33600"
     },
     {
       "name": "failover ignores prior cluster runtime active secondary",
       "passed": true,
-      "message": "route_group=claude-re-kiro, use_channel=['5'], log_id=1934"
+      "message": "route_group=claude-re-kiro, use_channel=['5'], log_id=33601"
     },
     {
       "name": "cluster expired degraded secondary restores original weight and is attempted",
       "passed": true,
-      "message": "route_group=claude-re-kiro, use_channel=['12', '5'], log_id=1936"
+      "message": "route_group=claude-re-kiro-003, use_channel=['12'], log_id=33602"
     }
   ]
 }

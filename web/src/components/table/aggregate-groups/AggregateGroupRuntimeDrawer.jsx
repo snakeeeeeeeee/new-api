@@ -62,6 +62,17 @@ const getCurrentTriggerReasonLabel = (route, t) => {
   return getTriggerReasonLabel(route?.last_trigger_reason, t);
 };
 
+const getSlowReasonLabel = (reason, t) => {
+  switch (reason) {
+    case 'first_response':
+      return t('流式首字慢');
+    case 'total_time':
+      return t('总耗时慢');
+    default:
+      return '-';
+  }
+};
+
 const isRouteRecentlyUsed = (route) => {
   return (route?.rpm ?? 0) > 0;
 };
@@ -455,6 +466,10 @@ const AggregateClusterTopologyCanvas = ({
           const statusText = node.visualStyle.text;
           const badgeWidth = getPillWidth(statusText, 72, 8.1, 24);
           const badgeX = node.x + node.width - badgeWidth - 16;
+          const level = node.route.degrade_level ?? 0;
+          const levelText = level > 0 ? `L${level}` : '';
+          const levelBadgeWidth = getPillWidth(levelText, 42, 8.6, 20);
+          const levelBadgeX = node.x + node.width - levelBadgeWidth - 16;
           const label = truncateLabel(
             node.route.route_group,
             isMobile ? 22 : expanded ? 36 : 30,
@@ -572,6 +587,31 @@ const AggregateClusterTopologyCanvas = ({
               >
                 {statusText}
               </text>
+              {level > 0 ? (
+                <>
+                  <rect
+                    x={levelBadgeX}
+                    y={node.y + 42}
+                    width={levelBadgeWidth}
+                    height='22'
+                    rx='11'
+                    fill='#fee2e2'
+                    stroke='rgba(220, 38, 38, 0.24)'
+                    strokeWidth='1'
+                  />
+                  <text
+                    x={levelBadgeX + levelBadgeWidth / 2}
+                    y={node.y + 53.5}
+                    textAnchor='middle'
+                    fill='#991b1b'
+                    dominantBaseline='middle'
+                    fontSize='11'
+                    fontWeight='800'
+                  >
+                    {levelText}
+                  </text>
+                </>
+              ) : null}
               <text
                 x={node.x + 18}
                 y={node.y + 62}
@@ -864,13 +904,19 @@ const AggregateTopologyCanvas = ({
           const headerInset = 16;
           const headerY = node.y + 14;
           const badgeWidth = getPillWidth(statusText, 74, 8.3, 26);
+          const level = node.route.degrade_level ?? 0;
+          const levelText = level > 0 ? `L${level}` : '';
+          const levelBadgeWidth = getPillWidth(levelText, 42, 8.6, 20);
+          const levelBadgeX =
+            node.x + node.width - headerInset - levelBadgeWidth;
+          const levelBadgeY = headerY + badgeHeight + 8;
           const label = truncateLabel(
             node.route.route_group,
             isMobile ? 30 : 28,
           );
           const secondMetricLabel = isClusterMode ? t('权重') : t('可选层级');
           const secondMetricValue = isClusterMode
-            ? (node.route.weight ?? 0)
+            ? `${node.route.weight ?? 0}/${node.route.effective_weight ?? 0}`
             : (node.route.priority_count ?? 0);
           const recentTrigger = hasRecentTrigger(node.route);
           const recentTriggerText = t('最近触发');
@@ -994,6 +1040,31 @@ const AggregateTopologyCanvas = ({
                     fontWeight='700'
                   >
                     {recentTriggerText}
+                  </text>
+                </>
+              ) : null}
+              {level > 0 ? (
+                <>
+                  <rect
+                    x={levelBadgeX}
+                    y={levelBadgeY}
+                    width={levelBadgeWidth}
+                    height='22'
+                    rx='11'
+                    fill='#fee2e2'
+                    stroke='rgba(220, 38, 38, 0.24)'
+                    strokeWidth='1'
+                  />
+                  <text
+                    x={levelBadgeX + levelBadgeWidth / 2}
+                    y={levelBadgeY + 11.5}
+                    textAnchor='middle'
+                    fill='#991b1b'
+                    dominantBaseline='middle'
+                    fontSize='11'
+                    fontWeight='800'
+                  >
+                    {levelText}
                   </text>
                 </>
               ) : null}
@@ -1575,6 +1646,10 @@ const AggregateGroupRuntimeDrawer = ({
                                   key: t('有效权重'),
                                   value: selectedRoute.effective_weight ?? 0,
                                 },
+                                {
+                                  key: t('降级层级'),
+                                  value: selectedRoute.degrade_level ?? 0,
+                                },
                               ]
                             : []),
                           {
@@ -1625,6 +1700,29 @@ const AggregateGroupRuntimeDrawer = ({
                             key: t('当前连续慢请求计数'),
                             value: selectedRoute.consecutive_slows ?? 0,
                           },
+                          ...(isClusterMode
+                            ? [
+                                {
+                                  key: t('降级期间失败计数'),
+                                  value:
+                                    selectedRoute.degraded_consecutive_failures ??
+                                    0,
+                                },
+                                {
+                                  key: t('降级期间慢请求计数'),
+                                  value:
+                                    selectedRoute.degraded_consecutive_slows ??
+                                    0,
+                                },
+                                {
+                                  key: t('最近慢请求原因'),
+                                  value: getSlowReasonLabel(
+                                    selectedRoute.last_slow_reason,
+                                    t,
+                                  ),
+                                },
+                              ]
+                            : []),
                           {
                             key: t('最近成功时间'),
                             value: formatTime(selectedRoute.last_success_at),

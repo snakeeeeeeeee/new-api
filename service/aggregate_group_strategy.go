@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -23,6 +24,66 @@ func IsAggregateSmartRoutingEnabledForContext(ctx *gin.Context) bool {
 	return common.GetContextKeyBool(ctx, constant.ContextKeyAggregateSmartRouting)
 }
 
+func normalizeAggregateRouteStrategyState(state *AggregateGroupRouteStrategyState, now int64) {
+	if state == nil {
+		return
+	}
+	if state.DegradedUntil > now {
+		if state.DegradeLevel <= 0 {
+			state.DegradeLevel = 1
+		}
+		return
+	}
+	if state.DegradedUntil > 0 {
+		state.DegradedUntil = 0
+	}
+	state.DegradeLevel = 0
+	state.DegradedConsecutiveFailures = 0
+	state.DegradedConsecutiveSlows = 0
+}
+
+func triggerAggregateRouteStrategyDegrade(state *AggregateGroupRouteStrategyState, now int64, reason string) {
+	if state == nil {
+		return
+	}
+	normalizeAggregateRouteStrategyState(state, now)
+	if state.DegradeLevel < 0 {
+		state.DegradeLevel = 0
+	}
+	state.DegradeLevel++
+	state.DegradedUntil = now + int64(setting.AggregateGroupDegradeDurationSeconds)
+	state.LastTriggerReason = reason
+	state.LastTriggerAt = now
+	switch reason {
+	case AggregateSmartTriggerReasonConsecutiveFailures:
+		state.DegradedConsecutiveFailures = 0
+	case AggregateSmartTriggerReasonConsecutiveSlows:
+		state.DegradedConsecutiveSlows = 0
+	}
+}
+
+func getAggregateRouteSlowSignal(c *gin.Context) (bool, string, int) {
+	if c == nil {
+		return false, "", 0
+	}
+	if setting.AggregateGroupSlowFirstResponseThreshold > 0 &&
+		common.GetContextKeyBool(c, constant.ContextKeyRelayIsStream) {
+		firstResponseMs := common.GetContextKeyInt(c, constant.ContextKeyFirstResponseMs)
+		if firstResponseMs >= setting.AggregateGroupSlowFirstResponseThreshold*1000 {
+			return true, AggregateSmartSlowReasonFirstResponse, int(math.Ceil(float64(firstResponseMs) / 1000))
+		}
+	}
+	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	useTimeSeconds := int(time.Since(startTime).Seconds())
+	if setting.AggregateGroupSlowRequestThreshold > 0 && useTimeSeconds >= setting.AggregateGroupSlowRequestThreshold {
+		return true, AggregateSmartSlowReasonTotalTime, useTimeSeconds
+	}
+	return false, "", useTimeSeconds
+}
+
 func RefreshAggregateGroupRouteStrategyState(groupName string, modelName string, routeGroup string) (*AggregateGroupRouteStrategyState, bool, error) {
 	state, err := GetAggregateGroupRouteStrategyState(groupName, modelName, routeGroup)
 	if err != nil || state == nil {
@@ -30,7 +91,7 @@ func RefreshAggregateGroupRouteStrategyState(groupName string, modelName string,
 	}
 	now := common.GetTimestamp()
 	if state.DegradedUntil > 0 && state.DegradedUntil <= now {
-		state.DegradedUntil = 0
+		normalizeAggregateRouteStrategyState(state, now)
 		state.ConsecutiveFailures = 0
 		state.ConsecutiveSlows = 0
 		if setErr := SetAggregateGroupRouteStrategyState(groupName, modelName, routeGroup, state); setErr != nil {
@@ -38,6 +99,7 @@ func RefreshAggregateGroupRouteStrategyState(groupName string, modelName string,
 		}
 		return state, true, nil
 	}
+	normalizeAggregateRouteStrategyState(state, now)
 	return state, false, nil
 }
 
@@ -66,10 +128,21 @@ func RecordAggregateRouteSmartFailure(c *gin.Context, modelName string, routeGro
 	if state == nil {
 		state = &AggregateGroupRouteStrategyState{}
 	}
+	normalizeAggregateRouteStrategyState(state, now)
 	if state.DegradedUntil > now {
 		state.LastFailureAt = now
+		state.DegradedConsecutiveFailures++
+		state.ConsecutiveFailures = 0
+		triggered := false
+		if setting.AggregateGroupFailureThreshold > 0 && state.DegradedConsecutiveFailures >= setting.AggregateGroupFailureThreshold {
+			triggerAggregateRouteStrategyDegrade(state, now, AggregateSmartTriggerReasonConsecutiveFailures)
+			triggered = true
+		}
 		if err = SetAggregateGroupRouteStrategyState(aggregateGroup, modelName, routeGroup, state); err != nil {
 			logger.LogError(c, "save aggregate smart strategy degraded failure state failed: "+err.Error())
+		}
+		if triggered {
+			logger.LogWarn(c, fmt.Sprintf("aggregate smart degrade level increased by consecutive failures: aggregate_group=%s, model=%s, route_group=%s, status_code=%d, degrade_level=%d, degrade_until=%d", aggregateGroup, modelName, routeGroup, statusCode, state.DegradeLevel, state.DegradedUntil))
 		}
 		return
 	}
@@ -79,9 +152,7 @@ func RecordAggregateRouteSmartFailure(c *gin.Context, modelName string, routeGro
 
 	triggered := false
 	if setting.AggregateGroupFailureThreshold > 0 && state.ConsecutiveFailures >= setting.AggregateGroupFailureThreshold {
-		state.DegradedUntil = now + int64(setting.AggregateGroupDegradeDurationSeconds)
-		state.LastTriggerReason = AggregateSmartTriggerReasonConsecutiveFailures
-		state.LastTriggerAt = now
+		triggerAggregateRouteStrategyDegrade(state, now, AggregateSmartTriggerReasonConsecutiveFailures)
 		triggered = true
 	}
 	if err = SetAggregateGroupRouteStrategyState(aggregateGroup, modelName, routeGroup, state); err != nil {
@@ -89,7 +160,7 @@ func RecordAggregateRouteSmartFailure(c *gin.Context, modelName string, routeGro
 		return
 	}
 	if triggered {
-		logger.LogWarn(c, fmt.Sprintf("aggregate smart degrade by consecutive failures: aggregate_group=%s, model=%s, route_group=%s, status_code=%d, degrade_until=%d", aggregateGroup, modelName, routeGroup, statusCode, state.DegradedUntil))
+		logger.LogWarn(c, fmt.Sprintf("aggregate smart degrade by consecutive failures: aggregate_group=%s, model=%s, route_group=%s, status_code=%d, degrade_level=%d, degrade_until=%d", aggregateGroup, modelName, routeGroup, statusCode, state.DegradeLevel, state.DegradedUntil))
 	}
 }
 
@@ -110,14 +181,26 @@ func RecordAggregateRouteSmartSuccess(c *gin.Context, modelName string, routeGro
 	if state == nil {
 		state = &AggregateGroupRouteStrategyState{}
 	}
+	normalizeAggregateRouteStrategyState(state, now)
+	isSlow, slowReason, slowSeconds := getAggregateRouteSlowSignal(c)
 	if state.DegradedUntil > now {
 		state.LastSuccessAt = now
-		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
-		if startTime.IsZero() {
-			startTime = time.Now()
-		}
-		if int(time.Since(startTime).Seconds()) >= setting.AggregateGroupSlowRequestThreshold {
+		if isSlow {
 			state.LastSlowAt = now
+			state.LastSlowReason = slowReason
+			state.DegradedConsecutiveSlows++
+			triggered := false
+			if setting.AggregateGroupConsecutiveSlowLimit > 0 && state.DegradedConsecutiveSlows >= setting.AggregateGroupConsecutiveSlowLimit {
+				triggerAggregateRouteStrategyDegrade(state, now, AggregateSmartTriggerReasonConsecutiveSlows)
+				triggered = true
+			}
+			if err = SetAggregateGroupRouteStrategyState(aggregateGroup, modelName, routeGroup, state); err != nil {
+				logger.LogError(c, "save aggregate smart strategy degraded slow success state failed: "+err.Error())
+			}
+			if triggered {
+				logger.LogWarn(c, fmt.Sprintf("aggregate smart degrade level increased by consecutive slow requests: aggregate_group=%s, model=%s, route_group=%s, slow_reason=%s, slow_seconds=%d, degrade_level=%d, degrade_until=%d", aggregateGroup, modelName, routeGroup, slowReason, slowSeconds, state.DegradeLevel, state.DegradedUntil))
+			}
+			return
 		}
 		if err = SetAggregateGroupRouteStrategyState(aggregateGroup, modelName, routeGroup, state); err != nil {
 			logger.LogError(c, "save aggregate smart strategy degraded success state failed: "+err.Error())
@@ -127,19 +210,13 @@ func RecordAggregateRouteSmartSuccess(c *gin.Context, modelName string, routeGro
 	state.ConsecutiveFailures = 0
 	state.LastSuccessAt = now
 
-	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
-	if startTime.IsZero() {
-		startTime = time.Now()
-	}
-	useTimeSeconds := int(time.Since(startTime).Seconds())
-	if useTimeSeconds >= setting.AggregateGroupSlowRequestThreshold {
+	if isSlow {
 		state.ConsecutiveSlows++
 		state.LastSlowAt = now
+		state.LastSlowReason = slowReason
 		triggered := false
 		if setting.AggregateGroupConsecutiveSlowLimit > 0 && state.ConsecutiveSlows >= setting.AggregateGroupConsecutiveSlowLimit {
-			state.DegradedUntil = now + int64(setting.AggregateGroupDegradeDurationSeconds)
-			state.LastTriggerReason = AggregateSmartTriggerReasonConsecutiveSlows
-			state.LastTriggerAt = now
+			triggerAggregateRouteStrategyDegrade(state, now, AggregateSmartTriggerReasonConsecutiveSlows)
 			triggered = true
 		}
 		if err = SetAggregateGroupRouteStrategyState(aggregateGroup, modelName, routeGroup, state); err != nil {
@@ -147,12 +224,13 @@ func RecordAggregateRouteSmartSuccess(c *gin.Context, modelName string, routeGro
 			return
 		}
 		if triggered {
-			logger.LogWarn(c, fmt.Sprintf("aggregate smart degrade by consecutive slow requests: aggregate_group=%s, model=%s, route_group=%s, use_time_seconds=%d, degrade_until=%d", aggregateGroup, modelName, routeGroup, useTimeSeconds, state.DegradedUntil))
+			logger.LogWarn(c, fmt.Sprintf("aggregate smart degrade by consecutive slow requests: aggregate_group=%s, model=%s, route_group=%s, slow_reason=%s, slow_seconds=%d, degrade_level=%d, degrade_until=%d", aggregateGroup, modelName, routeGroup, slowReason, slowSeconds, state.DegradeLevel, state.DegradedUntil))
 		}
 		return
 	}
 
 	state.ConsecutiveSlows = 0
+	state.LastSlowReason = ""
 	if err = SetAggregateGroupRouteStrategyState(aggregateGroup, modelName, routeGroup, state); err != nil {
 		logger.LogError(c, "save aggregate smart strategy success state failed: "+err.Error())
 	}

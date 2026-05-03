@@ -31,8 +31,19 @@ func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other
 	}
 }
 
+func RecordRelayTimingContext(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) {
+	if ctx == nil || relayInfo == nil {
+		return
+	}
+	common.SetContextKey(ctx, constant.ContextKeyRelayIsStream, relayInfo.IsStream)
+	if relayInfo.IsStream && relayInfo.HasSendResponse() {
+		common.SetContextKey(ctx, constant.ContextKeyFirstResponseMs, int(relayInfo.FirstResponseLatencyMilliseconds()))
+	}
+}
+
 func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,
 	cacheTokens int, cacheRatio float64, modelPrice float64, userGroupRatio float64) map[string]interface{} {
+	RecordRelayTimingContext(ctx, relayInfo)
 	other := make(map[string]interface{})
 	other["model_ratio"] = modelRatio
 	other["group_ratio"] = groupRatio

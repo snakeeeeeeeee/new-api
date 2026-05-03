@@ -58,6 +58,7 @@ const defaultStrategyInputs = {
   'aggregate_group.degrade_duration_seconds': 600,
   'aggregate_group.cluster_degraded_weight_percent': 20,
   'aggregate_group.slow_request_threshold_seconds': 30,
+  'aggregate_group.slow_first_response_threshold_seconds': 0,
   'aggregate_group.consecutive_slow_threshold': 3,
 };
 
@@ -513,7 +514,7 @@ const AggregateGroupsPage = () => {
                 <div>
                   <Text strong>{t('聚合分组全局策略')}</Text>
                   <div className='text-xs text-gray-600 mt-1'>
-                    {t('为开启智能策略的聚合分组配置连续失败、临时降级、Cluster 降权比例和慢请求阈值')}
+                    {t('为开启智能策略的聚合分组配置连续失败、临时降级、Cluster 递减降权和慢请求阈值')}
                   </div>
                 </div>
                 <Button type='primary' onClick={handleSaveStrategy}>
@@ -579,7 +580,7 @@ const AggregateGroupsPage = () => {
                   <div className='mb-2'>
                     <Text strong>{t('Cluster 降级有效权重比例（%）')}</Text>
                     <div className='text-xs text-gray-500 mt-1'>
-                      {t('仅 Cluster 模式生效；触发智能降级后按该比例计算有效权重')}
+                      {t('仅 Cluster 模式生效；降级窗口内再次触发会按该比例继续递减有效权重')}
                     </div>
                   </div>
                   <InputNumber
@@ -602,6 +603,9 @@ const AggregateGroupsPage = () => {
                 <Col xs={24} sm={12} md={8}>
                   <div className='mb-2'>
                     <Text strong>{t('慢请求阈值（秒）')}</Text>
+                    <div className='text-xs text-gray-500 mt-1'>
+                      {t('按请求总耗时统计，达到连续慢请求阈值后触发降级')}
+                    </div>
                   </div>
                   <InputNumber
                     min={1}
@@ -614,6 +618,29 @@ const AggregateGroupsPage = () => {
                       updateStrategyField(
                         'aggregate_group.slow_request_threshold_seconds',
                         Number(value) || 1,
+                      )
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('首字慢阈值（秒）')}</Text>
+                    <div className='text-xs text-gray-500 mt-1'>
+                      {t('仅流式请求生效；0 表示关闭首字慢统计')}
+                    </div>
+                  </div>
+                  <InputNumber
+                    min={0}
+                    value={
+                      strategyInputs[
+                        'aggregate_group.slow_first_response_threshold_seconds'
+                      ]
+                    }
+                    onChange={(value) =>
+                      updateStrategyField(
+                        'aggregate_group.slow_first_response_threshold_seconds',
+                        Math.max(0, Number(value) || 0),
                       )
                     }
                     style={{ width: '100%' }}

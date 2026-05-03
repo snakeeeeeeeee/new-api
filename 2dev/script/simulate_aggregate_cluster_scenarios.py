@@ -308,7 +308,7 @@ class ScenarioEnv:
         )
         self.redis("expire", self.runtime_key, 86400)
 
-    def set_smart_degraded(self, route_group, seconds=600, expired=False, weight_note=""):
+    def set_smart_degraded(self, route_group, seconds=600, expired=False, weight_note="", degrade_level=1):
         now = int(time.time())
         until_ts = now - 1 if expired else now + seconds
         key = self.smart_keys[route_group]
@@ -321,6 +321,12 @@ class ScenarioEnv:
             "0",
             "DegradedUntil",
             str(until_ts),
+            "DegradeLevel",
+            str(max(0, int(degrade_level))),
+            "DegradedConsecutiveFailures",
+            "0",
+            "DegradedConsecutiveSlows",
+            "0",
             "LastFailureAt",
             str(now - 1),
             "LastSlowAt",
@@ -528,6 +534,21 @@ def setup_cluster_degraded_reduced(env):
     )
 
 
+def setup_cluster_degraded_level2_reduced(env):
+    env.apply_db_state("cluster", primary_weight=0, secondary_weight=200)
+    env.restart_app()
+    env.clear_affinity()
+    env.clear_smart_states()
+    env.clear_runtime_state()
+    first = max(1, math.ceil(200 * env.args.cluster_degraded_weight_percent / 100))
+    second = max(1, math.ceil(first * env.args.cluster_degraded_weight_percent / 100))
+    env.set_smart_degraded(
+        env.args.secondary_route,
+        weight_note=f"weight=200 degrade_level=2 effective_weight={second}",
+        degrade_level=2,
+    )
+
+
 def setup_cluster_zero_degraded(env):
     env.apply_db_state("cluster", primary_weight=100, secondary_weight=0)
     env.restart_app()
@@ -698,6 +719,23 @@ def build_scenarios(env):
                 "cluster",
                 reduced_route=env.args.secondary_route,
                 effective_weight=max(1, math.ceil(200 * env.args.cluster_degraded_weight_percent / 100)),
+            ),
+        },
+        {
+            "name": "cluster degraded secondary level 2 is recursively reduced",
+            "setup": setup_cluster_degraded_level2_reduced,
+            "check": expect_attempted_channel(
+                env.args.secondary_channel_id,
+                "cluster",
+                reduced_route=env.args.secondary_route,
+                effective_weight=max(
+                    1,
+                    math.ceil(
+                        math.ceil(200 * env.args.cluster_degraded_weight_percent / 100)
+                        * env.args.cluster_degraded_weight_percent
+                        / 100
+                    ),
+                ),
             ),
         },
         {
