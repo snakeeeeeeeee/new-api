@@ -30,6 +30,64 @@ type selfInviteePageResponse struct {
 	Items []model.InviteeSummary `json:"items"`
 }
 
+type adminUserDetailResponse struct {
+	Id                int                            `json:"id"`
+	Username          string                         `json:"username"`
+	Quota             int                            `json:"quota"`
+	UsedQuota         int                            `json:"used_quota"`
+	RequestCount      int                            `json:"request_count"`
+	SubscriptionQuota model.SubscriptionQuotaSummary `json:"subscription_quota"`
+}
+
+func TestGetUserByUsernameIncludesSubscriptionQuota(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	user := &model.User{
+		Id:           80,
+		Username:     "dashboard_user",
+		Password:     "password123",
+		Role:         common.RoleCommonUser,
+		Status:       common.UserStatusEnabled,
+		Group:        "default",
+		AffCode:      "aff-dashboard-user",
+		Quota:        12345,
+		UsedQuota:    678,
+		RequestCount: 9,
+	}
+	require.NoError(t, db.Create(user).Error)
+
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.UserSubscription{
+		UserId:      80,
+		PlanId:      1,
+		AmountTotal: 1000,
+		AmountUsed:  250,
+		StartTime:   now - 60,
+		EndTime:     now + 3600,
+		Status:      "active",
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/by_username?username=dashboard_user", nil)
+	ctx.Set("role", common.RoleAdminUser)
+	GetUserByUsername(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+
+	var data adminUserDetailResponse
+	require.NoError(t, common.Unmarshal(resp.Data, &data))
+	require.Equal(t, 80, data.Id)
+	require.Equal(t, "dashboard_user", data.Username)
+	require.Equal(t, 12345, data.Quota)
+	require.Equal(t, 678, data.UsedQuota)
+	require.Equal(t, 9, data.RequestCount)
+	require.Equal(t, 1, data.SubscriptionQuota.ActiveCount)
+	require.Equal(t, int64(1000), data.SubscriptionQuota.AmountTotal)
+	require.Equal(t, int64(750), data.SubscriptionQuota.AmountRemain)
+}
+
 func TestGetSelfIncludesBoundInviteCodeAndPreviewData(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	seedInviteCodeControllerUser(t, db, 49, "upstream_owner", "aff-upstream")

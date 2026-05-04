@@ -364,12 +364,32 @@ export const generateChartTimePoints = (
   aggregatedData,
   data,
   dataExportDefaultTime,
+  startTimestamp,
+  endTimestamp,
 ) => {
   let chartTimePoints = Array.from(
     new Set([...aggregatedData.values()].map((d) => d.time)),
   );
 
-  if (chartTimePoints.length < DEFAULTS.MAX_TREND_POINTS) {
+  const startSeconds = Date.parse(startTimestamp) / 1000;
+  const endSeconds = Date.parse(endTimestamp) / 1000;
+  if (
+    !Number.isNaN(startSeconds) &&
+    !Number.isNaN(endSeconds) &&
+    endSeconds >= startSeconds
+  ) {
+    const interval = getTimeInterval(dataExportDefaultTime, true);
+    const firstTime = startSeconds - (startSeconds % interval);
+    const lastTime = endSeconds - (endSeconds % interval);
+    const generatedTimestamps = [];
+    for (let ts = firstTime; ts <= lastTime; ts += interval) {
+      generatedTimestamps.push(ts);
+    }
+    const showYear = isDataCrossYear(generatedTimestamps);
+    chartTimePoints = generatedTimestamps.map((ts) =>
+      timestamp2string1(ts, dataExportDefaultTime, showYear),
+    );
+  } else if (chartTimePoints.length < DEFAULTS.MAX_TREND_POINTS) {
     const lastTime = Math.max(...data.map((item) => item.created_at));
     const interval = getTimeInterval(dataExportDefaultTime, true);
 

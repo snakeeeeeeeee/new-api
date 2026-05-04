@@ -105,6 +105,11 @@ func GetQuotaDataByUsername(username string, startTime int64, endTime int64) (qu
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
 	err = DB.Table("quota_data").Where("username = ? and created_at >= ? and created_at <= ?", username, startTime, endTime).Find(&quotaDatas).Error
+	if err == nil {
+		quotaDatas = appendQuotaDataCacheSnapshot(quotaDatas, startTime, endTime, func(data *QuotaData) bool {
+			return data.Username == username
+		})
+	}
 	return quotaDatas, err
 }
 
@@ -112,6 +117,11 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64) (quotaData
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
 	err = DB.Table("quota_data").Where("user_id = ? and created_at >= ? and created_at <= ?", userId, startTime, endTime).Find(&quotaDatas).Error
+	if err == nil {
+		quotaDatas = appendQuotaDataCacheSnapshot(quotaDatas, startTime, endTime, func(data *QuotaData) bool {
+			return data.UserID == userId
+		})
+	}
 	return quotaDatas, err
 }
 
@@ -124,5 +134,26 @@ func GetAllQuotaDates(startTime int64, endTime int64, username string) (quotaDat
 	// only select model_name, sum(count) as count, sum(quota) as quota, model_name, created_at from quota_data group by model_name, created_at;
 	//err = DB.Table("quota_data").Where("created_at >= ? and created_at <= ?", startTime, endTime).Find(&quotaDatas).Error
 	err = DB.Table("quota_data").Select("model_name, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used, created_at").Where("created_at >= ? and created_at <= ?", startTime, endTime).Group("model_name, created_at").Find(&quotaDatas).Error
+	if err == nil {
+		quotaDatas = appendQuotaDataCacheSnapshot(quotaDatas, startTime, endTime, func(data *QuotaData) bool {
+			return true
+		})
+	}
 	return quotaDatas, err
+}
+
+func appendQuotaDataCacheSnapshot(quotaDatas []*QuotaData, startTime int64, endTime int64, match func(*QuotaData) bool) []*QuotaData {
+	CacheQuotaDataLock.Lock()
+	defer CacheQuotaDataLock.Unlock()
+	for _, data := range CacheQuotaData {
+		if data == nil || data.CreatedAt < startTime || data.CreatedAt > endTime {
+			continue
+		}
+		if match != nil && !match(data) {
+			continue
+		}
+		copied := *data
+		quotaDatas = append(quotaDatas, &copied)
+	}
+	return quotaDatas
 }

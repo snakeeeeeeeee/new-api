@@ -103,3 +103,34 @@ func TestRecordErrorLogStillWritesForExcludedUsers(t *testing.T) {
 	require.Equal(t, int64(1), countLogsByTypeAndUser(t, 17, LogTypeError))
 	require.Equal(t, int64(0), countLogsByTypeAndUser(t, 17, LogTypeConsume))
 }
+
+func TestFormatUserLogsHidesModelMapping(t *testing.T) {
+	logs := []*Log{
+		{
+			Id:          42,
+			ChannelName: "hidden-channel",
+			ModelName:   "claude-haiku-4-5",
+			Other: common.MapToJsonStr(map[string]interface{}{
+				"admin_info":          map[string]interface{}{"use_channel": []string{"hidden"}},
+				"reject_reason":       "hidden",
+				"is_model_mapped":     true,
+				"upstream_model_name": "claude-haiku-4-5-20251001",
+				"model_ratio":         0.5,
+			}),
+		},
+	}
+
+	formatUserLogs(logs, 0)
+
+	require.Empty(t, logs[0].ChannelName)
+	require.Equal(t, 1, logs[0].Id)
+	require.Equal(t, "claude-haiku-4-5", logs[0].ModelName)
+
+	other, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	require.NotContains(t, other, "admin_info")
+	require.NotContains(t, other, "reject_reason")
+	require.NotContains(t, other, "is_model_mapped")
+	require.NotContains(t, other, "upstream_model_name")
+	require.Equal(t, float64(0.5), other["model_ratio"])
+}

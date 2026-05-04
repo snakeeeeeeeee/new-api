@@ -38,6 +38,8 @@ import {
 
 export const useDashboardCharts = (
   dataExportDefaultTime,
+  startTimestamp,
+  endTimestamp,
   setTrendData,
   setConsumeQuota,
   setTimes,
@@ -324,6 +326,8 @@ export const useDashboardCharts = (
         aggregatedData,
         data,
         dataExportDefaultTime,
+        startTimestamp,
+        endTimestamp,
       );
 
       let newLineData = [];
@@ -414,6 +418,8 @@ export const useDashboardCharts = (
     },
     [
       dataExportDefaultTime,
+      startTimestamp,
+      endTimestamp,
       setTrendData,
       generateModelColors,
       setModelColors,

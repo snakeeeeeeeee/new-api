@@ -63,6 +63,8 @@ const Dashboard = () => {
   // ========== 图表管理 ==========
   const dashboardCharts = useDashboardCharts(
     dashboardData.dataExportDefaultTime,
+    dashboardData.inputs.start_timestamp,
+    dashboardData.inputs.end_timestamp,
     dashboardData.setTrendData,
     dashboardData.setConsumeQuota,
     dashboardData.setTimes,
@@ -75,7 +77,7 @@ const Dashboard = () => {
 
   // ========== 统计数据 ==========
   const { groupedStatsData } = useDashboardStats(
-    userState,
+    dashboardData.statsUser,
     dashboardData.consumeQuota,
     dashboardData.consumeTokens,
     dashboardData.times,

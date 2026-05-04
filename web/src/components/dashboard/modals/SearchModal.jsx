@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Modal, Form } from '@douyinfe/semi-ui';
 
 const SearchModal = ({
@@ -32,7 +32,7 @@ const SearchModal = ({
   handleInputChange,
   t,
 }) => {
-  const formRef = useRef();
+  const formApiRef = useRef();
 
   const FORM_FIELD_PROPS = {
     className: 'w-full mb-2 !rounded-lg',
@@ -44,6 +44,24 @@ const SearchModal = ({
 
   const { start_timestamp, end_timestamp, username } = inputs;
 
+  useEffect(() => {
+    if (!searchModalVisible) {
+      return;
+    }
+    formApiRef.current?.setValues?.({
+      start_timestamp,
+      end_timestamp,
+      data_export_default_time: dataExportDefaultTime,
+      username,
+    });
+  }, [
+    searchModalVisible,
+    start_timestamp,
+    end_timestamp,
+    dataExportDefaultTime,
+    username,
+  ]);
+
   return (
     <Modal
       title={t('搜索条件')}
@@ -54,7 +72,13 @@ const SearchModal = ({
       size={isMobile ? 'full-width' : 'small'}
       centered
     >
-      <Form ref={formRef} layout='vertical' className='w-full'>
+      <Form
+        getFormApi={(formApi) => {
+          formApiRef.current = formApi;
+        }}
+        layout='vertical'
+        className='w-full'
+      >
         {createFormField(Form.DatePicker, {
           field: 'start_timestamp',
           label: t('起始时间'),
@@ -90,6 +114,7 @@ const SearchModal = ({
           createFormField(Form.Input, {
             field: 'username',
             label: t('用户名称'),
+            initValue: username,
             value: username,
             placeholder: t('可选值'),
             name: 'username',

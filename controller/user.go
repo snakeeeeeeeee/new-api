@@ -281,6 +281,19 @@ func SearchUsers(c *gin.Context) {
 	return
 }
 
+func populateAdminUserDetail(user *model.User) error {
+	if user == nil {
+		return nil
+	}
+	if err := model.PopulateUsersInviteStats([]*model.User{user}); err != nil {
+		return err
+	}
+	if err := model.PopulateUsersSubscriptionQuotaSummary([]*model.User{user}); err != nil {
+		return err
+	}
+	return nil
+}
+
 func GetUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -297,7 +310,31 @@ func GetUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
 		return
 	}
-	if err := model.PopulateUsersInviteStats([]*model.User{user}); err != nil {
+	if err := populateAdminUserDetail(user); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    user,
+	})
+	return
+}
+
+func GetUserByUsername(c *gin.Context) {
+	username := c.Query("username")
+	user, err := model.GetUserByUsername(username, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	myRole := c.GetInt("role")
+	if myRole <= user.Role && myRole != common.RoleRootUser {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
+		return
+	}
+	if err := populateAdminUserDetail(user); err != nil {
 		common.ApiError(c, err)
 		return
 	}

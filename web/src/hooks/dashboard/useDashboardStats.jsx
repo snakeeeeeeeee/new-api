@@ -29,7 +29,7 @@ import {
   IconTypograph,
   IconSend,
 } from '@douyinfe/semi-icons';
-import { renderQuota } from '../../helpers';
+import { normalizeSubscriptionQuotaSummary, renderQuota } from '../../helpers';
 import { createSectionTitle } from '../../helpers/dashboard';
 
 export const useDashboardStats = (
@@ -42,6 +42,18 @@ export const useDashboardStats = (
   navigate,
   t,
 ) => {
+  const statsUser = userState?.user || userState || null;
+  const subscriptionQuota = normalizeSubscriptionQuotaSummary(
+    statsUser?.subscription_quota,
+  );
+  const subscriptionQuotaText = subscriptionQuota.hasActive
+    ? subscriptionQuota.hasUnlimited
+      ? subscriptionQuota.hasLimited
+        ? `${t('不限')} + ${renderQuota(subscriptionQuota.amountRemain)}`
+        : t('不限')
+      : `${renderQuota(subscriptionQuota.amountRemain)} / ${renderQuota(subscriptionQuota.amountTotal)}`
+    : '--';
+
   const groupedStatsData = useMemo(
     () => [
       {
@@ -50,7 +62,7 @@ export const useDashboardStats = (
         items: [
           {
             title: t('当前余额'),
-            value: renderQuota(userState?.user?.quota),
+            value: statsUser ? renderQuota(statsUser.quota) : '--',
             icon: <IconMoneyExchangeStroked />,
             avatarColor: 'blue',
             trendData: [],
@@ -58,11 +70,19 @@ export const useDashboardStats = (
           },
           {
             title: t('历史消耗'),
-            value: renderQuota(userState?.user?.used_quota),
+            value: statsUser ? renderQuota(statsUser.used_quota) : '--',
             icon: <IconHistogram />,
             avatarColor: 'purple',
             trendData: [],
             trendColor: '#8b5cf6',
+          },
+          {
+            title: t('订阅额度'),
+            value: subscriptionQuotaText,
+            icon: <IconCoinMoneyStroked />,
+            avatarColor: 'teal',
+            trendData: [],
+            trendColor: '#14b8a6',
           },
         ],
       },
@@ -72,7 +92,7 @@ export const useDashboardStats = (
         items: [
           {
             title: t('请求次数'),
-            value: userState.user?.request_count,
+            value: statsUser?.request_count,
             icon: <IconSend />,
             avatarColor: 'green',
             trendData: [],
@@ -134,9 +154,10 @@ export const useDashboardStats = (
       },
     ],
     [
-      userState?.user?.quota,
-      userState?.user?.used_quota,
-      userState?.user?.request_count,
+      statsUser?.quota,
+      statsUser?.used_quota,
+      statsUser?.request_count,
+      subscriptionQuotaText,
       times,
       consumeQuota,
       consumeTokens,

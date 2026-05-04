@@ -60,6 +60,8 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   const [pieData, setPieData] = useState([{ type: 'null', value: '0' }]);
   const [lineData, setLineData] = useState([]);
   const [modelColors, setModelColors] = useState({});
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [hasSelectedUserFilter, setHasSelectedUserFilter] = useState(false);
 
   // ========== 图表状态 ==========
   const [activeChartTab, setActiveChartTab] = useState('1');
@@ -161,18 +163,43 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     try {
       let url = '';
       const { start_timestamp, end_timestamp, username } = inputs;
+      const selectedUsername = username.trim();
+      setHasSelectedUserFilter(isAdminUser && selectedUsername !== '');
       let localStartTimestamp = Date.parse(start_timestamp) / 1000;
       let localEndTimestamp = Date.parse(end_timestamp) / 1000;
 
       if (isAdminUser) {
-        url = `/api/data/?username=${username}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
+        url = `/api/data/?username=${selectedUsername}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       } else {
         url = `/api/data/self/?start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&default_time=${dataExportDefaultTime}`;
       }
 
-      const res = await API.get(url);
+      const [quotaRes, userRes] = await Promise.all([
+        API.get(url),
+        isAdminUser && selectedUsername
+          ? API.get(
+              `/api/user/by_username?username=${encodeURIComponent(selectedUsername)}`,
+            )
+          : Promise.resolve(null),
+      ]);
+      const res = quotaRes;
       const { success, message, data } = res.data;
       if (success) {
+        if (userRes) {
+          const {
+            success: userSuccess,
+            message: userMessage,
+            data: userData,
+          } = userRes.data;
+          if (userSuccess) {
+            setSelectedUser(userData);
+          } else {
+            setSelectedUser(null);
+            showError(userMessage);
+          }
+        } else {
+          setSelectedUser(null);
+        }
         setQuotaData(data);
         if (data.length === 0) {
           data.push({
@@ -279,6 +306,10 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     setLineData,
     modelColors,
     setModelColors,
+    selectedUser,
+    setSelectedUser,
+    hasSelectedUserFilter,
+    setHasSelectedUserFilter,
 
     // 图表状态
     activeChartTab,
@@ -299,6 +330,7 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     performanceMetrics,
     getGreeting,
     isAdminUser,
+    statsUser: hasSelectedUserFilter ? selectedUser : userState?.user,
     hasApiInfoPanel,
     hasInfoPanels,
     apiInfoEnabled,
