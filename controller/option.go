@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
@@ -66,6 +67,9 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
+		if k == "ExternalRegisterAuthKey" {
+			continue
+		}
 		value := common.Interface2String(v)
 		if strings.HasSuffix(k, "Token") ||
 			strings.HasSuffix(k, "Secret") ||
@@ -98,6 +102,184 @@ func GetOptions(c *gin.Context) {
 	return
 }
 
+func parseExternalRegisterAuthKeys(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+
+	var authKeys []string
+	if err := common.UnmarshalJsonStr(raw, &authKeys); err == nil {
+		return normalizeExternalRegisterAuthKeys(authKeys)
+	}
+
+	return normalizeExternalRegisterAuthKeys([]string{raw})
+}
+
+func normalizeExternalRegisterAuthKeys(authKeys []string) []string {
+	normalized := make([]string, 0, len(authKeys))
+	seen := make(map[string]struct{}, len(authKeys))
+	for _, authKey := range authKeys {
+		authKey = strings.TrimSpace(authKey)
+		if authKey == "" {
+			continue
+		}
+		if _, ok := seen[authKey]; ok {
+			continue
+		}
+		seen[authKey] = struct{}{}
+		normalized = append(normalized, authKey)
+	}
+	return normalized
+}
+
+func encodeExternalRegisterAuthKeys(authKeys []string) (string, error) {
+	authKeys = normalizeExternalRegisterAuthKeys(authKeys)
+	if len(authKeys) == 0 {
+		return "", nil
+	}
+	data, err := common.Marshal(authKeys)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func externalRegisterAuthCodeResponse(enabled bool, authKeys []string) gin.H {
+	authKeys = normalizeExternalRegisterAuthKeys(authKeys)
+	authKey := ""
+	if len(authKeys) > 0 {
+		authKey = authKeys[len(authKeys)-1]
+	}
+	return gin.H{
+		"enabled":    enabled,
+		"configured": len(authKeys) > 0,
+		"auth_key":   authKey,
+		"auth_keys":  authKeys,
+	}
+}
+
+type deleteExternalRegisterAuthCodeRequest struct {
+	AuthKey string `json:"auth_key"`
+}
+
+func GetExternalRegisterAuthCode(c *gin.Context) {
+	common.OptionMapRWMutex.RLock()
+	authKeys := parseExternalRegisterAuthKeys(common.OptionMap["ExternalRegisterAuthKey"])
+	enabled := common.OptionMap["ExternalRegisterEnabled"] == "true"
+	common.OptionMapRWMutex.RUnlock()
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    externalRegisterAuthCodeResponse(enabled, authKeys),
+	})
+}
+
+func GenerateExternalRegisterAuthCode(c *gin.Context) {
+	authKey, err := common.GenerateRandomCharsKey(48)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgGenerateFailed)
+		common.SysLog("failed to generate external register auth key: " + err.Error())
+		return
+	}
+	common.OptionMapRWMutex.RLock()
+	authKeys := parseExternalRegisterAuthKeys(common.OptionMap["ExternalRegisterAuthKey"])
+	common.OptionMapRWMutex.RUnlock()
+	authKeys = append(authKeys, authKey)
+	authKeysValue, err := encodeExternalRegisterAuthKeys(authKeys)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.UpdateOption("ExternalRegisterAuthKey", authKeysValue); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.UpdateOption("ExternalRegisterEnabled", "true"); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    externalRegisterAuthCodeResponse(true, authKeys),
+	})
+}
+
+func DeleteExternalRegisterAuthCode(c *gin.Context) {
+	targetAuthKey := strings.TrimSpace(c.Query("auth_key"))
+	if targetAuthKey == "" && c.Request.Body != nil {
+		var req deleteExternalRegisterAuthCodeRequest
+		if err := common.DecodeJson(c.Request.Body, &req); err == nil {
+			targetAuthKey = strings.TrimSpace(req.AuthKey)
+		}
+	}
+	common.OptionMapRWMutex.RLock()
+	authKeys := parseExternalRegisterAuthKeys(common.OptionMap["ExternalRegisterAuthKey"])
+	common.OptionMapRWMutex.RUnlock()
+	if targetAuthKey == "" {
+		authKeys = nil
+	} else {
+		filtered := make([]string, 0, len(authKeys))
+		for _, authKey := range authKeys {
+			if authKey != targetAuthKey {
+				filtered = append(filtered, authKey)
+			}
+		}
+		authKeys = filtered
+	}
+
+	authKeysValue, err := encodeExternalRegisterAuthKeys(authKeys)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.UpdateOption("ExternalRegisterAuthKey", authKeysValue); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	enabled := len(authKeys) > 0
+	if !enabled {
+		if err := model.UpdateOption("ExternalRegisterEnabled", "false"); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	if !enabled {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data":    externalRegisterAuthCodeResponse(false, authKeys),
+		})
+		return
+	}
+	common.OptionMapRWMutex.RLock()
+	enabled = common.OptionMap["ExternalRegisterEnabled"] == "true"
+	common.OptionMapRWMutex.RUnlock()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    externalRegisterAuthCodeResponse(enabled, authKeys),
+	})
+}
+
+func DeleteAllExternalRegisterAuthCodes(c *gin.Context) {
+	if err := model.UpdateOption("ExternalRegisterAuthKey", ""); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.UpdateOption("ExternalRegisterEnabled", "false"); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    externalRegisterAuthCodeResponse(false, nil),
+	})
+}
+
 type OptionUpdateRequest struct {
 	Key   string `json:"key"`
 	Value any    `json:"value"`
@@ -122,6 +304,10 @@ func UpdateOption(c *gin.Context) {
 		option.Value = common.Interface2String(option.Value.(int))
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
+	}
+	if option.Key == "ExternalRegisterAuthKey" {
+		common.ApiErrorMsg(c, "请使用外部注册鉴权码专用接口管理")
+		return
 	}
 	switch option.Key {
 	case "GitHubOAuthEnabled":

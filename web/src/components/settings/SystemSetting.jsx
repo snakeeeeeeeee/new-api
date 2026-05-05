@@ -31,10 +31,13 @@ import {
   Card,
   Radio,
   Select,
+  Space,
+  Popconfirm,
 } from '@douyinfe/semi-ui';
 const { Text } = Typography;
 import {
   API,
+  copy,
   removeTrailingSlash,
   showError,
   showSuccess,
@@ -81,6 +84,7 @@ const SystemSetting = () => {
     TurnstileSiteKey: '',
     TurnstileSecretKey: '',
     RegisterEnabled: '',
+    ExternalRegisterEnabled: '',
     'passkey.enabled': '',
     'passkey.rp_display_name': '',
     'passkey.rp_id': '',
@@ -125,6 +129,16 @@ const SystemSetting = () => {
   const [domainList, setDomainList] = useState([]);
   const [ipList, setIpList] = useState([]);
   const [allowedPorts, setAllowedPorts] = useState([]);
+  const [externalRegisterAuth, setExternalRegisterAuth] = useState({
+    enabled: false,
+    configured: false,
+    auth_key: '',
+    auth_keys: [],
+  });
+  const [visibleExternalRegisterAuthKeys, setVisibleExternalRegisterAuthKeys] =
+    useState({});
+
+  const externalRegisterUrl = `${removeTrailingSlash(window.location.origin)}/api/user/external_register`;
 
   const getOptions = async () => {
     setLoading(true);
@@ -178,6 +192,7 @@ const SystemSetting = () => {
           case 'WeChatAuthEnabled':
           case 'TelegramOAuthEnabled':
           case 'RegisterEnabled':
+          case 'ExternalRegisterEnabled':
           case 'TurnstileCheckEnabled':
           case 'EmailDomainRestrictionEnabled':
           case 'EmailAliasRestrictionEnabled':
@@ -227,11 +242,26 @@ const SystemSetting = () => {
       if (formApiRef.current) {
         formApiRef.current.setValues(newInputs);
       }
+      await getExternalRegisterAuth();
       setIsLoaded(true);
     } else {
       showError(message);
     }
     setLoading(false);
+  };
+
+  const getExternalRegisterAuth = async () => {
+    const res = await API.get('/api/option/external_register_auth_code');
+    const { success, message, data } = res.data;
+    if (!success) {
+      showError(message);
+      return;
+    }
+    setExternalRegisterAuth(data || {});
+    setInputs((prev) => ({
+      ...prev,
+      ExternalRegisterEnabled: !!data?.enabled,
+    }));
   };
 
   useEffect(() => {
@@ -676,13 +706,144 @@ const SystemSetting = () => {
     await updateOptions(options);
   };
 
+  const generateExternalRegisterAuthCode = async () => {
+    setLoading(true);
+    try {
+      const res = await API.post('/api/option/external_register_auth_code');
+      const { success, message, data } = res.data;
+      if (!success) {
+        showError(message);
+        return;
+      }
+      setExternalRegisterAuth(data || {});
+      if (data?.auth_key) {
+        setVisibleExternalRegisterAuthKeys((prev) => ({
+          ...prev,
+          [data.auth_key]: true,
+        }));
+      }
+      setInputs((prev) => ({
+        ...prev,
+        ExternalRegisterEnabled: !!data?.enabled,
+      }));
+      formApiRef.current?.setValue?.(
+        'ExternalRegisterEnabled',
+        !!data?.enabled,
+      );
+      showSuccess(t('生成成功'));
+    } catch (error) {
+      showError(t('生成失败'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteExternalRegisterAuthCode = async (authKey) => {
+    setLoading(true);
+    try {
+      const res = await API.delete('/api/option/external_register_auth_code', {
+        data: { auth_key: authKey },
+      });
+      const { success, message, data } = res.data;
+      if (!success) {
+        showError(message);
+        return;
+      }
+      setExternalRegisterAuth(data || {});
+      setVisibleExternalRegisterAuthKeys((prev) => {
+        const next = { ...prev };
+        delete next[authKey];
+        return next;
+      });
+      setInputs((prev) => ({
+        ...prev,
+        ExternalRegisterEnabled: !!data?.enabled,
+      }));
+      formApiRef.current?.setValue?.(
+        'ExternalRegisterEnabled',
+        !!data?.enabled,
+      );
+      showSuccess(t('删除成功'));
+    } catch (error) {
+      showError(t('删除失败'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const deleteAllExternalRegisterAuthCodes = async () => {
+    setLoading(true);
+    try {
+      const res = await API.delete('/api/option/external_register_auth_codes');
+      const { success, message, data } = res.data;
+      if (!success) {
+        showError(message);
+        return;
+      }
+      setExternalRegisterAuth(data || {});
+      setVisibleExternalRegisterAuthKeys({});
+      setInputs((prev) => ({
+        ...prev,
+        ExternalRegisterEnabled: false,
+      }));
+      formApiRef.current?.setValue?.('ExternalRegisterEnabled', false);
+      showSuccess(t('删除成功'));
+    } catch (error) {
+      showError(t('删除失败'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyExternalRegisterAuthCode = async (authKey) => {
+    if (!authKey) {
+      return;
+    }
+    if (await copy(authKey)) {
+      showSuccess(t('复制成功'));
+    }
+  };
+
+  const maskExternalRegisterAuthKey = (authKey) => {
+    if (!authKey) {
+      return '';
+    }
+    return `${authKey.slice(0, 8)}****${authKey.slice(-6)}`;
+  };
+
+  const copyExternalRegisterUrl = async () => {
+    if (await copy(externalRegisterUrl)) {
+      showSuccess(t('复制成功'));
+    }
+  };
+
   const handleCheckboxChange = async (optionKey, event) => {
     const value = event.target.checked;
+
+    if (
+      optionKey === 'ExternalRegisterEnabled' &&
+      value &&
+      !externalRegisterAuth.configured
+    ) {
+      showError(t('请先生成外部注册鉴权码'));
+      setInputs((prev) => ({
+        ...prev,
+        ExternalRegisterEnabled: false,
+      }));
+      formApiRef.current?.setValue?.('ExternalRegisterEnabled', false);
+      return;
+    }
 
     if (optionKey === 'PasswordLoginEnabled' && !value) {
       setShowPasswordLoginConfirmModal(true);
     } else {
       await updateOptions([{ key: optionKey, value }]);
+      if (optionKey === 'ExternalRegisterEnabled') {
+        setExternalRegisterAuth((prev) => ({
+          ...prev,
+          enabled: value,
+        }));
+      }
     }
     if (optionKey === 'LinuxDOOAuthEnabled') {
       setLinuxDOOAuthEnabled(value);
@@ -1033,6 +1194,15 @@ const SystemSetting = () => {
                       >
                         {t('允许 Turnstile 用户校验')}
                       </Form.Checkbox>
+                      <Form.Checkbox
+                        field='ExternalRegisterEnabled'
+                        noLabel
+                        onChange={(e) =>
+                          handleCheckboxChange('ExternalRegisterEnabled', e)
+                        }
+                      >
+                        {t('允许外部注册接口')}
+                      </Form.Checkbox>
                     </Col>
                     <Col xs={24} sm={24} md={12} lg={12} xl={12}>
                       <Form.Checkbox
@@ -1091,6 +1261,157 @@ const SystemSetting = () => {
                       </Form.Checkbox>
                     </Col>
                   </Row>
+                  <div
+                    style={{
+                      marginTop: 18,
+                      padding: 16,
+                      border: '1px solid var(--semi-color-border)',
+                      borderRadius: 8,
+                      background: 'var(--semi-color-fill-0)',
+                    }}
+                  >
+                    <Row
+                      gutter={{
+                        xs: 8,
+                        sm: 16,
+                        md: 24,
+                        lg: 24,
+                        xl: 24,
+                        xxl: 24,
+                      }}
+                    >
+                      <Col xs={24} sm={24} md={12} lg={12} xl={12}>
+                        <Text strong>{t('外部注册接口')}</Text>
+                        <Text
+                          type='secondary'
+                          style={{ display: 'block', marginTop: 4 }}
+                        >
+                          {t('独立于普通注册开关，允许通过用户名和密码注册；邀请码可选。')}
+                        </Text>
+                        <Text
+                          type='secondary'
+                          style={{ display: 'block', marginTop: 12 }}
+                        >
+                          {t('接口地址')}
+                        </Text>
+                        <Space spacing={8} align='center' wrap>
+                          <Text code style={{ wordBreak: 'break-all' }}>
+                            {externalRegisterUrl}
+                          </Text>
+                          <Button size='small' onClick={copyExternalRegisterUrl}>
+                            {t('复制')}
+                          </Button>
+                        </Space>
+                        <Text
+                          type='secondary'
+                          style={{ display: 'block', marginTop: 8 }}
+                        >
+                          {t('请求头')}：<Text code>Authorization</Text>
+                        </Text>
+                        <Text
+                          type='secondary'
+                          style={{ display: 'block', marginTop: 4 }}
+                        >
+                          {t('请求头值')}：<Text code>Bearer {'<鉴权码>'}</Text>
+                        </Text>
+                      </Col>
+                      <Col xs={24} sm={24} md={12} lg={12} xl={12}>
+                        <Text strong>
+                          {t('鉴权码状态')}：
+                          {externalRegisterAuth.configured
+                            ? t('已配置')
+                            : t('未配置')}
+                        </Text>
+                        <div style={{ marginTop: 10 }}>
+                          {externalRegisterAuth.configured ? (
+                            <div style={{ display: 'grid', gap: 8 }}>
+                              {(externalRegisterAuth.auth_keys || []).map(
+                                (authKey, index) => (
+                                  <Space
+                                    key={authKey}
+                                    spacing={8}
+                                    align='center'
+                                    wrap
+                                  >
+                                    <Text type='secondary'>
+                                      {t('鉴权码')} {index + 1}
+                                    </Text>
+                                    <Text
+                                      code
+                                      style={{ wordBreak: 'break-all' }}
+                                    >
+                                      {visibleExternalRegisterAuthKeys[authKey]
+                                        ? authKey
+                                        : maskExternalRegisterAuthKey(authKey)}
+                                    </Text>
+                                    <Button
+                                      size='small'
+                                      onClick={() =>
+                                        setVisibleExternalRegisterAuthKeys(
+                                          (prev) => ({
+                                            ...prev,
+                                            [authKey]: !prev[authKey],
+                                          }),
+                                        )
+                                      }
+                                    >
+                                      {visibleExternalRegisterAuthKeys[authKey]
+                                        ? t('隐藏')
+                                        : t('查看')}
+                                    </Button>
+                                    <Button
+                                      size='small'
+                                      onClick={() =>
+                                        copyExternalRegisterAuthCode(authKey)
+                                      }
+                                    >
+                                      {t('复制')}
+                                    </Button>
+                                    <Popconfirm
+                                      title={t('确定删除这个外部注册鉴权码？')}
+                                      content={t('删除后使用该鉴权码的调用方将无法注册。')}
+                                      onConfirm={() =>
+                                        deleteExternalRegisterAuthCode(authKey)
+                                      }
+                                    >
+                                      <Button size='small' type='danger'>
+                                        {t('删除')}
+                                      </Button>
+                                    </Popconfirm>
+                                  </Space>
+                                ),
+                              )}
+                            </div>
+                          ) : (
+                            <Text type='tertiary'>--</Text>
+                          )}
+                        </div>
+                        <Space spacing={8} style={{ marginTop: 14 }} wrap>
+                          <Button
+                            theme='solid'
+                            type='primary'
+                            onClick={generateExternalRegisterAuthCode}
+                          >
+                            {externalRegisterAuth.configured
+                              ? t('新增鉴权码')
+                              : t('生成鉴权码')}
+                          </Button>
+                          <Popconfirm
+                            title={t('确定删除全部外部注册鉴权码？')}
+                            content={t('删除全部后外部注册接口将不可用。')}
+                            onConfirm={deleteAllExternalRegisterAuthCodes}
+                          >
+                            <Button
+                              type='danger'
+                              disabled={!externalRegisterAuth.configured}
+                            >
+                              {t('删除全部')}
+                            </Button>
+                          </Popconfirm>
+                        </Space>
+                      </Col>
+                    </Row>
+                  </div>
                 </Form.Section>
               </Card>
 

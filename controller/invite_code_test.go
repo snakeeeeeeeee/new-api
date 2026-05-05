@@ -30,6 +30,8 @@ func setupInviteCodeControllerTestDB(t *testing.T) *gorm.DB {
 	originalRegisterEnabled := common.RegisterEnabled
 	originalPasswordRegisterEnabled := common.PasswordRegisterEnabled
 	originalEmailVerificationEnabled := common.EmailVerificationEnabled
+	originalExternalRegisterEnabled := common.ExternalRegisterEnabled
+	originalExternalRegisterAuthKey := common.ExternalRegisterAuthKey
 	originalGenerateDefaultToken := constant.GenerateDefaultToken
 	originalQuotaForInviter := common.QuotaForInviter
 	originalQuotaForInvitee := common.QuotaForInvitee
@@ -41,6 +43,8 @@ func setupInviteCodeControllerTestDB(t *testing.T) *gorm.DB {
 	common.RegisterEnabled = true
 	common.PasswordRegisterEnabled = true
 	common.EmailVerificationEnabled = false
+	common.ExternalRegisterEnabled = false
+	common.ExternalRegisterAuthKey = ""
 	constant.GenerateDefaultToken = false
 	common.QuotaForInviter = 0
 	common.QuotaForInvitee = 0
@@ -51,7 +55,7 @@ func setupInviteCodeControllerTestDB(t *testing.T) *gorm.DB {
 
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.InviteCode{}, &model.TopUp{}, &model.Token{}, &model.Log{}, &model.UserSubscription{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.InviteCode{}, &model.TopUp{}, &model.Token{}, &model.Log{}, &model.UserSubscription{}, &model.Option{}))
 
 	t.Cleanup(func() {
 		common.UsingSQLite = originalUsingSQLite
@@ -61,6 +65,8 @@ func setupInviteCodeControllerTestDB(t *testing.T) *gorm.DB {
 		common.RegisterEnabled = originalRegisterEnabled
 		common.PasswordRegisterEnabled = originalPasswordRegisterEnabled
 		common.EmailVerificationEnabled = originalEmailVerificationEnabled
+		common.ExternalRegisterEnabled = originalExternalRegisterEnabled
+		common.ExternalRegisterAuthKey = originalExternalRegisterAuthKey
 		constant.GenerateDefaultToken = originalGenerateDefaultToken
 		common.QuotaForInviter = originalQuotaForInviter
 		common.QuotaForInvitee = originalQuotaForInvitee
