@@ -559,6 +559,10 @@ func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.R
 }
 
 func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	if info != nil && info.IsStream {
+		return OpenaiImageStreamHandler(c, info, resp)
+	}
+
 	defer service.CloseResponseBodyGracefully(resp)
 
 	responseBody, err := io.ReadAll(resp.Body)
@@ -570,6 +574,13 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	err = common.Unmarshal(responseBody, &usageResp)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	if oaiError := usageResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+		statusCode := resp.StatusCode
+		if statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices {
+			statusCode = http.StatusInternalServerError
+		}
+		return nil, types.WithOpenAIError(*oaiError, statusCode)
 	}
 
 	// 写入新的 response body
@@ -591,6 +602,61 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	}
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
 	return &usageResp.Usage, nil
+}
+
+func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	if resp == nil || resp.Body == nil {
+		logger.LogError(c, "invalid image stream response or response body")
+		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
+
+	defer service.CloseResponseBodyGracefully(resp)
+
+	usage := &dto.Usage{}
+	completedEventSeen := false
+
+	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+		var event struct {
+			Type  string     `json:"type"`
+			Usage *dto.Usage `json:"usage"`
+		}
+		if err := common.UnmarshalJsonStr(data, &event); err != nil {
+			logger.LogError(c, "failed to unmarshal image stream response: "+err.Error())
+			if err := helper.StringData(c, data); err != nil {
+				logger.LogError(c, "image stream write failed: "+err.Error())
+				return false
+			}
+			return true
+		}
+
+		if err := sendImageStreamData(c, event.Type, data); err != nil {
+			logger.LogError(c, "image stream write failed: "+err.Error())
+			return false
+		}
+
+		if event.Type == "image_generation.completed" || event.Type == "image_edit.completed" {
+			completedEventSeen = true
+		}
+		if event.Usage != nil {
+			usage = event.Usage
+		}
+		return true
+	})
+	helper.Done(c)
+
+	if completedEventSeen && service.ValidUsage(usage) {
+		return usage, nil
+	}
+	return usage, nil
+}
+
+func sendImageStreamData(c *gin.Context, eventType string, data string) error {
+	if eventType == "" {
+		return helper.StringData(c, data)
+	}
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", eventType)})
+	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", data)})
+	return helper.FlushWriter(c)
 }
 
 func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, responseBody []byte) {

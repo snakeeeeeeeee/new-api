@@ -36,6 +36,7 @@ export default function SettingsPaymentGateway(props) {
     PayAddress: '',
     EpayId: '',
     EpayKey: '',
+    PayServerInternalToken: '',
     Price: 7.3,
     MinTopUp: 1,
     TopupGroupRatio: '',
@@ -53,6 +54,7 @@ export default function SettingsPaymentGateway(props) {
         PayAddress: props.options.PayAddress || '',
         EpayId: props.options.EpayId || '',
         EpayKey: props.options.EpayKey || '',
+        PayServerInternalToken: props.options.PayServerInternalToken || '',
         Price:
           props.options.Price !== undefined
             ? parseFloat(props.options.Price)
@@ -150,6 +152,15 @@ export default function SettingsPaymentGateway(props) {
       if (inputs.EpayKey !== undefined && inputs.EpayKey !== '') {
         options.push({ key: 'EpayKey', value: inputs.EpayKey });
       }
+      if (
+        inputs.PayServerInternalToken !== undefined &&
+        inputs.PayServerInternalToken !== ''
+      ) {
+        options.push({
+          key: 'PayServerInternalToken',
+          value: inputs.PayServerInternalToken,
+        });
+      }
       if (inputs.Price !== '') {
         options.push({ key: 'Price', value: inputs.Price.toString() });
       }
@@ -242,6 +253,14 @@ export default function SettingsPaymentGateway(props) {
                 field='EpayKey'
                 label={t('易支付商户密钥')}
                 placeholder={t('敏感信息不会发送到前端显示')}
+                type='password'
+              />
+            </Col>
+            <Col xs={24} sm={24} md={8} lg={8} xl={8}>
+              <Form.Input
+                field='PayServerInternalToken'
+                label={t('Pay Server 服务令牌')}
+                placeholder={t('用于 /api/v1/orders 的 x-service-token')}
                 type='password'
               />
             </Col>

@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -20,15 +21,29 @@ var (
 )
 
 type TopUp struct {
-	Id            int     `json:"id"`
-	UserId        int     `json:"user_id" gorm:"index"`
-	Amount        int64   `json:"amount"`
-	Money         float64 `json:"money"`
-	TradeNo       string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod string  `json:"payment_method" gorm:"type:varchar(50)"`
-	CreateTime    int64   `json:"create_time"`
-	CompleteTime  int64   `json:"complete_time"`
-	Status        string  `json:"status"`
+	Id                       int     `json:"id"`
+	UserId                   int     `json:"user_id" gorm:"index"`
+	Amount                   int64   `json:"amount"`
+	Money                    float64 `json:"money"`
+	TradeNo                  string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod            string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PayServerOrderId         string  `json:"pay_server_order_id,omitempty" gorm:"type:varchar(64);index"`
+	PayServerTradeNo         string  `json:"pay_server_trade_no,omitempty" gorm:"type:varchar(64);index"`
+	ExternalOrderNo          *string `json:"external_order_no,omitempty" gorm:"type:varchar(255);uniqueIndex"`
+	ExternalCallbackURL      string  `json:"external_callback_url,omitempty" gorm:"type:text"`
+	ExternalCallbackStatus   string  `json:"external_callback_status,omitempty" gorm:"type:varchar(32)"`
+	ExternalCallbackTime     int64   `json:"external_callback_time,omitempty"`
+	ExternalCallbackResponse string  `json:"external_callback_response,omitempty" gorm:"type:text"`
+	ExternalPaymentData      string  `json:"external_payment_data,omitempty" gorm:"type:text"`
+	CreateTime               int64   `json:"create_time"`
+	CompleteTime             int64   `json:"complete_time"`
+	Status                   string  `json:"status"`
+}
+
+type CompletedTopUp struct {
+	TopUp      *TopUp
+	QuotaToAdd int
+	Updated    bool
 }
 
 func (topUp *TopUp) Insert() error {
@@ -147,6 +162,112 @@ func Recharge(referenceId string, customerId string) (err error) {
 	}
 
 	return nil
+}
+
+func CompleteEpayTopUp(referenceId string, payServerTradeNo string) (*CompletedTopUp, error) {
+	if referenceId == "" {
+		return nil, errors.New("未提供支付单号")
+	}
+
+	result := &CompletedTopUp{
+		TopUp: &TopUp{},
+	}
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := loadTopUpForUpdateTx(tx, referenceId, result.TopUp); err != nil {
+			if errors.Is(err, ErrTopUpNotFound) {
+				return errors.New("充值订单不存在")
+			}
+			return err
+		}
+
+		if result.TopUp.Status == common.TopUpStatusSuccess {
+			return nil
+		}
+		if result.TopUp.Status != common.TopUpStatusPending {
+			return errors.New("充值订单状态错误")
+		}
+
+		dAmount := decimal.NewFromInt(result.TopUp.Amount)
+		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+		result.QuotaToAdd = int(dAmount.Mul(dQuotaPerUnit).IntPart())
+		if result.QuotaToAdd <= 0 {
+			return errors.New("无效的充值额度")
+		}
+
+		result.TopUp.CompleteTime = common.GetTimestamp()
+		result.TopUp.Status = common.TopUpStatusSuccess
+		if payServerTradeNo != "" {
+			result.TopUp.PayServerTradeNo = payServerTradeNo
+		}
+		if err := tx.Save(result.TopUp).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&User{}).Where("id = ?", result.TopUp.UserId).Update("quota", gorm.Expr("quota + ?", result.QuotaToAdd)).Error; err != nil {
+			return err
+		}
+
+		result.Updated = true
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if result.Updated {
+		_ = cacheIncrUserQuota(result.TopUp.UserId, int64(result.QuotaToAdd))
+		RecordLog(result.TopUp.UserId, LogTypeTopup, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(result.QuotaToAdd), result.TopUp.Money))
+	}
+	return result, nil
+}
+
+func GetTopUpByExternalOrderNo(externalOrderNo string) *TopUp {
+	externalOrderNo = strings.TrimSpace(externalOrderNo)
+	if externalOrderNo == "" {
+		return nil
+	}
+	var topUp TopUp
+	err := DB.Where("external_order_no = ?", externalOrderNo).First(&topUp).Error
+	if err != nil {
+		return nil
+	}
+	return &topUp
+}
+
+func (topUp *TopUp) GetExternalOrderNo() string {
+	if topUp == nil || topUp.ExternalOrderNo == nil {
+		return ""
+	}
+	return *topUp.ExternalOrderNo
+}
+
+func UpdateTopUpPayServerInfo(tradeNo string, payServerOrderId string, payServerTradeNo string) error {
+	if tradeNo == "" {
+		return errors.New("未提供订单号")
+	}
+	updates := map[string]interface{}{}
+	if payServerOrderId != "" {
+		updates["pay_server_order_id"] = payServerOrderId
+	}
+	if payServerTradeNo != "" {
+		updates["pay_server_trade_no"] = payServerTradeNo
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return DB.Model(&TopUp{}).Where(topUpTradeNoColumn()+" = ?", tradeNo).Updates(updates).Error
+}
+
+func UpdateExternalCallbackResult(tradeNo string, status string, response string) error {
+	if tradeNo == "" {
+		return errors.New("未提供订单号")
+	}
+	return DB.Model(&TopUp{}).Where(topUpTradeNoColumn()+" = ?", tradeNo).Updates(map[string]interface{}{
+		"external_callback_status":   status,
+		"external_callback_time":     common.GetTimestamp(),
+		"external_callback_response": response,
+	}).Error
 }
 
 func RechargeStripe(referenceId string, customerId string) error {

@@ -34,6 +34,7 @@ const PaymentSetting = () => {
     PayAddress: '',
     EpayId: '',
     EpayKey: '',
+    PayServerInternalToken: '',
     Price: 7.3,
     MinTopUp: 1,
     TopupGroupRatio: '',

@@ -46,6 +46,9 @@ func InitOptionMap() {
 	common.OptionMap["RegisterEnabled"] = strconv.FormatBool(common.RegisterEnabled)
 	common.OptionMap["ExternalRegisterEnabled"] = strconv.FormatBool(common.ExternalRegisterEnabled)
 	common.OptionMap["ExternalRegisterAuthKey"] = common.ExternalRegisterAuthKey
+	common.OptionMap["ExternalTopupEnabled"] = strconv.FormatBool(common.ExternalTopupEnabled)
+	common.OptionMap["ExternalTopupAuthKey"] = common.ExternalTopupAuthKey
+	common.OptionMap["ExternalTopupCallbackSecret"] = common.ExternalTopupCallbackSecret
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
@@ -80,6 +83,7 @@ func InitOptionMap() {
 	common.OptionMap["CustomCallbackAddress"] = ""
 	common.OptionMap["EpayId"] = ""
 	common.OptionMap["EpayKey"] = ""
+	common.OptionMap["PayServerInternalToken"] = ""
 	common.OptionMap["Price"] = strconv.FormatFloat(operation_setting.Price, 'f', -1, 64)
 	common.OptionMap["USDExchangeRate"] = strconv.FormatFloat(operation_setting.USDExchangeRate, 'f', -1, 64)
 	common.OptionMap["MinTopUp"] = strconv.Itoa(operation_setting.MinTopUp)
@@ -284,6 +288,8 @@ func updateOptionMap(key string, value string) (err error) {
 			common.RegisterEnabled = boolValue
 		case "ExternalRegisterEnabled":
 			common.ExternalRegisterEnabled = boolValue
+		case "ExternalTopupEnabled":
+			common.ExternalTopupEnabled = boolValue
 		case "EmailDomainRestrictionEnabled":
 			common.EmailDomainRestrictionEnabled = boolValue
 		case "EmailAliasRestrictionEnabled":
@@ -389,6 +395,8 @@ func updateOptionMap(key string, value string) (err error) {
 		operation_setting.EpayId = value
 	case "EpayKey":
 		operation_setting.EpayKey = value
+	case "PayServerInternalToken":
+		operation_setting.PayServerInternalToken = value
 	case "Price":
 		operation_setting.Price, _ = strconv.ParseFloat(value, 64)
 	case "USDExchangeRate":
@@ -479,6 +487,10 @@ func updateOptionMap(key string, value string) (err error) {
 		common.TurnstileSecretKey = value
 	case "ExternalRegisterAuthKey":
 		common.ExternalRegisterAuthKey = strings.TrimSpace(value)
+	case "ExternalTopupAuthKey":
+		common.ExternalTopupAuthKey = strings.TrimSpace(value)
+	case "ExternalTopupCallbackSecret":
+		common.ExternalTopupCallbackSecret = strings.TrimSpace(value)
 	case "QuotaForNewUser":
 		common.QuotaForNewUser, _ = strconv.Atoi(value)
 	case "QuotaForInviter":

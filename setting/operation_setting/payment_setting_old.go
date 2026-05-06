@@ -13,6 +13,7 @@ var PayAddress = ""
 var CustomCallbackAddress = ""
 var EpayId = ""
 var EpayKey = ""
+var PayServerInternalToken = ""
 var Price = 7.3
 var MinTopUp = 1
 var USDExchangeRate = 7.3

@@ -26,8 +26,8 @@ type ImageRequest struct {
 	OutputFormat      json.RawMessage `json:"output_format,omitempty"`
 	OutputCompression json.RawMessage `json:"output_compression,omitempty"`
 	PartialImages     json.RawMessage `json:"partial_images,omitempty"`
-	// Stream            bool            `json:"stream,omitempty"`
-	Watermark *bool `json:"watermark,omitempty"`
+	Stream            *bool           `json:"stream,omitempty"`
+	Watermark         *bool           `json:"watermark,omitempty"`
 	// zhipu 4v
 	WatermarkEnabled json.RawMessage `json:"watermark_enabled,omitempty"`
 	UserId           json.RawMessage `json:"user_id,omitempty"`
@@ -161,7 +161,10 @@ func (i *ImageRequest) GetTokenCountMeta() *types.TokenCountMeta {
 }
 
 func (i *ImageRequest) IsStream(c *gin.Context) bool {
-	return false
+	if i.Stream == nil {
+		return false
+	}
+	return *i.Stream
 }
 
 func (i *ImageRequest) SetModelName(modelName string) {

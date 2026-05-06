@@ -58,6 +58,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			userRoute.POST("/register", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Register)
 			userRoute.POST("/external_register", middleware.CriticalRateLimit(), controller.ExternalRegister)
+			userRoute.POST("/external_topup", middleware.CriticalRateLimit(), controller.ExternalTopUp)
 			userRoute.POST("/login", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Login)
 			userRoute.POST("/login/2fa", middleware.CriticalRateLimit(), controller.Verify2FALogin)
 			userRoute.POST("/passkey/login/begin", middleware.CriticalRateLimit(), controller.PasskeyLoginBegin)
@@ -182,6 +183,10 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.POST("/external_register_auth_code", controller.GenerateExternalRegisterAuthCode)
 			optionRoute.DELETE("/external_register_auth_code", controller.DeleteExternalRegisterAuthCode)
 			optionRoute.DELETE("/external_register_auth_codes", controller.DeleteAllExternalRegisterAuthCodes)
+			optionRoute.GET("/external_topup_auth_code", controller.GetExternalTopupAuthCode)
+			optionRoute.POST("/external_topup_auth_code", controller.GenerateExternalTopupAuthCode)
+			optionRoute.DELETE("/external_topup_auth_code", controller.DeleteExternalTopupAuthCode)
+			optionRoute.DELETE("/external_topup_auth_codes", controller.DeleteAllExternalTopupAuthCodes)
 			optionRoute.GET("/channel_affinity_cache", controller.GetChannelAffinityCacheStats)
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)

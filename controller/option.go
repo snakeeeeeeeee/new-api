@@ -145,6 +145,14 @@ func encodeExternalRegisterAuthKeys(authKeys []string) (string, error) {
 	return string(data), nil
 }
 
+func parseExternalTopupAuthKeys(raw string) []string {
+	return parseExternalRegisterAuthKeys(raw)
+}
+
+func encodeExternalTopupAuthKeys(authKeys []string) (string, error) {
+	return encodeExternalRegisterAuthKeys(authKeys)
+}
+
 func externalRegisterAuthCodeResponse(enabled bool, authKeys []string) gin.H {
 	authKeys = normalizeExternalRegisterAuthKeys(authKeys)
 	authKey := ""
@@ -156,6 +164,21 @@ func externalRegisterAuthCodeResponse(enabled bool, authKeys []string) gin.H {
 		"configured": len(authKeys) > 0,
 		"auth_key":   authKey,
 		"auth_keys":  authKeys,
+	}
+}
+
+func externalTopupAuthCodeResponse(enabled bool, authKeys []string) gin.H {
+	authKeys = normalizeExternalRegisterAuthKeys(authKeys)
+	authKey := ""
+	if len(authKeys) > 0 {
+		authKey = authKeys[len(authKeys)-1]
+	}
+	return gin.H{
+		"enabled":         enabled,
+		"configured":      len(authKeys) > 0,
+		"auth_key":        authKey,
+		"auth_keys":       authKeys,
+		"callback_secret": common.ExternalTopupCallbackSecret,
 	}
 }
 
@@ -280,6 +303,130 @@ func DeleteAllExternalRegisterAuthCodes(c *gin.Context) {
 	})
 }
 
+func GetExternalTopupAuthCode(c *gin.Context) {
+	common.OptionMapRWMutex.RLock()
+	authKeys := parseExternalTopupAuthKeys(common.OptionMap["ExternalTopupAuthKey"])
+	enabled := common.OptionMap["ExternalTopupEnabled"] == "true"
+	common.OptionMapRWMutex.RUnlock()
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    externalTopupAuthCodeResponse(enabled, authKeys),
+	})
+}
+
+func GenerateExternalTopupAuthCode(c *gin.Context) {
+	authKey, err := common.GenerateRandomCharsKey(48)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgGenerateFailed)
+		common.SysLog("failed to generate external topup auth key: " + err.Error())
+		return
+	}
+	common.OptionMapRWMutex.RLock()
+	authKeys := parseExternalTopupAuthKeys(common.OptionMap["ExternalTopupAuthKey"])
+	callbackSecret := strings.TrimSpace(common.OptionMap["ExternalTopupCallbackSecret"])
+	common.OptionMapRWMutex.RUnlock()
+	authKeys = append(authKeys, authKey)
+	authKeysValue, err := encodeExternalTopupAuthKeys(authKeys)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if callbackSecret == "" {
+		callbackSecret, err = common.GenerateRandomCharsKey(48)
+		if err != nil {
+			common.ApiErrorI18n(c, i18n.MsgGenerateFailed)
+			common.SysLog("failed to generate external topup callback secret: " + err.Error())
+			return
+		}
+		if err := model.UpdateOption("ExternalTopupCallbackSecret", callbackSecret); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	if err := model.UpdateOption("ExternalTopupAuthKey", authKeysValue); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.UpdateOption("ExternalTopupEnabled", "true"); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    externalTopupAuthCodeResponse(true, authKeys),
+	})
+}
+
+func DeleteExternalTopupAuthCode(c *gin.Context) {
+	targetAuthKey := strings.TrimSpace(c.Query("auth_key"))
+	if targetAuthKey == "" && c.Request.Body != nil {
+		var req deleteExternalRegisterAuthCodeRequest
+		if err := common.DecodeJson(c.Request.Body, &req); err == nil {
+			targetAuthKey = strings.TrimSpace(req.AuthKey)
+		}
+	}
+	common.OptionMapRWMutex.RLock()
+	authKeys := parseExternalTopupAuthKeys(common.OptionMap["ExternalTopupAuthKey"])
+	common.OptionMapRWMutex.RUnlock()
+	if targetAuthKey == "" {
+		authKeys = nil
+	} else {
+		filtered := make([]string, 0, len(authKeys))
+		for _, authKey := range authKeys {
+			if authKey != targetAuthKey {
+				filtered = append(filtered, authKey)
+			}
+		}
+		authKeys = filtered
+	}
+
+	authKeysValue, err := encodeExternalTopupAuthKeys(authKeys)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.UpdateOption("ExternalTopupAuthKey", authKeysValue); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	enabled := len(authKeys) > 0
+	if !enabled {
+		if err := model.UpdateOption("ExternalTopupEnabled", "false"); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	if enabled {
+		common.OptionMapRWMutex.RLock()
+		enabled = common.OptionMap["ExternalTopupEnabled"] == "true"
+		common.OptionMapRWMutex.RUnlock()
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    externalTopupAuthCodeResponse(enabled, authKeys),
+	})
+}
+
+func DeleteAllExternalTopupAuthCodes(c *gin.Context) {
+	if err := model.UpdateOption("ExternalTopupAuthKey", ""); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := model.UpdateOption("ExternalTopupEnabled", "false"); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    externalTopupAuthCodeResponse(false, nil),
+	})
+}
+
 type OptionUpdateRequest struct {
 	Key   string `json:"key"`
 	Value any    `json:"value"`
@@ -305,8 +452,8 @@ func UpdateOption(c *gin.Context) {
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
 	}
-	if option.Key == "ExternalRegisterAuthKey" {
-		common.ApiErrorMsg(c, "请使用外部注册鉴权码专用接口管理")
+	if option.Key == "ExternalRegisterAuthKey" || option.Key == "ExternalTopupAuthKey" {
+		common.ApiErrorMsg(c, "请使用专用接口管理外部鉴权码")
 		return
 	}
 	switch option.Key {

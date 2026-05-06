@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -77,6 +79,21 @@ func TestConvertImageRequestKeepsResponseFormatForNonGPTImage(t *testing.T) {
 	require.Equal(t, "b64_json", imageRequest.ResponseFormat)
 }
 
+func TestImageRequestIsStreamPreservesExplicitStream(t *testing.T) {
+	t.Parallel()
+
+	stream := true
+	request := dto.ImageRequest{Stream: &stream}
+	require.True(t, request.IsStream(nil))
+
+	stream = false
+	request = dto.ImageRequest{Stream: &stream}
+	require.False(t, request.IsStream(nil))
+
+	request = dto.ImageRequest{}
+	require.False(t, request.IsStream(nil))
+}
+
 func TestDoResponseWithoutImageAdapterKeepsOpenAIImageResponse(t *testing.T) {
 	t.Parallel()
 
@@ -106,6 +123,114 @@ func TestDoResponseWithoutImageAdapterKeepsOpenAIImageResponse(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 46, usage.TotalTokens)
 	require.Equal(t, body, recorder.Body.String())
+}
+
+func TestDoResponseWithoutImageAdapterTreatsOpenAIErrorBodyAsFailure(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+
+	body := `{"error":{"message":"stream disconnected before completion","type":"server_error","code":"internal_server_error"}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:          constant.ChannelTypeOpenAI,
+			ChannelOtherSettings: dto.ChannelOtherSettings{},
+		},
+	}
+
+	usageAny, err := adaptor.DoResponse(ctx, resp, info)
+	require.Nil(t, usageAny)
+	require.NotNil(t, err)
+	require.Equal(t, http.StatusInternalServerError, err.StatusCode)
+	require.Equal(t, types.ErrorCode("internal_server_error"), err.GetErrorCode())
+	require.Equal(t, "stream disconnected before completion", err.ToOpenAIError().Message)
+	require.Empty(t, recorder.Body.String())
+}
+
+func TestDoResponseWithoutImageAdapterKeepsLargeBase64ImageResponse(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+
+	largeB64 := strings.Repeat("A", 11<<20)
+	body := `{"created":1776956476,"data":[{"b64_json":"` + largeB64 + `","revised_prompt":"prompt-a"}],"usage":{"input_tokens":12,"output_tokens":34,"total_tokens":46}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:          constant.ChannelTypeOpenAI,
+			ChannelOtherSettings: dto.ChannelOtherSettings{},
+		},
+	}
+
+	usageAny, err := adaptor.DoResponse(ctx, resp, info)
+	require.Nil(t, err)
+
+	usage, ok := usageAny.(*dto.Usage)
+	require.True(t, ok)
+	require.Equal(t, 46, usage.TotalTokens)
+	require.Equal(t, len(body), recorder.Body.Len())
+	require.Equal(t, strconv.Itoa(len(body)), recorder.Header().Get("Content-Length"))
+	require.Equal(t, body[:128], recorder.Body.String()[:128])
+	require.Equal(t, body[len(body)-128:], recorder.Body.String()[recorder.Body.Len()-128:])
+}
+
+func TestDoResponseWithImageStreamPassesThroughSSEAndExtractsUsage(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+
+	body := "data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"abc\"}\n\n" +
+		"data: {\"type\":\"image_generation.completed\",\"b64_json\":\"def\",\"usage\":{\"input_tokens\":12,\"output_tokens\":34,\"total_tokens\":46}}\n\n" +
+		"data: [DONE]\n\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		IsStream:  true,
+		RelayMode: relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:          constant.ChannelTypeOpenAI,
+			ChannelOtherSettings: dto.ChannelOtherSettings{},
+		},
+	}
+
+	usageAny, err := adaptor.DoResponse(ctx, resp, info)
+	require.Nil(t, err)
+
+	usage, ok := usageAny.(*dto.Usage)
+	require.True(t, ok)
+	require.Equal(t, 46, usage.TotalTokens)
+	require.Equal(t, 12, usage.InputTokens)
+	require.Equal(t, 34, usage.OutputTokens)
+	require.Contains(t, recorder.Body.String(), "event: image_generation.partial_image")
+	require.Contains(t, recorder.Body.String(), "data: {\"type\":\"image_generation.partial_image\"")
+	require.Contains(t, recorder.Body.String(), "event: image_generation.completed")
+	require.Contains(t, recorder.Body.String(), "data: {\"type\":\"image_generation.completed\"")
+	require.Contains(t, recorder.Body.String(), "data: [DONE]")
+	require.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
 }
 
 func TestDoResponseWithCPAImageAdapterPreservesStandardImageResponse(t *testing.T) {
