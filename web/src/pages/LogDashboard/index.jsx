@@ -59,7 +59,7 @@ const TREND_MODE_OPTIONS = [
 const LATENCY_MODE_OPTIONS = [
   { key: 'channel', label: '渠道耗时' },
   { key: 'group', label: '分组耗时' },
-  { key: 'channel_model', label: '渠道模型' },
+  { key: 'channel_model', label: '模型耗时' },
 ];
 
 const CHART_CONFIG = { mode: 'desktop-browser' };
@@ -118,7 +118,7 @@ const LogDashboardPage = () => {
   const [selectedLatencyChannel, setSelectedLatencyChannel] = useState('all');
   const [selectedLatencyGroup, setSelectedLatencyGroup] = useState('all');
   const [selectedLatencyModelChannel, setSelectedLatencyModelChannel] =
-    useState(undefined);
+    useState('all');
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -319,10 +319,23 @@ const LogDashboardPage = () => {
     ];
   }, [latencyData.channel_models, latencyData.channels, t]);
 
-  const latencyModelChannelOptions = useMemo(
-    () => latencyChannelOptions.filter((option) => option.value !== 'all'),
-    [latencyChannelOptions],
-  );
+  const latencyModelChannelOptions = useMemo(() => {
+    const channelMap = new Map();
+    (latencyData.channel_models || []).forEach((item) => {
+      if (item.channel_id) {
+        channelMap.set(String(item.channel_id), {
+          value: String(item.channel_id),
+          label: `${item.channel_name || `channel#${item.channel_id}`} · channel#${item.channel_id}`,
+        });
+      }
+    });
+    return [
+      { value: 'all', label: t('全部渠道') },
+      ...Array.from(channelMap.values()).sort((a, b) =>
+        String(a.label).localeCompare(String(b.label)),
+      ),
+    ];
+  }, [latencyData.channel_models, t]);
 
   const latencyGroupOptions = useMemo(() => {
     const groups = visibleLatencyGroups.map((item) => ({
@@ -356,19 +369,13 @@ const LogDashboardPage = () => {
   }, [latencyGroupOptions, selectedLatencyGroup]);
 
   useEffect(() => {
-    if (latencyModelChannelOptions.length === 0) {
-      if (selectedLatencyModelChannel !== undefined) {
-        setSelectedLatencyModelChannel(undefined);
-      }
-      return;
-    }
     if (
-      !selectedLatencyModelChannel ||
+      selectedLatencyModelChannel !== 'all' &&
       !latencyModelChannelOptions.some(
         (option) => option.value === selectedLatencyModelChannel,
       )
     ) {
-      setSelectedLatencyModelChannel(latencyModelChannelOptions[0].value);
+      setSelectedLatencyModelChannel('all');
     }
   }, [latencyModelChannelOptions, selectedLatencyModelChannel]);
 
@@ -389,7 +396,11 @@ const LogDashboardPage = () => {
       }
       return rows.filter((item) => (item.group_name || '-') === selectedLatencyGroup);
     }
-    return (latencyData.channel_models || []).filter(
+    const rows = latencyData.channel_models || [];
+    if (selectedLatencyModelChannel === 'all') {
+      return rows;
+    }
+    return rows.filter(
       (item) => String(item.channel_id) === String(selectedLatencyModelChannel),
     );
   }, [
@@ -420,12 +431,17 @@ const LogDashboardPage = () => {
       if (activeLatencyTab === 'group') {
         return record.group_name || '-';
       }
+      if (selectedLatencyModelChannel === 'all') {
+        const channelName = record.channel_name || `channel#${record.channel_id}`;
+        return `${record.model_name || '-'} · ${channelName}`;
+      }
       return record.model_name || '-';
     };
 
     const values = latencyTopRows
       .map((item) => ({
         name: getLatencyRowName(item),
+        channel: item.channel_name || `channel#${item.channel_id}`,
         p95: Number(item.p95_use_time_seconds || 0),
         request_count: item.request_count || 0,
         average: Number(item.average_use_time_seconds || 0),
@@ -446,7 +462,10 @@ const LogDashboardPage = () => {
       title: {
         visible: true,
         text: t('P95耗时 Top 10'),
-        subtext: t('仅统计最终成功请求'),
+        subtext:
+          activeLatencyTab === 'channel_model'
+            ? t('同名模型按渠道分别统计')
+            : t('仅统计最终成功请求'),
       },
       axes: [
         {
@@ -471,6 +490,14 @@ const LogDashboardPage = () => {
               key: t('平均耗时'),
               value: (datum) => formatUseTime(datum.average),
             },
+            ...(activeLatencyTab === 'channel_model'
+              ? [
+                  {
+                    key: t('渠道'),
+                    value: (datum) => datum.channel,
+                  },
+                ]
+              : []),
             {
               key: t('成功请求数'),
               value: (datum) => renderNumber(datum.request_count || 0),
@@ -479,7 +506,7 @@ const LogDashboardPage = () => {
         },
       },
     };
-  }, [activeLatencyTab, latencyTopRows, t]);
+  }, [activeLatencyTab, latencyTopRows, selectedLatencyModelChannel, t]);
 
   const channelColumns = useMemo(
     () => [
@@ -913,7 +940,6 @@ const LogDashboardPage = () => {
                   size='small'
                   value={selectedLatencyModelChannel}
                   optionList={latencyModelChannelOptions}
-                  placeholder={t('选择渠道')}
                   onChange={setSelectedLatencyModelChannel}
                   style={{ minWidth: 240 }}
                   filter
