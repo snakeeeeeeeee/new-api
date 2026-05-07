@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { API, renderNumber, showError } from '../../helpers';
+import { API, isHiddenGroup, renderNumber, showError } from '../../helpers';
 import { useTranslation } from 'react-i18next';
 import { initVChartSemiTheme } from '@visactor/vchart-semi-theme';
 import { VChart } from '@visactor/react-vchart';
@@ -34,6 +34,7 @@ import {
   Button,
   Card,
   Empty,
+  Select,
   Space,
   TabPane,
   Tabs,
@@ -53,6 +54,12 @@ const TREND_MODE_OPTIONS = [
   { key: 'overall', label: '整体' },
   { key: 'group', label: '分组' },
   { key: 'channel', label: '渠道' },
+];
+
+const LATENCY_MODE_OPTIONS = [
+  { key: 'channel', label: '渠道耗时' },
+  { key: 'group', label: '分组耗时' },
+  { key: 'channel_model', label: '渠道模型' },
 ];
 
 const AUTO_REFRESH_MS = 60 * 1000;
@@ -105,6 +112,11 @@ const LogDashboardPage = () => {
   const [activeWindow, setActiveWindow] = useState('1h');
   const [activeTrendMode, setActiveTrendMode] = useState('overall');
   const [activeStatsTab, setActiveStatsTab] = useState('channel');
+  const [activeLatencyTab, setActiveLatencyTab] = useState('channel');
+  const [selectedLatencyChannel, setSelectedLatencyChannel] = useState('all');
+  const [selectedLatencyGroup, setSelectedLatencyGroup] = useState('all');
+  const [selectedLatencyModelChannel, setSelectedLatencyModelChannel] =
+    useState(undefined);
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -265,6 +277,205 @@ const LogDashboardPage = () => {
       t('按渠道尝试统计各渠道随时间变化'),
     );
   }, [activeTrendMode, dashboard?.channel_trend, t]);
+
+  const latencyData = dashboard?.latency || {
+    channels: [],
+    groups: [],
+    channel_models: [],
+  };
+  const visibleLatencyGroups = useMemo(
+    () =>
+      (latencyData.groups || []).filter(
+        (item) => !isHiddenGroup(item.group_name || '-'),
+      ),
+    [latencyData.groups],
+  );
+
+  const latencyChannelOptions = useMemo(() => {
+    const channelMap = new Map();
+    (latencyData.channels || []).forEach((item) => {
+      if (item.channel_id) {
+        channelMap.set(String(item.channel_id), {
+          value: String(item.channel_id),
+          label: `${item.channel_name || `channel#${item.channel_id}`} · channel#${item.channel_id}`,
+        });
+      }
+    });
+    (latencyData.channel_models || []).forEach((item) => {
+      if (item.channel_id && !channelMap.has(String(item.channel_id))) {
+        channelMap.set(String(item.channel_id), {
+          value: String(item.channel_id),
+          label: `${item.channel_name || `channel#${item.channel_id}`} · channel#${item.channel_id}`,
+        });
+      }
+    });
+    return [
+      { value: 'all', label: t('全部渠道') },
+      ...Array.from(channelMap.values()).sort((a, b) =>
+        String(a.label).localeCompare(String(b.label)),
+      ),
+    ];
+  }, [latencyData.channel_models, latencyData.channels, t]);
+
+  const latencyModelChannelOptions = useMemo(
+    () => latencyChannelOptions.filter((option) => option.value !== 'all'),
+    [latencyChannelOptions],
+  );
+
+  const latencyGroupOptions = useMemo(() => {
+    const groups = visibleLatencyGroups.map((item) => ({
+      value: item.group_name || '-',
+      label: item.is_aggregate_group
+        ? `${item.group_name || '-'} · ${t('聚合')}`
+        : item.group_name || '-',
+    }));
+    return [
+      { value: 'all', label: t('全部分组') },
+      ...groups.sort((a, b) => String(a.label).localeCompare(String(b.label))),
+    ];
+  }, [t, visibleLatencyGroups]);
+
+  useEffect(() => {
+    if (
+      selectedLatencyChannel !== 'all' &&
+      !latencyChannelOptions.some((option) => option.value === selectedLatencyChannel)
+    ) {
+      setSelectedLatencyChannel('all');
+    }
+  }, [latencyChannelOptions, selectedLatencyChannel]);
+
+  useEffect(() => {
+    if (
+      selectedLatencyGroup !== 'all' &&
+      !latencyGroupOptions.some((option) => option.value === selectedLatencyGroup)
+    ) {
+      setSelectedLatencyGroup('all');
+    }
+  }, [latencyGroupOptions, selectedLatencyGroup]);
+
+  useEffect(() => {
+    if (latencyModelChannelOptions.length === 0) {
+      if (selectedLatencyModelChannel !== undefined) {
+        setSelectedLatencyModelChannel(undefined);
+      }
+      return;
+    }
+    if (
+      !selectedLatencyModelChannel ||
+      !latencyModelChannelOptions.some(
+        (option) => option.value === selectedLatencyModelChannel,
+      )
+    ) {
+      setSelectedLatencyModelChannel(latencyModelChannelOptions[0].value);
+    }
+  }, [latencyModelChannelOptions, selectedLatencyModelChannel]);
+
+  const currentLatencyRows = useMemo(() => {
+    if (activeLatencyTab === 'channel') {
+      const rows = latencyData.channels || [];
+      if (selectedLatencyChannel === 'all') {
+        return rows;
+      }
+      return rows.filter(
+        (item) => String(item.channel_id) === String(selectedLatencyChannel),
+      );
+    }
+    if (activeLatencyTab === 'group') {
+      const rows = visibleLatencyGroups;
+      if (selectedLatencyGroup === 'all') {
+        return rows;
+      }
+      return rows.filter((item) => (item.group_name || '-') === selectedLatencyGroup);
+    }
+    return (latencyData.channel_models || []).filter(
+      (item) => String(item.channel_id) === String(selectedLatencyModelChannel),
+    );
+  }, [
+    activeLatencyTab,
+    latencyData.channel_models,
+    latencyData.channels,
+    selectedLatencyChannel,
+    selectedLatencyGroup,
+    selectedLatencyModelChannel,
+    visibleLatencyGroups,
+  ]);
+
+  const latencyTopRows = useMemo(
+    () => [...currentLatencyRows].slice(0, 10),
+    [currentLatencyRows],
+  );
+
+  const latencyTableRows = useMemo(
+    () => [...currentLatencyRows].slice(0, 20),
+    [currentLatencyRows],
+  );
+
+  const latencyChartSpec = useMemo(() => {
+    const getLatencyRowName = (record) => {
+      if (activeLatencyTab === 'channel') {
+        return record.channel_name || `channel#${record.channel_id}`;
+      }
+      if (activeLatencyTab === 'group') {
+        return record.group_name || '-';
+      }
+      return record.model_name || '-';
+    };
+
+    const values = latencyTopRows
+      .map((item) => ({
+        name: getLatencyRowName(item),
+        p95: Number(item.p95_use_time_seconds || 0),
+        request_count: item.request_count || 0,
+        average: Number(item.average_use_time_seconds || 0),
+      }))
+      .reverse();
+
+    return {
+      type: 'bar',
+      direction: 'horizontal',
+      data: [
+        {
+          id: 'log-dashboard-latency-p95',
+          values,
+        },
+      ],
+      xField: 'p95',
+      yField: 'name',
+      title: {
+        visible: true,
+        text: t('P95耗时 Top 10'),
+        subtext: t('仅统计最终成功请求'),
+      },
+      axes: [
+        { orient: 'bottom', type: 'linear', title: { visible: true, text: t('秒') } },
+        { orient: 'left', type: 'band', label: { visible: true } },
+      ],
+      label: {
+        visible: true,
+        position: 'right',
+        formatter: (datum) => formatUseTime(datum.p95),
+      },
+      color: ['#3b82f6'],
+      tooltip: {
+        mark: {
+          content: [
+            {
+              key: t('P95耗时'),
+              value: (datum) => formatUseTime(datum.p95),
+            },
+            {
+              key: t('平均耗时'),
+              value: (datum) => formatUseTime(datum.average),
+            },
+            {
+              key: t('成功请求数'),
+              value: (datum) => renderNumber(datum.request_count || 0),
+            },
+          ],
+        },
+      },
+    };
+  }, [activeLatencyTab, latencyTopRows, t]);
 
   const channelColumns = useMemo(
     () => [
@@ -460,6 +671,89 @@ const LogDashboardPage = () => {
     [t],
   );
 
+  const latencyColumns = useMemo(
+    () => [
+      {
+        title:
+          activeLatencyTab === 'channel'
+            ? t('渠道')
+            : activeLatencyTab === 'group'
+              ? t('分组')
+              : t('模型'),
+        key: 'name',
+        fixed: 'left',
+        render: (_, record) => {
+          const name =
+            activeLatencyTab === 'channel'
+              ? record.channel_name || `channel#${record.channel_id}`
+              : activeLatencyTab === 'group'
+                ? record.group_name || '-'
+                : record.model_name || '-';
+          return (
+            <div className='flex min-w-[160px] flex-col gap-1'>
+              <div className='flex flex-wrap items-center gap-2'>
+                <span className='font-medium break-all'>{name}</span>
+                {record.request_count < 5 ? (
+                  <Tag shape='circle' color='orange'>
+                    {t('样本较少')}
+                  </Tag>
+                ) : null}
+                {record.is_aggregate_group ? (
+                  <Tag shape='circle' color='blue'>
+                    {t('聚合')}
+                  </Tag>
+                ) : null}
+              </div>
+              {activeLatencyTab !== 'group' && record.channel_id ? (
+                <Text type='tertiary' className='text-xs'>
+                  {record.channel_name || `channel#${record.channel_id}`} · channel#
+                  {record.channel_id}
+                </Text>
+              ) : null}
+            </div>
+          );
+        },
+      },
+      {
+        title: t('成功请求数'),
+        dataIndex: 'request_count',
+        key: 'request_count',
+        render: (value) => renderNumber(value || 0),
+      },
+      {
+        title: t('平均'),
+        dataIndex: 'average_use_time_seconds',
+        key: 'average_use_time_seconds',
+        render: (value) => formatUseTime(value),
+      },
+      {
+        title: 'P50',
+        dataIndex: 'p50_use_time_seconds',
+        key: 'p50_use_time_seconds',
+        render: (value) => formatUseTime(value),
+      },
+      {
+        title: 'P90',
+        dataIndex: 'p90_use_time_seconds',
+        key: 'p90_use_time_seconds',
+        render: (value) => formatUseTime(value),
+      },
+      {
+        title: 'P95',
+        dataIndex: 'p95_use_time_seconds',
+        key: 'p95_use_time_seconds',
+        render: (value) => formatUseTime(value),
+      },
+      {
+        title: t('最大耗时'),
+        dataIndex: 'max_use_time_seconds',
+        key: 'max_use_time_seconds',
+        render: (value) => formatUseTime(value),
+      },
+    ],
+    [activeLatencyTab, t],
+  );
+
   const summary = dashboard?.summary || {
     total_requests: 0,
     successful_requests: 0,
@@ -564,6 +858,95 @@ const LogDashboardPage = () => {
           icon={<Clock3 size={18} />}
         />
       </div>
+
+      <Card
+        className='!rounded-2xl shadow-sm border-0'
+        loading={loading}
+        title={
+          <div className='flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between'>
+            <div>
+              <Title heading={5} className='!mb-1'>
+                {t('耗时分析')}
+              </Title>
+              <Text type='tertiary'>{t('仅统计最终成功请求')}</Text>
+            </div>
+            <div className='flex flex-col gap-3 lg:flex-row lg:items-center'>
+              <Tabs
+                type='slash'
+                activeKey={activeLatencyTab}
+                onChange={setActiveLatencyTab}
+              >
+                {LATENCY_MODE_OPTIONS.map((option) => (
+                  <TabPane
+                    key={option.key}
+                    itemKey={option.key}
+                    tab={t(option.label)}
+                  />
+                ))}
+              </Tabs>
+              {activeLatencyTab === 'channel' ? (
+                <Select
+                  size='small'
+                  value={selectedLatencyChannel}
+                  optionList={latencyChannelOptions}
+                  onChange={setSelectedLatencyChannel}
+                  style={{ minWidth: 220 }}
+                  filter
+                  searchPosition='dropdown'
+                />
+              ) : activeLatencyTab === 'group' ? (
+                <Select
+                  size='small'
+                  value={selectedLatencyGroup}
+                  optionList={latencyGroupOptions}
+                  onChange={setSelectedLatencyGroup}
+                  style={{ minWidth: 200 }}
+                  filter
+                  searchPosition='dropdown'
+                />
+              ) : (
+                <Select
+                  size='small'
+                  value={selectedLatencyModelChannel}
+                  optionList={latencyModelChannelOptions}
+                  placeholder={t('选择渠道')}
+                  onChange={setSelectedLatencyModelChannel}
+                  style={{ minWidth: 240 }}
+                  filter
+                  searchPosition='dropdown'
+                />
+              )}
+            </div>
+          </div>
+        }
+      >
+        {currentLatencyRows.length > 0 ? (
+          <div className='grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.35fr)]'>
+            <div className='h-[360px] min-w-0 rounded-xl border border-[var(--semi-color-border)] p-2'>
+              <VChart spec={latencyChartSpec} />
+            </div>
+            <div className='min-w-0 overflow-y-auto overflow-x-hidden rounded-xl border border-[var(--semi-color-border)]'>
+              <CardTable
+                rowKey={(record, index) =>
+                  activeLatencyTab === 'channel'
+                    ? `channel-${record.channel_id}`
+                    : activeLatencyTab === 'group'
+                      ? `group-${record.group_name}-${index}`
+                      : `channel-model-${record.channel_id}-${record.model_name}-${index}`
+                }
+                columns={latencyColumns}
+                dataSource={latencyTableRows}
+                loading={loading}
+                hidePagination
+                scroll={{ x: 'max-content' }}
+                empty={<Empty description={t('当前窗口暂无耗时数据')} style={{ padding: 24 }} />}
+              />
+            </div>
+          </div>
+        ) : (
+          <Empty description={t('当前窗口暂无耗时数据')} style={{ padding: 48 }} />
+        )}
+      </Card>
 
       <Card
         className='!rounded-2xl shadow-sm border-0'

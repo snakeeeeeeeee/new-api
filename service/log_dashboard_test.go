@@ -116,6 +116,7 @@ func TestGetLogDashboardAggregatesRequestsAndChannels(t *testing.T) {
 		Content:   "success",
 		UseTime:   4,
 		ChannelId: 2,
+		ModelName: "claude-haiku-4-5",
 		RequestId: "req-success",
 		Group:     "vip",
 	})
@@ -214,6 +215,21 @@ func TestGetLogDashboardAggregatesRequestsAndChannels(t *testing.T) {
 	require.Equal(t, 0, dashboard.Groups[1].FailureCount)
 	require.InDelta(t, 4.0, dashboard.Groups[1].AverageSuccessUseTimeSeconds, 0.001)
 
+	require.Len(t, dashboard.Latency.Channels, 1)
+	require.Equal(t, 2, dashboard.Latency.Channels[0].ChannelId)
+	require.Equal(t, "beta", dashboard.Latency.Channels[0].ChannelName)
+	require.Equal(t, 1, dashboard.Latency.Channels[0].RequestCount)
+	require.InDelta(t, 4.0, dashboard.Latency.Channels[0].P95UseTimeSeconds, 0.001)
+
+	require.Len(t, dashboard.Latency.Groups, 1)
+	require.Equal(t, "vip", dashboard.Latency.Groups[0].GroupName)
+	require.True(t, dashboard.Latency.Groups[0].IsAggregateGroup)
+	require.Equal(t, 1, dashboard.Latency.Groups[0].RequestCount)
+
+	require.Len(t, dashboard.Latency.ChannelModels, 1)
+	require.Equal(t, 2, dashboard.Latency.ChannelModels[0].ChannelId)
+	require.Equal(t, "claude-haiku-4-5", dashboard.Latency.ChannelModels[0].ModelName)
+
 	require.NotEmpty(t, dashboard.GroupTrend)
 	require.NotEmpty(t, dashboard.ChannelTrend)
 	hasAggregateTrendPoint := false
@@ -262,6 +278,171 @@ func TestGetLogDashboardSupportsAllWindows(t *testing.T) {
 	dashboard24h, err := GetLogDashboard(nil, LogDashboardWindow24h)
 	require.NoError(t, err)
 	require.Len(t, dashboard24h.Trend, 25)
+}
+
+func TestGetLogDashboardLatencyAggregatesSuccessfulFinalRequests(t *testing.T) {
+	db := setupLogDashboardTestDB(t)
+	restoreNow := SetLogDashboardNowForTest(func() time.Time {
+		return time.Date(2026, 4, 21, 10, 0, 0, 0, time.Local)
+	})
+	defer restoreNow()
+
+	require.NoError(t, db.Create(&model.AggregateGroup{
+		Name:        "vip",
+		DisplayName: "vip",
+		Status:      model.AggregateGroupStatusEnabled,
+		GroupRatio:  1,
+	}).Error)
+
+	seedLogDashboardChannel(t, db, 1, "alpha")
+	seedLogDashboardChannel(t, db, 2, "beta")
+	base := time.Date(2026, 4, 21, 9, 40, 0, 0, time.Local).Unix()
+
+	seedLogDashboardLog(t, db, &model.Log{
+		UserId:    101,
+		CreatedAt: base,
+		Type:      model.LogTypeError,
+		Content:   "first attempt failed",
+		UseTime:   99,
+		ChannelId: 1,
+		ModelName: "claude-haiku-4-5",
+		RequestId: "req-retry-success",
+		Group:     "default",
+		Other:     `{"status_code":503}`,
+	})
+	for i, useTime := range []int{0, 2, 4, 6, 8, 10} {
+		requestID := fmt.Sprintf("req-alpha-%d", i)
+		if i == 0 {
+			requestID = "req-retry-success"
+		}
+		seedLogDashboardLog(t, db, &model.Log{
+			UserId:    101 + i,
+			CreatedAt: base + int64(i+1)*10,
+			Type:      model.LogTypeConsume,
+			Content:   "success",
+			UseTime:   useTime,
+			ChannelId: 2,
+			ModelName: "claude-haiku-4-5",
+			RequestId: requestID,
+			Group:     "vip",
+		})
+	}
+	seedLogDashboardLog(t, db, &model.Log{
+		UserId:    201,
+		CreatedAt: base + 100,
+		Type:      model.LogTypeConsume,
+		Content:   "success",
+		UseTime:   11,
+		ChannelId: 2,
+		ModelName: "gpt-4o",
+		RequestId: "req-beta-model",
+		Group:     "vip",
+	})
+	seedLogDashboardLog(t, db, &model.Log{
+		UserId:    202,
+		CreatedAt: base + 110,
+		Type:      model.LogTypeConsume,
+		Content:   "success",
+		UseTime:   3,
+		ChannelId: 1,
+		ModelName: "claude-sonnet-4-6",
+		RequestId: "req-default-success",
+		Group:     "default",
+	})
+	seedLogDashboardLog(t, db, &model.Log{
+		UserId:    203,
+		CreatedAt: base + 120,
+		Type:      model.LogTypeConsume,
+		Content:   "success without request id",
+		UseTime:   120,
+		ChannelId: 1,
+		ModelName: "ignored",
+		RequestId: "",
+		Group:     "default",
+	})
+
+	dashboard, err := GetLogDashboard(nil, LogDashboardWindow1h)
+	require.NoError(t, err)
+	require.Equal(t, 8, dashboard.Summary.SuccessfulRequests)
+	require.Equal(t, 8, dashboard.Summary.TotalRequests)
+
+	require.Len(t, dashboard.Latency.Channels, 2)
+	betaChannel := dashboard.Latency.Channels[0]
+	require.Equal(t, 2, betaChannel.ChannelId)
+	require.Equal(t, "beta", betaChannel.ChannelName)
+	require.Equal(t, 7, betaChannel.RequestCount)
+	require.InDelta(t, 41.0/7.0, betaChannel.AverageUseTimeSeconds, 0.001)
+	require.InDelta(t, 6.0, betaChannel.P50UseTimeSeconds, 0.001)
+	require.InDelta(t, 11.0, betaChannel.P90UseTimeSeconds, 0.001)
+	require.InDelta(t, 11.0, betaChannel.P95UseTimeSeconds, 0.001)
+	require.InDelta(t, 11.0, betaChannel.MaxUseTimeSeconds, 0.001)
+
+	alphaChannel := dashboard.Latency.Channels[1]
+	require.Equal(t, 1, alphaChannel.ChannelId)
+	require.Equal(t, 1, alphaChannel.RequestCount)
+	require.InDelta(t, 3.0, alphaChannel.P95UseTimeSeconds, 0.001)
+
+	require.Len(t, dashboard.Latency.Groups, 2)
+	vipGroup := dashboard.Latency.Groups[0]
+	require.Equal(t, "vip", vipGroup.GroupName)
+	require.True(t, vipGroup.IsAggregateGroup)
+	require.Equal(t, 7, vipGroup.RequestCount)
+	require.InDelta(t, 6.0, vipGroup.P50UseTimeSeconds, 0.001)
+	require.InDelta(t, 11.0, vipGroup.P95UseTimeSeconds, 0.001)
+
+	defaultGroup := dashboard.Latency.Groups[1]
+	require.Equal(t, "default", defaultGroup.GroupName)
+	require.False(t, defaultGroup.IsAggregateGroup)
+	require.Equal(t, 1, defaultGroup.RequestCount)
+	require.InDelta(t, 3.0, defaultGroup.P95UseTimeSeconds, 0.001)
+
+	require.Len(t, dashboard.Latency.ChannelModels, 3)
+	require.Equal(t, 2, dashboard.Latency.ChannelModels[0].ChannelId)
+	require.Equal(t, "gpt-4o", dashboard.Latency.ChannelModels[0].ModelName)
+	require.Equal(t, 1, dashboard.Latency.ChannelModels[0].RequestCount)
+	require.InDelta(t, 11.0, dashboard.Latency.ChannelModels[0].P95UseTimeSeconds, 0.001)
+
+	require.Equal(t, 2, dashboard.Latency.ChannelModels[1].ChannelId)
+	require.Equal(t, "claude-haiku-4-5", dashboard.Latency.ChannelModels[1].ModelName)
+	require.Equal(t, 6, dashboard.Latency.ChannelModels[1].RequestCount)
+	require.InDelta(t, 4.0, dashboard.Latency.ChannelModels[1].P50UseTimeSeconds, 0.001)
+	require.InDelta(t, 10.0, dashboard.Latency.ChannelModels[1].P95UseTimeSeconds, 0.001)
+
+	require.Equal(t, 1, dashboard.Latency.ChannelModels[2].ChannelId)
+	require.Equal(t, "claude-sonnet-4-6", dashboard.Latency.ChannelModels[2].ModelName)
+	require.Equal(t, 1, dashboard.Latency.ChannelModels[2].RequestCount)
+	require.InDelta(t, 3.0, dashboard.Latency.ChannelModels[2].P95UseTimeSeconds, 0.001)
+}
+
+func TestGetLogDashboardLatencyEmptyWithoutSuccessfulRequests(t *testing.T) {
+	db := setupLogDashboardTestDB(t)
+	restoreNow := SetLogDashboardNowForTest(func() time.Time {
+		return time.Date(2026, 4, 21, 10, 0, 0, 0, time.Local)
+	})
+	defer restoreNow()
+
+	seedLogDashboardChannel(t, db, 1, "alpha")
+	seedLogDashboardLog(t, db, &model.Log{
+		UserId:    101,
+		CreatedAt: time.Date(2026, 4, 21, 9, 45, 0, 0, time.Local).Unix(),
+		Type:      model.LogTypeError,
+		Content:   "failed",
+		UseTime:   7,
+		ChannelId: 1,
+		ModelName: "claude-haiku-4-5",
+		RequestId: "req-failed",
+		Group:     "default",
+		Other:     `{"status_code":500}`,
+	})
+
+	dashboard, err := GetLogDashboard(nil, LogDashboardWindow1h)
+	require.NoError(t, err)
+	require.Equal(t, 1, dashboard.Summary.TotalRequests)
+	require.Equal(t, 0, dashboard.Summary.SuccessfulRequests)
+	require.Empty(t, dashboard.Latency.Channels)
+	require.Empty(t, dashboard.Latency.Groups)
+	require.Empty(t, dashboard.Latency.ChannelModels)
+	require.NotEmpty(t, dashboard.Trend)
 }
 
 func TestGetLogDashboardRejectsInvalidWindow(t *testing.T) {

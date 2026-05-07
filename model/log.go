@@ -46,6 +46,7 @@ type DashboardLogEntry struct {
 	Content     string `json:"content"`
 	UseTime     int    `json:"use_time"`
 	ChannelId   int    `json:"channel_id"`
+	ModelName   string `json:"model_name"`
 	RequestId   string `json:"request_id"`
 	Other       string `json:"other"`
 	Group       string `json:"group" gorm:"column:log_group"`
@@ -139,10 +140,11 @@ func GetLogsForDashboard(ctx context.Context, startTimestamp int64, endTimestamp
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ensureCommonColumnsInitialized()
 	var logs []*DashboardLogEntry
 	query := LOG_DB.WithContext(ctx).
 		Model(&Log{}).
-		Select("user_id, created_at, type, content, use_time, channel_id, request_id, other, "+logGroupCol+" as log_group").
+		Select("user_id, created_at, type, content, use_time, channel_id, model_name, request_id, other, "+logGroupCol+" as log_group").
 		Where("type IN ?", []int{LogTypeConsume, LogTypeError})
 	if startTimestamp != 0 {
 		query = query.Where("created_at >= ?", startTimestamp)

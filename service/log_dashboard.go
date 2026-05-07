@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -88,6 +89,46 @@ type LogDashboardGroupStat struct {
 	TopErrorMessageCount         int     `json:"top_error_message_count"`
 }
 
+type LogDashboardChannelLatencyStat struct {
+	ChannelId             int     `json:"channel_id"`
+	ChannelName           string  `json:"channel_name"`
+	RequestCount          int     `json:"request_count"`
+	AverageUseTimeSeconds float64 `json:"average_use_time_seconds"`
+	P50UseTimeSeconds     float64 `json:"p50_use_time_seconds"`
+	P90UseTimeSeconds     float64 `json:"p90_use_time_seconds"`
+	P95UseTimeSeconds     float64 `json:"p95_use_time_seconds"`
+	MaxUseTimeSeconds     float64 `json:"max_use_time_seconds"`
+}
+
+type LogDashboardGroupLatencyStat struct {
+	GroupName             string  `json:"group_name"`
+	IsAggregateGroup      bool    `json:"is_aggregate_group"`
+	RequestCount          int     `json:"request_count"`
+	AverageUseTimeSeconds float64 `json:"average_use_time_seconds"`
+	P50UseTimeSeconds     float64 `json:"p50_use_time_seconds"`
+	P90UseTimeSeconds     float64 `json:"p90_use_time_seconds"`
+	P95UseTimeSeconds     float64 `json:"p95_use_time_seconds"`
+	MaxUseTimeSeconds     float64 `json:"max_use_time_seconds"`
+}
+
+type LogDashboardChannelModelLatencyStat struct {
+	ChannelId             int     `json:"channel_id"`
+	ChannelName           string  `json:"channel_name"`
+	ModelName             string  `json:"model_name"`
+	RequestCount          int     `json:"request_count"`
+	AverageUseTimeSeconds float64 `json:"average_use_time_seconds"`
+	P50UseTimeSeconds     float64 `json:"p50_use_time_seconds"`
+	P90UseTimeSeconds     float64 `json:"p90_use_time_seconds"`
+	P95UseTimeSeconds     float64 `json:"p95_use_time_seconds"`
+	MaxUseTimeSeconds     float64 `json:"max_use_time_seconds"`
+}
+
+type LogDashboardLatencyData struct {
+	Channels      []LogDashboardChannelLatencyStat      `json:"channels"`
+	Groups        []LogDashboardGroupLatencyStat        `json:"groups"`
+	ChannelModels []LogDashboardChannelModelLatencyStat `json:"channel_models"`
+}
+
 type LogDashboardData struct {
 	Window           string                            `json:"window"`
 	GeneratedAt      int64                             `json:"generated_at"`
@@ -97,6 +138,7 @@ type LogDashboardData struct {
 	ChannelTrend     []LogDashboardDimensionTrendPoint `json:"channel_trend"`
 	Channels         []LogDashboardChannelStat         `json:"channels"`
 	Groups           []LogDashboardGroupStat           `json:"groups"`
+	Latency          LogDashboardLatencyData           `json:"latency"`
 	TopErrorMessages []LogDashboardErrorMessageStat    `json:"top_error_messages"`
 	TopStatusCodes   []LogDashboardStatusCodeStat      `json:"top_status_codes"`
 }
@@ -109,16 +151,18 @@ type logDashboardWindowConfig struct {
 }
 
 type requestOutcomeState struct {
-	RequestID       string
-	SuccessAt       int64
-	SuccessUseTime  int
-	SuccessGroup    string
-	LastErrorAt     int64
-	LastErrorStatus int
-	LastErrorMsg    string
-	LastErrorGroup  string
-	HasSuccess      bool
-	HasError        bool
+	RequestID        string
+	SuccessAt        int64
+	SuccessUseTime   int
+	SuccessGroup     string
+	SuccessChannelId int
+	SuccessModelName string
+	LastErrorAt      int64
+	LastErrorStatus  int
+	LastErrorMsg     string
+	LastErrorGroup   string
+	HasSuccess       bool
+	HasError         bool
 }
 
 type channelAggregateState struct {
@@ -147,6 +191,15 @@ type logDashboardTrendMetric struct {
 	Count        int
 	SuccessCount int
 	FailureCount int
+}
+
+type logDashboardLatencyState struct {
+	UseTimes []int
+}
+
+type logDashboardChannelModelLatencyKey struct {
+	ChannelId int
+	ModelName string
 }
 
 var (
@@ -375,6 +428,247 @@ func normalizeLogDashboardGroupName(groupName string) string {
 	return normalized
 }
 
+func normalizeLogDashboardModelName(modelName string) string {
+	normalized := strings.TrimSpace(modelName)
+	if normalized == "" {
+		return "-"
+	}
+	return normalized
+}
+
+func addLogDashboardLatencySample(state *logDashboardLatencyState, useTime int) {
+	if state == nil {
+		return
+	}
+	state.UseTimes = append(state.UseTimes, useTime)
+}
+
+func getLogDashboardChannelLatencyState(states map[int]*logDashboardLatencyState, channelID int) *logDashboardLatencyState {
+	state, ok := states[channelID]
+	if !ok {
+		state = &logDashboardLatencyState{}
+		states[channelID] = state
+	}
+	return state
+}
+
+func getLogDashboardGroupLatencyState(states map[string]*logDashboardLatencyState, groupName string) *logDashboardLatencyState {
+	state, ok := states[groupName]
+	if !ok {
+		state = &logDashboardLatencyState{}
+		states[groupName] = state
+	}
+	return state
+}
+
+func getLogDashboardChannelModelLatencyState(states map[logDashboardChannelModelLatencyKey]*logDashboardLatencyState, key logDashboardChannelModelLatencyKey) *logDashboardLatencyState {
+	state, ok := states[key]
+	if !ok {
+		state = &logDashboardLatencyState{}
+		states[key] = state
+	}
+	return state
+}
+
+type logDashboardLatencyMetrics struct {
+	RequestCount          int
+	AverageUseTimeSeconds float64
+	P50UseTimeSeconds     float64
+	P90UseTimeSeconds     float64
+	P95UseTimeSeconds     float64
+	MaxUseTimeSeconds     float64
+}
+
+func calculateLogDashboardNearestRankPercentile(sortedUseTimes []int, percentile float64) float64 {
+	if len(sortedUseTimes) == 0 {
+		return 0
+	}
+	if percentile <= 0 {
+		return float64(sortedUseTimes[0])
+	}
+	rank := int(math.Ceil(percentile*float64(len(sortedUseTimes)))) - 1
+	if rank < 0 {
+		rank = 0
+	}
+	if rank >= len(sortedUseTimes) {
+		rank = len(sortedUseTimes) - 1
+	}
+	return float64(sortedUseTimes[rank])
+}
+
+func calculateLogDashboardLatencyMetrics(useTimes []int) logDashboardLatencyMetrics {
+	if len(useTimes) == 0 {
+		return logDashboardLatencyMetrics{}
+	}
+	sortedUseTimes := append([]int(nil), useTimes...)
+	sort.Ints(sortedUseTimes)
+
+	var total int64
+	for _, useTime := range sortedUseTimes {
+		total += int64(useTime)
+	}
+
+	return logDashboardLatencyMetrics{
+		RequestCount:          len(sortedUseTimes),
+		AverageUseTimeSeconds: float64(total) / float64(len(sortedUseTimes)),
+		P50UseTimeSeconds:     calculateLogDashboardNearestRankPercentile(sortedUseTimes, 0.50),
+		P90UseTimeSeconds:     calculateLogDashboardNearestRankPercentile(sortedUseTimes, 0.90),
+		P95UseTimeSeconds:     calculateLogDashboardNearestRankPercentile(sortedUseTimes, 0.95),
+		MaxUseTimeSeconds:     float64(sortedUseTimes[len(sortedUseTimes)-1]),
+	}
+}
+
+func compareLogDashboardLatencyMetrics(aP95 float64, aAverage float64, aCount int, aName string, bP95 float64, bAverage float64, bCount int, bName string) bool {
+	if aP95 != bP95 {
+		return aP95 > bP95
+	}
+	if aAverage != bAverage {
+		return aAverage > bAverage
+	}
+	if aCount != bCount {
+		return aCount > bCount
+	}
+	return aName < bName
+}
+
+func buildLogDashboardChannelLatencyStats(states map[int]*logDashboardLatencyState, channelNameMap map[int]string) []LogDashboardChannelLatencyStat {
+	if len(states) == 0 {
+		return []LogDashboardChannelLatencyStat{}
+	}
+	stats := make([]LogDashboardChannelLatencyStat, 0, len(states))
+	for channelID, state := range states {
+		if state == nil || len(state.UseTimes) == 0 {
+			continue
+		}
+		channelName := channelNameMap[channelID]
+		if channelName == "" {
+			channelName = fmt.Sprintf("channel#%d", channelID)
+		}
+		metrics := calculateLogDashboardLatencyMetrics(state.UseTimes)
+		stats = append(stats, LogDashboardChannelLatencyStat{
+			ChannelId:             channelID,
+			ChannelName:           channelName,
+			RequestCount:          metrics.RequestCount,
+			AverageUseTimeSeconds: metrics.AverageUseTimeSeconds,
+			P50UseTimeSeconds:     metrics.P50UseTimeSeconds,
+			P90UseTimeSeconds:     metrics.P90UseTimeSeconds,
+			P95UseTimeSeconds:     metrics.P95UseTimeSeconds,
+			MaxUseTimeSeconds:     metrics.MaxUseTimeSeconds,
+		})
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].P95UseTimeSeconds == stats[j].P95UseTimeSeconds &&
+			stats[i].AverageUseTimeSeconds == stats[j].AverageUseTimeSeconds &&
+			stats[i].RequestCount == stats[j].RequestCount {
+			return stats[i].ChannelId < stats[j].ChannelId
+		}
+		return compareLogDashboardLatencyMetrics(
+			stats[i].P95UseTimeSeconds,
+			stats[i].AverageUseTimeSeconds,
+			stats[i].RequestCount,
+			stats[i].ChannelName,
+			stats[j].P95UseTimeSeconds,
+			stats[j].AverageUseTimeSeconds,
+			stats[j].RequestCount,
+			stats[j].ChannelName,
+		)
+	})
+	return stats
+}
+
+func buildLogDashboardGroupLatencyStats(states map[string]*logDashboardLatencyState, aggregateGroupNameSet map[string]struct{}) []LogDashboardGroupLatencyStat {
+	if len(states) == 0 {
+		return []LogDashboardGroupLatencyStat{}
+	}
+	stats := make([]LogDashboardGroupLatencyStat, 0, len(states))
+	for groupName, state := range states {
+		if state == nil || len(state.UseTimes) == 0 {
+			continue
+		}
+		metrics := calculateLogDashboardLatencyMetrics(state.UseTimes)
+		stat := LogDashboardGroupLatencyStat{
+			GroupName:             groupName,
+			RequestCount:          metrics.RequestCount,
+			AverageUseTimeSeconds: metrics.AverageUseTimeSeconds,
+			P50UseTimeSeconds:     metrics.P50UseTimeSeconds,
+			P90UseTimeSeconds:     metrics.P90UseTimeSeconds,
+			P95UseTimeSeconds:     metrics.P95UseTimeSeconds,
+			MaxUseTimeSeconds:     metrics.MaxUseTimeSeconds,
+		}
+		if _, ok := aggregateGroupNameSet[groupName]; ok {
+			stat.IsAggregateGroup = true
+		}
+		stats = append(stats, stat)
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		return compareLogDashboardLatencyMetrics(
+			stats[i].P95UseTimeSeconds,
+			stats[i].AverageUseTimeSeconds,
+			stats[i].RequestCount,
+			stats[i].GroupName,
+			stats[j].P95UseTimeSeconds,
+			stats[j].AverageUseTimeSeconds,
+			stats[j].RequestCount,
+			stats[j].GroupName,
+		)
+	})
+	return stats
+}
+
+func buildLogDashboardChannelModelLatencyStats(states map[logDashboardChannelModelLatencyKey]*logDashboardLatencyState, channelNameMap map[int]string) []LogDashboardChannelModelLatencyStat {
+	if len(states) == 0 {
+		return []LogDashboardChannelModelLatencyStat{}
+	}
+	stats := make([]LogDashboardChannelModelLatencyStat, 0, len(states))
+	for key, state := range states {
+		if state == nil || len(state.UseTimes) == 0 {
+			continue
+		}
+		channelName := channelNameMap[key.ChannelId]
+		if channelName == "" {
+			channelName = fmt.Sprintf("channel#%d", key.ChannelId)
+		}
+		metrics := calculateLogDashboardLatencyMetrics(state.UseTimes)
+		stats = append(stats, LogDashboardChannelModelLatencyStat{
+			ChannelId:             key.ChannelId,
+			ChannelName:           channelName,
+			ModelName:             key.ModelName,
+			RequestCount:          metrics.RequestCount,
+			AverageUseTimeSeconds: metrics.AverageUseTimeSeconds,
+			P50UseTimeSeconds:     metrics.P50UseTimeSeconds,
+			P90UseTimeSeconds:     metrics.P90UseTimeSeconds,
+			P95UseTimeSeconds:     metrics.P95UseTimeSeconds,
+			MaxUseTimeSeconds:     metrics.MaxUseTimeSeconds,
+		})
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		iName := fmt.Sprintf("%s/%s", stats[i].ChannelName, stats[i].ModelName)
+		jName := fmt.Sprintf("%s/%s", stats[j].ChannelName, stats[j].ModelName)
+		if stats[i].P95UseTimeSeconds == stats[j].P95UseTimeSeconds &&
+			stats[i].AverageUseTimeSeconds == stats[j].AverageUseTimeSeconds &&
+			stats[i].RequestCount == stats[j].RequestCount &&
+			stats[i].ChannelId == stats[j].ChannelId {
+			return stats[i].ModelName < stats[j].ModelName
+		}
+		if stats[i].P95UseTimeSeconds == stats[j].P95UseTimeSeconds &&
+			stats[i].AverageUseTimeSeconds == stats[j].AverageUseTimeSeconds &&
+			stats[i].RequestCount == stats[j].RequestCount {
+			return stats[i].ChannelId < stats[j].ChannelId
+		}
+		return compareLogDashboardLatencyMetrics(
+			stats[i].P95UseTimeSeconds,
+			stats[i].AverageUseTimeSeconds,
+			stats[i].RequestCount,
+			iName,
+			stats[j].P95UseTimeSeconds,
+			stats[j].AverageUseTimeSeconds,
+			stats[j].RequestCount,
+			jName,
+		)
+	})
+	return stats
+}
+
 func getAggregateGroupNameSet() map[string]struct{} {
 	nameSet := make(map[string]struct{})
 	groups, err := model.GetAllAggregateGroups(false)
@@ -511,6 +805,8 @@ func GetLogDashboard(ctx context.Context, window string) (*LogDashboardData, err
 				requestState.SuccessAt = logItem.CreatedAt
 				requestState.SuccessUseTime = logItem.UseTime
 				requestState.SuccessGroup = normalizeLogDashboardGroupName(logItem.Group)
+				requestState.SuccessChannelId = logItem.ChannelId
+				requestState.SuccessModelName = normalizeLogDashboardModelName(logItem.ModelName)
 			}
 			continue
 		}
@@ -528,6 +824,9 @@ func GetLogDashboard(ctx context.Context, window string) (*LogDashboardData, err
 
 	summary := LogDashboardSummary{}
 	successUseTimeTotal := 0
+	channelLatencyStates := make(map[int]*logDashboardLatencyState)
+	groupLatencyStates := make(map[string]*logDashboardLatencyState)
+	channelModelLatencyStates := make(map[logDashboardChannelModelLatencyKey]*logDashboardLatencyState)
 	for _, requestState := range requestStates {
 		if requestState == nil {
 			continue
@@ -550,6 +849,15 @@ func GetLogDashboard(ctx context.Context, window string) (*LogDashboardData, err
 			groupState.SuccessCount++
 			groupState.UseTimeTotal += int64(requestState.SuccessUseTime)
 			groupState.UseTimeCount++
+			addLogDashboardLatencySample(getLogDashboardGroupLatencyState(groupLatencyStates, groupName), requestState.SuccessUseTime)
+			if requestState.SuccessChannelId > 0 {
+				addLogDashboardLatencySample(getLogDashboardChannelLatencyState(channelLatencyStates, requestState.SuccessChannelId), requestState.SuccessUseTime)
+				channelModelKey := logDashboardChannelModelLatencyKey{
+					ChannelId: requestState.SuccessChannelId,
+					ModelName: normalizeLogDashboardModelName(requestState.SuccessModelName),
+				}
+				addLogDashboardLatencySample(getLogDashboardChannelModelLatencyState(channelModelLatencyStates, channelModelKey), requestState.SuccessUseTime)
+			}
 			if bucketSeconds > 0 {
 				bucketStart := (requestState.SuccessAt / bucketSeconds) * bucketSeconds
 				successBuckets[bucketStart]++
@@ -717,6 +1025,11 @@ func GetLogDashboard(ctx context.Context, window string) (*LogDashboardData, err
 	for name := range aggregateGroupNameSet {
 		aggregateGroupSeriesSet[name] = struct{}{}
 	}
+	latencyData := LogDashboardLatencyData{
+		Channels:      buildLogDashboardChannelLatencyStats(channelLatencyStates, channelNameMap),
+		Groups:        buildLogDashboardGroupLatencyStats(groupLatencyStates, aggregateGroupNameSet),
+		ChannelModels: buildLogDashboardChannelModelLatencyStats(channelModelLatencyStates, channelNameMap),
+	}
 
 	return &LogDashboardData{
 		Window:           config.WindowKey,
@@ -727,6 +1040,7 @@ func GetLogDashboard(ctx context.Context, window string) (*LogDashboardData, err
 		ChannelTrend:     buildDimensionTrendPoints(bucketStarts, config.LabelLayout, channelSeriesOrder, channelSeriesMetrics, nil),
 		Channels:         channels,
 		Groups:           groups,
+		Latency:          latencyData,
 		TopErrorMessages: buildTopErrorMessageStats(overallErrorCounts, 10),
 		TopStatusCodes:   buildTopStatusCodeStats(overallStatusCounts, 10),
 	}, nil

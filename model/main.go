@@ -62,7 +62,7 @@ func initCol() {
 }
 
 func ensureCommonColumnsInitialized() {
-	if commonGroupCol == "" || commonKeyCol == "" {
+	if commonGroupCol == "" || commonKeyCol == "" || logGroupCol == "" || logKeyCol == "" {
 		initCol()
 	}
 }
