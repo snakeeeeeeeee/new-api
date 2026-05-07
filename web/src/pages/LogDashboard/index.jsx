@@ -62,7 +62,9 @@ const LATENCY_MODE_OPTIONS = [
   { key: 'channel_model', label: '渠道模型' },
 ];
 
+const CHART_CONFIG = { mode: 'desktop-browser' };
 const AUTO_REFRESH_MS = 60 * 1000;
+const LATENCY_PANEL_HEIGHT = 420;
 
 const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
 const formatUseTime = (value) => `${Number(value || 0).toFixed(1)}s`;
@@ -447,15 +449,17 @@ const LogDashboardPage = () => {
         subtext: t('仅统计最终成功请求'),
       },
       axes: [
-        { orient: 'bottom', type: 'linear', title: { visible: true, text: t('秒') } },
-        { orient: 'left', type: 'band', label: { visible: true } },
+        {
+          orient: 'bottom',
+          type: 'linear',
+          title: { visible: true, text: t('秒') },
+        },
+        {
+          orient: 'left',
+          type: 'band',
+          label: { visible: true },
+        },
       ],
-      label: {
-        visible: true,
-        position: 'right',
-        formatter: (datum) => formatUseTime(datum.p95),
-      },
-      color: ['#3b82f6'],
       tooltip: {
         mark: {
           content: [
@@ -921,11 +925,20 @@ const LogDashboardPage = () => {
         }
       >
         {currentLatencyRows.length > 0 ? (
-          <div className='grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.35fr)]'>
-            <div className='h-[360px] min-w-0 rounded-xl border border-[var(--semi-color-border)] p-2'>
-              <VChart spec={latencyChartSpec} />
+          <div
+            className='grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.35fr)]'
+            style={{ height: LATENCY_PANEL_HEIGHT }}
+          >
+            <div
+              className='min-w-0 overflow-hidden rounded-xl border border-[var(--semi-color-border)] p-2'
+              style={{ height: LATENCY_PANEL_HEIGHT }}
+            >
+              <VChart spec={latencyChartSpec} option={CHART_CONFIG} />
             </div>
-            <div className='min-w-0 overflow-y-auto overflow-x-hidden rounded-xl border border-[var(--semi-color-border)]'>
+            <div
+              className='min-w-0 overflow-y-auto overflow-x-hidden rounded-xl border border-[var(--semi-color-border)]'
+              style={{ height: LATENCY_PANEL_HEIGHT }}
+            >
               <CardTable
                 rowKey={(record, index) =>
                   activeLatencyTab === 'channel'
