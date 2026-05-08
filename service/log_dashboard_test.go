@@ -321,10 +321,12 @@ func TestGetLogDashboardLatencyAggregatesSuccessfulFinalRequests(t *testing.T) {
 			Type:      model.LogTypeConsume,
 			Content:   "success",
 			UseTime:   useTime,
+			IsStream:  true,
 			ChannelId: 2,
 			ModelName: "claude-haiku-4-5",
 			RequestId: requestID,
 			Group:     "vip",
+			Other:     fmt.Sprintf(`{"frt":%d}`, i*1000),
 		})
 	}
 	seedLogDashboardLog(t, db, &model.Log{
@@ -333,10 +335,12 @@ func TestGetLogDashboardLatencyAggregatesSuccessfulFinalRequests(t *testing.T) {
 		Type:      model.LogTypeConsume,
 		Content:   "success",
 		UseTime:   11,
+		IsStream:  true,
 		ChannelId: 2,
 		ModelName: "gpt-4o",
 		RequestId: "req-beta-model",
 		Group:     "vip",
+		Other:     `{"frt":"11000"}`,
 	})
 	seedLogDashboardLog(t, db, &model.Log{
 		UserId:    202,
@@ -376,11 +380,18 @@ func TestGetLogDashboardLatencyAggregatesSuccessfulFinalRequests(t *testing.T) {
 	require.InDelta(t, 11.0, betaChannel.P90UseTimeSeconds, 0.001)
 	require.InDelta(t, 11.0, betaChannel.P95UseTimeSeconds, 0.001)
 	require.InDelta(t, 11.0, betaChannel.MaxUseTimeSeconds, 0.001)
+	require.Equal(t, 7, betaChannel.FirstResponseTimeCount)
+	require.InDelta(t, 26.0/7.0, betaChannel.AverageFirstResponseTimeSeconds, 0.001)
+	require.InDelta(t, 3.0, betaChannel.P50FirstResponseTimeSeconds, 0.001)
+	require.InDelta(t, 11.0, betaChannel.P90FirstResponseTimeSeconds, 0.001)
+	require.InDelta(t, 11.0, betaChannel.P95FirstResponseTimeSeconds, 0.001)
+	require.InDelta(t, 11.0, betaChannel.MaxFirstResponseTimeSeconds, 0.001)
 
 	alphaChannel := dashboard.Latency.Channels[1]
 	require.Equal(t, 1, alphaChannel.ChannelId)
 	require.Equal(t, 1, alphaChannel.RequestCount)
 	require.InDelta(t, 3.0, alphaChannel.P95UseTimeSeconds, 0.001)
+	require.Equal(t, 0, alphaChannel.FirstResponseTimeCount)
 
 	require.Len(t, dashboard.Latency.Groups, 2)
 	vipGroup := dashboard.Latency.Groups[0]
@@ -389,29 +400,38 @@ func TestGetLogDashboardLatencyAggregatesSuccessfulFinalRequests(t *testing.T) {
 	require.Equal(t, 7, vipGroup.RequestCount)
 	require.InDelta(t, 6.0, vipGroup.P50UseTimeSeconds, 0.001)
 	require.InDelta(t, 11.0, vipGroup.P95UseTimeSeconds, 0.001)
+	require.Equal(t, 7, vipGroup.FirstResponseTimeCount)
+	require.InDelta(t, 11.0, vipGroup.P95FirstResponseTimeSeconds, 0.001)
 
 	defaultGroup := dashboard.Latency.Groups[1]
 	require.Equal(t, "default", defaultGroup.GroupName)
 	require.False(t, defaultGroup.IsAggregateGroup)
 	require.Equal(t, 1, defaultGroup.RequestCount)
 	require.InDelta(t, 3.0, defaultGroup.P95UseTimeSeconds, 0.001)
+	require.Equal(t, 0, defaultGroup.FirstResponseTimeCount)
 
 	require.Len(t, dashboard.Latency.ChannelModels, 3)
 	require.Equal(t, 2, dashboard.Latency.ChannelModels[0].ChannelId)
 	require.Equal(t, "gpt-4o", dashboard.Latency.ChannelModels[0].ModelName)
 	require.Equal(t, 1, dashboard.Latency.ChannelModels[0].RequestCount)
 	require.InDelta(t, 11.0, dashboard.Latency.ChannelModels[0].P95UseTimeSeconds, 0.001)
+	require.Equal(t, 1, dashboard.Latency.ChannelModels[0].FirstResponseTimeCount)
+	require.InDelta(t, 11.0, dashboard.Latency.ChannelModels[0].P95FirstResponseTimeSeconds, 0.001)
 
 	require.Equal(t, 2, dashboard.Latency.ChannelModels[1].ChannelId)
 	require.Equal(t, "claude-haiku-4-5", dashboard.Latency.ChannelModels[1].ModelName)
 	require.Equal(t, 6, dashboard.Latency.ChannelModels[1].RequestCount)
 	require.InDelta(t, 4.0, dashboard.Latency.ChannelModels[1].P50UseTimeSeconds, 0.001)
 	require.InDelta(t, 10.0, dashboard.Latency.ChannelModels[1].P95UseTimeSeconds, 0.001)
+	require.Equal(t, 6, dashboard.Latency.ChannelModels[1].FirstResponseTimeCount)
+	require.InDelta(t, 2.0, dashboard.Latency.ChannelModels[1].P50FirstResponseTimeSeconds, 0.001)
+	require.InDelta(t, 5.0, dashboard.Latency.ChannelModels[1].P95FirstResponseTimeSeconds, 0.001)
 
 	require.Equal(t, 1, dashboard.Latency.ChannelModels[2].ChannelId)
 	require.Equal(t, "claude-sonnet-4-6", dashboard.Latency.ChannelModels[2].ModelName)
 	require.Equal(t, 1, dashboard.Latency.ChannelModels[2].RequestCount)
 	require.InDelta(t, 3.0, dashboard.Latency.ChannelModels[2].P95UseTimeSeconds, 0.001)
+	require.Equal(t, 0, dashboard.Latency.ChannelModels[2].FirstResponseTimeCount)
 }
 
 func TestGetLogDashboardLatencyEmptyWithoutSuccessfulRequests(t *testing.T) {

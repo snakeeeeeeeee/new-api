@@ -62,6 +62,11 @@ const LATENCY_MODE_OPTIONS = [
   { key: 'channel_model', label: '模型耗时' },
 ];
 
+const LATENCY_METRIC_OPTIONS = [
+  { key: 'use_time', label: '总耗时' },
+  { key: 'first_response_time', label: '首字耗时' },
+];
+
 const CHART_CONFIG = { mode: 'desktop-browser' };
 const AUTO_REFRESH_MS = 60 * 1000;
 const LATENCY_PANEL_HEIGHT = 420;
@@ -115,6 +120,7 @@ const LogDashboardPage = () => {
   const [activeTrendMode, setActiveTrendMode] = useState('overall');
   const [activeStatsTab, setActiveStatsTab] = useState('channel');
   const [activeLatencyTab, setActiveLatencyTab] = useState('channel');
+  const [activeLatencyMetric, setActiveLatencyMetric] = useState('use_time');
   const [selectedLatencyChannel, setSelectedLatencyChannel] = useState('all');
   const [selectedLatencyGroup, setSelectedLatencyGroup] = useState('all');
   const [selectedLatencyModelChannel, setSelectedLatencyModelChannel] =
@@ -414,13 +420,66 @@ const LogDashboardPage = () => {
   ]);
 
   const latencyTopRows = useMemo(
-    () => [...currentLatencyRows].slice(0, 10),
-    [currentLatencyRows],
+    () => {
+      const rows =
+        activeLatencyMetric === 'first_response_time'
+          ? currentLatencyRows.filter((item) => item.first_response_time_count > 0)
+          : currentLatencyRows;
+      return [...rows]
+        .sort((a, b) => {
+          const aP95 =
+            activeLatencyMetric === 'first_response_time'
+              ? Number(a.p95_first_response_time_seconds || 0)
+              : Number(a.p95_use_time_seconds || 0);
+          const bP95 =
+            activeLatencyMetric === 'first_response_time'
+              ? Number(b.p95_first_response_time_seconds || 0)
+              : Number(b.p95_use_time_seconds || 0);
+          const aCount =
+            activeLatencyMetric === 'first_response_time'
+              ? Number(a.first_response_time_count || 0)
+              : Number(a.request_count || 0);
+          const bCount =
+            activeLatencyMetric === 'first_response_time'
+              ? Number(b.first_response_time_count || 0)
+              : Number(b.request_count || 0);
+          if (aP95 !== bP95) {
+            return bP95 - aP95;
+          }
+          return bCount - aCount;
+        })
+        .slice(0, 10);
+    },
+    [activeLatencyMetric, currentLatencyRows],
   );
 
   const latencyTableRows = useMemo(
-    () => [...currentLatencyRows].slice(0, 20),
-    [currentLatencyRows],
+    () =>
+      [...currentLatencyRows]
+        .sort((a, b) => {
+          const aP95 =
+            activeLatencyMetric === 'first_response_time'
+              ? Number(a.p95_first_response_time_seconds || 0)
+              : Number(a.p95_use_time_seconds || 0);
+          const bP95 =
+            activeLatencyMetric === 'first_response_time'
+              ? Number(b.p95_first_response_time_seconds || 0)
+              : Number(b.p95_use_time_seconds || 0);
+          const aCount =
+            activeLatencyMetric === 'first_response_time'
+              ? Number(a.first_response_time_count || 0)
+              : Number(a.request_count || 0);
+          const bCount =
+            activeLatencyMetric === 'first_response_time'
+              ? Number(b.first_response_time_count || 0)
+              : Number(b.request_count || 0);
+          if (aP95 !== bP95) {
+            return bP95 - aP95;
+          }
+          return bCount - aCount;
+        })
+        .slice(0, 20),
+    [activeLatencyMetric, currentLatencyRows],
   );
 
   const latencyChartSpec = useMemo(() => {
@@ -442,9 +501,18 @@ const LogDashboardPage = () => {
       .map((item) => ({
         name: getLatencyRowName(item),
         channel: item.channel_name || `channel#${item.channel_id}`,
-        p95: Number(item.p95_use_time_seconds || 0),
-        request_count: item.request_count || 0,
-        average: Number(item.average_use_time_seconds || 0),
+        p95:
+          activeLatencyMetric === 'first_response_time'
+            ? Number(item.p95_first_response_time_seconds || 0)
+            : Number(item.p95_use_time_seconds || 0),
+        request_count:
+          activeLatencyMetric === 'first_response_time'
+            ? item.first_response_time_count || 0
+            : item.request_count || 0,
+        average:
+          activeLatencyMetric === 'first_response_time'
+            ? Number(item.average_first_response_time_seconds || 0)
+            : Number(item.average_use_time_seconds || 0),
       }))
       .reverse();
 
@@ -461,11 +529,16 @@ const LogDashboardPage = () => {
       yField: 'name',
       title: {
         visible: true,
-        text: t('P95耗时 Top 10'),
+        text:
+          activeLatencyMetric === 'first_response_time'
+            ? t('首字P95 Top 10')
+            : t('P95耗时 Top 10'),
         subtext:
           activeLatencyTab === 'channel_model'
             ? t('同名模型按渠道分别统计')
-            : t('仅统计最终成功请求'),
+            : activeLatencyMetric === 'first_response_time'
+              ? t('仅统计带首字数据的最终成功请求')
+              : t('仅统计最终成功请求'),
       },
       axes: [
         {
@@ -483,11 +556,17 @@ const LogDashboardPage = () => {
         mark: {
           content: [
             {
-              key: t('P95耗时'),
+              key:
+                activeLatencyMetric === 'first_response_time'
+                  ? t('首字P95')
+                  : t('P95耗时'),
               value: (datum) => formatUseTime(datum.p95),
             },
             {
-              key: t('平均耗时'),
+              key:
+                activeLatencyMetric === 'first_response_time'
+                  ? t('首字平均')
+                  : t('平均耗时'),
               value: (datum) => formatUseTime(datum.average),
             },
             ...(activeLatencyTab === 'channel_model'
@@ -499,14 +578,23 @@ const LogDashboardPage = () => {
                 ]
               : []),
             {
-              key: t('成功请求数'),
+              key:
+                activeLatencyMetric === 'first_response_time'
+                  ? t('首字样本数')
+                  : t('成功请求数'),
               value: (datum) => renderNumber(datum.request_count || 0),
             },
           ],
         },
       },
     };
-  }, [activeLatencyTab, latencyTopRows, selectedLatencyModelChannel, t]);
+  }, [
+    activeLatencyMetric,
+    activeLatencyTab,
+    latencyTopRows,
+    selectedLatencyModelChannel,
+    t,
+  ]);
 
   const channelColumns = useMemo(
     () => [
@@ -752,27 +840,89 @@ const LogDashboardPage = () => {
         render: (value) => renderNumber(value || 0),
       },
       {
-        title: t('平均'),
+        title: t('首字样本数'),
+        dataIndex: 'first_response_time_count',
+        key: 'first_response_time_count',
+        render: (value) =>
+          value > 0 ? renderNumber(value) : <Text type='tertiary'>-</Text>,
+      },
+      {
+        title: t('平均耗时'),
         dataIndex: 'average_use_time_seconds',
         key: 'average_use_time_seconds',
         render: (value) => formatUseTime(value),
       },
       {
-        title: 'P50',
+        title: t('P95耗时'),
+        dataIndex: 'p95_use_time_seconds',
+        key: 'p95_use_time_seconds',
+        render: (value) => formatUseTime(value),
+      },
+      {
+        title: t('首字平均'),
+        dataIndex: 'average_first_response_time_seconds',
+        key: 'average_first_response_time_seconds',
+        render: (value, record) =>
+          record.first_response_time_count > 0 ? (
+            formatUseTime(value)
+          ) : (
+            <Text type='tertiary'>-</Text>
+          ),
+      },
+      {
+        title: t('首字P50'),
+        dataIndex: 'p50_first_response_time_seconds',
+        key: 'p50_first_response_time_seconds',
+        render: (value, record) =>
+          record.first_response_time_count > 0 ? (
+            formatUseTime(value)
+          ) : (
+            <Text type='tertiary'>-</Text>
+          ),
+      },
+      {
+        title: t('首字P90'),
+        dataIndex: 'p90_first_response_time_seconds',
+        key: 'p90_first_response_time_seconds',
+        render: (value, record) =>
+          record.first_response_time_count > 0 ? (
+            formatUseTime(value)
+          ) : (
+            <Text type='tertiary'>-</Text>
+          ),
+      },
+      {
+        title: t('首字P95'),
+        dataIndex: 'p95_first_response_time_seconds',
+        key: 'p95_first_response_time_seconds',
+        render: (value, record) =>
+          record.first_response_time_count > 0 ? (
+            formatUseTime(value)
+          ) : (
+            <Text type='tertiary'>-</Text>
+          ),
+      },
+      {
+        title: t('首字最大'),
+        dataIndex: 'max_first_response_time_seconds',
+        key: 'max_first_response_time_seconds',
+        render: (value, record) =>
+          record.first_response_time_count > 0 ? (
+            formatUseTime(value)
+          ) : (
+            <Text type='tertiary'>-</Text>
+          ),
+      },
+      {
+        title: t('总耗时P50'),
         dataIndex: 'p50_use_time_seconds',
         key: 'p50_use_time_seconds',
         render: (value) => formatUseTime(value),
       },
       {
-        title: 'P90',
+        title: t('总耗时P90'),
         dataIndex: 'p90_use_time_seconds',
         key: 'p90_use_time_seconds',
-        render: (value) => formatUseTime(value),
-      },
-      {
-        title: 'P95',
-        dataIndex: 'p95_use_time_seconds',
-        key: 'p95_use_time_seconds',
         render: (value) => formatUseTime(value),
       },
       {
@@ -903,6 +1053,20 @@ const LogDashboardPage = () => {
             </div>
             <div className='flex flex-col gap-3 lg:flex-row lg:items-center'>
               <Tabs
+                type='button'
+                size='small'
+                activeKey={activeLatencyMetric}
+                onChange={setActiveLatencyMetric}
+              >
+                {LATENCY_METRIC_OPTIONS.map((option) => (
+                  <TabPane
+                    key={option.key}
+                    itemKey={option.key}
+                    tab={t(option.label)}
+                  />
+                ))}
+              </Tabs>
+              <Tabs
                 type='slash'
                 activeKey={activeLatencyTab}
                 onChange={setActiveLatencyTab}
@@ -959,7 +1123,18 @@ const LogDashboardPage = () => {
               className='min-w-0 overflow-hidden rounded-xl border border-[var(--semi-color-border)] p-2'
               style={{ height: LATENCY_PANEL_HEIGHT }}
             >
-              <VChart spec={latencyChartSpec} option={CHART_CONFIG} />
+              {latencyTopRows.length > 0 ? (
+                <VChart spec={latencyChartSpec} option={CHART_CONFIG} />
+              ) : (
+                <Empty
+                  description={
+                    activeLatencyMetric === 'first_response_time'
+                      ? t('当前窗口暂无首字耗时数据')
+                      : t('当前窗口暂无耗时数据')
+                  }
+                  style={{ padding: 48 }}
+                />
+              )}
             </div>
             <div
               className='min-w-0 overflow-y-auto overflow-x-hidden rounded-xl border border-[var(--semi-color-border)]'
