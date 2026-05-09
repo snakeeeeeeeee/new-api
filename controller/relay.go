@@ -249,13 +249,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 		service.RecordRelayTimingContext(c, relayInfo)
 
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
-
 		shouldRetryRequest := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
+		isInternalRetryLog := shouldRetryRequest
 		if isAggregateGroupRequest {
 			if transition := service.PrepareAggregateGroupRetry(c, retryParam.GetRetry(), relayInfo.OriginModelName, common.RetryTimes); transition != nil {
 				groupRetryable := shouldRetry(c, newAPIError, 1)
 				shouldRetryRequest = groupRetryable
+				isInternalRetryLog = groupRetryable && transition.HasNext
 				if groupRetryable && !transition.WithinCurrentGroup {
 					service.RecordAggregateRouteSmartFailure(c, relayInfo.OriginModelName, transition.FailedGroup, newAPIError.StatusCode)
 				}
@@ -296,6 +296,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				}
 			}
 		}
+		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, isInternalRetryLog)
 
 		if !shouldRetryRequest {
 			break
@@ -515,7 +516,7 @@ func buildAggregateRelayErrorLog(c *gin.Context, err *types.NewAPIError) string 
 	)
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, internalRetry ...bool) {
 	if common.GetContextKeyString(c, constant.ContextKeyAggregateGroup) != "" {
 		logger.LogError(c, buildAggregateChannelErrorLog(c, channelError, err))
 		service.RecordAggregateRouteRPMFailure(c, c.GetString("original_model"))
@@ -530,6 +531,11 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
+	isInternalRetry := len(internalRetry) > 0 && internalRetry[0]
+	recordRelayErrorLog(c, err, isInternalRetry)
+}
+
+func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError, internalRetry bool) {
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
 		// 保存错误日志到mysql中
 		userId := c.GetInt("id")
@@ -548,6 +554,11 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		other["channel_id"] = channelId
 		other["channel_name"] = c.GetString("channel_name")
 		other["channel_type"] = c.GetInt("channel_type")
+		if internalRetry {
+			other["internal_retry"] = true
+		} else {
+			other["user_safe"] = true
+		}
 		adminInfo := make(map[string]interface{})
 		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
 		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
@@ -566,7 +577,6 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		isStream := common.GetContextKeyBool(c, constant.ContextKeyRelayIsStream)
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, isStream, userGroup, other)
 	}
-
 }
 
 func RelayMidjourney(c *gin.Context) {
@@ -724,18 +734,13 @@ func RelayTask(c *gin.Context) {
 			break
 		}
 
-		if !taskErr.LocalError {
-			processChannelError(c,
-				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
-					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
-		}
-
 		shouldRetryTask := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
+		isInternalRetryLog := shouldRetryTask
 		if isAggregateGroupRequest {
 			if transition := service.PrepareAggregateGroupRetry(c, retryParam.GetRetry(), relayInfo.OriginModelName, common.RetryTimes); transition != nil {
 				groupRetryable := shouldRetryTaskRelay(c, channel.Id, taskErr, 1)
 				shouldRetryTask = groupRetryable
+				isInternalRetryLog = groupRetryable && transition.HasNext
 				if groupRetryable && !transition.WithinCurrentGroup {
 					service.RecordAggregateRouteSmartFailure(c, relayInfo.OriginModelName, transition.FailedGroup, taskErr.StatusCode)
 				}
@@ -775,6 +780,13 @@ func RelayTask(c *gin.Context) {
 					shouldRetryTask = false
 				}
 			}
+		}
+		if !taskErr.LocalError {
+			processChannelError(c,
+				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
+					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
+				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode),
+				isInternalRetryLog)
 		}
 		if !shouldRetryTask {
 			break

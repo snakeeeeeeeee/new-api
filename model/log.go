@@ -65,6 +65,8 @@ const (
 	LogTypeRefund  = 6
 )
 
+const userFacingRelayErrorLog = "status_code=500, 系统异常，请稍后重试"
+
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
@@ -76,6 +78,19 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			delete(otherMap, "reject_reason")
 			delete(otherMap, "is_model_mapped")
 			delete(otherMap, "upstream_model_name")
+			if logs[i].Type == LogTypeError {
+				delete(otherMap, "error_type")
+				delete(otherMap, "error_code")
+				delete(otherMap, "status_code")
+				delete(otherMap, "channel_id")
+				delete(otherMap, "channel_name")
+				delete(otherMap, "channel_type")
+				delete(otherMap, "internal_retry")
+				delete(otherMap, "user_safe")
+			}
+		}
+		if logs[i].Type == LogTypeError {
+			logs[i].Content = userFacingRelayErrorLog
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
 		logs[i].Id = startIdx + i + 1
@@ -83,7 +98,12 @@ func formatUserLogs(logs []*Log, startIdx int) {
 }
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
-	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order("id desc").Limit(common.MaxRecentItems).Find(&logs).Error
+	err = LOG_DB.Model(&Log{}).
+		Where("token_id = ?", tokenId).
+		Where("(logs.other IS NULL OR logs.other = '' OR logs.other NOT LIKE ?)", `%"internal_retry"%`).
+		Order("id desc").
+		Limit(common.MaxRecentItems).
+		Find(&logs).Error
 	formatUserLogs(logs, 0)
 	return logs, err
 }
@@ -449,6 +469,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	if group != "" {
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
 	}
+	tx = tx.Where("(logs.other IS NULL OR logs.other = '' OR logs.other NOT LIKE ?)", `%"internal_retry"%`)
 	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
 	if err != nil {
 		common.SysError("failed to count user logs: " + err.Error())

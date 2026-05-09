@@ -134,3 +134,80 @@ func TestFormatUserLogsHidesModelMapping(t *testing.T) {
 	require.NotContains(t, other, "upstream_model_name")
 	require.Equal(t, float64(0.5), other["model_ratio"])
 }
+
+func TestFormatUserLogsSanitizesErrorContent(t *testing.T) {
+	logs := []*Log{
+		{
+			Id:      42,
+			Type:    LogTypeError,
+			Content: `status_code=429, upstream capacity {"reason":"INSUFFICIENT_MODEL_CAPACITY"}`,
+			Other: common.MapToJsonStr(map[string]interface{}{
+				"error_type":     "openai_error",
+				"error_code":     "rate_limit_error",
+				"status_code":    429,
+				"channel_id":     9,
+				"channel_name":   "upstream-a",
+				"channel_type":   1,
+				"internal_retry": false,
+				"user_safe":      true,
+				"request_path":   "/v1/chat/completions",
+			}),
+		},
+	}
+
+	formatUserLogs(logs, 0)
+
+	require.Equal(t, userFacingRelayErrorLog, logs[0].Content)
+	other, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	require.NotContains(t, other, "error_type")
+	require.NotContains(t, other, "error_code")
+	require.NotContains(t, other, "status_code")
+	require.NotContains(t, other, "channel_id")
+	require.NotContains(t, other, "channel_name")
+	require.NotContains(t, other, "channel_type")
+	require.NotContains(t, other, "internal_retry")
+	require.NotContains(t, other, "user_safe")
+	require.Equal(t, "/v1/chat/completions", other["request_path"])
+}
+
+func TestGetUserLogsHidesInternalRetryErrors(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+	seedLogTestUser(t, 19, "retry-hidden")
+
+	finalLog := &Log{
+		UserId:    19,
+		Username:  "retry-hidden",
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeError,
+		Content:   "status_code=500, upstream final error",
+		TokenName: "retry-token",
+		ModelName: "claude-opus-4-6",
+		Other:     common.MapToJsonStr(map[string]interface{}{"user_safe": true, "status_code": 500}),
+	}
+	internalRetryLog := &Log{
+		UserId:    19,
+		Username:  "retry-hidden",
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeError,
+		Content:   "status_code=429, upstream retry error",
+		TokenName: "retry-token",
+		ModelName: "claude-opus-4-6",
+		Other:     common.MapToJsonStr(map[string]interface{}{"internal_retry": true, "status_code": 429}),
+	}
+	require.NoError(t, LOG_DB.Create(internalRetryLog).Error)
+	require.NoError(t, LOG_DB.Create(finalLog).Error)
+
+	logs, total, err := GetUserLogs(19, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "")
+
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+	require.Equal(t, userFacingRelayErrorLog, logs[0].Content)
+	other, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	require.NotContains(t, other, "status_code")
+	require.NotContains(t, other, "internal_retry")
+	require.NotContains(t, logs[0].Content, "upstream")
+}

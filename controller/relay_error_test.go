@@ -77,6 +77,44 @@ func TestProcessChannelErrorRecordsStreamState(t *testing.T) {
 	require.NoError(t, db.Where("request_id = ?", "req-stream-error").First(&logItem).Error)
 	require.Equal(t, model.LogTypeError, logItem.Type)
 	require.True(t, logItem.IsStream)
+	other, err := common.StrToMap(logItem.Other)
+	require.NoError(t, err)
+	require.True(t, other["user_safe"].(bool))
+	require.NotContains(t, other, "internal_retry")
+}
+
+func TestProcessChannelErrorMarksInternalRetryLog(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	originalErrorLogEnabled := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = true
+	t.Cleanup(func() {
+		constant.ErrorLogEnabled = originalErrorLogEnabled
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("id", 1002)
+	ctx.Set("username", "retry-user")
+	ctx.Set("token_name", "retry-token")
+	ctx.Set("original_model", "claude-opus-4-6")
+	ctx.Set("token_id", 2003)
+	ctx.Set("group", "default")
+	ctx.Set("channel_id", 3004)
+	ctx.Set("channel_name", "retry-channel")
+	ctx.Set("channel_type", 1)
+	ctx.Set(common.RequestIdKey, "req-internal-retry")
+
+	apiErr := types.NewOpenAIError(assertErr("upstream capacity exceeded"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	processChannelError(ctx, *types.NewChannelError(3004, 1, "retry-channel", false, "", false), apiErr, true)
+
+	var logItem model.Log
+	require.NoError(t, db.Where("request_id = ?", "req-internal-retry").First(&logItem).Error)
+	require.Contains(t, logItem.Content, "upstream capacity exceeded")
+	other, err := common.StrToMap(logItem.Other)
+	require.NoError(t, err)
+	require.True(t, other["internal_retry"].(bool))
+	require.NotContains(t, other, "user_safe")
 }
 
 func assertErr(msg string) error {
