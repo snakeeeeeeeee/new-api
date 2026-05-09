@@ -68,9 +68,9 @@ import { SiDiscord } from 'react-icons/si';
 const RegisterForm = () => {
   let navigate = useNavigate();
   const { t } = useTranslation();
-  let affCode = new URLSearchParams(window.location.search).get('aff');
-  let inviteCodeFromUrl =
-    new URLSearchParams(window.location.search).get('invite_code');
+  const searchParams = new URLSearchParams(window.location.search);
+  const affCodeFromUrl = searchParams.get('aff') || '';
+  const inviteCodeFromUrl = searchParams.get('invite_code') || '';
   const githubButtonTextKeyByState = {
     idle: '使用 GitHub 继续',
     redirecting: '正在跳转 GitHub...',
@@ -83,7 +83,7 @@ const RegisterForm = () => {
     email: '',
     verification_code: '',
     wechat_verification_code: '',
-    invite_code: inviteCodeFromUrl || '',
+    invite_code: inviteCodeFromUrl,
   });
   const { username, password, password2 } = inputs;
   const [userState, userDispatch] = useContext(UserContext);
@@ -92,7 +92,9 @@ const RegisterForm = () => {
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
   const [turnstileToken, setTurnstileToken] = useState('');
   const [showWeChatLoginModal, setShowWeChatLoginModal] = useState(false);
-  const [showEmailRegister, setShowEmailRegister] = useState(false);
+  const [showEmailRegister, setShowEmailRegister] = useState(
+    Boolean(inviteCodeFromUrl),
+  );
   const [wechatLoading, setWechatLoading] = useState(false);
   const [githubLoading, setGithubLoading] = useState(false);
   const [discordLoading, setDiscordLoading] = useState(false);
@@ -118,8 +120,8 @@ const RegisterForm = () => {
   const logo = getLogo();
   const systemName = getSystemName();
 
-  if (affCode) {
-    localStorage.setItem('aff', affCode);
+  if (affCodeFromUrl) {
+    localStorage.setItem('aff', affCodeFromUrl);
   }
   if (inviteCodeFromUrl) {
     localStorage.setItem('invite_code', inviteCodeFromUrl);
@@ -148,6 +150,16 @@ const RegisterForm = () => {
   );
 
   const [showEmailVerification, setShowEmailVerification] = useState(false);
+
+  useEffect(() => {
+    if (inviteCodeFromUrl) {
+      setInputs((currentInputs) => ({
+        ...currentInputs,
+        invite_code: inviteCodeFromUrl,
+      }));
+      setShowEmailRegister(true);
+    }
+  }, [inviteCodeFromUrl]);
 
   useEffect(() => {
     setShowEmailVerification(!!status?.email_verification);
@@ -237,16 +249,16 @@ const RegisterForm = () => {
       }
       setRegisterLoading(true);
       try {
-        if (!affCode) {
-          affCode = localStorage.getItem('aff');
-        }
+        const affCode = affCodeFromUrl || localStorage.getItem('aff');
         const inviteCode =
           inputs.invite_code || localStorage.getItem('invite_code');
-        inputs.aff_code = affCode;
-        inputs.invite_code = inviteCode;
         const res = await API.post(
           `/api/user/register?turnstile=${turnstileToken}`,
-          inputs,
+          {
+            ...inputs,
+            aff_code: affCode,
+            invite_code: inviteCode,
+          },
         );
         const { success, message } = res.data;
         if (success) {
@@ -581,7 +593,11 @@ const RegisterForm = () => {
               </Title>
             </div>
             <div className='px-2 py-8'>
-              <Form className='space-y-3'>
+              <Form
+                key={`register-form-${inviteCodeFromUrl || 'default'}`}
+                className='space-y-3'
+                initValues={inputs}
+              >
                 <Form.Input
                   field='username'
                   label={t('用户名')}
@@ -799,8 +815,7 @@ const RegisterForm = () => {
         style={{ top: '50%', left: '-120px' }}
       />
       <div className='w-full max-w-sm mt-[60px]'>
-        {showEmailRegister ||
-        !hasOAuthRegisterOptions
+        {showEmailRegister || !hasOAuthRegisterOptions
           ? renderEmailRegisterForm()
           : renderOAuthOptions()}
         {renderWeChatLoginModal()}
