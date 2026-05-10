@@ -43,6 +43,22 @@ func callExternalRegister(t *testing.T, authCode string, payload []byte) tokenAP
 	return resp
 }
 
+func callExternalSubscriptionQuota(t *testing.T, authCode string, payload []byte) tokenAPIResponse {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/user/external_subscription_quota", bytes.NewReader(payload))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	if authCode != "" {
+		ctx.Request.Header.Set("Authorization", "Bearer "+authCode)
+	}
+	ExternalSubscriptionQuota(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	return resp
+}
+
 func TestExternalRegisterRequiresEnabledAndAuthCode(t *testing.T) {
 	setupInviteCodeControllerTestDB(t)
 	model.InitOptionMap()
@@ -124,6 +140,114 @@ func TestExternalRegisterAllowsRegistrationWithoutInviteCode(t *testing.T) {
 	require.Zero(t, created.InviteCodeOwnerId)
 	require.Zero(t, created.InviterId)
 	require.Equal(t, common.QuotaForNewUser, created.Quota)
+}
+
+func TestExternalSubscriptionQuotaRequiresEnabledAndAuthCode(t *testing.T) {
+	setupInviteCodeControllerTestDB(t)
+	model.InitOptionMap()
+	payload := []byte(`{"username":"quota_guard_user"}`)
+
+	common.ExternalRegisterEnabled = false
+	common.ExternalRegisterAuthKey = `["secret-code"]`
+	resp := callExternalSubscriptionQuota(t, "secret-code", payload)
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "未启用")
+
+	common.ExternalRegisterEnabled = true
+	common.ExternalRegisterAuthKey = ""
+	resp = callExternalSubscriptionQuota(t, "secret-code", payload)
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "未配置")
+
+	common.ExternalRegisterAuthKey = "secret-code"
+	resp = callExternalSubscriptionQuota(t, "", payload)
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "鉴权失败")
+
+	resp = callExternalSubscriptionQuota(t, "wrong-code", payload)
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "鉴权失败")
+}
+
+func TestExternalSubscriptionQuotaReturnsActiveSummary(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	model.InitOptionMap()
+	seedInviteCodeControllerUser(t, db, 1201, "ext_quota_user", "aff-ext-quota")
+
+	now := common.GetTimestamp()
+	require.NoError(t, db.Create(&model.UserSubscription{
+		UserId:        1201,
+		PlanId:        1,
+		AmountTotal:   20000,
+		AmountUsed:    19999,
+		StartTime:     now - 60,
+		EndTime:       now + 3600,
+		NextResetTime: now + 600,
+		Status:        "active",
+	}).Error)
+	require.NoError(t, db.Create(&model.UserSubscription{
+		UserId:      1201,
+		PlanId:      2,
+		AmountTotal: 10000,
+		AmountUsed:  5000,
+		StartTime:   now - 7200,
+		EndTime:     now - 3600,
+		Status:      "active",
+	}).Error)
+
+	originalQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 1000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
+	common.ExternalRegisterEnabled = true
+	common.ExternalRegisterAuthKey = `["external-secret"]`
+
+	resp := callExternalSubscriptionQuota(t, "external-secret", []byte(`{"username":"ext_quota_user"}`))
+	require.True(t, resp.Success, resp.Message)
+
+	var data externalSubscriptionQuotaResponse
+	require.NoError(t, common.Unmarshal(resp.Data, &data))
+	require.Equal(t, 1201, data.UserID)
+	require.Equal(t, "ext_quota_user", data.Username)
+	require.Equal(t, 1, data.SubscriptionQuota.ActiveCount)
+	require.Equal(t, int64(20000), data.SubscriptionQuota.AmountTotal)
+	require.Equal(t, int64(19999), data.SubscriptionQuota.AmountUsed)
+	require.Equal(t, int64(1), data.SubscriptionQuota.AmountRemain)
+	require.Equal(t, now+600, data.SubscriptionQuota.NextResetTime)
+	require.Equal(t, now+3600, data.SubscriptionQuota.EarliestEndTime)
+	require.Equal(t, 20.0, data.Display.AmountTotal)
+	require.Equal(t, 19.999, data.Display.AmountUsed)
+	require.Equal(t, 0.001, data.Display.AmountRemain)
+	require.Equal(t, 99.995, data.Display.UsagePercent)
+	require.Equal(t, 0.005, data.Display.RemainPercent)
+	require.True(t, data.Display.HasActive)
+	require.True(t, data.Display.HasLimitedQuota)
+	require.False(t, data.Display.HasUnlimited)
+}
+
+func TestExternalSubscriptionQuotaReturnsZeroSummaryWithoutActiveSubscription(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	model.InitOptionMap()
+	seedInviteCodeControllerUser(t, db, 1202, "ext_no_subscription_user", "aff-ext-no-subscription")
+
+	common.ExternalRegisterEnabled = true
+	common.ExternalRegisterAuthKey = `["external-secret"]`
+
+	resp := callExternalSubscriptionQuota(t, "external-secret", []byte(`{"username":"ext_no_subscription_user"}`))
+	require.True(t, resp.Success, resp.Message)
+
+	var data externalSubscriptionQuotaResponse
+	require.NoError(t, common.Unmarshal(resp.Data, &data))
+	require.Equal(t, 1202, data.UserID)
+	require.Equal(t, "ext_no_subscription_user", data.Username)
+	require.Zero(t, data.SubscriptionQuota.ActiveCount)
+	require.Zero(t, data.SubscriptionQuota.AmountTotal)
+	require.Zero(t, data.SubscriptionQuota.AmountUsed)
+	require.Zero(t, data.SubscriptionQuota.AmountRemain)
+	require.False(t, data.Display.HasActive)
+	require.False(t, data.Display.HasLimitedQuota)
+	require.False(t, data.Display.HasUnlimited)
 }
 
 func TestExternalRegisterRejectsInvalidInputAndInviteCodes(t *testing.T) {
