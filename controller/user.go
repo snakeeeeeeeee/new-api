@@ -710,6 +710,14 @@ func GetSelf(c *gin.Context) {
 		"permissions":          permissions,                // 新增权限字段
 	}
 
+	canGrantInvitation, inviteAgentLevel, err := model.UserCanGrantInvitation(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	responseData["invite_agent_level"] = inviteAgentLevel
+	responseData["can_grant_invitation"] = canGrantInvitation
+
 	statsByOwnerID, err := model.GetInviteStatsByOwnerUserIDs([]int{id})
 	if err != nil {
 		common.ApiError(c, err)

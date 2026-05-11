@@ -77,6 +77,8 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/self", controller.GetSelf)
 				selfRoute.GET("/self/invite_codes", controller.GetSelfInviteCodes)
 				selfRoute.GET("/self/invitees", controller.GetSelfInvitees)
+				selfRoute.POST("/self/invitees/:id/enable_invitation", controller.EnableSelfInviteeInvitation)
+				selfRoute.GET("/self/invite_agent_stats", controller.GetSelfInviteAgentStats)
 				selfRoute.GET("/models", controller.GetUserModels)
 				selfRoute.PUT("/self", controller.UpdateSelf)
 				selfRoute.DELETE("/self", controller.DeleteSelf)
