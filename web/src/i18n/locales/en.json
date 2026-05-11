@@ -1639,6 +1639,7 @@
     "当运行通道全部测试时，超过此时间将自动禁用通道": "When running all channel tests, the channel will be automatically disabled when this time is exceeded",
     "当钱包或订阅剩余额度低于此数值时，系统将通过选择的方式发送通知": "When wallet or subscription remaining quota falls below this value, the system will send a notification through the selected method",
     "待使用收益": "Proceeds to be used",
+    "待开启邀请功能": "",
     "待部署": "Pending Deployment",
     "微信": "WeChat",
     "微信公众号二维码图片链接": "WeChat Public Account QR Code Image Link",

@@ -139,6 +139,9 @@ const InvitationCard = ({
       (point?.recharge_amount || 0) > 0 || (point?.consume_quota || 0) > 0,
   );
   const secondLevelStats = agentStats?.second_level_stats || [];
+  const pendingInviteeForInvitation = canGrantInvitation
+    ? inviteesPreview.find((invitee) => !invitee.invitation_enabled)
+    : null;
 
   const buildInviteRegisterLink = (code) => {
     const baseUrl = (
@@ -534,6 +537,44 @@ const InvitationCard = ({
               </div>
             </div>
           </Card>
+
+          {pendingInviteeForInvitation && (
+            <Card className='!rounded-xl w-full'>
+              <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3'>
+                <div className='min-w-0'>
+                  <Text type='tertiary' className='text-sm'>
+                    {t('待开启邀请功能')}
+                  </Text>
+                  <div className='mt-1 flex flex-wrap items-center gap-2'>
+                    <span className='font-semibold'>
+                      {pendingInviteeForInvitation.username}
+                    </span>
+                    <Tag size='small' shape='circle'>
+                      {t('可给被邀请人开启邀请码')}
+                    </Tag>
+                  </div>
+                </div>
+                <Popconfirm
+                  title={t('确定给该用户开启邀请功能？')}
+                  content={t('系统会自动生成一个零奖励的邀请码。')}
+                  onConfirm={() =>
+                    enableInviteeInvitation(pendingInviteeForInvitation)
+                  }
+                >
+                  <Button
+                    size='small'
+                    type='primary'
+                    theme='solid'
+                    loading={
+                      enablingInviteeId === pendingInviteeForInvitation.user_id
+                    }
+                  >
+                    {t('开启邀请功能')}
+                  </Button>
+                </Popconfirm>
+              </div>
+            </Card>
+          )}
 
           {hasAgentStatsAccess && (
             <Card

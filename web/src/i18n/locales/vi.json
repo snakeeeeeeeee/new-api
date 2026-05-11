@@ -1616,6 +1616,7 @@
     "当运行通道全部测试时，超过此时间将自动禁用通道": "Khi chạy tất cả các kiểm tra kênh, kênh sẽ tự động bị vô hiệu hóa khi vượt quá thời gian này",
     "当钱包或订阅剩余额度低于此数值时，系统将通过选择的方式发送通知": "Khi hạn ngạch còn lại của ví hoặc gói thuê bao thấp hơn giá trị này, hệ thống sẽ gửi thông báo theo phương thức đã chọn",
     "待使用收益": "Tiền thu được để sử dụng",
+    "待开启邀请功能": "",
     "待部署": "Pending Deployment",
     "微信": "WeChat",
     "微信公众号二维码图片链接": "Liên kết hình ảnh mã QR tài khoản công khai WeChat",
