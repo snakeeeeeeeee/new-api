@@ -36,6 +36,30 @@ type externalRegisterRequest struct {
 	InviteCode string `json:"invite_code"`
 }
 
+type externalSubscriptionQuotaRequest struct {
+	Username string `json:"username"`
+}
+
+type externalSubscriptionQuotaDisplay struct {
+	AmountTotal     float64 `json:"amount_total"`
+	AmountUsed      float64 `json:"amount_used"`
+	AmountRemain    float64 `json:"amount_remain"`
+	UsagePercent    float64 `json:"usage_percent"`
+	RemainPercent   float64 `json:"remain_percent"`
+	Currency        string  `json:"currency"`
+	QuotaPerUnit    float64 `json:"quota_per_unit"`
+	HasActive       bool    `json:"has_active"`
+	HasLimitedQuota bool    `json:"has_limited_quota"`
+	HasUnlimited    bool    `json:"has_unlimited"`
+}
+
+type externalSubscriptionQuotaResponse struct {
+	UserID            int                              `json:"user_id"`
+	Username          string                           `json:"username"`
+	SubscriptionQuota model.SubscriptionQuotaSummary   `json:"subscription_quota"`
+	Display           externalSubscriptionQuotaDisplay `json:"display"`
+}
+
 func getBearerToken(c *gin.Context) string {
 	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
 	const bearerPrefix = "Bearer "
@@ -71,6 +95,61 @@ func externalRegisterAuthKeyMatches(requestAuthKey string, authKeys []string) bo
 		}
 	}
 	return false
+}
+
+func validateExternalRegisterAuth(c *gin.Context, featureName string) bool {
+	if !common.ExternalRegisterEnabled {
+		common.ApiErrorMsg(c, featureName+"未启用")
+		return false
+	}
+	authKeys := externalRegisterAuthKeys()
+	if len(authKeys) == 0 {
+		common.ApiErrorMsg(c, featureName+"鉴权码未配置")
+		return false
+	}
+	if !externalRegisterAuthKeyMatches(getBearerToken(c), authKeys) {
+		common.ApiErrorMsg(c, featureName+"鉴权失败")
+		return false
+	}
+	return true
+}
+
+func subscriptionQuotaDisplay(summary model.SubscriptionQuotaSummary) externalSubscriptionQuotaDisplay {
+	quotaPerUnit := common.QuotaPerUnit
+	if quotaPerUnit <= 0 {
+		quotaPerUnit = 1
+	}
+	amountTotal := float64(summary.AmountTotal) / quotaPerUnit
+	amountUsed := float64(summary.AmountUsed) / quotaPerUnit
+	amountRemain := float64(summary.AmountRemain) / quotaPerUnit
+	usagePercent := 0.0
+	remainPercent := 0.0
+	if summary.AmountTotal > 0 {
+		usagePercent = float64(summary.AmountUsed) / float64(summary.AmountTotal) * 100
+		remainPercent = float64(summary.AmountRemain) / float64(summary.AmountTotal) * 100
+		if usagePercent < 0 {
+			usagePercent = 0
+		} else if usagePercent > 100 {
+			usagePercent = 100
+		}
+		if remainPercent < 0 {
+			remainPercent = 0
+		} else if remainPercent > 100 {
+			remainPercent = 100
+		}
+	}
+	return externalSubscriptionQuotaDisplay{
+		AmountTotal:     amountTotal,
+		AmountUsed:      amountUsed,
+		AmountRemain:    amountRemain,
+		UsagePercent:    usagePercent,
+		RemainPercent:   remainPercent,
+		Currency:        "USD",
+		QuotaPerUnit:    quotaPerUnit,
+		HasActive:       summary.ActiveCount > 0,
+		HasLimitedQuota: summary.AmountTotal > 0,
+		HasUnlimited:    summary.UnlimitedCount > 0,
+	}
 }
 
 func Login(c *gin.Context) {
@@ -301,18 +380,7 @@ func Register(c *gin.Context) {
 }
 
 func ExternalRegister(c *gin.Context) {
-	if !common.ExternalRegisterEnabled {
-		common.ApiErrorMsg(c, "外部注册未启用")
-		return
-	}
-	authKeys := externalRegisterAuthKeys()
-	if len(authKeys) == 0 {
-		common.ApiErrorMsg(c, "外部注册鉴权码未配置")
-		return
-	}
-	requestAuthKey := getBearerToken(c)
-	if !externalRegisterAuthKeyMatches(requestAuthKey, authKeys) {
-		common.ApiErrorMsg(c, "外部注册鉴权失败")
+	if !validateExternalRegisterAuth(c, "外部注册") {
 		return
 	}
 
@@ -356,6 +424,40 @@ func ExternalRegister(c *gin.Context) {
 			"invite_code_id":       inviteCodeId,
 			"invite_code_owner_id": createdUser.InviteCodeOwnerId,
 		},
+	})
+}
+
+func ExternalSubscriptionQuota(c *gin.Context) {
+	if !validateExternalRegisterAuth(c, "外部订阅额度查询") {
+		return
+	}
+
+	var req externalSubscriptionQuotaRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" {
+		common.ApiErrorMsg(c, "username is required")
+		return
+	}
+
+	user, err := model.GetUserByUsername(req.Username, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	summary, err := model.GetActiveSubscriptionQuotaSummary(user.Id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, externalSubscriptionQuotaResponse{
+		UserID:            user.Id,
+		Username:          user.Username,
+		SubscriptionQuota: summary,
+		Display:           subscriptionQuotaDisplay(summary),
 	})
 }
 

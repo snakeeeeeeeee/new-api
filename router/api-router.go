@@ -58,6 +58,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			userRoute.POST("/register", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Register)
 			userRoute.POST("/external_register", middleware.CriticalRateLimit(), controller.ExternalRegister)
+			userRoute.POST("/external_subscription_quota", middleware.CriticalRateLimit(), controller.ExternalSubscriptionQuota)
 			userRoute.POST("/external_topup", middleware.CriticalRateLimit(), controller.ExternalTopUp)
 			userRoute.POST("/login", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Login)
 			userRoute.POST("/login/2fa", middleware.CriticalRateLimit(), controller.Verify2FALogin)
