@@ -13,11 +13,13 @@ import (
 )
 
 type selfInvitePreviewResponse struct {
-	InviteCodeCount int                    `json:"invite_code_count"`
-	InviteCodes     []model.InviteCode     `json:"invite_codes"`
-	InviteUserCount int                    `json:"invite_user_count"`
-	Invitees        []model.InviteeSummary `json:"invitees"`
-	BoundInviteCode *model.InviteCode      `json:"bound_invite_code"`
+	InviteCodeCount    int                    `json:"invite_code_count"`
+	InviteCodes        []model.InviteCode     `json:"invite_codes"`
+	InviteUserCount    int                    `json:"invite_user_count"`
+	Invitees           []model.InviteeSummary `json:"invitees"`
+	BoundInviteCode    *model.InviteCode      `json:"bound_invite_code"`
+	InviteAgentLevel   int                    `json:"invite_agent_level"`
+	CanGrantInvitation bool                   `json:"can_grant_invitation"`
 }
 
 type selfInviteCodePageResponse struct {
@@ -307,4 +309,119 @@ func TestGetSelfInviteesIncludesInviteCodeState(t *testing.T) {
 	require.Equal(t, model.InviteCodeStatusDisabled, inviteeMap["invitee_disabled_ui"].InviteCodeStatus)
 	require.False(t, inviteeMap["invitee_disabled_ui"].InviteCodeDeleted)
 	require.True(t, inviteeMap["invitee_deleted_ui"].InviteCodeDeleted)
+}
+
+func TestEnableSelfInviteeInvitationCreatesSecondLevelCode(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	seedInviteCodeControllerUser(t, db, 100, "agent_controller_a", "aff-agent-controller-a")
+
+	firstCode := &model.InviteCode{
+		Code:              "CTRL-A-001",
+		Prefix:            "CTRL",
+		OwnerUserId:       100,
+		TargetGroup:       "vip",
+		RewardQuotaPerUse: 0,
+		RewardTotalUses:   0,
+		Status:            model.InviteCodeStatusEnabled,
+	}
+	require.NoError(t, firstCode.Insert())
+	require.NoError(t, db.Create(&model.User{
+		Id:                101,
+		Username:          "agent_controller_b",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-controller-b",
+		InviteCodeId:      firstCode.Id,
+		InviteCodeOwnerId: 100,
+		InviterId:         100,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/user/self/invitees/101/enable_invitation", nil)
+	ctx.Set("id", 100)
+	ctx.Params = gin.Params{{Key: "id", Value: "101"}}
+	EnableSelfInviteeInvitation(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+
+	var code model.InviteCode
+	require.NoError(t, common.Unmarshal(resp.Data, &code))
+	require.Equal(t, 101, code.OwnerUserId)
+	require.Equal(t, model.InviteAgentLevelSecond, code.AgentLevel)
+	require.Equal(t, 100, code.GrantedByUserId)
+}
+
+func TestGetSelfInviteAgentStatsReturnsSecondLevelRows(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	seedInviteCodeControllerUser(t, db, 110, "agent_stats_a", "aff-agent-stats-a")
+	firstCode := &model.InviteCode{
+		Code:              "CTRL-STATS-A",
+		Prefix:            "CTRL",
+		OwnerUserId:       110,
+		TargetGroup:       "vip",
+		RewardQuotaPerUse: 0,
+		RewardTotalUses:   0,
+		Status:            model.InviteCodeStatusEnabled,
+	}
+	require.NoError(t, firstCode.Insert())
+	require.NoError(t, db.Create(&model.User{
+		Id:                111,
+		Username:          "agent_stats_b",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-stats-b",
+		InviteCodeId:      firstCode.Id,
+		InviteCodeOwnerId: 110,
+		InviterId:         110,
+		UsedQuota:         500,
+	}).Error)
+	code, err := model.EnableInviteeInvitation(110, 111)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.User{
+		Id:                112,
+		Username:          "agent_stats_c",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-stats-c",
+		InviteCodeId:      code.Id,
+		InviteCodeOwnerId: 111,
+		InviterId:         111,
+		UsedQuota:         900,
+	}).Error)
+	require.NoError(t, db.Create(&model.TopUp{
+		UserId:       112,
+		Amount:       120,
+		Money:        12,
+		TradeNo:      "ctrl-agent-stats-c",
+		CreateTime:   common.GetTimestamp(),
+		CompleteTime: common.GetTimestamp(),
+		Status:       common.TopUpStatusSuccess,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/self/invite_agent_stats?period=day", nil)
+	ctx.Set("id", 110)
+	GetSelfInviteAgentStats(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+
+	var stats model.InviteAgentStatsResponse
+	require.NoError(t, common.Unmarshal(resp.Data, &stats))
+	require.Equal(t, model.InviteAgentLevelFirst, stats.AgentLevel)
+	require.Len(t, stats.SecondLevelStats, 1)
+	require.Equal(t, 111, stats.SecondLevelStats[0].UserID)
+	require.Equal(t, int64(120), stats.SecondLevelStats[0].InviteeStats.RechargeAmount)
+	require.Equal(t, 900, stats.SecondLevelStats[0].InviteeStats.ConsumeQuota)
 }

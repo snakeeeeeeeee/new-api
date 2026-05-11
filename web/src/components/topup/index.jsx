@@ -807,6 +807,7 @@ const TopUp = () => {
           renderQuota={renderQuota}
           renderQuotaWithAmount={renderQuotaWithAmount}
           setOpenTransfer={setOpenTransfer}
+          refreshUser={getUserQuota}
           inviteRegisterBaseUrl={
             statusState?.status?.server_address || window.location.origin
           }

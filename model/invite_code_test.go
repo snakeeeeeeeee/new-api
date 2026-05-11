@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/require"
@@ -40,16 +41,53 @@ func seedInviteCode(t *testing.T, code string, ownerID int, targetGroup string, 
 
 func seedInviteTopUp(t *testing.T, userID int, tradeNo string, amount int64, money float64, status string) {
 	t.Helper()
+	seedInviteTopUpAt(t, userID, tradeNo, amount, money, status, common.GetTimestamp())
+}
+
+func seedInviteTopUpAt(t *testing.T, userID int, tradeNo string, amount int64, money float64, status string, completeTime int64) {
+	t.Helper()
 	topUp := &TopUp{
 		UserId:        userID,
 		Amount:        amount,
 		Money:         money,
 		TradeNo:       tradeNo,
 		PaymentMethod: "epay",
-		CreateTime:    common.GetTimestamp(),
+		CreateTime:    completeTime,
+		CompleteTime:  completeTime,
 		Status:        status,
 	}
 	require.NoError(t, topUp.Insert())
+}
+
+func seedInviteConsumeLogAt(t *testing.T, userID int, username string, quota int, createdAt int64) {
+	t.Helper()
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId:    userID,
+		CreatedAt: createdAt,
+		Type:      LogTypeConsume,
+		Username:  username,
+		Quota:     quota,
+	}).Error)
+}
+
+func fixedInviteStatsTime(year int, month time.Month, day int) int64 {
+	return time.Date(year, month, day, 12, 0, 0, 0, time.Local).Unix()
+}
+
+func sumInviteTrendRecharge(points []InviteAgentTrendPoint) int64 {
+	var total int64
+	for _, point := range points {
+		total += point.RechargeAmount
+	}
+	return total
+}
+
+func sumInviteTrendConsume(points []InviteAgentTrendPoint) int {
+	var total int
+	for _, point := range points {
+		total += point.ConsumeQuota
+	}
+	return total
 }
 
 func TestInsertWithManagedInviteCodeGrantsRewardAndBindsUser(t *testing.T) {
@@ -412,4 +450,243 @@ func TestBindUserInviteBindingRejectsForeignInviteCode(t *testing.T) {
 
 	_, err := BindUserInviteBinding(851, 85, foreignCode.Id)
 	require.ErrorIs(t, err, ErrInviteCodeOwnerMismatch)
+}
+
+func TestEnableInviteeInvitationCreatesSecondLevelCode(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 90, "agent_a")
+	firstCode := seedInviteCode(t, "AGENTA-CODE", 90, "vip", 0, 0, 0, InviteCodeStatusEnabled)
+	invitee := &User{
+		Id:                901,
+		Username:          "agent_b",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-b",
+		InviteCodeId:      firstCode.Id,
+		InviteCodeOwnerId: 90,
+		InviterId:         90,
+	}
+	require.NoError(t, DB.Create(invitee).Error)
+
+	code, err := EnableInviteeInvitation(90, 901)
+	require.NoError(t, err)
+	require.NotNil(t, code)
+	require.Equal(t, 901, code.OwnerUserId)
+	require.Equal(t, "vip", code.TargetGroup)
+	require.Equal(t, InviteAgentLevelSecond, code.AgentLevel)
+	require.Equal(t, 90, code.GrantedByUserId)
+	require.Equal(t, 0, code.RewardQuotaPerUse)
+	require.Equal(t, 0, code.RewardTotalUses)
+
+	level, err := GetUserInviteAgentLevel(901)
+	require.NoError(t, err)
+	require.Equal(t, InviteAgentLevelSecond, level)
+}
+
+func TestEnableInviteeInvitationRejectsSecondLevelGrant(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 91, "agent_a2")
+	firstCode := seedInviteCode(t, "AGENTA2-CODE", 91, "vip", 0, 0, 0, InviteCodeStatusEnabled)
+	agentB := &User{
+		Id:                911,
+		Username:          "agent_b2",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-b2",
+		InviteCodeId:      firstCode.Id,
+		InviteCodeOwnerId: 91,
+		InviterId:         91,
+	}
+	require.NoError(t, DB.Create(agentB).Error)
+	secondCode, err := EnableInviteeInvitation(91, 911)
+	require.NoError(t, err)
+
+	inviteeC := &User{
+		Id:                912,
+		Username:          "agent_c2",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-c2",
+		InviteCodeId:      secondCode.Id,
+		InviteCodeOwnerId: 911,
+		InviterId:         911,
+	}
+	require.NoError(t, DB.Create(inviteeC).Error)
+
+	_, err = EnableInviteeInvitation(911, 912)
+	require.ErrorIs(t, err, ErrInviteAgentNoPermission)
+}
+
+func TestGetInviteAgentStatsSeparatesSecondLevelFlow(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 92, "agent_a3")
+	firstCode := seedInviteCode(t, "AGENTA3-CODE", 92, "vip", 0, 0, 0, InviteCodeStatusEnabled)
+	agentB := &User{
+		Id:                921,
+		Username:          "agent_b3",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-b3",
+		InviteCodeId:      firstCode.Id,
+		InviteCodeOwnerId: 92,
+		InviterId:         92,
+		UsedQuota:         3000,
+	}
+	require.NoError(t, DB.Create(agentB).Error)
+	secondCode, err := EnableInviteeInvitation(92, 921)
+	require.NoError(t, err)
+	inviteeC := &User{
+		Id:                922,
+		Username:          "agent_c3",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-c3",
+		InviteCodeId:      secondCode.Id,
+		InviteCodeOwnerId: 921,
+		InviterId:         921,
+		UsedQuota:         7000,
+	}
+	require.NoError(t, DB.Create(inviteeC).Error)
+	seedInviteTopUp(t, 921, "agent_b_topup", 100, 10, common.TopUpStatusSuccess)
+	seedInviteTopUp(t, 922, "agent_c_topup", 200, 20, common.TopUpStatusSuccess)
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId:    922,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeConsume,
+		Username:  "agent_c3",
+		Quota:     7000,
+	}).Error)
+
+	stats, err := GetInviteAgentStats(92, "day", common.GetTimestamp()-86400, common.GetTimestamp()+10)
+	require.NoError(t, err)
+	require.Equal(t, InviteAgentLevelFirst, stats.AgentLevel)
+	require.Equal(t, int64(1), stats.DirectStats.UserCount)
+	require.Equal(t, int64(100), stats.DirectStats.RechargeAmount)
+	require.Equal(t, 3000, stats.DirectStats.ConsumeQuota)
+	require.Len(t, stats.SecondLevelStats, 1)
+	require.Equal(t, 921, stats.SecondLevelStats[0].UserID)
+	require.Equal(t, int64(100), stats.SecondLevelStats[0].SelfStats.RechargeAmount)
+	require.Equal(t, 3000, stats.SecondLevelStats[0].SelfStats.ConsumeQuota)
+	require.Equal(t, int64(200), stats.SecondLevelStats[0].InviteeStats.RechargeAmount)
+	require.Equal(t, 7000, stats.SecondLevelStats[0].InviteeStats.ConsumeQuota)
+	require.NotEmpty(t, stats.SecondLevelTrend)
+	var trendConsume int
+	for _, point := range stats.SecondLevelTrend {
+		trendConsume += point.ConsumeQuota
+	}
+	require.Equal(t, 7000, trendConsume)
+}
+
+func TestGetInviteAgentStatsFiltersRechargeStatusAndTrendRange(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 93, "agent_a4")
+	firstCode := seedInviteCode(t, "AGENTA4-CODE", 93, "vip", 0, 0, 0, InviteCodeStatusEnabled)
+	invitee := &User{
+		Id:                931,
+		Username:          "agent_b4",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-b4",
+		InviteCodeId:      firstCode.Id,
+		InviteCodeOwnerId: 93,
+		InviterId:         93,
+		UsedQuota:         900,
+	}
+	require.NoError(t, DB.Create(invitee).Error)
+
+	inRange := fixedInviteStatsTime(2026, time.May, 10)
+	outOfRange := fixedInviteStatsTime(2026, time.May, 1)
+	seedInviteTopUpAt(t, 931, "agent_b4_success_in_range", 100, 10, common.TopUpStatusSuccess, inRange)
+	seedInviteTopUpAt(t, 931, "agent_b4_success_out_range", 70, 7, common.TopUpStatusSuccess, outOfRange)
+	seedInviteTopUpAt(t, 931, "agent_b4_pending_in_range", 999, 99, common.TopUpStatusPending, inRange)
+	seedInviteConsumeLogAt(t, 931, "agent_b4", 300, inRange)
+	seedInviteConsumeLogAt(t, 931, "agent_b4", 600, outOfRange)
+
+	stats, err := GetInviteAgentStats(93, "day", fixedInviteStatsTime(2026, time.May, 9), fixedInviteStatsTime(2026, time.May, 11))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), stats.DirectStats.UserCount)
+	require.Equal(t, int64(170), stats.DirectStats.RechargeAmount)
+	require.Equal(t, 17.0, stats.DirectStats.RechargeMoney)
+	require.Equal(t, 900, stats.DirectStats.ConsumeQuota)
+	require.Equal(t, int64(100), sumInviteTrendRecharge(stats.DirectTrend))
+	require.Equal(t, 300, sumInviteTrendConsume(stats.DirectTrend))
+}
+
+func TestGetInviteAgentStatsAggregatesMonthTrend(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 94, "agent_a5")
+	firstCode := seedInviteCode(t, "AGENTA5-CODE", 94, "vip", 0, 0, 0, InviteCodeStatusEnabled)
+	invitee := &User{
+		Id:                941,
+		Username:          "agent_b5",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-b5",
+		InviteCodeId:      firstCode.Id,
+		InviteCodeOwnerId: 94,
+		InviterId:         94,
+		UsedQuota:         1200,
+	}
+	require.NoError(t, DB.Create(invitee).Error)
+
+	mayTime := fixedInviteStatsTime(2026, time.May, 10)
+	juneTime := fixedInviteStatsTime(2026, time.June, 5)
+	seedInviteTopUpAt(t, 941, "agent_b5_may_1", 100, 10, common.TopUpStatusSuccess, mayTime)
+	seedInviteTopUpAt(t, 941, "agent_b5_may_2", 50, 5, common.TopUpStatusSuccess, mayTime)
+	seedInviteTopUpAt(t, 941, "agent_b5_june_1", 200, 20, common.TopUpStatusSuccess, juneTime)
+	seedInviteConsumeLogAt(t, 941, "agent_b5", 300, mayTime)
+	seedInviteConsumeLogAt(t, 941, "agent_b5", 400, juneTime)
+
+	stats, err := GetInviteAgentStats(94, "month", fixedInviteStatsTime(2026, time.May, 1), fixedInviteStatsTime(2026, time.June, 30))
+	require.NoError(t, err)
+	require.Equal(t, int64(350), stats.DirectStats.RechargeAmount)
+	require.Equal(t, 35.0, stats.DirectStats.RechargeMoney)
+	require.Len(t, stats.DirectTrend, 2)
+	require.Equal(t, "2026-05", stats.DirectTrend[0].Label)
+	require.Equal(t, int64(150), stats.DirectTrend[0].RechargeAmount)
+	require.Equal(t, 300, stats.DirectTrend[0].ConsumeQuota)
+	require.Equal(t, "2026-06", stats.DirectTrend[1].Label)
+	require.Equal(t, int64(200), stats.DirectTrend[1].RechargeAmount)
+	require.Equal(t, 400, stats.DirectTrend[1].ConsumeQuota)
+}
+
+func TestGetInviteAgentStatsKeepsConsumeTotalWithoutConsumeLogs(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 95, "agent_a6")
+	firstCode := seedInviteCode(t, "AGENTA6-CODE", 95, "vip", 0, 0, 0, InviteCodeStatusEnabled)
+	invitee := &User{
+		Id:                951,
+		Username:          "agent_b6",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		AffCode:           "aff-agent-b6",
+		InviteCodeId:      firstCode.Id,
+		InviteCodeOwnerId: 95,
+		InviterId:         95,
+		UsedQuota:         4321,
+	}
+	require.NoError(t, DB.Create(invitee).Error)
+	seedInviteTopUpAt(t, 951, "agent_b6_topup", 123, 12.3, common.TopUpStatusSuccess, fixedInviteStatsTime(2026, time.May, 10))
+
+	stats, err := GetInviteAgentStats(95, "day", fixedInviteStatsTime(2026, time.May, 9), fixedInviteStatsTime(2026, time.May, 11))
+	require.NoError(t, err)
+	require.Equal(t, 4321, stats.DirectStats.ConsumeQuota)
+	require.Equal(t, 0, sumInviteTrendConsume(stats.DirectTrend))
+	require.Equal(t, int64(123), sumInviteTrendRecharge(stats.DirectTrend))
 }

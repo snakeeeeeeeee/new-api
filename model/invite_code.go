@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
@@ -15,6 +17,9 @@ import (
 const (
 	InviteCodeStatusEnabled  = 1
 	InviteCodeStatusDisabled = 2
+	InviteAgentLevelNone     = 0
+	InviteAgentLevelFirst    = 1
+	InviteAgentLevelSecond   = 2
 	ManualInviteCodePrefix   = "MANUAL"
 )
 
@@ -27,6 +32,10 @@ var (
 	ErrInviteCodeOwnerMismatch    = errors.New("邀请码不属于目标邀请人")
 	ErrInviteCodeUnavailable      = errors.New("邀请码不存在或已删除")
 	ErrInviteCodeManualOnly       = errors.New("手动绑定邀请码不能用于注册")
+	ErrInviteAgentNoPermission    = errors.New("当前用户没有开通下级邀请功能的权限")
+	ErrInviteAgentTargetInvalid   = errors.New("只能给自己通过邀请码直接邀请的用户开启邀请功能")
+	ErrInviteAgentTargetRole      = errors.New("不能给管理员用户开启代理邀请功能")
+	ErrInviteAgentAlreadyEnabled  = errors.New("该用户已开启邀请功能")
 )
 
 type InviteCode struct {
@@ -38,6 +47,8 @@ type InviteCode struct {
 	RewardQuotaPerUse         int            `json:"reward_quota_per_use" gorm:"type:int;default:0"`
 	RewardTotalUses           int            `json:"reward_total_uses" gorm:"type:int;default:0"`
 	RewardUsedUses            int            `json:"reward_used_uses" gorm:"type:int;default:0"`
+	AgentLevel                int            `json:"agent_level" gorm:"type:int;default:1;index"`
+	GrantedByUserId           int            `json:"granted_by_user_id" gorm:"type:int;default:0;index"`
 	Status                    int            `json:"status" gorm:"type:int;default:1;index"`
 	CreatedTime               int64          `json:"created_time" gorm:"bigint"`
 	UpdatedTime               int64          `json:"updated_time" gorm:"bigint"`
@@ -50,6 +61,7 @@ type InviteCode struct {
 	InviteTotalRechargeMoney  float64        `json:"invite_total_recharge_money,omitempty" gorm:"-"`
 	InviteTotalConsume        int            `json:"invite_total_consume,omitempty" gorm:"-"`
 	RemainingRewardUses       int            `json:"remaining_reward_uses,omitempty" gorm:"-"`
+	GrantsInvitePermission    bool           `json:"grants_invite_permission" gorm:"-"`
 	IsDeleted                 bool           `json:"is_deleted,omitempty" gorm:"-"`
 	IsManual                  bool           `json:"is_manual,omitempty" gorm:"-"`
 }
@@ -66,6 +78,11 @@ type InviteeSummary struct {
 	InviteTotalRechargeAmount int64   `json:"invite_total_recharge_amount"`
 	InviteTotalRechargeMoney  float64 `json:"invite_total_recharge_money"`
 	InviteTotalConsume        int     `json:"invite_total_consume"`
+	InviteAgentLevel          int     `json:"invite_agent_level"`
+	CanGrantInvitation        bool    `json:"can_grant_invitation"`
+	InvitationEnabled         bool    `json:"invitation_enabled"`
+	InvitationInviteCodeID    int     `json:"invitation_invite_code_id"`
+	InvitationInviteCode      string  `json:"invitation_invite_code"`
 }
 
 type InviteStats struct {
@@ -87,6 +104,43 @@ type InviteBindingChange struct {
 	InviteCode           *InviteCode `json:"invite_code,omitempty"`
 }
 
+type InviteAgentTrendPoint struct {
+	BucketStart    int64   `json:"bucket_start"`
+	Label          string  `json:"label"`
+	RechargeAmount int64   `json:"recharge_amount"`
+	RechargeMoney  float64 `json:"recharge_money"`
+	ConsumeQuota   int     `json:"consume_quota"`
+}
+
+type InviteAgentUserFlowStats struct {
+	UserCount      int64   `json:"user_count"`
+	RechargeAmount int64   `json:"recharge_amount"`
+	RechargeMoney  float64 `json:"recharge_money"`
+	ConsumeQuota   int     `json:"consume_quota"`
+}
+
+type InviteAgentSecondLevelStats struct {
+	UserID       int                      `json:"user_id"`
+	Username     string                   `json:"username"`
+	Group        string                   `json:"group"`
+	InviteCodeID int                      `json:"invite_code_id"`
+	InviteCode   string                   `json:"invite_code"`
+	SelfStats    InviteAgentUserFlowStats `json:"self_stats"`
+	InviteeStats InviteAgentUserFlowStats `json:"invitee_stats"`
+}
+
+type InviteAgentStatsResponse struct {
+	AgentLevel         int                           `json:"agent_level"`
+	CanGrantInvitation bool                          `json:"can_grant_invitation"`
+	Period             string                        `json:"period"`
+	StartTime          int64                         `json:"start_time"`
+	EndTime            int64                         `json:"end_time"`
+	DirectStats        InviteAgentUserFlowStats      `json:"direct_stats"`
+	DirectTrend        []InviteAgentTrendPoint       `json:"direct_trend"`
+	SecondLevelStats   []InviteAgentSecondLevelStats `json:"second_level_stats"`
+	SecondLevelTrend   []InviteAgentTrendPoint       `json:"second_level_trend"`
+}
+
 func (code *InviteCode) normalizeDerivedFields() {
 	remaining := code.RewardTotalUses - code.RewardUsedUses
 	if remaining < 0 {
@@ -95,6 +149,14 @@ func (code *InviteCode) normalizeDerivedFields() {
 	code.RemainingRewardUses = remaining
 	code.IsDeleted = code.DeletedAt.Valid
 	code.IsManual = isManualInviteCode(code)
+	if code.IsManual {
+		code.GrantsInvitePermission = false
+		return
+	}
+	if code.AgentLevel <= InviteAgentLevelNone {
+		code.AgentLevel = InviteAgentLevelFirst
+	}
+	code.GrantsInvitePermission = code.Status == InviteCodeStatusEnabled && !code.IsDeleted && code.AgentLevel > InviteAgentLevelNone
 }
 
 func isManualInviteCode(code *InviteCode) bool {
@@ -132,6 +194,8 @@ func (code *InviteCode) Update() error {
 		"reward_quota_per_use",
 		"reward_total_uses",
 		"reward_used_uses",
+		"agent_level",
+		"granted_by_user_id",
 		"status",
 		"updated_time",
 	).Updates(code).Error
@@ -253,6 +317,8 @@ func CreateInviteCodes(prefix string, count int, ownerUserID int, targetGroup st
 				TargetGroup:       targetGroup,
 				RewardQuotaPerUse: rewardQuotaPerUse,
 				RewardTotalUses:   rewardTotalUses,
+				AgentLevel:        InviteAgentLevelFirst,
+				GrantedByUserId:   0,
 				Status:            status,
 			}
 			if err := code.Insert(); err != nil {
@@ -599,6 +665,8 @@ func getOrCreateManualInviteCodeTx(tx *gorm.DB, owner *User) (*InviteCode, error
 		"reward_quota_per_use": 0,
 		"reward_total_uses":    0,
 		"reward_used_uses":     0,
+		"agent_level":          InviteAgentLevelNone,
+		"granted_by_user_id":   0,
 		"status":               InviteCodeStatusEnabled,
 		"deleted_at":           nil,
 		"updated_time":         common.GetTimestamp(),
@@ -628,6 +696,8 @@ func getOrCreateManualInviteCodeTx(tx *gorm.DB, owner *User) (*InviteCode, error
 		RewardQuotaPerUse: 0,
 		RewardTotalUses:   0,
 		RewardUsedUses:    0,
+		AgentLevel:        InviteAgentLevelNone,
+		GrantedByUserId:   0,
 		Status:            InviteCodeStatusEnabled,
 	}
 	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&inviteCode).Error; err != nil {
@@ -756,6 +826,9 @@ type inviteeSummaryQueryRow struct {
 	InviteCodeStatus    int          `gorm:"column:invite_code_status"`
 	InviteCodeDeletedAt sql.NullTime `gorm:"column:invite_code_deleted_at"`
 	InviteTotalConsume  int          `gorm:"column:invite_total_consume"`
+	InviteAgentLevel    int          `gorm:"column:invite_agent_level"`
+	InvitationCodeID    int          `gorm:"column:invitation_invite_code_id"`
+	InvitationCode      string       `gorm:"column:invitation_invite_code"`
 }
 
 func GetInviteeSummariesByOwnerUserID(ownerUserID int, startIdx int, limit int) ([]*InviteeSummary, int64, error) {
@@ -808,6 +881,9 @@ func GetInviteeSummariesByOwnerUserID(ownerUserID int, startIdx int, limit int) 
 			InviteTotalConsume: row.InviteTotalConsume,
 		})
 	}
+	if err := populateInviteeAgentFields(invitees); err != nil {
+		return nil, 0, err
+	}
 
 	var rechargeRows []inviteeRechargeRow
 	if err := DB.Table("top_ups").
@@ -830,4 +906,529 @@ func GetInviteeSummariesByOwnerUserID(ownerUserID int, startIdx int, limit int) 
 		}
 	}
 	return invitees, total, nil
+}
+
+func GetUserInviteAgentLevel(userID int) (int, error) {
+	if userID <= 0 {
+		return InviteAgentLevelNone, nil
+	}
+	var codes []InviteCode
+	if err := DB.Where("owner_user_id = ? AND status = ?", userID, InviteCodeStatusEnabled).Find(&codes).Error; err != nil {
+		return InviteAgentLevelNone, err
+	}
+	level := InviteAgentLevelNone
+	for i := range codes {
+		codes[i].normalizeDerivedFields()
+		if codes[i].IsManual || !codes[i].GrantsInvitePermission {
+			continue
+		}
+		if level == InviteAgentLevelNone || codes[i].AgentLevel < level {
+			level = codes[i].AgentLevel
+		}
+	}
+	return level, nil
+}
+
+func UserCanGrantInvitation(userID int) (bool, int, error) {
+	level, err := GetUserInviteAgentLevel(userID)
+	if err != nil {
+		return false, InviteAgentLevelNone, err
+	}
+	return level == InviteAgentLevelFirst, level, nil
+}
+
+func populateInviteeAgentFields(invitees []*InviteeSummary) error {
+	if len(invitees) == 0 {
+		return nil
+	}
+	userIDs := make([]int, 0, len(invitees))
+	for _, invitee := range invitees {
+		if invitee != nil && invitee.UserID > 0 {
+			userIDs = append(userIDs, invitee.UserID)
+		}
+	}
+	if len(userIDs) == 0 {
+		return nil
+	}
+	var codes []InviteCode
+	if err := DB.Where("owner_user_id IN ? AND status = ?", userIDs, InviteCodeStatusEnabled).Find(&codes).Error; err != nil {
+		return err
+	}
+	bestByOwner := make(map[int]*InviteCode)
+	for i := range codes {
+		codes[i].normalizeDerivedFields()
+		if codes[i].IsManual || !codes[i].GrantsInvitePermission {
+			continue
+		}
+		existing := bestByOwner[codes[i].OwnerUserId]
+		if existing == nil || codes[i].AgentLevel < existing.AgentLevel || (codes[i].AgentLevel == existing.AgentLevel && codes[i].Id < existing.Id) {
+			codeCopy := codes[i]
+			bestByOwner[codes[i].OwnerUserId] = &codeCopy
+		}
+	}
+	for _, invitee := range invitees {
+		if invitee == nil {
+			continue
+		}
+		code := bestByOwner[invitee.UserID]
+		if code == nil {
+			invitee.InviteAgentLevel = InviteAgentLevelNone
+			invitee.CanGrantInvitation = false
+			invitee.InvitationEnabled = false
+			continue
+		}
+		invitee.InviteAgentLevel = code.AgentLevel
+		invitee.CanGrantInvitation = code.AgentLevel == InviteAgentLevelFirst
+		invitee.InvitationEnabled = true
+		invitee.InvitationInviteCodeID = code.Id
+		invitee.InvitationInviteCode = code.Code
+	}
+	return nil
+}
+
+func EnableInviteeInvitation(ownerUserID int, targetUserID int) (*InviteCode, error) {
+	if ownerUserID <= 0 || targetUserID <= 0 {
+		return nil, ErrInviteAgentTargetInvalid
+	}
+	var createdCode *InviteCode
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var ownerCodes []InviteCode
+		if err := tx.Where("owner_user_id = ? AND status = ?", ownerUserID, InviteCodeStatusEnabled).Find(&ownerCodes).Error; err != nil {
+			return err
+		}
+		ownerLevel := InviteAgentLevelNone
+		for i := range ownerCodes {
+			ownerCodes[i].normalizeDerivedFields()
+			if ownerCodes[i].IsManual || !ownerCodes[i].GrantsInvitePermission {
+				continue
+			}
+			if ownerLevel == InviteAgentLevelNone || ownerCodes[i].AgentLevel < ownerLevel {
+				ownerLevel = ownerCodes[i].AgentLevel
+			}
+		}
+		if ownerLevel != InviteAgentLevelFirst {
+			return ErrInviteAgentNoPermission
+		}
+
+		var target User
+		if err := tx.First(&target, "id = ?", targetUserID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrInviteBindingUserNotFound
+			}
+			return err
+		}
+		if target.Role >= common.RoleAdminUser {
+			return ErrInviteAgentTargetRole
+		}
+		if target.InviteCodeOwnerId != ownerUserID || target.InviteCodeId <= 0 {
+			return ErrInviteAgentTargetInvalid
+		}
+
+		var sourceCode InviteCode
+		if err := tx.Unscoped().First(&sourceCode, "id = ?", target.InviteCodeId).Error; err != nil {
+			return ErrInviteAgentTargetInvalid
+		}
+		sourceCode.normalizeDerivedFields()
+		if sourceCode.IsManual {
+			return ErrInviteAgentTargetInvalid
+		}
+
+		var existingCodes []InviteCode
+		if err := tx.Unscoped().Where("owner_user_id = ?", target.Id).Find(&existingCodes).Error; err != nil {
+			return err
+		}
+		for i := range existingCodes {
+			existingCodes[i].normalizeDerivedFields()
+			if existingCodes[i].IsManual || existingCodes[i].AgentLevel <= InviteAgentLevelNone {
+				continue
+			}
+			return ErrInviteAgentAlreadyEnabled
+		}
+
+		prefix := fmt.Sprintf("AG%d", target.Id)
+		targetGroup := strings.TrimSpace(target.Group)
+		if targetGroup == "" {
+			targetGroup = "default"
+		}
+		codes, err := createInviteCodesTx(tx, prefix, 1, target.Id, targetGroup, 0, 0, InviteCodeStatusEnabled, InviteAgentLevelSecond, ownerUserID)
+		if err != nil {
+			return err
+		}
+		var inviteCode InviteCode
+		if err := tx.Where("code = ?", codes[0]).First(&inviteCode).Error; err != nil {
+			return err
+		}
+		inviteCode.normalizeDerivedFields()
+		createdCode = &inviteCode
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return createdCode, nil
+}
+
+func createInviteCodesTx(tx *gorm.DB, prefix string, count int, ownerUserID int, targetGroup string, rewardQuotaPerUse int, rewardTotalUses int, status int, agentLevel int, grantedByUserID int) ([]string, error) {
+	prefix = strings.TrimSuffix(strings.TrimSpace(prefix), "-")
+	targetGroup = strings.TrimSpace(targetGroup)
+	if prefix == "" {
+		return nil, errors.New("邀请码前缀不能为空")
+	}
+	if count <= 0 {
+		return nil, errors.New("生成数量必须大于 0")
+	}
+	if agentLevel < InviteAgentLevelNone {
+		agentLevel = InviteAgentLevelNone
+	}
+
+	createdCodes := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		var inserted bool
+		for retry := 0; retry < 10; retry++ {
+			code := &InviteCode{
+				Code:              generateInviteCode(prefix),
+				Prefix:            prefix,
+				OwnerUserId:       ownerUserID,
+				TargetGroup:       targetGroup,
+				RewardQuotaPerUse: rewardQuotaPerUse,
+				RewardTotalUses:   rewardTotalUses,
+				AgentLevel:        agentLevel,
+				GrantedByUserId:   grantedByUserID,
+				Status:            status,
+			}
+			if err := tx.Create(code).Error; err != nil {
+				if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(strings.ToLower(err.Error()), "unique") {
+					continue
+				}
+				return nil, err
+			}
+			createdCodes = append(createdCodes, code.Code)
+			inserted = true
+			break
+		}
+		if !inserted {
+			return nil, fmt.Errorf("生成邀请码失败，前缀 %s 出现重复冲突", prefix)
+		}
+	}
+	return createdCodes, nil
+}
+
+type inviteFlowRechargeRow struct {
+	UserID int     `gorm:"column:user_id"`
+	Amount int64   `gorm:"column:amount"`
+	Money  float64 `gorm:"column:money"`
+	Time   int64   `gorm:"column:event_time"`
+}
+
+type inviteFlowConsumeRow struct {
+	UserID int   `gorm:"column:user_id"`
+	Quota  int   `gorm:"column:quota"`
+	Time   int64 `gorm:"column:event_time"`
+}
+
+type inviteFlowUserRow struct {
+	Id        int    `gorm:"column:id"`
+	Username  string `gorm:"column:username"`
+	Group     string `gorm:"column:user_group"`
+	UsedQuota int    `gorm:"column:used_quota"`
+}
+
+func GetInviteAgentStats(ownerUserID int, period string, startTime int64, endTime int64) (*InviteAgentStatsResponse, error) {
+	if ownerUserID <= 0 {
+		return nil, ErrInviteBindingOwnerNotFound
+	}
+	period, startTime, endTime = normalizeInviteStatsRange(period, startTime, endTime)
+	agentLevel, err := GetUserInviteAgentLevel(ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	resp := &InviteAgentStatsResponse{
+		AgentLevel:         agentLevel,
+		CanGrantInvitation: agentLevel == InviteAgentLevelFirst,
+		Period:             period,
+		StartTime:          startTime,
+		EndTime:            endTime,
+		DirectTrend:        emptyInviteTrend(period, startTime, endTime),
+		SecondLevelTrend:   emptyInviteTrend(period, startTime, endTime),
+	}
+
+	directUsers, err := getDirectInviteAgentUsers(ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	directIDs := userRowsToIDs(directUsers)
+	resp.DirectStats = summarizeInviteUserRows(directUsers)
+	if err := fillRechargeStatsAndTrend(directIDs, startTime, endTime, period, &resp.DirectStats, resp.DirectTrend); err != nil {
+		return nil, err
+	}
+	if err := fillConsumeTrend(directIDs, startTime, endTime, period, resp.DirectTrend); err != nil {
+		return nil, err
+	}
+
+	if agentLevel != InviteAgentLevelFirst || len(directUsers) == 0 {
+		return resp, nil
+	}
+
+	secondCodes, err := getSecondLevelCodesGrantedBy(ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	secondCodeByOwner := make(map[int]InviteCode, len(secondCodes))
+	secondOwnerIDs := make([]int, 0, len(secondCodes))
+	for _, code := range secondCodes {
+		secondCodeByOwner[code.OwnerUserId] = code
+		secondOwnerIDs = append(secondOwnerIDs, code.OwnerUserId)
+	}
+	if len(secondOwnerIDs) == 0 {
+		return resp, nil
+	}
+	secondUsers, err := getUsersByIDs(secondOwnerIDs)
+	if err != nil {
+		return nil, err
+	}
+	secondInviteesByOwner, err := getDirectInviteAgentUsersByOwners(secondOwnerIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(secondUsers, func(i, j int) bool { return secondUsers[i].Id > secondUsers[j].Id })
+	resp.SecondLevelStats = make([]InviteAgentSecondLevelStats, 0, len(secondUsers))
+	allSecondInviteeIDs := make([]int, 0)
+	for _, secondUser := range secondUsers {
+		code := secondCodeByOwner[secondUser.Id]
+		selfRows := []inviteFlowUserRow{secondUser}
+		inviteeRows := secondInviteesByOwner[secondUser.Id]
+		inviteeIDs := userRowsToIDs(inviteeRows)
+		allSecondInviteeIDs = append(allSecondInviteeIDs, inviteeIDs...)
+		item := InviteAgentSecondLevelStats{
+			UserID:       secondUser.Id,
+			Username:     secondUser.Username,
+			Group:        secondUser.Group,
+			InviteCodeID: code.Id,
+			InviteCode:   code.Code,
+			SelfStats:    summarizeInviteUserRows(selfRows),
+			InviteeStats: summarizeInviteUserRows(inviteeRows),
+		}
+		if err := fillRechargeStatsAndTrend([]int{secondUser.Id}, startTime, endTime, period, &item.SelfStats, nil); err != nil {
+			return nil, err
+		}
+		if err := fillRechargeStatsAndTrend(inviteeIDs, startTime, endTime, period, &item.InviteeStats, nil); err != nil {
+			return nil, err
+		}
+		resp.SecondLevelStats = append(resp.SecondLevelStats, item)
+	}
+	if len(allSecondInviteeIDs) > 0 {
+		resp.SecondLevelStats = resp.SecondLevelStats
+		dummyStats := InviteAgentUserFlowStats{}
+		if err := fillRechargeStatsAndTrend(allSecondInviteeIDs, startTime, endTime, period, &dummyStats, resp.SecondLevelTrend); err != nil {
+			return nil, err
+		}
+		if err := fillConsumeTrend(allSecondInviteeIDs, startTime, endTime, period, resp.SecondLevelTrend); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+func normalizeInviteStatsRange(period string, startTime int64, endTime int64) (string, int64, int64) {
+	now := common.GetTimestamp()
+	if endTime <= 0 {
+		endTime = now
+	}
+	if period != "month" {
+		period = "day"
+	}
+	if startTime <= 0 {
+		if period == "month" {
+			startTime = time.Unix(endTime, 0).AddDate(0, -11, 0).Unix()
+		} else {
+			startTime = time.Unix(endTime, 0).AddDate(0, 0, -29).Unix()
+		}
+	}
+	if startTime > endTime {
+		startTime, endTime = endTime, startTime
+	}
+	if period == "month" {
+		minStart := time.Unix(endTime, 0).AddDate(0, -35, 0).Unix()
+		if startTime < minStart {
+			startTime = minStart
+		}
+	} else {
+		minStart := time.Unix(endTime, 0).AddDate(0, 0, -365).Unix()
+		if startTime < minStart {
+			startTime = minStart
+		}
+	}
+	return period, startTime, endTime
+}
+
+func bucketInviteTime(ts int64, period string) (int64, string) {
+	t := time.Unix(ts, 0).Local()
+	if period == "month" {
+		bucket := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+		return bucket.Unix(), bucket.Format("2006-01")
+	}
+	bucket := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	return bucket.Unix(), bucket.Format("01-02")
+}
+
+func emptyInviteTrend(period string, startTime int64, endTime int64) []InviteAgentTrendPoint {
+	startBucket, _ := bucketInviteTime(startTime, period)
+	endBucket, _ := bucketInviteTime(endTime, period)
+	points := make([]InviteAgentTrendPoint, 0)
+	for cursor := time.Unix(startBucket, 0); !cursor.After(time.Unix(endBucket, 0)); {
+		bucketStart := cursor.Unix()
+		_, label := bucketInviteTime(bucketStart, period)
+		points = append(points, InviteAgentTrendPoint{BucketStart: bucketStart, Label: label})
+		if period == "month" {
+			cursor = cursor.AddDate(0, 1, 0)
+		} else {
+			cursor = cursor.AddDate(0, 0, 1)
+		}
+	}
+	return points
+}
+
+func trendIndex(points []InviteAgentTrendPoint) map[int64]int {
+	index := make(map[int64]int, len(points))
+	for i := range points {
+		index[points[i].BucketStart] = i
+	}
+	return index
+}
+
+func getDirectInviteAgentUsers(ownerUserID int) ([]inviteFlowUserRow, error) {
+	return getDirectInviteAgentUsersByOwner(ownerUserID)
+}
+
+func getDirectInviteAgentUsersByOwner(ownerUserID int) ([]inviteFlowUserRow, error) {
+	ensureCommonColumnsInitialized()
+	var rows []inviteFlowUserRow
+	selectClause := fmt.Sprintf("id, username, %s as user_group, used_quota", commonGroupCol)
+	err := DB.Model(&User{}).
+		Select(selectClause).
+		Where("invite_code_owner_id = ? AND invite_code_id > 0", ownerUserID).
+		Find(&rows).Error
+	return rows, err
+}
+
+func getDirectInviteAgentUsersByOwners(ownerIDs []int) (map[int][]inviteFlowUserRow, error) {
+	result := make(map[int][]inviteFlowUserRow, len(ownerIDs))
+	if len(ownerIDs) == 0 {
+		return result, nil
+	}
+	ensureCommonColumnsInitialized()
+	var rows []struct {
+		OwnerID   int    `gorm:"column:owner_id"`
+		Id        int    `gorm:"column:id"`
+		Username  string `gorm:"column:username"`
+		Group     string `gorm:"column:user_group"`
+		UsedQuota int    `gorm:"column:used_quota"`
+	}
+	selectClause := fmt.Sprintf("invite_code_owner_id as owner_id, id, username, %s as user_group, used_quota", commonGroupCol)
+	if err := DB.Model(&User{}).Select(selectClause).Where("invite_code_owner_id IN ? AND invite_code_id > 0", ownerIDs).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.OwnerID] = append(result[row.OwnerID], inviteFlowUserRow{
+			Id:        row.Id,
+			Username:  row.Username,
+			Group:     row.Group,
+			UsedQuota: row.UsedQuota,
+		})
+	}
+	return result, nil
+}
+
+func getSecondLevelCodesGrantedBy(granterUserID int) ([]InviteCode, error) {
+	var codes []InviteCode
+	if err := DB.Where("granted_by_user_id = ? AND agent_level = ? AND status = ?", granterUserID, InviteAgentLevelSecond, InviteCodeStatusEnabled).Find(&codes).Error; err != nil {
+		return nil, err
+	}
+	filtered := make([]InviteCode, 0, len(codes))
+	for i := range codes {
+		codes[i].normalizeDerivedFields()
+		if codes[i].IsManual || !codes[i].GrantsInvitePermission {
+			continue
+		}
+		filtered = append(filtered, codes[i])
+	}
+	return filtered, nil
+}
+
+func getUsersByIDs(userIDs []int) ([]inviteFlowUserRow, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	ensureCommonColumnsInitialized()
+	var rows []inviteFlowUserRow
+	selectClause := fmt.Sprintf("id, username, %s as user_group, used_quota", commonGroupCol)
+	err := DB.Model(&User{}).Select(selectClause).Where("id IN ?", userIDs).Find(&rows).Error
+	return rows, err
+}
+
+func userRowsToIDs(rows []inviteFlowUserRow) []int {
+	ids := make([]int, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.Id)
+	}
+	return ids
+}
+
+func summarizeInviteUserRows(rows []inviteFlowUserRow) InviteAgentUserFlowStats {
+	stats := InviteAgentUserFlowStats{UserCount: int64(len(rows))}
+	for _, row := range rows {
+		stats.ConsumeQuota += row.UsedQuota
+	}
+	return stats
+}
+
+func fillRechargeStatsAndTrend(userIDs []int, startTime int64, endTime int64, period string, stats *InviteAgentUserFlowStats, points []InviteAgentTrendPoint) error {
+	if len(userIDs) == 0 {
+		return nil
+	}
+	var rows []inviteFlowRechargeRow
+	if err := DB.Table("top_ups").
+		Select("user_id, amount, money, complete_time as event_time").
+		Where("user_id IN ? AND status = ?", userIDs, common.TopUpStatusSuccess).
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	index := trendIndex(points)
+	for _, row := range rows {
+		if stats != nil {
+			stats.RechargeAmount += row.Amount
+			stats.RechargeMoney += row.Money
+		}
+		if len(points) == 0 || row.Time < startTime || row.Time > endTime {
+			continue
+		}
+		bucket, _ := bucketInviteTime(row.Time, period)
+		if idx, ok := index[bucket]; ok {
+			points[idx].RechargeAmount += row.Amount
+			points[idx].RechargeMoney += row.Money
+		}
+	}
+	return nil
+}
+
+func fillConsumeTrend(userIDs []int, startTime int64, endTime int64, period string, points []InviteAgentTrendPoint) error {
+	if len(userIDs) == 0 || len(points) == 0 {
+		return nil
+	}
+	var rows []inviteFlowConsumeRow
+	if err := LOG_DB.Model(&Log{}).
+		Select("user_id, quota, created_at as event_time").
+		Where("user_id IN ? AND type = ? AND created_at >= ? AND created_at <= ?", userIDs, LogTypeConsume, startTime, endTime).
+		Find(&rows).Error; err != nil {
+		return err
+	}
+	index := trendIndex(points)
+	for _, row := range rows {
+		bucket, _ := bucketInviteTime(row.Time, period)
+		if idx, ok := index[bucket]; ok {
+			points[idx].ConsumeQuota += row.Quota
+		}
+	}
+	return nil
 }
