@@ -20,7 +20,6 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Avatar,
-  Badge,
   Button,
   Card,
   Popconfirm,
@@ -31,23 +30,8 @@ import {
   Typography,
 } from '@douyinfe/semi-ui';
 import { VChart } from '@visactor/react-vchart';
-import {
-  API,
-  copy,
-  renderPaymentAmount,
-  showError,
-  showSuccess,
-} from '../../helpers';
-import {
-  BarChart2,
-  CreditCard,
-  Gift,
-  LineChart,
-  Ticket,
-  TrendingUp,
-  Users,
-  Zap,
-} from 'lucide-react';
+import { API, copy, showError, showSuccess } from '../../helpers';
+import { Gift, LineChart, Ticket, Zap } from 'lucide-react';
 import InviteDetailsModal from './modals/InviteDetailsModal';
 
 const { Text } = Typography;
@@ -84,6 +68,42 @@ const InviteCodeStatusTag = ({ inviteCode, t }) => {
   );
 };
 
+const renderUSDStatsAmount = (value) => {
+  const amount = Number(value) || 0;
+  return `$${amount.toFixed(2)}`;
+};
+
+const quotaToUSD = (quota) => {
+  const quotaPerUnit = Number(localStorage.getItem('quota_per_unit') || 1);
+  if (!quotaPerUnit || quotaPerUnit <= 0) {
+    return 0;
+  }
+  return (Number(quota) || 0) / quotaPerUnit;
+};
+
+const renderQuotaAsUSD = (quota) => renderUSDStatsAmount(quotaToUSD(quota));
+
+const getRechargeUSD = (stats) =>
+  stats?.recharge_usd ?? stats?.recharge_money ?? 0;
+
+const getConsumeUSD = (stats) =>
+  stats?.consume_usd ?? quotaToUSD(stats?.consume_quota);
+
+const StatBlock = ({ label, value }) => (
+  <div className='rounded-lg border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-4 py-3 min-w-0'>
+    <div className='text-lg font-semibold truncate'>{value}</div>
+    <Text type='tertiary' className='text-xs'>
+      {label}
+    </Text>
+  </div>
+);
+
+const EmptyLine = ({ children }) => (
+  <div className='rounded-lg border border-[var(--semi-color-border)] px-4 py-3'>
+    <Text type='tertiary'>{children}</Text>
+  </div>
+);
+
 const SectionHeader = ({ title, count, buttonText, onClick, t }) => (
   <div className='flex items-center justify-between gap-3'>
     <div className='flex flex-col'>
@@ -104,10 +124,10 @@ const InvitationCard = ({
   t,
   userState,
   renderQuota,
-  renderQuotaWithAmount,
   setOpenTransfer,
   inviteRegisterBaseUrl,
   refreshUser,
+  pageMode = false,
 }) => {
   const [showInviteCodesModal, setShowInviteCodesModal] = useState(false);
   const [showInviteesModal, setShowInviteesModal] = useState(false);
@@ -123,8 +143,6 @@ const InvitationCard = ({
   const inviteeCount =
     userState?.user?.invite_user_count || inviteesPreview.length || 0;
   const boundInviteCode = userState?.user?.bound_invite_code;
-  const inviteTotalRechargeAmount =
-    userState?.user?.invite_total_recharge_amount || 0;
   const inviteTotalRechargeMoney =
     userState?.user?.invite_total_recharge_money ??
     userState?.user?.invite_total_recharge ??
@@ -136,12 +154,34 @@ const InvitationCard = ({
   const agentTrend = agentStats?.direct_trend || [];
   const hasAgentTrendData = agentTrend.some(
     (point) =>
-      (point?.recharge_amount || 0) > 0 || (point?.consume_quota || 0) > 0,
+      (point?.recharge_usd || point?.recharge_money || 0) > 0 ||
+      (point?.consume_usd || point?.consume_quota || 0) > 0,
   );
   const secondLevelStats = agentStats?.second_level_stats || [];
-  const pendingInviteeForInvitation = canGrantInvitation
-    ? inviteesPreview.find((invitee) => !invitee.invitation_enabled)
-    : null;
+  const pendingInviteesForInvitation = canGrantInvitation
+    ? inviteesPreview.filter((invitee) => !invitee.invitation_enabled)
+    : [];
+  const activeInviteeCount = inviteesPreview.filter(
+    (invitee) => invitee.invitation_enabled,
+  ).length;
+  const inviteOverviewMetrics = [
+    {
+      label: t('邀请人数'),
+      value: inviteeCount,
+    },
+    {
+      label: t('实付金额'),
+      value: renderUSDStatsAmount(inviteTotalRechargeMoney),
+    },
+    {
+      label: t('消费等额'),
+      value: renderQuotaAsUSD(inviteTotalConsume),
+    },
+    {
+      label: t('已开启邀请功能'),
+      value: activeInviteeCount,
+    },
+  ];
 
   const buildInviteRegisterLink = (code) => {
     const baseUrl = (
@@ -217,13 +257,13 @@ const InvitationCard = ({
           values: trend.flatMap((point) => [
             {
               label: point.label,
-              value: point.recharge_amount || 0,
-              type: t('充值额度'),
+              value: getRechargeUSD(point),
+              type: t('实付金额'),
             },
             {
               label: point.label,
-              value: point.consume_quota || 0,
-              type: t('消费额度'),
+              value: getConsumeUSD(point),
+              type: t('消费等额'),
             },
           ]),
         },
@@ -294,23 +334,17 @@ const InvitationCard = ({
         key: 'invited_user_count',
       },
       {
-        title: t('邀请充值额度'),
-        dataIndex: 'invite_total_recharge_amount',
-        key: 'invite_total_recharge_amount',
-        render: (value) => renderQuotaWithAmount(value || 0),
-      },
-      {
-        title: t('邀请实付金额'),
+        title: t('实付金额'),
         dataIndex: 'invite_total_recharge_money',
         key: 'invite_total_recharge_money',
         render: (value, record) =>
-          renderPaymentAmount(value ?? record.invite_total_recharge ?? 0),
+          renderUSDStatsAmount(value ?? record.invite_total_recharge ?? 0),
       },
       {
-        title: t('邀请消费额度'),
+        title: t('消费等额'),
         dataIndex: 'invite_total_consume',
         key: 'invite_total_consume',
-        render: (value) => renderQuota(value || 0),
+        render: (value) => renderQuotaAsUSD(value || 0),
       },
       {
         title: t('邀请链接'),
@@ -329,7 +363,7 @@ const InvitationCard = ({
           ),
       },
     ],
-    [inviteRegisterBaseUrl, renderQuota, renderQuotaWithAmount, t],
+    [inviteRegisterBaseUrl, renderQuota, t],
   );
 
   const inviteeColumns = useMemo(
@@ -338,40 +372,40 @@ const InvitationCard = ({
         title: t('用户名'),
         dataIndex: 'username',
         key: 'username',
+        width: 140,
       },
       {
         title: t('邀请码'),
         dataIndex: 'invite_code',
         key: 'invite_code',
         render: (value) => value || '-',
+        width: 150,
       },
       {
         title: t('分组'),
         dataIndex: 'group',
         key: 'group',
-      },
-      {
-        title: t('充值额度'),
-        dataIndex: 'invite_total_recharge_amount',
-        key: 'invite_total_recharge_amount',
-        render: (value) => renderQuotaWithAmount(value || 0),
+        width: 100,
       },
       {
         title: t('实付金额'),
         dataIndex: 'invite_total_recharge_money',
         key: 'invite_total_recharge_money',
         render: (value, record) =>
-          renderPaymentAmount(value ?? record.invite_total_recharge ?? 0),
+          renderUSDStatsAmount(value ?? record.invite_total_recharge ?? 0),
+        width: 100,
       },
       {
-        title: t('消费额度'),
+        title: t('消费等额'),
         dataIndex: 'invite_total_consume',
         key: 'invite_total_consume',
-        render: (value) => renderQuota(value || 0),
+        render: (value) => renderQuotaAsUSD(value || 0),
+        width: 100,
       },
       {
         title: t('邀请功能'),
         key: 'invitation_enabled',
+        width: 140,
         render: (_, record) => {
           if (record.invitation_enabled) {
             return (
@@ -408,8 +442,6 @@ const InvitationCard = ({
     [
       canGrantInvitation,
       enablingInviteeId,
-      renderQuota,
-      renderQuotaWithAmount,
       t,
     ],
   );
@@ -430,148 +462,93 @@ const InvitationCard = ({
   return (
     <>
       <Card className='!rounded-2xl shadow-sm border-0'>
-        <div className='flex items-center mb-4'>
-          <Avatar size='small' color='green' className='mr-3 shadow-md'>
-            <Gift size={16} />
-          </Avatar>
-          <div>
-            <Typography.Text className='text-lg font-medium'>
-              {t('邀请统计')}
-            </Typography.Text>
-            <div className='text-xs'>
-              {t('查看归属到您的邀请码带来的用户数据')}
+        {pageMode ? (
+          <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4'>
+            <div>
+              <Typography.Title heading={3} className='!mb-1'>
+                {t('邀请管理')}
+              </Typography.Title>
+              <Text type='tertiary'>
+                {t('管理邀请码、被邀请人和邀请数据')}
+              </Text>
+            </div>
+            <Button
+              size='small'
+              theme='borderless'
+              loading={agentStatsLoading}
+              onClick={() => {
+                loadAgentStats();
+                refreshUser?.();
+              }}
+            >
+              {t('刷新')}
+            </Button>
+          </div>
+        ) : (
+          <div className='flex items-center mb-4'>
+            <Avatar size='small' color='green' className='mr-3 shadow-md'>
+              <Gift size={16} />
+            </Avatar>
+            <div>
+              <Typography.Text className='text-lg font-medium'>
+                {t('邀请统计')}
+              </Typography.Text>
+              <div className='text-xs text-[var(--semi-color-text-2)]'>
+                {t('查看归属到您的邀请码带来的用户数据')}
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         <Space vertical style={{ width: '100%' }}>
-          <Card
-            className='!rounded-xl w-full'
-            cover={
-              <div
-                className='relative min-h-[168px]'
-                style={{
-                  '--palette-primary-darkerChannel': '0 75 80',
-                  backgroundImage: `linear-gradient(0deg, rgba(var(--palette-primary-darkerChannel) / 80%), rgba(var(--palette-primary-darkerChannel) / 80%)), url('/cover-4.webp')`,
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center',
-                  backgroundRepeat: 'no-repeat',
-                }}
-              >
-                <div className='relative z-10 h-full flex flex-col justify-between p-4'>
-                  <div className='flex justify-between items-center'>
-                    <Text strong style={{ color: 'white', fontSize: '16px' }}>
-                      {t('邀请统计')}
-                    </Text>
-                  </div>
-
-                  <div className='grid grid-cols-2 md:grid-cols-4 gap-4 mt-4'>
-                    {[
-                      {
-                        label: t('邀请充值额度'),
-                        value: renderQuotaWithAmount(inviteTotalRechargeAmount),
-                        icon: TrendingUp,
-                      },
-                      {
-                        label: t('邀请实付金额'),
-                        value: renderPaymentAmount(inviteTotalRechargeMoney),
-                        icon: CreditCard,
-                      },
-                      {
-                        label: t('邀请消费额度'),
-                        value: renderQuota(inviteTotalConsume),
-                        icon: BarChart2,
-                      },
-                      {
-                        label: t('邀请人数'),
-                        value: inviteeCount,
-                        icon: Users,
-                      },
-                    ].map((metric) => {
-                      const Icon = metric.icon;
-                      return (
-                        <div className='text-center min-w-0' key={metric.label}>
-                          <div
-                            className='text-base sm:text-xl font-bold mb-2 truncate'
-                            style={{ color: 'white' }}
-                          >
-                            {metric.value}
-                          </div>
-                          <div className='flex items-center justify-center text-sm'>
-                            <Icon
-                              size={14}
-                              className='mr-1 flex-shrink-0'
-                              style={{ color: 'rgba(255,255,255,0.8)' }}
-                            />
-                            <Text
-                              ellipsis={{ showTooltip: true }}
-                              style={{
-                                color: 'rgba(255,255,255,0.8)',
-                                fontSize: '12px',
-                              }}
-                            >
-                              {metric.label}
-                            </Text>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            }
-          >
-            <div className='space-y-2'>
-              <Text type='tertiary' className='text-sm'>
-                {t('该区域统计的是通过管理员邀请码归属到您名下的新用户数据。')}
-              </Text>
-              <div className='flex flex-wrap gap-2'>
-                <Tag size='small' shape='circle' color={inviteAgentLevel ? 'green' : 'grey'}>
-                  {inviteAgentLevel ? t('邀请功能已开启') : t('邀请功能未开启')}
+          <Card className='!rounded-xl w-full' title={<Text type='tertiary'>{t('邀请概览')}</Text>}>
+            <div className='grid grid-cols-2 lg:grid-cols-4 gap-3'>
+              {inviteOverviewMetrics.map((metric) => (
+                <StatBlock key={metric.label} label={metric.label} value={metric.value} />
+              ))}
+            </div>
+            <div className='mt-3 flex flex-wrap gap-2'>
+              <Tag size='small' shape='circle' color={inviteAgentLevel ? 'green' : 'grey'}>
+                {inviteAgentLevel ? t('邀请功能已开启') : t('邀请功能未开启')}
+              </Tag>
+              {canGrantInvitation && (
+                <Tag size='small' shape='circle' color='blue'>
+                  {t('可给被邀请人开启邀请码')}
                 </Tag>
-                {canGrantInvitation && (
-                  <Tag size='small' shape='circle' color='blue'>
-                    {t('可给被邀请人开启邀请码')}
-                  </Tag>
-                )}
-              </div>
+              )}
             </div>
           </Card>
 
-          {pendingInviteeForInvitation && (
-            <Card className='!rounded-xl w-full'>
-              <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3'>
-                <div className='min-w-0'>
-                  <Text type='tertiary' className='text-sm'>
-                    {t('待开启邀请功能')}
-                  </Text>
-                  <div className='mt-1 flex flex-wrap items-center gap-2'>
-                    <span className='font-semibold'>
-                      {pendingInviteeForInvitation.username}
-                    </span>
-                    <Tag size='small' shape='circle'>
-                      {t('可给被邀请人开启邀请码')}
-                    </Tag>
-                  </div>
-                </div>
-                <Popconfirm
-                  title={t('确定给该用户开启邀请功能？')}
-                  content={t('系统会自动生成一个零奖励的邀请码。')}
-                  onConfirm={() =>
-                    enableInviteeInvitation(pendingInviteeForInvitation)
-                  }
-                >
-                  <Button
-                    size='small'
-                    type='primary'
-                    theme='solid'
-                    loading={
-                      enablingInviteeId === pendingInviteeForInvitation.user_id
-                    }
+          {pendingInviteesForInvitation.length > 0 && (
+            <Card className='!rounded-xl w-full' title={<Text type='tertiary'>{t('待开启邀请功能')}</Text>}>
+              <div className='space-y-2'>
+                {pendingInviteesForInvitation.slice(0, 3).map((invitee) => (
+                  <div
+                    key={invitee.user_id}
+                    className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border border-[var(--semi-color-border)] px-3 py-2'
                   >
-                    {t('开启邀请功能')}
-                  </Button>
-                </Popconfirm>
+                    <div className='min-w-0'>
+                      <div className='font-semibold truncate'>{invitee.username}</div>
+                      <Text type='tertiary' className='text-xs'>
+                        {t('邀请码')} {invitee.invite_code || '-'}
+                      </Text>
+                    </div>
+                    <Popconfirm
+                      title={t('确定给该用户开启邀请功能？')}
+                      content={t('系统会自动生成一个零奖励的邀请码。')}
+                      onConfirm={() => enableInviteeInvitation(invitee)}
+                    >
+                      <Button
+                        size='small'
+                        type='primary'
+                        theme='solid'
+                        loading={enablingInviteeId === invitee.user_id}
+                      >
+                        {t('开启邀请功能')}
+                      </Button>
+                    </Popconfirm>
+                  </div>
+                ))}
               </div>
             </Card>
           )}
@@ -603,118 +580,152 @@ const InvitationCard = ({
                 </div>
               ) : hasAgentTrendData ? (
                 <div className='h-72'>
-                  <VChart
-                    spec={buildTrendSpec(agentTrend)}
-                    option={{ mode: 'desktop-browser' }}
-                  />
+                  <VChart spec={buildTrendSpec(agentTrend)} option={{ mode: 'desktop-browser' }} />
                 </div>
               ) : (
                 <div className='h-40 flex items-center justify-center rounded-lg border border-[var(--semi-color-border)]'>
                   <Text type='tertiary'>{t('暂无邀请统计数据')}</Text>
                 </div>
               )}
-              {canGrantInvitation && (
-                <div className='mt-6'>
-                  <div className='flex items-center justify-between mb-3'>
-                    <Text type='tertiary'>{t('被邀请人邀请统计')}</Text>
-                    <Button
-                      size='small'
-                      theme='borderless'
-                      loading={agentStatsLoading}
-                      onClick={loadAgentStats}
-                    >
-                      {t('刷新统计')}
-                    </Button>
-                  </div>
-                  {secondLevelStats.length > 0 || agentStatsLoading ? (
-                    <Table
-                      size='small'
-                      rowKey='user_id'
-                      loading={agentStatsLoading}
-                      dataSource={secondLevelStats}
-                      pagination={false}
-                      scroll={{ x: 'max-content' }}
-                      columns={[
-                        {
-                          title: t('用户'),
-                          key: 'user',
-                          dataIndex: 'username',
-                          render: (value, record) =>
-                            `#${record.user_id} ${value}`,
-                        },
-                        {
-                          title: t('邀请码'),
-                          key: 'invite_code',
-                          dataIndex: 'invite_code',
-                        },
-                        {
-                          title: t('被邀请人充值'),
-                          key: 'self_recharge_amount',
-                          dataIndex: 'self_stats',
-                          render: (value) =>
-                            renderQuotaWithAmount(value?.recharge_amount || 0),
-                        },
-                        {
-                          title: t('被邀请人消费'),
-                          key: 'self_consume_quota',
-                          dataIndex: 'self_stats',
-                          render: (value) =>
-                            renderQuota(value?.consume_quota || 0),
-                        },
-                        {
-                          title: t('其邀请用户充值'),
-                          key: 'invitee_recharge_amount',
-                          dataIndex: 'invitee_stats',
-                          render: (value) =>
-                            renderQuotaWithAmount(value?.recharge_amount || 0),
-                        },
-                        {
-                          title: t('其邀请用户消费'),
-                          key: 'invitee_consume_quota',
-                          dataIndex: 'invitee_stats',
-                          render: (value) =>
-                            renderQuota(value?.consume_quota || 0),
-                        },
-                      ]}
-                    />
-                  ) : (
-                    <div className='rounded-lg border border-[var(--semi-color-border)] p-4'>
-                      <Text type='tertiary'>{t('暂无被邀请人邀请数据')}</Text>
-                    </div>
-                  )}
-                </div>
-              )}
             </Card>
           )}
 
-          {boundInviteCode && (
+          <Card
+            className='!rounded-xl w-full'
+            title={
+              <SectionHeader
+                title={t('被邀请人')}
+                count={inviteeCount}
+                buttonText={t('查看全部')}
+                onClick={() => setShowInviteesModal(true)}
+                t={t}
+              />
+            }
+          >
+            {inviteesPreview.length > 0 ? (
+              <div className='space-y-2'>
+                {inviteesPreview.slice(0, 5).map((invitee) => (
+                  <div
+                    key={invitee.user_id}
+                    className='rounded-lg border border-[var(--semi-color-border)] px-3 py-2'
+                  >
+                    <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3'>
+                      <div className='min-w-0'>
+                        <div className='font-semibold truncate'>
+                          {invitee.username}
+                        </div>
+                        <Text type='tertiary' className='text-xs'>
+                          {t('邀请码')} {invitee.invite_code || '-'} ·{' '}
+                          {invitee.group || '-'}
+                        </Text>
+                      </div>
+                      <div className='flex flex-wrap items-center gap-2 text-xs'>
+                        <Tag size='small' shape='circle'>
+                          {t('实付金额')}{' '}
+                          {renderUSDStatsAmount(
+                            invitee.invite_total_recharge_money ??
+                              invitee.invite_total_recharge ??
+                              0,
+                          )}
+                        </Tag>
+                        <Tag size='small' shape='circle'>
+                          {t('消费等额')}{' '}
+                          {renderQuotaAsUSD(invitee.invite_total_consume || 0)}
+                        </Tag>
+                        {invitee.invitation_enabled ? (
+                          <Tag size='small' shape='circle' color='green'>
+                            {t('已开启')}
+                          </Tag>
+                        ) : canGrantInvitation ? (
+                          <Popconfirm
+                            title={t('确定给该用户开启邀请功能？')}
+                            content={t('系统会自动生成一个零奖励的邀请码。')}
+                            onConfirm={() => enableInviteeInvitation(invitee)}
+                          >
+                            <Button
+                              size='small'
+                              theme='borderless'
+                              loading={enablingInviteeId === invitee.user_id}
+                            >
+                              {t('开启邀请功能')}
+                            </Button>
+                          </Popconfirm>
+                        ) : (
+                          <Tag size='small' shape='circle'>
+                            {t('未开启')}
+                          </Tag>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyLine>{t('暂无被邀请人记录。')}</EmptyLine>
+            )}
+          </Card>
+
+          {canGrantInvitation && (
             <Card
               className='!rounded-xl w-full'
-              title={<Text type='tertiary'>{t('当前绑定的邀请码')}</Text>}
+              title={
+                <div className='flex items-center justify-between gap-3'>
+                  <Text type='tertiary'>{t('被邀请人邀请统计')}</Text>
+                  <Button size='small' theme='borderless' loading={agentStatsLoading} onClick={loadAgentStats}>
+                    {t('刷新统计')}
+                  </Button>
+                </div>
+              }
             >
-              <div className='rounded-lg border border-[var(--semi-color-border)] p-4 space-y-3'>
-                <div className='flex flex-wrap items-center gap-2'>
-                  <Ticket
-                    size={16}
-                    className='text-[var(--semi-color-primary)]'
-                  />
-                  <span className='font-semibold text-base'>
-                    {boundInviteCode.code}
-                  </span>
-                  <InviteCodeStatusTag inviteCode={boundInviteCode} t={t} />
-                </div>
-                <div className='flex flex-wrap gap-2 text-xs'>
-                  <Tag size='small' shape='circle'>
-                    {t('归属用户')} {boundInviteCode.owner_username || '-'}
-                  </Tag>
-                  <Tag size='small' shape='circle'>
-                    {t('目标分组')} {boundInviteCode.target_group || '-'}
-                  </Tag>
-                </div>
-                <Text type='tertiary' className='text-xs'>
-                  {boundInviteCodeHint}
-                </Text>
-              </div>
+              {secondLevelStats.length > 0 || agentStatsLoading ? (
+                <Table
+                  size='small'
+                  rowKey='user_id'
+                  loading={agentStatsLoading}
+                  dataSource={secondLevelStats}
+                  pagination={false}
+                  scroll={{ x: 'max-content' }}
+                  columns={[
+                    {
+                      title: t('用户'),
+                      key: 'user',
+                      dataIndex: 'username',
+                      render: (value, record) => `#${record.user_id} ${value}`,
+                    },
+                    {
+                      title: t('邀请码'),
+                      key: 'invite_code',
+                      dataIndex: 'invite_code',
+                    },
+                    {
+                      title: t('被邀请人充值'),
+                      key: 'self_recharge_amount',
+                      dataIndex: 'self_stats',
+                      render: (value) => renderUSDStatsAmount(getRechargeUSD(value)),
+                    },
+                    {
+                      title: t('被邀请人消费'),
+                      key: 'self_consume_quota',
+                      dataIndex: 'self_stats',
+                      render: (value) => renderUSDStatsAmount(getConsumeUSD(value)),
+                    },
+                    {
+                      title: t('其邀请用户充值'),
+                      key: 'invitee_recharge_amount',
+                      dataIndex: 'invitee_stats',
+                      render: (value) => renderUSDStatsAmount(getRechargeUSD(value)),
+                    },
+                    {
+                      title: t('其邀请用户消费'),
+                      key: 'invitee_consume_quota',
+                      dataIndex: 'invitee_stats',
+                      render: (value) => renderUSDStatsAmount(getConsumeUSD(value)),
+                    },
+                  ]}
+                />
+              ) : (
+                <EmptyLine>{t('暂无被邀请人邀请数据')}</EmptyLine>
+              )}
             </Card>
           )}
 
@@ -731,171 +742,54 @@ const InvitationCard = ({
             }
           >
             {inviteCodesPreview.length > 0 ? (
-              <div className='space-y-3'>
-                {inviteCodesPreview.map((inviteCode) => (
-                  <div
-                    key={inviteCode.id}
-                    className='rounded-lg border border-[var(--semi-color-border)] p-3 space-y-3'
-                  >
-                    <div className='flex flex-wrap items-center gap-2'>
-                      <span className='font-semibold'>{inviteCode.code}</span>
-                      <InviteCodeStatusTag inviteCode={inviteCode} t={t} />
-                      {isManualInviteCode(inviteCode) && (
-                        <Tag size='small' shape='circle' color='blue'>
-                          {t('手动绑定码')}
-                        </Tag>
-                      )}
-                    </div>
-                    <div className='flex flex-wrap gap-2 text-xs'>
-                      <Tag size='small' shape='circle'>
-                        {t('目标分组')} {inviteCode.target_group}
-                      </Tag>
-                      <Tag size='small' shape='circle'>
-                        {t('剩余次数')} {inviteCode.remaining_reward_uses || 0}
-                      </Tag>
-                      <Tag size='small' shape='circle'>
-                        {t('邀请人数')} {inviteCode.invited_user_count || 0}
-                      </Tag>
-                      <Tag size='small' shape='circle'>
-                        {t('单次赠送')}{' '}
-                        {renderQuota(inviteCode.reward_quota_per_use || 0)}
-                      </Tag>
-                      <Tag size='small' shape='circle'>
-                        {t('充值额')}{' '}
-                        {renderQuotaWithAmount(
-                          inviteCode.invite_total_recharge_amount || 0,
-                        )}
-                      </Tag>
-                      <Tag size='small' shape='circle'>
-                        {t('实付')}{' '}
-                        {renderPaymentAmount(
-                          inviteCode.invite_total_recharge_money ??
-                            inviteCode.invite_total_recharge ??
-                            0,
-                        )}
-                      </Tag>
-                      <Tag size='small' shape='circle'>
-                        {t('消费额')}{' '}
-                        {renderQuota(inviteCode.invite_total_consume || 0)}
-                      </Tag>
-                    </div>
-                    {!isManualInviteCode(inviteCode) && (
-                      <div className='space-y-2'>
-                        <Text type='tertiary' className='text-xs break-all'>
-                          {buildInviteRegisterLink(inviteCode.code)}
-                        </Text>
-                        <Button
-                          size='small'
-                          theme='borderless'
-                          onClick={() => handleCopyInviteLink(inviteCode.code)}
-                        >
-                          {t('复制邀请链接')}
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <Table
+                size='small'
+                rowKey={(record) => record.id || record.code}
+                dataSource={inviteCodesPreview}
+                pagination={false}
+                scroll={{ x: 'max-content' }}
+                columns={inviteCodeColumns}
+              />
             ) : (
-              <Text type='tertiary'>{t('您当前还没有绑定的邀请码。')}</Text>
+              <EmptyLine>{t('您当前还没有绑定的邀请码。')}</EmptyLine>
             )}
           </Card>
 
-          <Card
-            className='!rounded-xl w-full'
-            title={
-              <SectionHeader
-                title={t('最近被邀请人')}
-                count={inviteeCount}
-                buttonText={t('查看全部')}
-                onClick={() => setShowInviteesModal(true)}
-                t={t}
-              />
-            }
-          >
-            {inviteesPreview.length > 0 ? (
-              <div className='space-y-3'>
-                {inviteesPreview.map((invitee) => (
-                  <div
-                    key={invitee.user_id}
-                    className='rounded-lg border border-[var(--semi-color-border)] p-3 space-y-3'
-                  >
-                    <div className='font-semibold'>{invitee.username}</div>
-                    <div className='flex flex-wrap gap-2 text-xs'>
-                      <Tag size='small' shape='circle'>
-                        {t('邀请码')} {invitee.invite_code || '-'}
-                      </Tag>
-                      <Tag size='small' shape='circle'>
-                        {t('分组')} {invitee.group || '-'}
-                      </Tag>
-                      <Tag size='small' shape='circle'>
-                        {t('充值额')}{' '}
-                        {renderQuotaWithAmount(
-                          invitee.invite_total_recharge_amount || 0,
-                        )}
-                      </Tag>
-                      <Tag size='small' shape='circle'>
-                        {t('实付')}{' '}
-                        {renderPaymentAmount(
-                          invitee.invite_total_recharge_money ??
-                            invitee.invite_total_recharge ??
-                            0,
-                        )}
-                      </Tag>
-                      <Tag size='small' shape='circle'>
-                        {t('消费额')}{' '}
-                        {renderQuota(invitee.invite_total_consume || 0)}
-                      </Tag>
-                      {invitee.invitation_enabled ? (
-                        <Tag size='small' shape='circle' color='green'>
-                          {t('邀请功能已开启')}
-                        </Tag>
-                      ) : (
-                        canGrantInvitation && (
-                          <Popconfirm
-                            title={t('确定给该用户开启邀请功能？')}
-                            content={t('系统会自动生成一个零奖励的邀请码。')}
-                            onConfirm={() => enableInviteeInvitation(invitee)}
-                          >
-                            <Button
-                              size='small'
-                              theme='borderless'
-                              loading={enablingInviteeId === invitee.user_id}
-                            >
-                              {t('开启邀请功能')}
-                            </Button>
-                          </Popconfirm>
-                        )
-                      )}
-                    </div>
+          {boundInviteCode && (
+            <Card className='!rounded-xl w-full' title={<Text type='tertiary'>{t('当前绑定的邀请码')}</Text>}>
+              <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3'>
+                <div className='min-w-0'>
+                  <div className='flex flex-wrap items-center gap-2'>
+                    <Ticket size={16} className='text-[var(--semi-color-primary)]' />
+                    <span className='font-semibold'>{boundInviteCode.code}</span>
+                    <InviteCodeStatusTag inviteCode={boundInviteCode} t={t} />
                   </div>
-                ))}
+                  <Text type='tertiary' className='text-xs'>
+                    {boundInviteCodeHint}
+                  </Text>
+                </div>
+                <div className='flex flex-wrap gap-2 text-xs'>
+                  <Tag size='small' shape='circle'>
+                    {t('归属用户')} {boundInviteCode.owner_username || '-'}
+                  </Tag>
+                  <Tag size='small' shape='circle'>
+                    {t('目标分组')} {boundInviteCode.target_group || '-'}
+                  </Tag>
+                </div>
               </div>
-            ) : (
-              <Text type='tertiary'>{t('暂无被邀请人记录。')}</Text>
-            )}
-          </Card>
+            </Card>
+          )}
 
           {userState?.user?.aff_quota > 0 && (
-            <Card
-              className='!rounded-xl w-full'
-              title={<Text type='tertiary'>{t('历史奖励额度')}</Text>}
-            >
+            <Card className='!rounded-xl w-full' title={<Text type='tertiary'>{t('历史奖励额度')}</Text>}>
               <div className='flex items-center justify-between gap-4'>
                 <div>
-                  <div className='text-lg font-semibold'>
-                    {renderQuota(userState?.user?.aff_quota || 0)}
-                  </div>
+                  <div className='text-lg font-semibold'>{renderQuota(userState?.user?.aff_quota || 0)}</div>
                   <Text type='tertiary' className='text-sm'>
                     {t('可划转到余额的旧邀请奖励')}
                   </Text>
                 </div>
-                <Button
-                  type='primary'
-                  theme='solid'
-                  onClick={() => setOpenTransfer(true)}
-                  className='!rounded-lg'
-                >
+                <Button type='primary' theme='solid' onClick={() => setOpenTransfer(true)} className='!rounded-lg'>
                   <Zap size={12} className='mr-1' />
                   {t('划转到余额')}
                 </Button>
@@ -903,38 +797,14 @@ const InvitationCard = ({
             </Card>
           )}
 
-          <Card
-            className='!rounded-xl w-full'
-            title={<Text type='tertiary'>{t('说明')}</Text>}
-          >
-            <div className='space-y-3'>
-              <div className='flex items-start gap-2'>
-                <Badge dot type='success' />
-                <Text type='tertiary' className='text-sm'>
-                  {t(
-                    '邀请人数、邀请充值额度、邀请实付金额、邀请消费额度仅统计新邀请码体系。',
-                  )}
-                </Text>
-              </div>
-
-              <div className='flex items-start gap-2'>
-                <Badge dot type='success' />
-                <Text type='tertiary' className='text-sm'>
-                  {t('邀请码已删除或禁用时，历史归属关系和统计仍会保留展示。')}
-                </Text>
-              </div>
-
-              <div className='flex items-start gap-2'>
-                <Badge dot type='success' />
-                <Text type='tertiary' className='text-sm'>
-                  {t('如需新的归属邀请码，请联系管理员创建并分配。')}
-                </Text>
-              </div>
+          <Card className='!rounded-xl w-full' title={<Text type='tertiary'>{t('说明')}</Text>}>
+            <div className='space-y-2 text-sm text-[var(--semi-color-text-2)]'>
+              <div>{t('邀请统计仅包含新邀请码体系的数据。')}</div>
+              <div>{t('实付金额不包含赠送额度。消费等额按当前额度汇率换算，不区分额度来源。')}</div>
             </div>
           </Card>
         </Space>
       </Card>
-
       <InviteDetailsModal
         visible={showInviteCodesModal}
         onCancel={() => setShowInviteCodesModal(false)}

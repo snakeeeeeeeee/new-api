@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { getLucideIcon } from '../../helpers/render';
@@ -26,6 +26,7 @@ import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { useSidebar } from '../../hooks/common/useSidebar';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
 import { isAdmin, isRoot, showError } from '../../helpers';
+import { UserContext } from '../../context/User';
 import SkeletonWrapper from './components/SkeletonWrapper';
 
 import { Nav, Divider, Button } from '@douyinfe/semi-ui';
@@ -39,6 +40,7 @@ const routerMap = {
   token: '/console/token',
   redemption: '/console/redemption',
   topup: '/console/topup',
+  invitation: '/console/invitation',
   user: '/console/user',
   subscription: '/console/subscription',
   log: '/console/log',
@@ -66,10 +68,19 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   const showSkeleton = useMinimumLoadingTime(sidebarLoading, 200);
 
   const [selectedKeys, setSelectedKeys] = useState(['home']);
+  const [userState] = useContext(UserContext);
   const [chatItems, setChatItems] = useState([]);
   const [openedKeys, setOpenedKeys] = useState([]);
   const location = useLocation();
   const [routerMapState, setRouterMapState] = useState(routerMap);
+  const user = userState?.user || {};
+  const hasInvitationAccess = Boolean(
+    (user.invite_agent_level || 0) > 0 ||
+      user.can_grant_invitation ||
+      (user.invite_code_count || 0) > 0 ||
+      (user.invite_user_count || 0) > 0 ||
+      user.bound_invite_code,
+  );
 
   const workspaceItems = useMemo(() => {
     const items = [
@@ -133,6 +144,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         to: '/topup',
       },
       {
+        text: t('邀请管理'),
+        itemKey: 'invitation',
+        to: '/invitation',
+        className: hasInvitationAccess ? '' : 'tableHiddle',
+      },
+      {
         text: t('个人设置'),
         itemKey: 'personal',
         to: '/personal',
@@ -146,7 +163,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     });
 
     return filteredItems;
-  }, [t, isModuleVisible]);
+  }, [t, isModuleVisible, hasInvitationAccess]);
 
   const adminItems = useMemo(() => {
     const items = [

@@ -109,14 +109,18 @@ type InviteAgentTrendPoint struct {
 	Label          string  `json:"label"`
 	RechargeAmount int64   `json:"recharge_amount"`
 	RechargeMoney  float64 `json:"recharge_money"`
+	RechargeUSD    float64 `json:"recharge_usd"`
 	ConsumeQuota   int     `json:"consume_quota"`
+	ConsumeUSD     float64 `json:"consume_usd"`
 }
 
 type InviteAgentUserFlowStats struct {
 	UserCount      int64   `json:"user_count"`
 	RechargeAmount int64   `json:"recharge_amount"`
 	RechargeMoney  float64 `json:"recharge_money"`
+	RechargeUSD    float64 `json:"recharge_usd"`
 	ConsumeQuota   int     `json:"consume_quota"`
+	ConsumeUSD     float64 `json:"consume_usd"`
 }
 
 type InviteAgentSecondLevelStats struct {
@@ -1380,7 +1384,15 @@ func summarizeInviteUserRows(rows []inviteFlowUserRow) InviteAgentUserFlowStats 
 	for _, row := range rows {
 		stats.ConsumeQuota += row.UsedQuota
 	}
+	stats.ConsumeUSD = quotaToUSD(stats.ConsumeQuota)
 	return stats
+}
+
+func quotaToUSD(quota int) float64 {
+	if quota <= 0 || common.QuotaPerUnit <= 0 {
+		return 0
+	}
+	return float64(quota) / common.QuotaPerUnit
 }
 
 func fillRechargeStatsAndTrend(userIDs []int, startTime int64, endTime int64, period string, stats *InviteAgentUserFlowStats, points []InviteAgentTrendPoint) error {
@@ -1399,6 +1411,7 @@ func fillRechargeStatsAndTrend(userIDs []int, startTime int64, endTime int64, pe
 		if stats != nil {
 			stats.RechargeAmount += row.Amount
 			stats.RechargeMoney += row.Money
+			stats.RechargeUSD += row.Money
 		}
 		if len(points) == 0 || row.Time < startTime || row.Time > endTime {
 			continue
@@ -1407,6 +1420,7 @@ func fillRechargeStatsAndTrend(userIDs []int, startTime int64, endTime int64, pe
 		if idx, ok := index[bucket]; ok {
 			points[idx].RechargeAmount += row.Amount
 			points[idx].RechargeMoney += row.Money
+			points[idx].RechargeUSD += row.Money
 		}
 	}
 	return nil
@@ -1428,6 +1442,7 @@ func fillConsumeTrend(userIDs []int, startTime int64, endTime int64, period stri
 		bucket, _ := bucketInviteTime(row.Time, period)
 		if idx, ok := index[bucket]; ok {
 			points[idx].ConsumeQuota += row.Quota
+			points[idx].ConsumeUSD += quotaToUSD(row.Quota)
 		}
 	}
 	return nil

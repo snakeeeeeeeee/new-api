@@ -423,5 +423,7 @@ func TestGetSelfInviteAgentStatsReturnsSecondLevelRows(t *testing.T) {
 	require.Len(t, stats.SecondLevelStats, 1)
 	require.Equal(t, 111, stats.SecondLevelStats[0].UserID)
 	require.Equal(t, int64(120), stats.SecondLevelStats[0].InviteeStats.RechargeAmount)
+	require.Equal(t, 12.0, stats.SecondLevelStats[0].InviteeStats.RechargeUSD)
 	require.Equal(t, 900, stats.SecondLevelStats[0].InviteeStats.ConsumeQuota)
+	require.Equal(t, float64(900)/common.QuotaPerUnit, stats.SecondLevelStats[0].InviteeStats.ConsumeUSD)
 }

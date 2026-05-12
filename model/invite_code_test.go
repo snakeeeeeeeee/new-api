@@ -82,10 +82,26 @@ func sumInviteTrendRecharge(points []InviteAgentTrendPoint) int64 {
 	return total
 }
 
+func sumInviteTrendRechargeUSD(points []InviteAgentTrendPoint) float64 {
+	var total float64
+	for _, point := range points {
+		total += point.RechargeUSD
+	}
+	return total
+}
+
 func sumInviteTrendConsume(points []InviteAgentTrendPoint) int {
 	var total int
 	for _, point := range points {
 		total += point.ConsumeQuota
+	}
+	return total
+}
+
+func sumInviteTrendConsumeUSD(points []InviteAgentTrendPoint) float64 {
+	var total float64
+	for _, point := range points {
+		total += point.ConsumeUSD
 	}
 	return total
 }
@@ -525,6 +541,11 @@ func TestEnableInviteeInvitationRejectsSecondLevelGrant(t *testing.T) {
 
 func TestGetInviteAgentStatsSeparatesSecondLevelFlow(t *testing.T) {
 	truncateTables(t)
+	originalQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 1000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
 	seedInviteOwner(t, 92, "agent_a3")
 	firstCode := seedInviteCode(t, "AGENTA3-CODE", 92, "vip", 0, 0, 0, InviteCodeStatusEnabled)
 	agentB := &User{
@@ -572,19 +593,27 @@ func TestGetInviteAgentStatsSeparatesSecondLevelFlow(t *testing.T) {
 	require.Equal(t, InviteAgentLevelFirst, stats.AgentLevel)
 	require.Equal(t, int64(1), stats.DirectStats.UserCount)
 	require.Equal(t, int64(100), stats.DirectStats.RechargeAmount)
+	require.Equal(t, 10.0, stats.DirectStats.RechargeUSD)
 	require.Equal(t, 3000, stats.DirectStats.ConsumeQuota)
+	require.Equal(t, 3.0, stats.DirectStats.ConsumeUSD)
 	require.Len(t, stats.SecondLevelStats, 1)
 	require.Equal(t, 921, stats.SecondLevelStats[0].UserID)
 	require.Equal(t, int64(100), stats.SecondLevelStats[0].SelfStats.RechargeAmount)
+	require.Equal(t, 10.0, stats.SecondLevelStats[0].SelfStats.RechargeUSD)
 	require.Equal(t, 3000, stats.SecondLevelStats[0].SelfStats.ConsumeQuota)
+	require.Equal(t, 3.0, stats.SecondLevelStats[0].SelfStats.ConsumeUSD)
 	require.Equal(t, int64(200), stats.SecondLevelStats[0].InviteeStats.RechargeAmount)
+	require.Equal(t, 20.0, stats.SecondLevelStats[0].InviteeStats.RechargeUSD)
 	require.Equal(t, 7000, stats.SecondLevelStats[0].InviteeStats.ConsumeQuota)
+	require.Equal(t, 7.0, stats.SecondLevelStats[0].InviteeStats.ConsumeUSD)
 	require.NotEmpty(t, stats.SecondLevelTrend)
 	var trendConsume int
 	for _, point := range stats.SecondLevelTrend {
 		trendConsume += point.ConsumeQuota
 	}
 	require.Equal(t, 7000, trendConsume)
+	require.Equal(t, 20.0, sumInviteTrendRechargeUSD(stats.SecondLevelTrend))
+	require.Equal(t, 7.0, sumInviteTrendConsumeUSD(stats.SecondLevelTrend))
 }
 
 func TestGetInviteAgentStatsFiltersRechargeStatusAndTrendRange(t *testing.T) {
@@ -619,9 +648,12 @@ func TestGetInviteAgentStatsFiltersRechargeStatusAndTrendRange(t *testing.T) {
 	require.Equal(t, int64(1), stats.DirectStats.UserCount)
 	require.Equal(t, int64(170), stats.DirectStats.RechargeAmount)
 	require.Equal(t, 17.0, stats.DirectStats.RechargeMoney)
+	require.Equal(t, 17.0, stats.DirectStats.RechargeUSD)
 	require.Equal(t, 900, stats.DirectStats.ConsumeQuota)
 	require.Equal(t, int64(100), sumInviteTrendRecharge(stats.DirectTrend))
+	require.Equal(t, 10.0, sumInviteTrendRechargeUSD(stats.DirectTrend))
 	require.Equal(t, 300, sumInviteTrendConsume(stats.DirectTrend))
+	require.Equal(t, float64(300)/common.QuotaPerUnit, sumInviteTrendConsumeUSD(stats.DirectTrend))
 }
 
 func TestGetInviteAgentStatsAggregatesMonthTrend(t *testing.T) {
@@ -658,10 +690,14 @@ func TestGetInviteAgentStatsAggregatesMonthTrend(t *testing.T) {
 	require.Len(t, stats.DirectTrend, 2)
 	require.Equal(t, "2026-05", stats.DirectTrend[0].Label)
 	require.Equal(t, int64(150), stats.DirectTrend[0].RechargeAmount)
+	require.Equal(t, 15.0, stats.DirectTrend[0].RechargeUSD)
 	require.Equal(t, 300, stats.DirectTrend[0].ConsumeQuota)
+	require.Equal(t, float64(300)/common.QuotaPerUnit, stats.DirectTrend[0].ConsumeUSD)
 	require.Equal(t, "2026-06", stats.DirectTrend[1].Label)
 	require.Equal(t, int64(200), stats.DirectTrend[1].RechargeAmount)
+	require.Equal(t, 20.0, stats.DirectTrend[1].RechargeUSD)
 	require.Equal(t, 400, stats.DirectTrend[1].ConsumeQuota)
+	require.Equal(t, float64(400)/common.QuotaPerUnit, stats.DirectTrend[1].ConsumeUSD)
 }
 
 func TestGetInviteAgentStatsKeepsConsumeTotalWithoutConsumeLogs(t *testing.T) {
@@ -687,6 +723,8 @@ func TestGetInviteAgentStatsKeepsConsumeTotalWithoutConsumeLogs(t *testing.T) {
 	stats, err := GetInviteAgentStats(95, "day", fixedInviteStatsTime(2026, time.May, 9), fixedInviteStatsTime(2026, time.May, 11))
 	require.NoError(t, err)
 	require.Equal(t, 4321, stats.DirectStats.ConsumeQuota)
+	require.Equal(t, float64(4321)/common.QuotaPerUnit, stats.DirectStats.ConsumeUSD)
 	require.Equal(t, 0, sumInviteTrendConsume(stats.DirectTrend))
 	require.Equal(t, int64(123), sumInviteTrendRecharge(stats.DirectTrend))
+	require.Equal(t, 12.3, sumInviteTrendRechargeUSD(stats.DirectTrend))
 }
