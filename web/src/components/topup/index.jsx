@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useState, useContext } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   API,
   showError,
@@ -27,7 +27,7 @@ import {
   renderQuota,
   renderQuotaWithAmount,
 } from '../../helpers';
-import { Modal, Toast } from '@douyinfe/semi-ui';
+import { Button, Card, Modal, Tag, Toast, Typography } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
@@ -36,8 +36,11 @@ import RechargeCard from './RechargeCard';
 import PaymentConfirmModal from './modals/PaymentConfirmModal';
 import TopupHistoryModal from './modals/TopupHistoryModal';
 
+const { Text } = Typography;
+
 const TopUp = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [userState, userDispatch] = useContext(UserContext);
   const [statusState] = useContext(StatusContext);
@@ -100,6 +103,14 @@ const TopUp = () => {
     amount_options: [],
     discount: {},
   });
+
+  const hasInvitationAccess = Boolean(
+    (userState?.user?.invite_agent_level || 0) > 0 ||
+      userState?.user?.can_grant_invitation ||
+      (userState?.user?.invite_code_count || 0) > 0 ||
+      (userState?.user?.invite_user_count || 0) > 0 ||
+      userState?.user?.bound_invite_code,
+  );
 
   const topUp = async () => {
     if (redemptionCode === '') {
@@ -655,6 +666,43 @@ const TopUp = () => {
     }));
   };
 
+  const inviteEntryCard = (
+    <Card className='!rounded-2xl shadow-sm border-0'>
+      <div className='flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between'>
+        <div className='min-w-0'>
+          <div className='mb-2 flex flex-wrap items-center gap-2'>
+            <Typography.Text className='text-lg font-medium'>
+              {t('邀请管理')}
+            </Typography.Text>
+            {hasInvitationAccess ? (
+              <Tag size='small' shape='circle' color='green'>
+                {t('已开通')}
+              </Tag>
+            ) : (
+              <Tag size='small' shape='circle'>
+                {t('未开通')}
+              </Tag>
+            )}
+          </div>
+          <Text type='tertiary'>
+            {hasInvitationAccess
+              ? t('查看邀请码、被邀请人和邀请数据。')
+              : t('如需邀请用户注册，请联系管理员开通。')}
+          </Text>
+        </div>
+        {hasInvitationAccess ? (
+          <Button
+            type='primary'
+            theme='solid'
+            onClick={() => navigate('/console/invitation')}
+          >
+            {t('前往邀请管理')}
+          </Button>
+        ) : null}
+      </div>
+    </Card>
+  );
+
   return (
     <div className='w-full max-w-7xl mx-auto relative min-h-screen lg:min-h-0 mt-[60px] px-2'>
       {/* 充值确认模态框 */}
@@ -757,6 +805,7 @@ const TopUp = () => {
           allSubscriptions={allSubscriptions}
           reloadSubscriptionSelf={getSubscriptionSelf}
         />
+        {inviteEntryCard}
       </div>
     </div>
   );
