@@ -127,6 +127,54 @@ func TestAggregateGroupClientRoutePoolsRoundTrip(t *testing.T) {
 	require.Empty(t, empty.ClaudeCodeCLI.Targets)
 }
 
+func TestAggregateGroupSmartStrategyConfigRoundTrip(t *testing.T) {
+	prepareAggregateGroupModelTest(t)
+
+	group := &AggregateGroup{
+		Name:                    "enterprise-smart-strategy",
+		DisplayName:             "企业策略覆盖",
+		Status:                  AggregateGroupStatusEnabled,
+		GroupRatio:              1,
+		RoutingMode:             AggregateGroupRoutingModeCluster,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, group.SetSmartStrategyConfig(&AggregateGroupSmartStrategyConfig{
+		FailureRateWindowSeconds:   aggregateTargetWeightForTest(120),
+		FailureRateMinRequests:     aggregateTargetWeightForTest(50),
+		FailureRateThresholdPct:    aggregateTargetWeightForTest(8),
+		SlowRateWindowSeconds:      aggregateTargetWeightForTest(180),
+		SlowRateMinRequests:        aggregateTargetWeightForTest(40),
+		SlowRateThresholdPct:       aggregateTargetWeightForTest(25),
+		DegradeDurationSeconds:     aggregateTargetWeightForTest(300),
+		ClusterDegradedWeightPct:   aggregateTargetWeightForTest(35),
+		SlowRequestThreshold:       aggregateTargetWeightForTest(20),
+		SlowFirstResponseThreshold: aggregateTargetWeightForTest(1),
+	}))
+	require.NoError(t, group.InsertWithTargets([]AggregateGroupTarget{
+		{RealGroup: "default", OrderIndex: 0, Weight: aggregateTargetWeightForTest(AggregateGroupTargetDefaultWeight)},
+	}))
+
+	loaded, err := GetAggregateGroupByName("enterprise-smart-strategy", true)
+	require.NoError(t, err)
+	config := loaded.GetSmartStrategyConfig()
+	require.NotNil(t, config)
+	require.Equal(t, 120, *config.FailureRateWindowSeconds)
+	require.Equal(t, 50, *config.FailureRateMinRequests)
+	require.Equal(t, 8, *config.FailureRateThresholdPct)
+	require.Equal(t, 180, *config.SlowRateWindowSeconds)
+	require.Equal(t, 40, *config.SlowRateMinRequests)
+	require.Equal(t, 25, *config.SlowRateThresholdPct)
+	require.Equal(t, 300, *config.DegradeDurationSeconds)
+	require.Equal(t, 35, *config.ClusterDegradedWeightPct)
+	require.Equal(t, 20, *config.SlowRequestThreshold)
+	require.Equal(t, 1, *config.SlowFirstResponseThreshold)
+
+	require.NoError(t, loaded.SetSmartStrategyConfig(nil))
+	require.Empty(t, loaded.SmartStrategyConfig)
+}
+
 func TestDeleteAggregateGroupByIDDeletesTargets(t *testing.T) {
 	prepareAggregateGroupModelTest(t)
 

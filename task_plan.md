@@ -1,3 +1,47 @@
+# Task Plan: 聚合分组百分比智能降权
+
+## Goal
+把聚合分组智能降权从连续失败/慢请求次数触发改为滑动窗口百分比触发，并支持聚合分组级覆盖全局策略。旧连续次数配置保留兼容但不再参与判断；旧运行态降权状态升级后首次读取即清空。完成后跑单元测试、前端构建、Docker dev 构建和真实网关仿真。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+### Phase 1: Backend Strategy & Compatibility
+- [x] 新增全局百分比策略 option 和规范化逻辑。
+- [x] 给聚合分组增加 `smart_strategy_config` JSON 字段与 API 透传。
+- [x] 扩展 RPM 指标为可配置窗口，并新增策略失败/慢成功指标。
+- [x] 改造降权触发为错误率/慢率，旧状态按 `strategy_version=2` 清空。
+- **Status:** complete
+
+### Phase 2: Frontend
+- [x] 聚合分组全局策略 UI 替换为百分比配置。
+- [x] 编辑弹窗增加跟随全局/自定义策略。
+- [x] 运行态抽屉展示策略来源、窗口指标、错误率、慢率和阈值。
+- **Status:** complete
+
+### Phase 3: Tests
+- [x] 补 service/model/controller 单元测试。
+- [x] 运行 `go test ./...`。
+- [x] 运行 `cd web && bun run build`。
+- **Status:** complete
+
+### Phase 4: Docker Dev Simulation
+- [x] 构建 `new-api-local:dev`。
+- [x] 重建 `docker-compose-dev.yml` 服务并确认健康。
+- [x] 通过真实网关请求验证低样本、1% 错误率、5% 错误率、慢率和组级覆盖。
+- [x] 清理临时 DB/Redis 数据。
+- **Status:** complete
+
+## Key Constraints
+- 本版不做多档降权。
+- 本版不做真实子分组 route-level 覆盖。
+- 旧连续次数配置只保留兼容，不再影响新策略。
+- JSON 操作使用 `common.*` 包装。
+- DB 变更兼容 SQLite、MySQL、PostgreSQL。
+
+---
+
 # Task Plan: Relay Error Passthrough Settings
 
 ## Goal

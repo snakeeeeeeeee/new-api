@@ -32,6 +32,12 @@ func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.True(t, listResp.Success, listResp.Message)
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.smart_strategy_enabled"`)
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.consecutive_failure_threshold"`)
+	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.failure_rate_window_seconds"`)
+	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.failure_rate_min_requests"`)
+	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.failure_rate_threshold_percent"`)
+	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.slow_rate_window_seconds"`)
+	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.slow_rate_min_requests"`)
+	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.slow_rate_threshold_percent"`)
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.cluster_degraded_weight_percent"`)
 	require.Contains(t, string(listResp.Data), `"key":"aggregate_group.slow_first_response_threshold_seconds"`)
 	require.Contains(t, string(listResp.Data), `"key":"LogConsumeExcludedUserIDs"`)
@@ -60,6 +66,54 @@ func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.True(t, percentResp.Success, percentResp.Message)
 	require.Equal(t, 35, setting.AggregateGroupClusterDegradedWeightPct)
 
+	rateWindowPayload := []byte(`{"key":"aggregate_group.failure_rate_window_seconds","value":"120"}`)
+	rateWindowRecorder := httptest.NewRecorder()
+	rateWindowCtx, _ := gin.CreateTestContext(rateWindowRecorder)
+	rateWindowCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(rateWindowPayload))
+	rateWindowCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(rateWindowCtx)
+
+	var rateWindowResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(rateWindowRecorder.Body.Bytes(), &rateWindowResp))
+	require.True(t, rateWindowResp.Success, rateWindowResp.Message)
+	require.Equal(t, 120, setting.AggregateGroupFailureRateWindowSeconds)
+
+	minRequestsPayload := []byte(`{"key":"aggregate_group.failure_rate_min_requests","value":"200"}`)
+	minRequestsRecorder := httptest.NewRecorder()
+	minRequestsCtx, _ := gin.CreateTestContext(minRequestsRecorder)
+	minRequestsCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(minRequestsPayload))
+	minRequestsCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(minRequestsCtx)
+
+	var minRequestsResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(minRequestsRecorder.Body.Bytes(), &minRequestsResp))
+	require.True(t, minRequestsResp.Success, minRequestsResp.Message)
+	require.Equal(t, 200, setting.AggregateGroupFailureRateMinRequests)
+
+	rateThresholdPayload := []byte(`{"key":"aggregate_group.failure_rate_threshold_percent","value":"6"}`)
+	rateThresholdRecorder := httptest.NewRecorder()
+	rateThresholdCtx, _ := gin.CreateTestContext(rateThresholdRecorder)
+	rateThresholdCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(rateThresholdPayload))
+	rateThresholdCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(rateThresholdCtx)
+
+	var rateThresholdResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(rateThresholdRecorder.Body.Bytes(), &rateThresholdResp))
+	require.True(t, rateThresholdResp.Success, rateThresholdResp.Message)
+	require.Equal(t, 6, setting.AggregateGroupFailureRateThresholdPct)
+
+	slowRatePayload := []byte(`{"key":"aggregate_group.slow_rate_threshold_percent","value":"40"}`)
+	slowRateRecorder := httptest.NewRecorder()
+	slowRateCtx, _ := gin.CreateTestContext(slowRateRecorder)
+	slowRateCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(slowRatePayload))
+	slowRateCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(slowRateCtx)
+
+	var slowRateResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(slowRateRecorder.Body.Bytes(), &slowRateResp))
+	require.True(t, slowRateResp.Success, slowRateResp.Message)
+	require.Equal(t, 40, setting.AggregateGroupSlowRateThresholdPct)
+
 	invalidPercentPayload := []byte(`{"key":"aggregate_group.cluster_degraded_weight_percent","value":"101"}`)
 	invalidPercentRecorder := httptest.NewRecorder()
 	invalidPercentCtx, _ := gin.CreateTestContext(invalidPercentRecorder)
@@ -72,6 +126,44 @@ func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.False(t, invalidPercentResp.Success)
 	require.Contains(t, invalidPercentResp.Message, "1 到 100")
 	require.Equal(t, 35, setting.AggregateGroupClusterDegradedWeightPct)
+
+	invalidRateWindowPayload := []byte(`{"key":"aggregate_group.failure_rate_window_seconds","value":"3601"}`)
+	invalidRateWindowRecorder := httptest.NewRecorder()
+	invalidRateWindowCtx, _ := gin.CreateTestContext(invalidRateWindowRecorder)
+	invalidRateWindowCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(invalidRateWindowPayload))
+	invalidRateWindowCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(invalidRateWindowCtx)
+
+	var invalidRateWindowResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(invalidRateWindowRecorder.Body.Bytes(), &invalidRateWindowResp))
+	require.False(t, invalidRateWindowResp.Success)
+	require.Contains(t, invalidRateWindowResp.Message, "1 到 3600")
+	require.Equal(t, 120, setting.AggregateGroupFailureRateWindowSeconds)
+
+	invalidMinRequestsPayload := []byte(`{"key":"aggregate_group.slow_rate_min_requests","value":"0"}`)
+	invalidMinRequestsRecorder := httptest.NewRecorder()
+	invalidMinRequestsCtx, _ := gin.CreateTestContext(invalidMinRequestsRecorder)
+	invalidMinRequestsCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(invalidMinRequestsPayload))
+	invalidMinRequestsCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(invalidMinRequestsCtx)
+
+	var invalidMinRequestsResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(invalidMinRequestsRecorder.Body.Bytes(), &invalidMinRequestsResp))
+	require.False(t, invalidMinRequestsResp.Success)
+	require.Contains(t, invalidMinRequestsResp.Message, "最小样本数")
+
+	invalidRateThresholdPayload := []byte(`{"key":"aggregate_group.slow_rate_threshold_percent","value":"101"}`)
+	invalidRateThresholdRecorder := httptest.NewRecorder()
+	invalidRateThresholdCtx, _ := gin.CreateTestContext(invalidRateThresholdRecorder)
+	invalidRateThresholdCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(invalidRateThresholdPayload))
+	invalidRateThresholdCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(invalidRateThresholdCtx)
+
+	var invalidRateThresholdResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(invalidRateThresholdRecorder.Body.Bytes(), &invalidRateThresholdResp))
+	require.False(t, invalidRateThresholdResp.Success)
+	require.Contains(t, invalidRateThresholdResp.Message, "百分比阈值")
+	require.Equal(t, 40, setting.AggregateGroupSlowRateThresholdPct)
 
 	firstResponsePayload := []byte(`{"key":"aggregate_group.slow_first_response_threshold_seconds","value":"0"}`)
 	firstResponseRecorder := httptest.NewRecorder()

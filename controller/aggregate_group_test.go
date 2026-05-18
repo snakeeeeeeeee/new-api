@@ -37,6 +37,12 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 	originalSlowRequestThreshold := setting.AggregateGroupSlowRequestThreshold
 	originalSlowFirstResponseThreshold := setting.AggregateGroupSlowFirstResponseThreshold
 	originalConsecutiveSlowLimit := setting.AggregateGroupConsecutiveSlowLimit
+	originalFailureRateWindowSeconds := setting.AggregateGroupFailureRateWindowSeconds
+	originalFailureRateMinRequests := setting.AggregateGroupFailureRateMinRequests
+	originalFailureRateThresholdPct := setting.AggregateGroupFailureRateThresholdPct
+	originalSlowRateWindowSeconds := setting.AggregateGroupSlowRateWindowSeconds
+	originalSlowRateMinRequests := setting.AggregateGroupSlowRateMinRequests
+	originalSlowRateThresholdPct := setting.AggregateGroupSlowRateThresholdPct
 
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -54,6 +60,12 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 		setting.AggregateGroupSlowRequestThreshold = originalSlowRequestThreshold
 		setting.AggregateGroupSlowFirstResponseThreshold = originalSlowFirstResponseThreshold
 		setting.AggregateGroupConsecutiveSlowLimit = originalConsecutiveSlowLimit
+		setting.AggregateGroupFailureRateWindowSeconds = originalFailureRateWindowSeconds
+		setting.AggregateGroupFailureRateMinRequests = originalFailureRateMinRequests
+		setting.AggregateGroupFailureRateThresholdPct = originalFailureRateThresholdPct
+		setting.AggregateGroupSlowRateWindowSeconds = originalSlowRateWindowSeconds
+		setting.AggregateGroupSlowRateMinRequests = originalSlowRateMinRequests
+		setting.AggregateGroupSlowRateThresholdPct = originalSlowRateThresholdPct
 		service.ClearAggregateRouteAffinityCacheAll()
 		sqlDB, err := db.DB()
 		if err == nil {
@@ -101,6 +113,18 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 			{"type":"gjson","path":"metadata.user_id"}
 		],
 		"retry_status_codes":"401,429,500-599",
+		"smart_strategy_config":{
+			"failure_rate_window_seconds":120,
+			"failure_rate_min_requests":50,
+			"failure_rate_threshold_percent":8,
+			"slow_rate_window_seconds":180,
+			"slow_rate_min_requests":40,
+			"slow_rate_threshold_percent":25,
+			"degrade_duration_seconds":300,
+			"cluster_degraded_weight_percent":35,
+			"slow_request_threshold_seconds":20,
+			"slow_first_response_threshold_seconds":1
+		},
 		"visible_user_groups":["vip"],
 		"targets":[{"real_group":"default","weight":50},{"real_group":"vip","weight":150}],
 		"client_route_pools":{
@@ -144,6 +168,37 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"client_route_pools"`)
 	require.Contains(t, string(listResp.Data), `"fallback_to_default":false`)
 	require.Contains(t, string(listResp.Data), `"weight":250`)
+	require.Contains(t, string(listResp.Data), `"smart_strategy_config"`)
+	require.Contains(t, string(listResp.Data), `"failure_rate_threshold_percent":8`)
+	require.Contains(t, string(listResp.Data), `"cluster_degraded_weight_percent":35`)
+}
+
+func TestCreateAggregateGroupRejectsInvalidSmartStrategyConfig(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+
+	payload := []byte(`{
+		"name":"enterprise-stable",
+		"display_name":"企业稳定组",
+		"status":1,
+		"group_ratio":1.5,
+		"routing_mode":"cluster",
+		"recovery_enabled":true,
+		"recovery_interval_seconds":300,
+		"visible_user_groups":["vip"],
+		"targets":[{"real_group":"default","weight":100}],
+		"smart_strategy_config":{"failure_rate_threshold_percent":101}
+	}`)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/aggregate_group", bytes.NewReader(payload))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	CreateAggregateGroup(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "错误率阈值")
 }
 
 func TestCreateAggregateGroupRejectsNegativeTargetWeight(t *testing.T) {
@@ -366,6 +421,7 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 	seedAggregateGroupControllerAbilityChannel(t, 1003, "vip", "a-model", 0)
 
 	now := time.Now().Unix()
+	setting.AggregateGroupClusterDegradedWeightPct = 50
 	require.NoError(t, service.SetAggregateGroupRuntimeState(group.Name, "a-model", &service.AggregateGroupRuntimeState{
 		ActiveIndex:   1,
 		ActiveGroup:   "vip",
@@ -374,15 +430,17 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 		ActiveSinceAt: now,
 	}))
 	require.NoError(t, service.SetAggregateGroupRouteStrategyState(group.Name, "a-model", "default", &service.AggregateGroupRouteStrategyState{
+		StrategyVersion:             2,
 		DegradedUntil:               common.GetTimestamp() + 600,
-		DegradeLevel:                2,
+		DegradeLevel:                1,
 		DegradedConsecutiveFailures: 1,
 		LastFailureAt:               now,
 		LastSlowReason:              service.AggregateSmartSlowReasonFirstResponse,
-		LastTriggerReason:           service.AggregateSmartTriggerReasonConsecutiveFailures,
+		LastTriggerReason:           service.AggregateSmartTriggerReasonFailureRate,
 		LastTriggerAt:               now - 10,
 	}))
 	require.NoError(t, service.SetAggregateGroupRouteStrategyState(group.Name, "a-model", "vip", &service.AggregateGroupRouteStrategyState{
+		StrategyVersion:  2,
 		ConsecutiveSlows: 1,
 		LastSuccessAt:    now,
 	}))
@@ -393,6 +451,8 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 	service.RecordAggregateRouteRPMAttempt(rpmCtx, "a-model", "default")
 	service.RecordAggregateRouteRPMSuccess(rpmCtx, "a-model", "default")
 	service.RecordAggregateRouteRPMFailure(rpmCtx, "a-model")
+	service.RecordAggregateRouteStrategyFailure(rpmCtx, "a-model", "default")
+	service.RecordAggregateRouteSlowSuccess(rpmCtx, "a-model", "default")
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -418,17 +478,27 @@ func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *te
 	require.Len(t, resp.Data.Runtime.Routes, 2)
 	require.Equal(t, "default", resp.Data.Runtime.Routes[0].RouteGroup)
 	require.Equal(t, 50, resp.Data.Runtime.Routes[0].Weight)
-	require.Equal(t, 2, resp.Data.Runtime.Routes[0].EffectiveWeight)
+	require.Equal(t, 25, resp.Data.Runtime.Routes[0].EffectiveWeight)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].PriorityCount)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].RPM)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].SuccessRPM)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].FailureRPM)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].StrategyFailureRPM)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].SlowSuccessRPM)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].FailureWindowRequests)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].FailureWindowFailures)
+	require.Equal(t, 100, resp.Data.Runtime.Routes[0].FailureRatePercent)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].SlowWindowSuccesses)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].SlowWindowSlowSuccesses)
+	require.Equal(t, 100, resp.Data.Runtime.Routes[0].SlowRatePercent)
+	require.Equal(t, "global", resp.Data.Runtime.Routes[0].StrategySource)
+	require.Equal(t, 2, resp.Data.Runtime.Routes[0].StrategyVersion)
 	require.True(t, resp.Data.Runtime.Routes[0].IsDegraded)
 	require.False(t, resp.Data.Runtime.Routes[0].IsSoftFallback)
-	require.Equal(t, 2, resp.Data.Runtime.Routes[0].DegradeLevel)
+	require.Equal(t, 1, resp.Data.Runtime.Routes[0].DegradeLevel)
 	require.Equal(t, 1, resp.Data.Runtime.Routes[0].DegradedConsecutiveFailures)
 	require.Equal(t, service.AggregateSmartSlowReasonFirstResponse, resp.Data.Runtime.Routes[0].LastSlowReason)
-	require.Equal(t, service.AggregateSmartTriggerReasonConsecutiveFailures, resp.Data.Runtime.Routes[0].LastTriggerReason)
+	require.Equal(t, service.AggregateSmartTriggerReasonFailureRate, resp.Data.Runtime.Routes[0].LastTriggerReason)
 	require.Equal(t, "vip", resp.Data.Runtime.Routes[1].RouteGroup)
 	require.Equal(t, 150, resp.Data.Runtime.Routes[1].Weight)
 	require.Equal(t, 150, resp.Data.Runtime.Routes[1].EffectiveWeight)

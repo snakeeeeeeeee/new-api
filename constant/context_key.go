@@ -51,6 +51,7 @@ const (
 	ContextKeyAggregateRetryIndex              ContextKey = "aggregate_retry_index"
 	ContextKeyAggregateRetryBase               ContextKey = "aggregate_retry_base"
 	ContextKeyAggregateSmartRouting            ContextKey = "aggregate_smart_routing"
+	ContextKeyAggregateSmartStrategy           ContextKey = "aggregate_smart_strategy"
 	ContextKeyAggregateRoutingMode             ContextKey = "aggregate_routing_mode"
 	ContextKeyAggregateAttemptedRoutes         ContextKey = "aggregate_attempted_routes"
 	ContextKeyAggregateRecoveryEnabled         ContextKey = "aggregate_recovery_enabled"

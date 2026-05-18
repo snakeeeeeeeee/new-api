@@ -46,6 +46,10 @@ const formatTime = (timestamp) => {
 
 const getTriggerReasonLabel = (reason, t) => {
   switch (reason) {
+    case 'failure_rate':
+      return t('错误率触发');
+    case 'slow_rate':
+      return t('慢请求率触发');
     case 'consecutive_failures':
       return t('连续失败触发');
     case 'consecutive_slows':
@@ -90,6 +94,17 @@ const formatRouteSuccessRate = (route) => {
 
 const getRuntimeRouteKey = (route) =>
   `${route?.route_pool || 'default'}::${route?.route_group || ''}`;
+
+const getStrategySourceLabel = (source, t) => {
+  switch (source) {
+    case 'group':
+      return t('当前分组自定义');
+    case 'global':
+      return t('全局策略');
+    default:
+      return '-';
+  }
+};
 
 const getRouteStatusConfig = (route, t, routingMode = 'failover') => {
   if ((route?.priority_count ?? 0) <= 0) {
@@ -1233,6 +1248,7 @@ const AggregateGroupRuntimeDrawer = ({
   const routingMode = runtimeGroup?.routing_mode || 'failover';
   const isClusterMode = routingMode === 'cluster';
   const smartStrategy = runtimeData?.smart_strategy;
+  const effectiveStrategy = smartStrategy?.effective_strategy;
   const runtime = runtimeData?.runtime;
   const activeRoute = runtime?.active_route;
   const clientRoutePools = useMemo(
@@ -1365,6 +1381,49 @@ const AggregateGroupRuntimeDrawer = ({
                         smartStrategy?.effective_enabled,
                         t,
                       ),
+                    },
+                    {
+                      key: t('策略来源'),
+                      value: (
+                        <Tag
+                          color={
+                            effectiveStrategy?.source === 'group'
+                              ? 'orange'
+                              : 'blue'
+                          }
+                        >
+                          {getStrategySourceLabel(effectiveStrategy?.source, t)}
+                        </Tag>
+                      ),
+                    },
+                    {
+                      key: t('错误率策略'),
+                      value: effectiveStrategy
+                        ? t('{{window}} 秒 / {{min}} 样本 / {{threshold}}%', {
+                            window:
+                              effectiveStrategy.failure_rate_window_seconds,
+                            min: effectiveStrategy.failure_rate_min_requests,
+                            threshold:
+                              effectiveStrategy.failure_rate_threshold_percent,
+                          })
+                        : '-',
+                    },
+                    {
+                      key: t('慢率策略'),
+                      value: effectiveStrategy
+                        ? t('{{window}} 秒 / {{min}} 样本 / {{threshold}}%', {
+                            window: effectiveStrategy.slow_rate_window_seconds,
+                            min: effectiveStrategy.slow_rate_min_requests,
+                            threshold:
+                              effectiveStrategy.slow_rate_threshold_percent,
+                          })
+                        : '-',
+                    },
+                    {
+                      key: t('降级权重比例'),
+                      value: effectiveStrategy
+                        ? `${effectiveStrategy.cluster_degraded_weight_percent}%`
+                        : '-',
                     },
                     {
                       key: t('路由模式'),
@@ -1637,6 +1696,97 @@ const AggregateGroupRuntimeDrawer = ({
                             value: formatRouteSuccessRate(selectedRoute),
                           },
                           {
+                            key: t('策略失败 RPM'),
+                            value: selectedRoute.strategy_failure_rpm ?? 0,
+                          },
+                          {
+                            key: t('慢成功 RPM'),
+                            value: selectedRoute.slow_success_rpm ?? 0,
+                          },
+                          {
+                            key: t('策略来源'),
+                            value: (
+                              <Tag
+                                color={
+                                  selectedRoute.strategy_source === 'group'
+                                    ? 'orange'
+                                    : 'blue'
+                                }
+                              >
+                                {getStrategySourceLabel(
+                                  selectedRoute.strategy_source,
+                                  t,
+                                )}
+                              </Tag>
+                            ),
+                          },
+                          {
+                            key: t('错误率窗口'),
+                            value: t(
+                              '{{failures}} / {{requests}}，{{rate}}%',
+                              {
+                                failures:
+                                  selectedRoute.failure_window_failures ?? 0,
+                                requests:
+                                  selectedRoute.failure_window_requests ?? 0,
+                                rate: selectedRoute.failure_rate_percent ?? 0,
+                              },
+                            ),
+                          },
+                          {
+                            key: t('错误率样本'),
+                            value:
+                              (selectedRoute.failure_window_requests ?? 0) >=
+                              (selectedRoute.failure_rate_min_requests ?? 0) ? (
+                                <Tag color='green'>{t('已达到')}</Tag>
+                              ) : (
+                                <Tag color='grey'>
+                                  {t('{{current}} / {{min}}', {
+                                    current:
+                                      selectedRoute.failure_window_requests ??
+                                      0,
+                                    min:
+                                      selectedRoute.failure_rate_min_requests ??
+                                      0,
+                                  })}
+                                </Tag>
+                              ),
+                          },
+                          {
+                            key: t('错误率阈值'),
+                            value: `${selectedRoute.failure_rate_threshold_percent ?? 0}%`,
+                          },
+                          {
+                            key: t('慢率窗口'),
+                            value: t('{{slow}} / {{success}}，{{rate}}%', {
+                              slow:
+                                selectedRoute.slow_window_slow_successes ?? 0,
+                              success: selectedRoute.slow_window_successes ?? 0,
+                              rate: selectedRoute.slow_rate_percent ?? 0,
+                            }),
+                          },
+                          {
+                            key: t('慢率样本'),
+                            value:
+                              (selectedRoute.slow_window_successes ?? 0) >=
+                              (selectedRoute.slow_rate_min_requests ?? 0) ? (
+                                <Tag color='green'>{t('已达到')}</Tag>
+                              ) : (
+                                <Tag color='grey'>
+                                  {t('{{current}} / {{min}}', {
+                                    current:
+                                      selectedRoute.slow_window_successes ?? 0,
+                                    min:
+                                      selectedRoute.slow_rate_min_requests ?? 0,
+                                  })}
+                                </Tag>
+                              ),
+                          },
+                          {
+                            key: t('慢率阈值'),
+                            value: `${selectedRoute.slow_rate_threshold_percent ?? 0}%`,
+                          },
+                          {
                             key: t('权重'),
                             value: selectedRoute.weight ?? 0,
                           },
@@ -1693,36 +1843,16 @@ const AggregateGroupRuntimeDrawer = ({
                             value: formatTime(selectedRoute.degraded_until),
                           },
                           {
-                            key: t('当前连续失败计数'),
-                            value: selectedRoute.consecutive_failures ?? 0,
+                            key: t('最近慢请求原因'),
+                            value: getSlowReasonLabel(
+                              selectedRoute.last_slow_reason,
+                              t,
+                            ),
                           },
                           {
-                            key: t('当前连续慢请求计数'),
-                            value: selectedRoute.consecutive_slows ?? 0,
+                            key: t('策略版本'),
+                            value: selectedRoute.strategy_version || 2,
                           },
-                          ...(isClusterMode
-                            ? [
-                                {
-                                  key: t('降级期间失败计数'),
-                                  value:
-                                    selectedRoute.degraded_consecutive_failures ??
-                                    0,
-                                },
-                                {
-                                  key: t('降级期间慢请求计数'),
-                                  value:
-                                    selectedRoute.degraded_consecutive_slows ??
-                                    0,
-                                },
-                                {
-                                  key: t('最近慢请求原因'),
-                                  value: getSlowReasonLabel(
-                                    selectedRoute.last_slow_reason,
-                                    t,
-                                  ),
-                                },
-                              ]
-                            : []),
                           {
                             key: t('最近成功时间'),
                             value: formatTime(selectedRoute.last_success_at),

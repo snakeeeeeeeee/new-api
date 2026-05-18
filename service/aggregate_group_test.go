@@ -37,6 +37,12 @@ func prepareAggregateGroupServiceTest(t *testing.T) {
 	originalSlowRequestThreshold := setting.AggregateGroupSlowRequestThreshold
 	originalSlowFirstResponseThreshold := setting.AggregateGroupSlowFirstResponseThreshold
 	originalConsecutiveSlowLimit := setting.AggregateGroupConsecutiveSlowLimit
+	originalFailureRateWindowSeconds := setting.AggregateGroupFailureRateWindowSeconds
+	originalFailureRateMinRequests := setting.AggregateGroupFailureRateMinRequests
+	originalFailureRateThresholdPct := setting.AggregateGroupFailureRateThresholdPct
+	originalSlowRateWindowSeconds := setting.AggregateGroupSlowRateWindowSeconds
+	originalSlowRateMinRequests := setting.AggregateGroupSlowRateMinRequests
+	originalSlowRateThresholdPct := setting.AggregateGroupSlowRateThresholdPct
 	originalAffinitySetting := *operation_setting.GetChannelAffinitySetting()
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组","svip":"SVIP分组"}`))
 	t.Cleanup(func() {
@@ -61,6 +67,12 @@ func prepareAggregateGroupServiceTest(t *testing.T) {
 		setting.AggregateGroupSlowRequestThreshold = originalSlowRequestThreshold
 		setting.AggregateGroupSlowFirstResponseThreshold = originalSlowFirstResponseThreshold
 		setting.AggregateGroupConsecutiveSlowLimit = originalConsecutiveSlowLimit
+		setting.AggregateGroupFailureRateWindowSeconds = originalFailureRateWindowSeconds
+		setting.AggregateGroupFailureRateMinRequests = originalFailureRateMinRequests
+		setting.AggregateGroupFailureRateThresholdPct = originalFailureRateThresholdPct
+		setting.AggregateGroupSlowRateWindowSeconds = originalSlowRateWindowSeconds
+		setting.AggregateGroupSlowRateMinRequests = originalSlowRateMinRequests
+		setting.AggregateGroupSlowRateThresholdPct = originalSlowRateThresholdPct
 		*operation_setting.GetChannelAffinitySetting() = originalAffinitySetting
 	})
 }
@@ -199,6 +211,34 @@ func enableAggregateGroupSmartRouting(t *testing.T, group *model.AggregateGroup)
 	loadedGroup.SmartRoutingEnabled = true
 	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargets(loadedGroup.GetTargetGroups())))
 	group.SmartRoutingEnabled = true
+}
+
+func buildAggregateSmartStrategyTestContext(groupName string, routeGroup string) *gin.Context {
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, groupName)
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, routeGroup)
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateStartIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateInitialStartIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateSmartRouting, true)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRoutingMode, model.AggregateGroupRoutingModeCluster)
+	return ctx
+}
+
+func recordAggregateSmartFailureAttempt(ctx *gin.Context, modelName string, routeGroup string, statusCode int) {
+	RecordAggregateRouteRPMAttempt(ctx, modelName, routeGroup)
+	RecordAggregateRouteSmartFailure(ctx, modelName, routeGroup, statusCode)
+}
+
+func recordAggregateSmartSuccessAttempt(ctx *gin.Context, modelName string, routeGroup string, slow bool) {
+	if slow {
+		common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-2*time.Second))
+	} else {
+		common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now())
+	}
+	RecordAggregateRouteRPMAttempt(ctx, modelName, routeGroup)
+	RecordAggregateRouteSuccess(ctx, modelName)
 }
 
 func TestVisibleAggregateGroupsAndRatios(t *testing.T) {
@@ -638,7 +678,8 @@ func TestAggregateSmartStrategyDisabledKeepsOriginalSelection(t *testing.T) {
 	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
 
 	require.NoError(t, SetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
-		DegradedUntil: common.GetTimestamp() + 600,
+		StrategyVersion: aggregateGroupRouteStrategyVersion,
+		DegradedUntil:   common.GetTimestamp() + 600,
 	}))
 
 	rec := httptest.NewRecorder()
@@ -665,7 +706,8 @@ func TestAggregateSmartStrategySkipsTemporarilyDegradedRoute(t *testing.T) {
 	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
 
 	require.NoError(t, SetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
-		DegradedUntil: common.GetTimestamp() + 600,
+		StrategyVersion: aggregateGroupRouteStrategyVersion,
+		DegradedUntil:   common.GetTimestamp() + 600,
 	}))
 
 	rec := httptest.NewRecorder()
@@ -682,52 +724,94 @@ func TestAggregateSmartStrategySkipsTemporarilyDegradedRoute(t *testing.T) {
 	require.Equal(t, "vip", common.GetContextKeyString(ctx, constant.ContextKeyRouteGroup))
 }
 
-func TestAggregateSmartStrategyFailureThresholdTriggersTemporaryDegrade(t *testing.T) {
+func TestAggregateSmartStrategyLowSamplesDoNotDegrade(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	setting.AggregateGroupSmartStrategyEnabled = true
-	setting.AggregateGroupFailureThreshold = 2
+	setting.AggregateGroupFailureRateMinRequests = 100
+	setting.AggregateGroupFailureRateThresholdPct = 5
 	setting.AggregateGroupDegradeDurationSeconds = 600
 
-	rec := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(rec)
-	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
-	common.SetContextKey(ctx, constant.ContextKeyAggregateSmartRouting, true)
+	ctx := buildAggregateSmartStrategyTestContext("enterprise-stable", "default")
 
-	RecordAggregateRouteSmartFailure(ctx, "gpt-4.1", "default", 503)
+	for i := 0; i < 99; i++ {
+		recordAggregateSmartFailureAttempt(ctx, "gpt-4.1", "default", 503)
+	}
 
 	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
 	require.NotNil(t, state)
-	require.Equal(t, 1, state.ConsecutiveFailures)
+	require.Equal(t, aggregateGroupRouteStrategyVersion, state.StrategyVersion)
 	require.Equal(t, int64(0), state.DegradedUntil)
+	require.Equal(t, 99, state.LastWindowRequests)
+	require.Equal(t, 99, state.LastWindowFailures)
+	require.Equal(t, 100, state.LastFailureRate)
 	require.Empty(t, state.LastTriggerReason)
 	require.Equal(t, int64(0), state.LastTriggerAt)
+}
 
-	RecordAggregateRouteSmartFailure(ctx, "gpt-4.1", "default", 503)
+func TestAggregateSmartStrategyHighRPMOnePercentFailureDoesNotDegrade(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	setting.AggregateGroupSmartStrategyEnabled = true
+	setting.AggregateGroupFailureRateMinRequests = 100
+	setting.AggregateGroupFailureRateThresholdPct = 5
 
-	state, err = GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
+	ctx := buildAggregateSmartStrategyTestContext("enterprise-stable", "default")
+	for i := 0; i < 10000; i++ {
+		RecordAggregateRouteRPMAttempt(ctx, "gpt-4.1", "default")
+	}
+	for i := 0; i < 100; i++ {
+		RecordAggregateRouteSmartFailure(ctx, "gpt-4.1", "default", 503)
+	}
+
+	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
 	require.NotNil(t, state)
-	require.Equal(t, 2, state.ConsecutiveFailures)
+	require.Equal(t, int64(0), state.DegradedUntil)
+	require.Equal(t, 10000, state.LastWindowRequests)
+	require.Equal(t, 100, state.LastWindowFailures)
+	require.Equal(t, 1, state.LastFailureRate)
+	require.Empty(t, state.LastTriggerReason)
+}
+
+func TestAggregateSmartStrategyFailureRateTriggersTemporaryDegrade(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	setting.AggregateGroupSmartStrategyEnabled = true
+	setting.AggregateGroupFailureRateMinRequests = 100
+	setting.AggregateGroupFailureRateThresholdPct = 5
+	setting.AggregateGroupDegradeDurationSeconds = 600
+
+	ctx := buildAggregateSmartStrategyTestContext("enterprise-stable", "default")
+	for i := 0; i < 95; i++ {
+		RecordAggregateRouteRPMAttempt(ctx, "gpt-4.1", "default")
+	}
+	for i := 0; i < 5; i++ {
+		recordAggregateSmartFailureAttempt(ctx, "gpt-4.1", "default", 503)
+	}
+
+	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, aggregateGroupRouteStrategyVersion, state.StrategyVersion)
 	require.Greater(t, state.DegradedUntil, common.GetTimestamp())
 	require.Equal(t, 1, state.DegradeLevel)
-	require.Equal(t, AggregateSmartTriggerReasonConsecutiveFailures, state.LastTriggerReason)
+	require.Equal(t, 100, state.LastWindowRequests)
+	require.Equal(t, 5, state.LastWindowFailures)
+	require.Equal(t, 5, state.LastFailureRate)
+	require.Equal(t, 0, state.DegradedConsecutiveFailures)
+	require.Equal(t, AggregateSmartTriggerReasonFailureRate, state.LastTriggerReason)
 	require.Greater(t, state.LastTriggerAt, int64(0))
 }
 
-func TestAggregateSmartStrategyRepeatedFailuresIncreaseDegradeLevel(t *testing.T) {
+func TestAggregateSmartStrategyRepeatedFailureRateDoesNotIncreaseDegradeLevel(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	setting.AggregateGroupSmartStrategyEnabled = true
-	setting.AggregateGroupFailureThreshold = 2
+	setting.AggregateGroupFailureRateMinRequests = 2
+	setting.AggregateGroupFailureRateThresholdPct = 50
 	setting.AggregateGroupDegradeDurationSeconds = 600
 
-	rec := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(rec)
-	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
-	common.SetContextKey(ctx, constant.ContextKeyAggregateSmartRouting, true)
-
-	RecordAggregateRouteSmartFailure(ctx, "gpt-4.1", "default", 503)
-	RecordAggregateRouteSmartFailure(ctx, "gpt-4.1", "default", 503)
+	ctx := buildAggregateSmartStrategyTestContext("enterprise-stable", "default")
+	recordAggregateSmartFailureAttempt(ctx, "gpt-4.1", "default", 503)
+	recordAggregateSmartFailureAttempt(ctx, "gpt-4.1", "default", 503)
 
 	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
@@ -735,105 +819,127 @@ func TestAggregateSmartStrategyRepeatedFailuresIncreaseDegradeLevel(t *testing.T
 	require.Equal(t, 1, state.DegradeLevel)
 	firstUntil := state.DegradedUntil
 
-	RecordAggregateRouteSmartFailure(ctx, "gpt-4.1", "default", 503)
+	recordAggregateSmartFailureAttempt(ctx, "gpt-4.1", "default", 503)
+	recordAggregateSmartFailureAttempt(ctx, "gpt-4.1", "default", 503)
 	state, err = GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
 	require.Equal(t, 1, state.DegradeLevel)
-	require.Equal(t, 1, state.DegradedConsecutiveFailures)
-
-	RecordAggregateRouteSmartFailure(ctx, "gpt-4.1", "default", 503)
-	state, err = GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
-	require.NoError(t, err)
-	require.Equal(t, 2, state.DegradeLevel)
-	require.Equal(t, 0, state.DegradedConsecutiveFailures)
 	require.GreaterOrEqual(t, state.DegradedUntil, firstUntil)
-	require.Equal(t, AggregateSmartTriggerReasonConsecutiveFailures, state.LastTriggerReason)
+	require.Equal(t, 0, state.DegradedConsecutiveFailures)
+	require.Equal(t, AggregateSmartTriggerReasonFailureRate, state.LastTriggerReason)
 }
 
-func TestAggregateSmartStrategySlowSuccessOnlyAffectsLaterRequests(t *testing.T) {
+func TestAggregateSmartStrategySlowRateTriggersTemporaryDegrade(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	setting.AggregateGroupSmartStrategyEnabled = true
 	setting.AggregateGroupSlowRequestThreshold = 1
 	setting.AggregateGroupSlowFirstResponseThreshold = 0
-	setting.AggregateGroupConsecutiveSlowLimit = 2
+	setting.AggregateGroupSlowRateMinRequests = 10
+	setting.AggregateGroupSlowRateThresholdPct = 30
 	setting.AggregateGroupDegradeDurationSeconds = 600
 
-	rec := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(rec)
-	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
-	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
-	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
-	common.SetContextKey(ctx, constant.ContextKeyAggregateStartIndex, 0)
-	common.SetContextKey(ctx, constant.ContextKeyAggregateInitialStartIndex, 0)
-	common.SetContextKey(ctx, constant.ContextKeyAggregateSmartRouting, true)
-	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-2*time.Second))
-
-	RecordAggregateRouteSuccess(ctx, "gpt-4.1")
+	ctx := buildAggregateSmartStrategyTestContext("enterprise-stable", "default")
+	for i := 0; i < 7; i++ {
+		recordAggregateSmartSuccessAttempt(ctx, "gpt-4.1", "default", false)
+	}
+	for i := 0; i < 2; i++ {
+		recordAggregateSmartSuccessAttempt(ctx, "gpt-4.1", "default", true)
+	}
 
 	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
 	require.NotNil(t, state)
-	require.Equal(t, 1, state.ConsecutiveSlows)
 	require.Equal(t, int64(0), state.DegradedUntil)
+	require.Equal(t, 9, state.LastWindowRequests)
+	require.Equal(t, 2, state.LastWindowSlowRequests)
+	require.Equal(t, 23, state.LastSlowRate)
 	require.Empty(t, state.LastTriggerReason)
-	require.Equal(t, int64(0), state.LastTriggerAt)
 
-	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-2*time.Second))
-	RecordAggregateRouteSuccess(ctx, "gpt-4.1")
+	recordAggregateSmartSuccessAttempt(ctx, "gpt-4.1", "default", true)
 
 	state, err = GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
 	require.NotNil(t, state)
-	require.Equal(t, 2, state.ConsecutiveSlows)
 	require.Greater(t, state.DegradedUntil, common.GetTimestamp())
 	require.Equal(t, 1, state.DegradeLevel)
-	require.Equal(t, AggregateSmartTriggerReasonConsecutiveSlows, state.LastTriggerReason)
+	require.Equal(t, 10, state.LastWindowRequests)
+	require.Equal(t, 3, state.LastWindowSlowRequests)
+	require.Equal(t, 30, state.LastSlowRate)
+	require.Equal(t, AggregateSmartTriggerReasonSlowRate, state.LastTriggerReason)
 	require.Equal(t, AggregateSmartSlowReasonTotalTime, state.LastSlowReason)
 	require.Greater(t, state.LastTriggerAt, int64(0))
 }
 
-func TestAggregateSmartStrategyRepeatedSlowSuccessInDegradeWindowIncreasesLevel(t *testing.T) {
+func TestAggregateSmartStrategyRepeatedSlowRateDoesNotIncreaseDegradeLevel(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	setting.AggregateGroupSmartStrategyEnabled = true
 	setting.AggregateGroupSlowRequestThreshold = 1
 	setting.AggregateGroupSlowFirstResponseThreshold = 0
-	setting.AggregateGroupConsecutiveSlowLimit = 2
+	setting.AggregateGroupSlowRateMinRequests = 2
+	setting.AggregateGroupSlowRateThresholdPct = 50
 	setting.AggregateGroupDegradeDurationSeconds = 600
 
-	rec := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(rec)
-	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
-	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
-	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
-	common.SetContextKey(ctx, constant.ContextKeyAggregateStartIndex, 0)
-	common.SetContextKey(ctx, constant.ContextKeyAggregateInitialStartIndex, 0)
-	common.SetContextKey(ctx, constant.ContextKeyAggregateSmartRouting, true)
-
-	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-2*time.Second))
-	RecordAggregateRouteSuccess(ctx, "gpt-4.1")
-	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-2*time.Second))
-	RecordAggregateRouteSuccess(ctx, "gpt-4.1")
+	ctx := buildAggregateSmartStrategyTestContext("enterprise-stable", "default")
+	recordAggregateSmartSuccessAttempt(ctx, "gpt-4.1", "default", true)
+	recordAggregateSmartSuccessAttempt(ctx, "gpt-4.1", "default", true)
 
 	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
 	require.NotNil(t, state)
 	require.Equal(t, 1, state.DegradeLevel)
+	firstUntil := state.DegradedUntil
 
-	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-2*time.Second))
-	RecordAggregateRouteSuccess(ctx, "gpt-4.1")
+	recordAggregateSmartSuccessAttempt(ctx, "gpt-4.1", "default", true)
+	recordAggregateSmartSuccessAttempt(ctx, "gpt-4.1", "default", true)
 	state, err = GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
 	require.Equal(t, 1, state.DegradeLevel)
-	require.Equal(t, 1, state.DegradedConsecutiveSlows)
-
-	common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now().Add(-2*time.Second))
-	RecordAggregateRouteSuccess(ctx, "gpt-4.1")
-	state, err = GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
-	require.NoError(t, err)
-	require.Equal(t, 2, state.DegradeLevel)
+	require.GreaterOrEqual(t, state.DegradedUntil, firstUntil)
 	require.Equal(t, 0, state.DegradedConsecutiveSlows)
-	require.Equal(t, AggregateSmartTriggerReasonConsecutiveSlows, state.LastTriggerReason)
+	require.Equal(t, AggregateSmartTriggerReasonSlowRate, state.LastTriggerReason)
 	require.Equal(t, AggregateSmartSlowReasonTotalTime, state.LastSlowReason)
+}
+
+func TestAggregateSmartStrategyGroupConfigOverridesGlobal(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	setting.AggregateGroupSmartStrategyEnabled = true
+	setting.AggregateGroupFailureRateMinRequests = 1000
+	setting.AggregateGroupFailureRateThresholdPct = 90
+
+	group := seedAggregateGroupWithWeightedTargets(t, "enterprise-custom", model.AggregateGroupRoutingModeCluster, true, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	config := &model.AggregateGroupSmartStrategyConfig{
+		FailureRateWindowSeconds: common.GetPointer(60),
+		FailureRateMinRequests:   common.GetPointer(10),
+		FailureRateThresholdPct:  common.GetPointer(20),
+		DegradeDurationSeconds:   common.GetPointer(120),
+	}
+	require.NoError(t, group.SetSmartStrategyConfig(config))
+	require.NoError(t, group.UpdateWithTargets(NormalizeAggregateTargetsWithWeights(group.Targets)))
+	group, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	strategy := GetAggregateGroupEffectiveSmartStrategy(group)
+	require.Equal(t, AggregateSmartStrategySourceGroup, strategy.Source)
+	require.Equal(t, 10, strategy.FailureRateMinRequests)
+	require.Equal(t, 20, strategy.FailureRateThresholdPct)
+
+	ctx := buildAggregateSmartStrategyTestContext(group.Name, "default")
+	common.SetContextKey(ctx, constant.ContextKeyAggregateSmartStrategy, strategy)
+	for i := 0; i < 8; i++ {
+		RecordAggregateRouteRPMAttempt(ctx, "gpt-4.1", "default")
+	}
+	for i := 0; i < 2; i++ {
+		recordAggregateSmartFailureAttempt(ctx, "gpt-4.1", "default", 503)
+	}
+
+	state, err := GetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default")
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, AggregateSmartTriggerReasonFailureRate, state.LastTriggerReason)
+	require.Equal(t, 20, state.LastFailureRate)
+	require.Greater(t, state.DegradedUntil, common.GetTimestamp())
+	require.LessOrEqual(t, state.DegradedUntil, common.GetTimestamp()+120)
 }
 
 func TestAggregateSmartStrategyHealthySuccessDuringDegradeDoesNotResetLevel(t *testing.T) {
@@ -842,11 +948,12 @@ func TestAggregateSmartStrategyHealthySuccessDuringDegradeDoesNotResetLevel(t *t
 	setting.AggregateGroupSlowRequestThreshold = 30
 
 	require.NoError(t, SetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		StrategyVersion:             aggregateGroupRouteStrategyVersion,
 		DegradedUntil:               common.GetTimestamp() + 600,
-		DegradeLevel:                2,
+		DegradeLevel:                1,
 		DegradedConsecutiveFailures: 1,
 		DegradedConsecutiveSlows:    1,
-		LastTriggerReason:           AggregateSmartTriggerReasonConsecutiveFailures,
+		LastTriggerReason:           AggregateSmartTriggerReasonFailureRate,
 		LastTriggerAt:               common.GetTimestamp() - 10,
 	}))
 
@@ -865,7 +972,7 @@ func TestAggregateSmartStrategyHealthySuccessDuringDegradeDoesNotResetLevel(t *t
 	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
 	require.NotNil(t, state)
-	require.Equal(t, 2, state.DegradeLevel)
+	require.Equal(t, 1, state.DegradeLevel)
 	require.Equal(t, 1, state.DegradedConsecutiveFailures)
 	require.Equal(t, 1, state.DegradedConsecutiveSlows)
 	require.Greater(t, state.LastSuccessAt, int64(0))
@@ -876,31 +983,28 @@ func TestAggregateSmartStrategyStreamingFirstResponseSlowOnlyAppliesToStream(t *
 	setting.AggregateGroupSmartStrategyEnabled = true
 	setting.AggregateGroupSlowRequestThreshold = 60
 	setting.AggregateGroupSlowFirstResponseThreshold = 1
-	setting.AggregateGroupConsecutiveSlowLimit = 1
+	setting.AggregateGroupSlowRateMinRequests = 1
+	setting.AggregateGroupSlowRateThresholdPct = 50
 
 	buildCtx := func(isStream bool) *gin.Context {
-		rec := httptest.NewRecorder()
-		ctx, _ := gin.CreateTestContext(rec)
-		common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
-		common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
-		common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
-		common.SetContextKey(ctx, constant.ContextKeyAggregateStartIndex, 0)
-		common.SetContextKey(ctx, constant.ContextKeyAggregateInitialStartIndex, 0)
-		common.SetContextKey(ctx, constant.ContextKeyAggregateSmartRouting, true)
+		ctx := buildAggregateSmartStrategyTestContext("enterprise-stable", "default")
 		common.SetContextKey(ctx, constant.ContextKeyRequestStartTime, time.Now())
 		common.SetContextKey(ctx, constant.ContextKeyRelayIsStream, isStream)
 		common.SetContextKey(ctx, constant.ContextKeyFirstResponseMs, 1500)
 		return ctx
 	}
 
-	RecordAggregateRouteSuccess(buildCtx(false), "gpt-4.1")
+	nonStreamCtx := buildCtx(false)
+	RecordAggregateRouteRPMAttempt(nonStreamCtx, "gpt-4.1", "default")
+	RecordAggregateRouteSuccess(nonStreamCtx, "gpt-4.1")
 	state, err := GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
 	require.NotNil(t, state)
 	require.Equal(t, int64(0), state.DegradedUntil)
-	require.Equal(t, 0, state.ConsecutiveSlows)
 
-	RecordAggregateRouteSuccess(buildCtx(true), "gpt-4.1")
+	streamCtx := buildCtx(true)
+	RecordAggregateRouteRPMAttempt(streamCtx, "gpt-4.1", "default")
+	RecordAggregateRouteSuccess(streamCtx, "gpt-4.1")
 	state, err = GetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
 	require.NoError(t, err)
 	require.NotNil(t, state)
@@ -920,13 +1024,14 @@ func TestAggregateSmartStrategyRecoveredRouteParticipatesAgainAfterWindow(t *tes
 	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
 
 	require.NoError(t, SetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		StrategyVersion:             aggregateGroupRouteStrategyVersion,
 		ConsecutiveFailures:         4,
 		ConsecutiveSlows:            2,
 		DegradedUntil:               common.GetTimestamp() - 1,
 		DegradeLevel:                3,
 		DegradedConsecutiveFailures: 1,
 		DegradedConsecutiveSlows:    1,
-		LastTriggerReason:           AggregateSmartTriggerReasonConsecutiveFailures,
+		LastTriggerReason:           AggregateSmartTriggerReasonFailureRate,
 		LastTriggerAt:               common.GetTimestamp() - 10,
 	}))
 
@@ -951,8 +1056,28 @@ func TestAggregateSmartStrategyRecoveredRouteParticipatesAgainAfterWindow(t *tes
 	require.Equal(t, 0, state.ConsecutiveSlows)
 	require.Equal(t, 0, state.DegradedConsecutiveFailures)
 	require.Equal(t, 0, state.DegradedConsecutiveSlows)
-	require.Equal(t, AggregateSmartTriggerReasonConsecutiveFailures, state.LastTriggerReason)
+	require.Equal(t, AggregateSmartTriggerReasonFailureRate, state.LastTriggerReason)
 	require.Greater(t, state.LastTriggerAt, int64(0))
+}
+
+func TestAggregateSmartStrategyOldRuntimeStateIsResetOnRead(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	require.NoError(t, SetAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
+		DegradedUntil:     common.GetTimestamp() + 600,
+		DegradeLevel:      3,
+		LastTriggerReason: AggregateSmartTriggerReasonConsecutiveFailures,
+		LastTriggerAt:     common.GetTimestamp() - 10,
+	}))
+
+	state, recovered, err := RefreshAggregateGroupRouteStrategyState("enterprise-stable", "gpt-4.1", "default")
+	require.NoError(t, err)
+	require.True(t, recovered)
+	require.NotNil(t, state)
+	require.Equal(t, aggregateGroupRouteStrategyVersion, state.StrategyVersion)
+	require.Equal(t, int64(0), state.DegradedUntil)
+	require.Equal(t, 0, state.DegradeLevel)
+	require.Empty(t, state.LastTriggerReason)
+	require.Equal(t, int64(0), state.LastTriggerAt)
 }
 
 func TestAggregateSmartStrategyStillSkipsUnsupportedModelByExistingAbilityLookup(t *testing.T) {
@@ -1069,7 +1194,8 @@ func TestAggregateClusterSmartStrategyReducesDegradedRouteWeightInsteadOfSkippin
 	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
 	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
 	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
-		DegradedUntil: common.GetTimestamp() + 600,
+		StrategyVersion: aggregateGroupRouteStrategyVersion,
+		DegradedUntil:   common.GetTimestamp() + 600,
 	}))
 
 	rec := httptest.NewRecorder()
@@ -1090,7 +1216,7 @@ func TestAggregateClusterSmartStrategyReducesDegradedRouteWeightInsteadOfSkippin
 	require.Equal(t, "default", candidates[0].Target.RealGroup)
 	require.True(t, candidates[0].IsDegraded)
 	require.Equal(t, 100, candidates[0].Weight)
-	require.Equal(t, 20, candidates[0].EffectiveWeight)
+	require.Equal(t, 50, candidates[0].EffectiveWeight)
 	require.Equal(t, "vip", candidates[1].Target.RealGroup)
 	require.False(t, candidates[1].IsDegraded)
 	require.Equal(t, 0, candidates[1].EffectiveWeight)
@@ -1107,7 +1233,8 @@ func TestAggregateClusterSmartStrategyUsesConfiguredDegradedWeightPercent(t *tes
 	})
 	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
 	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
-		DegradedUntil: common.GetTimestamp() + 600,
+		StrategyVersion: aggregateGroupRouteStrategyVersion,
+		DegradedUntil:   common.GetTimestamp() + 600,
 	}))
 
 	rec := httptest.NewRecorder()
@@ -1120,14 +1247,15 @@ func TestAggregateClusterSmartStrategyUsesConfiguredDegradedWeightPercent(t *tes
 	require.Equal(t, 36, candidates[0].EffectiveWeight)
 }
 
-func TestAggregateClusterDegradeLevelRecursivelyReducesEffectiveWeight(t *testing.T) {
+func TestAggregateClusterDegradeLevelReducesEffectiveWeightOnce(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	setting.AggregateGroupClusterDegradedWeightPct = 20
 
 	require.Equal(t, 100, calculateAggregateClusterEffectiveWeight(100, 0))
 	require.Equal(t, 20, calculateAggregateClusterEffectiveWeight(100, 1))
-	require.Equal(t, 4, calculateAggregateClusterEffectiveWeight(100, 2))
-	require.Equal(t, 1, calculateAggregateClusterEffectiveWeight(100, 3))
+	require.Equal(t, 20, calculateAggregateClusterEffectiveWeight(100, 2))
+	require.Equal(t, 20, calculateAggregateClusterEffectiveWeight(100, 3))
+	require.Equal(t, 1, calculateAggregateClusterEffectiveWeight(1, 3))
 	require.Equal(t, 0, calculateAggregateClusterEffectiveWeight(0, 3))
 }
 
@@ -1143,7 +1271,8 @@ func TestAggregateClusterZeroWeightDegradedRouteKeepsZeroEffectiveWeight(t *test
 	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
 	seedAggregateAbilityChannel(t, 1002, "vip", "gpt-4.1", 10)
 	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
-		DegradedUntil: common.GetTimestamp() + 600,
+		StrategyVersion: aggregateGroupRouteStrategyVersion,
+		DegradedUntil:   common.GetTimestamp() + 600,
 	}))
 
 	rec := httptest.NewRecorder()
@@ -1169,10 +1298,10 @@ func TestAggregateClusterDegradedRouteEffectiveWeightRestoresAfterWindow(t *test
 	})
 	seedAggregateAbilityChannel(t, 1001, "default", "gpt-4.1", 10)
 	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
-		ConsecutiveFailures: 2,
-		DegradedUntil:       common.GetTimestamp() - 1,
-		LastTriggerReason:   AggregateSmartTriggerReasonConsecutiveFailures,
-		LastTriggerAt:       common.GetTimestamp() - 10,
+		StrategyVersion:   aggregateGroupRouteStrategyVersion,
+		DegradedUntil:     common.GetTimestamp() - 1,
+		LastTriggerReason: AggregateSmartTriggerReasonFailureRate,
+		LastTriggerAt:     common.GetTimestamp() - 10,
 	}))
 
 	rec := httptest.NewRecorder()
@@ -1237,7 +1366,8 @@ func TestAggregateClusterRouteAffinityStableReducesDegradedAndUpdatesOnSuccess(t
 	RecordAggregateRouteSuccess(secondCtx, "gpt-4.1")
 
 	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "gpt-4.1", "default", &AggregateGroupRouteStrategyState{
-		DegradedUntil: common.GetTimestamp() + 600,
+		StrategyVersion: aggregateGroupRouteStrategyVersion,
+		DegradedUntil:   common.GetTimestamp() + 600,
 	}))
 
 	thirdCtx := buildCtx()
@@ -2322,8 +2452,9 @@ func TestAggregateClusterClaudeCLIPoolUsesReducedWeightForDegradedRoute(t *testi
 		{RealGroup: "svip", Weight: common.GetPointer(0)},
 	})
 	require.NoError(t, SetAggregateGroupRouteStrategyState(group.Name, "claude-sonnet-4-6", "vip", &AggregateGroupRouteStrategyState{
-		DegradedUntil: common.GetTimestamp() + 600,
-		DegradeLevel:  2,
+		StrategyVersion: aggregateGroupRouteStrategyVersion,
+		DegradedUntil:   common.GetTimestamp() + 600,
+		DegradeLevel:    1,
 	}))
 
 	ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
@@ -2344,7 +2475,7 @@ func TestAggregateClusterClaudeCLIPoolUsesReducedWeightForDegradedRoute(t *testi
 	require.Len(t, candidates, 2)
 	require.Equal(t, "vip", candidates[0].Target.RealGroup)
 	require.True(t, candidates[0].IsDegraded)
-	require.Equal(t, 4, candidates[0].EffectiveWeight)
+	require.Equal(t, 50, candidates[0].EffectiveWeight)
 	require.Equal(t, "svip", candidates[1].Target.RealGroup)
 	require.Equal(t, 0, candidates[1].EffectiveWeight)
 }

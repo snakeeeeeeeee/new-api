@@ -208,6 +208,7 @@ func selectAggregateGroupChannel(param *RetryParam, aggregateGroup *model.Aggreg
 
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateGroup, aggregateGroup.Name)
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateSmartRouting, IsAggregateSmartRoutingEnabled(aggregateGroup))
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateSmartStrategy, GetAggregateGroupEffectiveSmartStrategy(aggregateGroup))
 	routingMode := aggregateGroup.GetRoutingMode()
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRoutingMode, routingMode)
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRecoveryEnabled, aggregateGroup.RecoveryEnabled)

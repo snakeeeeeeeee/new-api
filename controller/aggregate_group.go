@@ -35,6 +35,7 @@ type aggregateGroupUpsertRequest struct {
 	VisibleUserGroups         []string                                     `json:"visible_user_groups"`
 	Targets                   []aggregateGroupTargetRequest                `json:"targets"`
 	ClientRoutePools          model.AggregateGroupClientRoutePools         `json:"client_route_pools"`
+	SmartStrategyConfig       *model.AggregateGroupSmartStrategyConfig     `json:"smart_strategy_config"`
 }
 
 type aggregateGroupResponse struct {
@@ -55,14 +56,16 @@ type aggregateGroupResponse struct {
 	VisibleUserGroups         []string                                     `json:"visible_user_groups"`
 	Targets                   []model.AggregateGroupTarget                 `json:"targets"`
 	ClientRoutePools          model.AggregateGroupClientRoutePools         `json:"client_route_pools"`
+	SmartStrategyConfig       *model.AggregateGroupSmartStrategyConfig     `json:"smart_strategy_config"`
 	CreatedTime               int64                                        `json:"created_time"`
 	UpdatedTime               int64                                        `json:"updated_time"`
 }
 
 type aggregateGroupSmartStrategyResponse struct {
-	GlobalEnabled    bool `json:"global_enabled"`
-	GroupEnabled     bool `json:"group_enabled"`
-	EffectiveEnabled bool `json:"effective_enabled"`
+	GlobalEnabled     bool                                         `json:"global_enabled"`
+	GroupEnabled      bool                                         `json:"group_enabled"`
+	EffectiveEnabled  bool                                         `json:"effective_enabled"`
+	EffectiveStrategy service.AggregateGroupEffectiveSmartStrategy `json:"effective_strategy"`
 }
 
 type aggregateGroupRuntimeResponse struct {
@@ -99,6 +102,7 @@ func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupRes
 		VisibleUserGroups:         group.GetVisibleUserGroups(),
 		Targets:                   targets,
 		ClientRoutePools:          group.GetClientRoutePools(),
+		SmartStrategyConfig:       group.GetSmartStrategyConfig(),
 		CreatedTime:               group.CreatedTime,
 		UpdatedTime:               group.UpdatedTime,
 	}
@@ -198,9 +202,10 @@ func GetAggregateGroupRuntime(c *gin.Context) {
 	common.ApiSuccess(c, &aggregateGroupRuntimeResponse{
 		AggregateGroup: buildAggregateGroupResponse(group),
 		SmartStrategy: aggregateGroupSmartStrategyResponse{
-			GlobalEnabled:    setting.AggregateGroupSmartStrategyEnabled,
-			GroupEnabled:     group.SmartRoutingEnabled,
-			EffectiveEnabled: service.IsAggregateSmartRoutingEnabled(group),
+			GlobalEnabled:     setting.AggregateGroupSmartStrategyEnabled,
+			GroupEnabled:      group.SmartRoutingEnabled,
+			EffectiveEnabled:  service.IsAggregateSmartRoutingEnabled(group),
+			EffectiveStrategy: service.GetAggregateGroupEffectiveSmartStrategy(group),
 		},
 		Models:        models,
 		SelectedModel: selectedModel,
@@ -246,6 +251,11 @@ func CreateAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	smartStrategyConfig, err := service.NormalizeAndValidateAggregateSmartStrategyConfig(req.SmartStrategyConfig)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if dup, err := model.IsAggregateGroupNameDuplicated(0, group.Name); err != nil {
 		common.ApiError(c, err)
 		return
@@ -258,6 +268,10 @@ func CreateAggregateGroup(c *gin.Context) {
 		return
 	}
 	if err := group.SetClientRoutePools(clientRoutePools); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := group.SetSmartStrategyConfig(smartStrategyConfig); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -325,6 +339,11 @@ func UpdateAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	smartStrategyConfig, err := service.NormalizeAndValidateAggregateSmartStrategyConfig(req.SmartStrategyConfig)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if dup, err := model.IsAggregateGroupNameDuplicated(group.Id, group.Name); err != nil {
 		common.ApiError(c, err)
 		return
@@ -337,6 +356,10 @@ func UpdateAggregateGroup(c *gin.Context) {
 		return
 	}
 	if err := group.SetClientRoutePools(clientRoutePools); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := group.SetSmartStrategyConfig(smartStrategyConfig); err != nil {
 		common.ApiError(c, err)
 		return
 	}

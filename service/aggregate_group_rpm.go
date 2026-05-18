@@ -16,18 +16,31 @@ import (
 
 const (
 	aggregateRouteRPMWindowSeconds = int64(60)
-	aggregateRouteRPMTTL           = 120 * time.Second
+	aggregateRouteRPMTTL           = 2 * time.Hour
 	aggregateRouteRPMRedisPrefix   = "new-api:aggregate_route_rpm:v2"
 
-	aggregateRouteRPMMetricAttempt = "attempt"
-	aggregateRouteRPMMetricSuccess = "success"
-	aggregateRouteRPMMetricFailure = "failure"
+	aggregateRouteRPMMetricAttempt         = "attempt"
+	aggregateRouteRPMMetricSuccess         = "success"
+	aggregateRouteRPMMetricFailure         = "failure"
+	aggregateRouteRPMMetricStrategyFailure = "strategy_failure"
+	aggregateRouteRPMMetricSlowSuccess     = "slow_success"
 )
 
 type AggregateRouteRPMStats struct {
-	RPM        int `json:"rpm"`
-	SuccessRPM int `json:"success_rpm"`
-	FailureRPM int `json:"failure_rpm"`
+	RPM                int `json:"rpm"`
+	SuccessRPM         int `json:"success_rpm"`
+	FailureRPM         int `json:"failure_rpm"`
+	StrategyFailureRPM int `json:"strategy_failure_rpm"`
+	SlowSuccessRPM     int `json:"slow_success_rpm"`
+}
+
+type AggregateRouteWindowStats struct {
+	WindowSeconds    int `json:"window_seconds"`
+	Attempts         int `json:"attempts"`
+	Successes        int `json:"successes"`
+	Failures         int `json:"failures"`
+	StrategyFailures int `json:"strategy_failures"`
+	SlowSuccesses    int `json:"slow_successes"`
 }
 
 type aggregateRouteRPMMemoryEntry struct {
@@ -61,6 +74,14 @@ func RecordAggregateRouteRPMSuccess(c *gin.Context, modelName string, routeGroup
 func RecordAggregateRouteRPMFailure(c *gin.Context, modelName string) {
 	routeGroup := common.GetContextKeyString(c, constant.ContextKeyRouteGroup)
 	recordAggregateRouteRPMFromContext(c, modelName, routeGroup, aggregateRouteRPMMetricFailure)
+}
+
+func RecordAggregateRouteStrategyFailure(c *gin.Context, modelName string, routeGroup string) {
+	recordAggregateRouteRPMFromContext(c, modelName, routeGroup, aggregateRouteRPMMetricStrategyFailure)
+}
+
+func RecordAggregateRouteSlowSuccess(c *gin.Context, modelName string, routeGroup string) {
+	recordAggregateRouteRPMFromContext(c, modelName, routeGroup, aggregateRouteRPMMetricSlowSuccess)
 }
 
 func recordAggregateRouteRPMFromContext(c *gin.Context, modelName string, routeGroup string, metric string) {
@@ -112,20 +133,44 @@ func GetAggregateRouteRPMStats(groupName string, modelName string, routeGroup st
 }
 
 func GetAggregateRouteRPMStatsForPool(groupName string, modelName string, routePool string, routeGroup string) AggregateRouteRPMStats {
+	stats := GetAggregateRouteWindowStatsForPool(groupName, modelName, routePool, routeGroup, int(aggregateRouteRPMWindowSeconds))
 	return AggregateRouteRPMStats{
-		RPM:        int(sumAggregateRouteRPM(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricAttempt)),
-		SuccessRPM: int(sumAggregateRouteRPM(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricSuccess)),
-		FailureRPM: int(sumAggregateRouteRPM(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricFailure)),
+		RPM:                stats.Attempts,
+		SuccessRPM:         stats.Successes,
+		FailureRPM:         stats.Failures,
+		StrategyFailureRPM: stats.StrategyFailures,
+		SlowSuccessRPM:     stats.SlowSuccesses,
+	}
+}
+
+func GetAggregateRouteWindowStatsForPool(groupName string, modelName string, routePool string, routeGroup string, windowSeconds int) AggregateRouteWindowStats {
+	if windowSeconds <= 0 {
+		windowSeconds = int(aggregateRouteRPMWindowSeconds)
+	}
+	return AggregateRouteWindowStats{
+		WindowSeconds:    windowSeconds,
+		Attempts:         int(sumAggregateRouteRPMForWindow(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricAttempt, windowSeconds)),
+		Successes:        int(sumAggregateRouteRPMForWindow(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricSuccess, windowSeconds)),
+		Failures:         int(sumAggregateRouteRPMForWindow(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricFailure, windowSeconds)),
+		StrategyFailures: int(sumAggregateRouteRPMForWindow(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricStrategyFailure, windowSeconds)),
+		SlowSuccesses:    int(sumAggregateRouteRPMForWindow(groupName, modelName, routePool, routeGroup, aggregateRouteRPMMetricSlowSuccess, windowSeconds)),
 	}
 }
 
 func sumAggregateRouteRPM(groupName string, modelName string, routePool string, routeGroup string, metric string) int64 {
+	return sumAggregateRouteRPMForWindow(groupName, modelName, routePool, routeGroup, metric, int(aggregateRouteRPMWindowSeconds))
+}
+
+func sumAggregateRouteRPMForWindow(groupName string, modelName string, routePool string, routeGroup string, metric string, windowSeconds int) int64 {
 	if groupName == "" || modelName == "" || routeGroup == "" || metric == "" {
 		return 0
 	}
+	if windowSeconds <= 0 {
+		windowSeconds = int(aggregateRouteRPMWindowSeconds)
+	}
 	routePool = normalizeAggregateClusterRoutePool(routePool)
 	now := aggregateRouteRPMNow().Unix()
-	from := now - aggregateRouteRPMWindowSeconds + 1
+	from := now - int64(windowSeconds) + 1
 	if common.RedisEnabled && common.RDB != nil {
 		total, ok := sumAggregateRouteRPMRedis(groupName, modelName, routePool, routeGroup, metric, from, now)
 		if ok {

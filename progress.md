@@ -1,3 +1,33 @@
+# Session: 2026-05-19 聚合分组百分比智能降权
+
+## Scope
+- 实施聚合分组百分比智能降权、组级覆盖、旧状态兼容清理、前端策略 UI、单元测试和 Docker dev 真实仿真。
+
+## Progress
+- 已确认实施计划和验收要求。
+- 已确认当前 dirty worktree 主要是未跟踪 probe/tmp/output 文件，本轮不触碰。
+- 已完成后端百分比策略实现：新增全局 option、组级 `smart_strategy_config`、RPM 窗口指标、v2 状态清理、非递归降权。
+- 已完成聚合分组 UI：全局策略改为错误率/慢率百分比，编辑弹窗支持跟随全局/自定义覆盖，运行态展示策略来源和窗口指标。
+- 已新增 Docker dev 真实仿真脚本 `2dev/script/simulate_aggregate_percentage_strategy.py`，使用临时聚合分组/渠道/token 和 fake Claude upstream 通过真实 `/v1/messages` 网关请求验证百分比策略。
+
+## Verification
+- `go test ./service ./controller ./model -run 'Aggregate|Option' -count=1`: passed.
+- `go test ./...`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `python3 -m py_compile 2dev/script/simulate_aggregate_percentage_strategy.py`: passed.
+- `docker build -t new-api-local:dev .`: passed.
+- `docker compose -f docker-compose-dev.yml up -d --force-recreate new-api-dev postgres-dev redis-dev`: passed; `new-api-dev` healthy.
+- `python3 2dev/script/simulate_aggregate_percentage_strategy.py`: passed; verified old state reset, low sample no degrade, 1,000,000-window 1% failure no degrade, 5% failure degrade, 30% slow-rate degrade, group override source/thresholds, runtime API, and Redis state.
+- Post-simulation cleanup verified: temporary `agpct%` aggregate groups/users/channels/tokens all `0`, Redis `*agpct*` keys `0`, `new-api-dev` remains healthy.
+- `git diff --check`: passed.
+
+## Errors
+- 初次 focused Go 测试发现旧连续次数/递归降权测试预期未更新，已改为百分比窗口语义。
+- 组级覆盖和流式首字慢 focused 用例第一次失败：测试样本数/阈值设置不匹配新慢率/错误率算法，已修正。
+- 第一次 Docker 仿真脚本失败：PostgreSQL `INSERT ... RETURNING` 输出包含 command tag，脚本直接 `int()` 解析失败。已改为 `psql_scalar()` 只取首个非空返回行，并清理首次失败留下的临时 `agpct%` 用户。
+
+---
+
 # Session: 2026-05-18 Relay Error Passthrough Settings
 
 ## Scope

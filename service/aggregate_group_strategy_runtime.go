@@ -9,8 +9,10 @@ import (
 )
 
 const aggregateGroupRouteStrategyStateTTL = 24 * time.Hour
+const aggregateGroupRouteStrategyVersion = 2
 
 type AggregateGroupRouteStrategyState struct {
+	StrategyVersion             int    `json:"strategy_version"`
 	ConsecutiveFailures         int    `json:"consecutive_failures"`
 	ConsecutiveSlows            int    `json:"consecutive_slows"`
 	DegradedUntil               int64  `json:"degraded_until"`
@@ -23,11 +25,18 @@ type AggregateGroupRouteStrategyState struct {
 	LastTriggerReason           string `json:"last_trigger_reason"`
 	LastTriggerAt               int64  `json:"last_trigger_at"`
 	LastSlowReason              string `json:"last_slow_reason"`
+	LastFailureRate             int    `json:"last_failure_rate_percent"`
+	LastSlowRate                int    `json:"last_slow_rate_percent"`
+	LastWindowRequests          int    `json:"last_window_requests"`
+	LastWindowFailures          int    `json:"last_window_failures"`
+	LastWindowSlowRequests      int    `json:"last_window_slow_requests"`
 }
 
 const (
 	AggregateSmartTriggerReasonConsecutiveFailures = "consecutive_failures"
 	AggregateSmartTriggerReasonConsecutiveSlows    = "consecutive_slows"
+	AggregateSmartTriggerReasonFailureRate         = "failure_rate"
+	AggregateSmartTriggerReasonSlowRate            = "slow_rate"
 	AggregateSmartSlowReasonTotalTime              = "total_time"
 	AggregateSmartSlowReasonFirstResponse          = "first_response"
 )

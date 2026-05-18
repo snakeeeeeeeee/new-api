@@ -140,6 +140,29 @@ const normalizeClientRoutePools = (value) => {
   };
 };
 
+const defaultSmartStrategyConfig = () => ({
+  failure_rate_window_seconds: 60,
+  failure_rate_min_requests: 100,
+  failure_rate_threshold_percent: 5,
+  slow_rate_window_seconds: 60,
+  slow_rate_min_requests: 100,
+  slow_rate_threshold_percent: 30,
+  degrade_duration_seconds: 600,
+  cluster_degraded_weight_percent: 50,
+  slow_request_threshold_seconds: 30,
+  slow_first_response_threshold_seconds: 0,
+});
+
+const normalizeSmartStrategyConfig = (value) => {
+  if (!value) {
+    return null;
+  }
+  return {
+    ...defaultSmartStrategyConfig(),
+    ...value,
+  };
+};
+
 const defaultInputs = {
   id: undefined,
   name: '',
@@ -158,6 +181,7 @@ const defaultInputs = {
   visible_user_groups: [],
   targets: [],
   client_route_pools: defaultClientRoutePools(),
+  smart_strategy_config: null,
 };
 
 const EditAggregateGroupModal = ({
@@ -235,6 +259,9 @@ const EditAggregateGroupModal = ({
           client_route_pools: normalizeClientRoutePools(
             data.client_route_pools,
           ),
+          smart_strategy_config: normalizeSmartStrategyConfig(
+            data.smart_strategy_config,
+          ),
         });
       } catch (error) {
         showError(error?.message || t('获取聚合分组详情失败'));
@@ -277,6 +304,24 @@ const EditAggregateGroupModal = ({
     setInputs((prev) => ({
       ...prev,
       [field]: value,
+    }));
+  };
+
+  const updateSmartStrategyMode = (custom) => {
+    setInputs((prev) => ({
+      ...prev,
+      smart_strategy_config: custom ? defaultSmartStrategyConfig() : null,
+    }));
+  };
+
+  const updateSmartStrategyField = (field, value) => {
+    setInputs((prev) => ({
+      ...prev,
+      smart_strategy_config: {
+        ...defaultSmartStrategyConfig(),
+        ...(prev.smart_strategy_config || {}),
+        [field]: value,
+      },
     }));
   };
 
@@ -742,6 +787,126 @@ const EditAggregateGroupModal = ({
     </div>
   );
 
+  const renderSmartStrategyConfig = () => {
+    const useCustomStrategy = !!inputs.smart_strategy_config;
+    const strategyConfig =
+      inputs.smart_strategy_config || defaultSmartStrategyConfig();
+    const renderNumberInput = (
+      label,
+      field,
+      { min = 1, max, helper, fallback = 1 } = {},
+    ) => (
+      <Col xs={24} sm={12} md={8}>
+        <div className='mb-2'>
+          <Text strong>{t(label)}</Text>
+          {helper ? (
+            <div className='text-xs text-gray-500 mt-1'>{t(helper)}</div>
+          ) : null}
+        </div>
+        <InputNumber
+          min={min}
+          max={max}
+          value={strategyConfig[field]}
+          disabled={!useCustomStrategy}
+          onChange={(value) =>
+            updateSmartStrategyField(
+              field,
+              min === 0
+                ? Math.max(0, Number(value) || 0)
+                : Number(value) || fallback,
+            )
+          }
+          style={{ width: '100%' }}
+        />
+      </Col>
+    );
+
+    return (
+      <div className='mt-5 border-t border-gray-100 pt-4'>
+        <div className='flex items-start justify-between gap-3 flex-wrap'>
+          <div>
+            <Text strong>{t('智能降权策略')}</Text>
+            <div className='mt-1 text-xs text-gray-500'>
+              {t('默认跟随全局；开启自定义后仅覆盖当前聚合分组的百分比降权参数。')}
+            </div>
+          </div>
+          <Space>
+            <Tag color={useCustomStrategy ? 'orange' : 'green'}>
+              {useCustomStrategy ? t('自定义策略') : t('跟随全局')}
+            </Tag>
+            <Switch
+              checked={useCustomStrategy}
+              onChange={(checked) => updateSmartStrategyMode(checked)}
+            />
+          </Space>
+        </div>
+
+        {useCustomStrategy ? (
+          <Row gutter={12} className='mt-3'>
+            {renderNumberInput(
+              '错误率窗口（秒）',
+              'failure_rate_window_seconds',
+              {
+                min: 1,
+                max: 3600,
+                helper: '统计最近窗口内的可重试失败占尝试请求比例',
+              },
+            )}
+            {renderNumberInput(
+              '错误率最小样本数',
+              'failure_rate_min_requests',
+            )}
+            {renderNumberInput(
+              '错误率阈值（%）',
+              'failure_rate_threshold_percent',
+              { min: 1, max: 100 },
+            )}
+            {renderNumberInput('慢率窗口（秒）', 'slow_rate_window_seconds', {
+              min: 1,
+              max: 3600,
+              helper: '统计最近窗口内慢成功请求占成功请求比例',
+            })}
+            {renderNumberInput('慢率最小样本数', 'slow_rate_min_requests')}
+            {renderNumberInput('慢率阈值（%）', 'slow_rate_threshold_percent', {
+              min: 1,
+              max: 100,
+            })}
+            {renderNumberInput(
+              '临时降级时长（秒）',
+              'degrade_duration_seconds',
+            )}
+            {renderNumberInput(
+              'Cluster 降级有效权重比例（%）',
+              'cluster_degraded_weight_percent',
+              {
+                min: 1,
+                max: 100,
+                helper: '正数权重降级后最低保留 1，原始 0 仍为 0',
+                fallback: 50,
+              },
+            )}
+            {renderNumberInput(
+              '慢请求阈值（秒）',
+              'slow_request_threshold_seconds',
+              {
+                helper: '按请求总耗时统计慢成功请求',
+              },
+            )}
+            {renderNumberInput(
+              '首字慢阈值（秒）',
+              'slow_first_response_threshold_seconds',
+              {
+                min: 0,
+                helper: '仅流式请求生效；0 表示关闭首字慢统计',
+                fallback: 0,
+              },
+            )}
+          </Row>
+        ) : null}
+      </div>
+    );
+  };
+
   const renderClientRoutePools = () => (
     <div className='mt-5 border-t border-gray-100 pt-4'>
       <div className='flex items-start justify-between gap-3 flex-wrap'>
@@ -959,6 +1124,9 @@ const EditAggregateGroupModal = ({
             })),
           },
         },
+        smart_strategy_config: inputs.smart_strategy_config
+          ? { ...inputs.smart_strategy_config }
+          : null,
       };
       const res = isEdit
         ? await API.put('/api/aggregate_group', payload)
@@ -1210,6 +1378,7 @@ const EditAggregateGroupModal = ({
 	              </div>
 	            </TabPane>
           </Tabs>
+          {renderSmartStrategyConfig()}
           {renderClientRoutePools()}
         </Card>
       </div>

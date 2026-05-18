@@ -178,6 +178,12 @@ func InitOptionMap() {
 	common.OptionMap["aggregate_group.slow_request_threshold_seconds"] = strconv.Itoa(setting.AggregateGroupSlowRequestThreshold)
 	common.OptionMap["aggregate_group.slow_first_response_threshold_seconds"] = strconv.Itoa(setting.AggregateGroupSlowFirstResponseThreshold)
 	common.OptionMap["aggregate_group.consecutive_slow_threshold"] = strconv.Itoa(setting.AggregateGroupConsecutiveSlowLimit)
+	common.OptionMap["aggregate_group.failure_rate_window_seconds"] = strconv.Itoa(setting.AggregateGroupFailureRateWindowSeconds)
+	common.OptionMap["aggregate_group.failure_rate_min_requests"] = strconv.Itoa(setting.AggregateGroupFailureRateMinRequests)
+	common.OptionMap["aggregate_group.failure_rate_threshold_percent"] = strconv.Itoa(setting.AggregateGroupFailureRateThresholdPct)
+	common.OptionMap["aggregate_group.slow_rate_window_seconds"] = strconv.Itoa(setting.AggregateGroupSlowRateWindowSeconds)
+	common.OptionMap["aggregate_group.slow_rate_min_requests"] = strconv.Itoa(setting.AggregateGroupSlowRateMinRequests)
+	common.OptionMap["aggregate_group.slow_rate_threshold_percent"] = strconv.Itoa(setting.AggregateGroupSlowRateThresholdPct)
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
 
 	// 自动添加所有注册的模型配置
@@ -586,6 +592,36 @@ func updateOptionMap(key string, value string) (err error) {
 		intValue, _ := strconv.Atoi(value)
 		intValue = setting.NormalizeAggregateGroupConsecutiveSlowThreshold(intValue)
 		setting.AggregateGroupConsecutiveSlowLimit = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
+	case "aggregate_group.failure_rate_window_seconds":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupRateWindowSeconds(intValue)
+		setting.AggregateGroupFailureRateWindowSeconds = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
+	case "aggregate_group.failure_rate_min_requests":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupRateMinRequests(intValue, setting.DefaultAggregateGroupFailureRateMinRequests)
+		setting.AggregateGroupFailureRateMinRequests = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
+	case "aggregate_group.failure_rate_threshold_percent":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupRateThresholdPercent(intValue, setting.DefaultAggregateGroupFailureRateThresholdPct)
+		setting.AggregateGroupFailureRateThresholdPct = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
+	case "aggregate_group.slow_rate_window_seconds":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupRateWindowSeconds(intValue)
+		setting.AggregateGroupSlowRateWindowSeconds = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
+	case "aggregate_group.slow_rate_min_requests":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupRateMinRequests(intValue, setting.DefaultAggregateGroupSlowRateMinRequests)
+		setting.AggregateGroupSlowRateMinRequests = intValue
+		common.OptionMap[key] = strconv.Itoa(intValue)
+	case "aggregate_group.slow_rate_threshold_percent":
+		intValue, _ := strconv.Atoi(value)
+		intValue = setting.NormalizeAggregateGroupRateThresholdPercent(intValue, setting.DefaultAggregateGroupSlowRateThresholdPct)
+		setting.AggregateGroupSlowRateThresholdPct = intValue
 		common.OptionMap[key] = strconv.Itoa(intValue)
 	case "StreamCacheQueueLength":
 		setting.StreamCacheQueueLength, _ = strconv.Atoi(value)

@@ -27,19 +27,20 @@ type aggregateClusterRouteCandidate struct {
 }
 
 func calculateAggregateClusterEffectiveWeight(weight int, degradeLevel int) int {
+	return calculateAggregateClusterEffectiveWeightWithPercent(weight, degradeLevel, setting.AggregateGroupClusterDegradedWeightPct)
+}
+
+func calculateAggregateClusterEffectiveWeightWithPercent(weight int, degradeLevel int, degradedWeightPercent int) int {
 	if weight <= 0 {
 		return 0
 	}
 	if degradeLevel <= 0 {
 		return weight
 	}
-	percent := setting.NormalizeAggregateGroupClusterDegradedWeightPercent(setting.AggregateGroupClusterDegradedWeightPct)
-	reducedWeight := float64(weight)
-	for i := 0; i < degradeLevel; i++ {
-		reducedWeight = math.Ceil(reducedWeight * float64(percent) / 100)
-		if reducedWeight <= 1 {
-			return 1
-		}
+	percent := setting.NormalizeAggregateGroupClusterDegradedWeightPercent(degradedWeightPercent)
+	reducedWeight := math.Ceil(float64(weight) * float64(percent) / 100)
+	if reducedWeight <= 1 {
+		return 1
 	}
 	return int(reducedWeight)
 }
@@ -147,6 +148,7 @@ func isAggregateRouteCandidateAttempted(ctx *gin.Context, routePool string, inde
 
 func buildAggregateClusterRouteCandidatesFromTargets(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, routePool string, targets []model.AggregateGroupTarget, skipDegraded bool, excludeAttempted bool) ([]aggregateClusterRouteCandidate, []aggregateClusterRouteCandidate, error) {
 	routePool = normalizeAggregateClusterRoutePool(routePool)
+	strategy := GetAggregateGroupEffectiveSmartStrategy(aggregateGroup)
 	healthyCandidates := make([]aggregateClusterRouteCandidate, 0, len(targets))
 	supportedCandidates := make([]aggregateClusterRouteCandidate, 0, len(targets))
 	for index, target := range targets {
@@ -183,10 +185,10 @@ func buildAggregateClusterRouteCandidatesFromTargets(ctx *gin.Context, aggregate
 				if state != nil {
 					candidate.DegradeLevel = state.DegradeLevel
 				}
-				logger.LogWarn(ctx, fmt.Sprintf("aggregate cluster smart strategy reduced degraded route: aggregate_group=%s, model=%s, route_group=%s(index=%d), weight=%d, effective_weight=%d, degrade_level=%d, degraded_until=%d", aggregateGroup.Name, modelName, target.RealGroup, index, candidate.Weight, calculateAggregateClusterEffectiveWeight(candidate.Weight, candidate.DegradeLevel), candidate.DegradeLevel, state.DegradedUntil))
+				logger.LogWarn(ctx, fmt.Sprintf("aggregate cluster smart strategy reduced degraded route: aggregate_group=%s, model=%s, route_group=%s(index=%d), weight=%d, effective_weight=%d, degrade_level=%d, degraded_until=%d", aggregateGroup.Name, modelName, target.RealGroup, index, candidate.Weight, calculateAggregateClusterEffectiveWeightWithPercent(candidate.Weight, candidate.DegradeLevel, strategy.ClusterDegradedWeightPercent), candidate.DegradeLevel, state.DegradedUntil))
 			}
 		}
-		candidate.EffectiveWeight = calculateAggregateClusterEffectiveWeight(candidate.Weight, candidate.DegradeLevel)
+		candidate.EffectiveWeight = calculateAggregateClusterEffectiveWeightWithPercent(candidate.Weight, candidate.DegradeLevel, strategy.ClusterDegradedWeightPercent)
 		supportedCandidates = append(supportedCandidates, candidate)
 		if !candidate.IsDegraded {
 			healthyCandidates = append(healthyCandidates, candidate)

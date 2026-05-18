@@ -54,12 +54,16 @@ const { Text } = Typography;
 
 const defaultStrategyInputs = {
   'aggregate_group.smart_strategy_enabled': false,
-  'aggregate_group.consecutive_failure_threshold': 2,
+  'aggregate_group.failure_rate_window_seconds': 60,
+  'aggregate_group.failure_rate_min_requests': 100,
+  'aggregate_group.failure_rate_threshold_percent': 5,
+  'aggregate_group.slow_rate_window_seconds': 60,
+  'aggregate_group.slow_rate_min_requests': 100,
+  'aggregate_group.slow_rate_threshold_percent': 30,
   'aggregate_group.degrade_duration_seconds': 600,
-  'aggregate_group.cluster_degraded_weight_percent': 20,
+  'aggregate_group.cluster_degraded_weight_percent': 50,
   'aggregate_group.slow_request_threshold_seconds': 30,
   'aggregate_group.slow_first_response_threshold_seconds': 0,
-  'aggregate_group.consecutive_slow_threshold': 3,
 };
 
 const isUserVisibleGroup = (group) =>
@@ -155,7 +159,7 @@ const AggregateGroupsPage = () => {
           return;
         }
         const parsedValue = Number(item.value);
-        if (!Number.isNaN(parsedValue) && parsedValue > 0) {
+        if (!Number.isNaN(parsedValue) && parsedValue >= 0) {
           nextInputs[item.key] = parsedValue;
         }
       });
@@ -514,7 +518,7 @@ const AggregateGroupsPage = () => {
                 <div>
                   <Text strong>{t('聚合分组全局策略')}</Text>
                   <div className='text-xs text-gray-600 mt-1'>
-                    {t('为开启智能策略的聚合分组配置连续失败、临时降级、Cluster 递减降权和慢请求阈值')}
+                    {t('为开启智能策略的聚合分组配置滑动窗口错误率、慢率、临时降级和 Cluster 有效权重')}
                   </div>
                 </div>
                 <Button type='primary' onClick={handleSaveStrategy}>
@@ -540,18 +544,122 @@ const AggregateGroupsPage = () => {
                 </Col>
                 <Col xs={24} sm={12} md={8}>
                   <div className='mb-2'>
-                    <Text strong>{t('连续失败阈值')}</Text>
+                    <Text strong>{t('错误率窗口（秒）')}</Text>
+                    <div className='text-xs text-gray-500 mt-1'>
+                      {t('统计最近窗口内的可重试失败占尝试请求比例')}
+                    </div>
                   </div>
                   <InputNumber
                     min={1}
+                    max={3600}
                     value={
                       strategyInputs[
-                        'aggregate_group.consecutive_failure_threshold'
+                        'aggregate_group.failure_rate_window_seconds'
                       ]
                     }
                     onChange={(value) =>
                       updateStrategyField(
-                        'aggregate_group.consecutive_failure_threshold',
+                        'aggregate_group.failure_rate_window_seconds',
+                        Number(value) || 1,
+                      )
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('错误率最小样本数')}</Text>
+                  </div>
+                  <InputNumber
+                    min={1}
+                    value={
+                      strategyInputs['aggregate_group.failure_rate_min_requests']
+                    }
+                    onChange={(value) =>
+                      updateStrategyField(
+                        'aggregate_group.failure_rate_min_requests',
+                        Number(value) || 1,
+                      )
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('错误率阈值（%）')}</Text>
+                  </div>
+                  <InputNumber
+                    min={1}
+                    max={100}
+                    value={
+                      strategyInputs[
+                        'aggregate_group.failure_rate_threshold_percent'
+                      ]
+                    }
+                    onChange={(value) =>
+                      updateStrategyField(
+                        'aggregate_group.failure_rate_threshold_percent',
+                        Number(value) || 1,
+                      )
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('慢率窗口（秒）')}</Text>
+                    <div className='text-xs text-gray-500 mt-1'>
+                      {t('统计最近窗口内慢成功请求占成功请求比例')}
+                    </div>
+                  </div>
+                  <InputNumber
+                    min={1}
+                    max={3600}
+                    value={
+                      strategyInputs['aggregate_group.slow_rate_window_seconds']
+                    }
+                    onChange={(value) =>
+                      updateStrategyField(
+                        'aggregate_group.slow_rate_window_seconds',
+                        Number(value) || 1,
+                      )
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('慢率最小样本数')}</Text>
+                  </div>
+                  <InputNumber
+                    min={1}
+                    value={
+                      strategyInputs['aggregate_group.slow_rate_min_requests']
+                    }
+                    onChange={(value) =>
+                      updateStrategyField(
+                        'aggregate_group.slow_rate_min_requests',
+                        Number(value) || 1,
+                      )
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Col>
+                <Col xs={24} sm={12} md={8}>
+                  <div className='mb-2'>
+                    <Text strong>{t('慢率阈值（%）')}</Text>
+                  </div>
+                  <InputNumber
+                    min={1}
+                    max={100}
+                    value={
+                      strategyInputs[
+                        'aggregate_group.slow_rate_threshold_percent'
+                      ]
+                    }
+                    onChange={(value) =>
+                      updateStrategyField(
+                        'aggregate_group.slow_rate_threshold_percent',
                         Number(value) || 1,
                       )
                     }
@@ -580,7 +688,7 @@ const AggregateGroupsPage = () => {
                   <div className='mb-2'>
                     <Text strong>{t('Cluster 降级有效权重比例（%）')}</Text>
                     <div className='text-xs text-gray-500 mt-1'>
-                      {t('仅 Cluster 模式生效；降级窗口内再次触发会按该比例继续递减有效权重')}
+                      {t('仅 Cluster 模式生效；正数权重降级后最低保留 1')}
                     </div>
                   </div>
                   <InputNumber
@@ -594,7 +702,7 @@ const AggregateGroupsPage = () => {
                     onChange={(value) =>
                       updateStrategyField(
                         'aggregate_group.cluster_degraded_weight_percent',
-                        Number(value) || 20,
+                        Number(value) || 50,
                       )
                     }
                     style={{ width: '100%' }}
@@ -604,7 +712,7 @@ const AggregateGroupsPage = () => {
                   <div className='mb-2'>
                     <Text strong>{t('慢请求阈值（秒）')}</Text>
                     <div className='text-xs text-gray-500 mt-1'>
-                      {t('按请求总耗时统计，达到连续慢请求阈值后触发降级')}
+                      {t('按请求总耗时统计慢成功请求')}
                     </div>
                   </div>
                   <InputNumber
@@ -641,26 +749,6 @@ const AggregateGroupsPage = () => {
                       updateStrategyField(
                         'aggregate_group.slow_first_response_threshold_seconds',
                         Math.max(0, Number(value) || 0),
-                      )
-                    }
-                    style={{ width: '100%' }}
-                  />
-                </Col>
-                <Col xs={24} sm={12} md={8}>
-                  <div className='mb-2'>
-                    <Text strong>{t('连续慢请求阈值')}</Text>
-                  </div>
-                  <InputNumber
-                    min={1}
-                    value={
-                      strategyInputs[
-                        'aggregate_group.consecutive_slow_threshold'
-                      ]
-                    }
-                    onChange={(value) =>
-                      updateStrategyField(
-                        'aggregate_group.consecutive_slow_threshold',
-                        Number(value) || 1,
                       )
                     }
                     style={{ width: '100%' }}

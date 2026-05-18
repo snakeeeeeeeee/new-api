@@ -666,6 +666,33 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "aggregate_group.failure_rate_window_seconds", "aggregate_group.slow_rate_window_seconds":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue <= 0 || intValue > setting.MaxAggregateGroupRateWindowSeconds {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "统计窗口必须在 1 到 3600 秒之间",
+			})
+			return
+		}
+	case "aggregate_group.failure_rate_min_requests", "aggregate_group.slow_rate_min_requests":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue <= 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "最小样本数必须大于 0",
+			})
+			return
+		}
+	case "aggregate_group.failure_rate_threshold_percent", "aggregate_group.slow_rate_threshold_percent":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue <= 0 || intValue > 100 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "百分比阈值必须在 1 到 100 之间",
+			})
+			return
+		}
 	case "console_setting.api_info":
 		err = console_setting.ValidateConsoleSettings(option.Value.(string), "ApiInfo")
 		if err != nil {

@@ -44,6 +44,7 @@ type AggregateGroup struct {
 	RetryStatusCodes          string                 `json:"retry_status_codes" gorm:"type:text"`
 	VisibleUserGroups         string                 `json:"-" gorm:"type:text"`
 	ClientRoutePools          string                 `json:"-" gorm:"type:text"`
+	SmartStrategyConfig       string                 `json:"-" gorm:"type:text"`
 	CreatedTime               int64                  `json:"created_time" gorm:"bigint"`
 	UpdatedTime               int64                  `json:"updated_time" gorm:"bigint"`
 	DeletedAt                 gorm.DeletedAt         `json:"-" gorm:"index"`
@@ -78,6 +79,19 @@ type AggregateGroupRouteAffinityKeySource struct {
 	Type string `json:"type"`
 	Key  string `json:"key,omitempty"`
 	Path string `json:"path,omitempty"`
+}
+
+type AggregateGroupSmartStrategyConfig struct {
+	FailureRateWindowSeconds   *int `json:"failure_rate_window_seconds,omitempty"`
+	FailureRateMinRequests     *int `json:"failure_rate_min_requests,omitempty"`
+	FailureRateThresholdPct    *int `json:"failure_rate_threshold_percent,omitempty"`
+	SlowRateWindowSeconds      *int `json:"slow_rate_window_seconds,omitempty"`
+	SlowRateMinRequests        *int `json:"slow_rate_min_requests,omitempty"`
+	SlowRateThresholdPct       *int `json:"slow_rate_threshold_percent,omitempty"`
+	DegradeDurationSeconds     *int `json:"degrade_duration_seconds,omitempty"`
+	ClusterDegradedWeightPct   *int `json:"cluster_degraded_weight_percent,omitempty"`
+	SlowRequestThreshold       *int `json:"slow_request_threshold_seconds,omitempty"`
+	SlowFirstResponseThreshold *int `json:"slow_first_response_threshold_seconds,omitempty"`
 }
 
 func (g *AggregateGroup) IsEnabled() bool {
@@ -238,6 +252,31 @@ func (g *AggregateGroup) SetRouteAffinityKeySources(sources []AggregateGroupRout
 	return nil
 }
 
+func (g *AggregateGroup) GetSmartStrategyConfig() *AggregateGroupSmartStrategyConfig {
+	if g == nil || strings.TrimSpace(g.SmartStrategyConfig) == "" {
+		return nil
+	}
+	var config AggregateGroupSmartStrategyConfig
+	if err := common.UnmarshalJsonStr(g.SmartStrategyConfig, &config); err != nil {
+		common.SysError("failed to unmarshal aggregate group smart strategy config: " + err.Error())
+		return nil
+	}
+	return &config
+}
+
+func (g *AggregateGroup) SetSmartStrategyConfig(config *AggregateGroupSmartStrategyConfig) error {
+	if config == nil {
+		g.SmartStrategyConfig = ""
+		return nil
+	}
+	jsonBytes, err := common.Marshal(config)
+	if err != nil {
+		return err
+	}
+	g.SmartStrategyConfig = string(jsonBytes)
+	return nil
+}
+
 func (g *AggregateGroup) SetVisibleUserGroups(groups []string) error {
 	jsonBytes, err := common.Marshal(groups)
 	if err != nil {
@@ -315,6 +354,7 @@ func (g *AggregateGroup) UpdateWithTargets(targets []AggregateGroupTarget) error
 			"retry_status_codes":           g.RetryStatusCodes,
 			"visible_user_groups":          g.VisibleUserGroups,
 			"client_route_pools":           g.ClientRoutePools,
+			"smart_strategy_config":        g.SmartStrategyConfig,
 			"updated_time":                 g.UpdatedTime,
 		}).Error; err != nil {
 			return err

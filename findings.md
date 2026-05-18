@@ -1,3 +1,32 @@
+# 聚合分组百分比智能降权
+
+## Requirements
+- 全局智能策略从连续次数触发改为滑动窗口百分比触发。
+- 聚合分组允许 `smart_strategy_config` 覆盖全局策略，空值继承全局。
+- 旧 `consecutive_failure_threshold` / `consecutive_slow_threshold` 保留兼容但不参与触发。
+- 旧运行态策略状态无版本或低版本时清空，避免误降权延续。
+- Cluster 降权按单档百分比计算，默认 `100 -> 50`，正权重最低 1，0 权重仍为 0，不再递归。
+- Docker dev 必须完成真实网关仿真验证。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 统计继续复用秒级 Redis/memory bucket | 现有 RPM 统计已按 aggregate group/model/route pool/route group 隔离，适合扩展策略指标 |
+| 错误率样本数用 attempts，慢率样本数用 success | 避免失败请求同时污染慢率；成功慢请求才代表可用但慢 |
+| 可重试聚合失败才计入 `strategy_failure` | 避免客户端 400 等不可重试错误触发供应商降权 |
+| 组级配置用 TEXT JSON 字段 | 兼容三类数据库，并方便后续增加策略字段 |
+
+## Verification Findings
+- Docker dev 仿真使用临时聚合分组、两个临时真实分组/Anthropic 渠道、临时 token 和本地 fake Claude upstream，经真实 `/v1/messages` 网关请求覆盖策略路径。
+- 低样本场景 9/9 个可重试失败只累计窗口指标，不触发降权，因为未达到默认 `failure_rate_min_requests=100`。
+- 高 RPM 场景用 Redis 秒级窗口模拟 `1,000,000` attempts / `10,000` strategy failures，再发 1 次真实网关失败请求触发策略评估，runtime API 显示 `failure_rate_percent=1` 且未降权。
+- 5% 错误率场景先在高阈值下通过真实请求累计 `99` attempts / `4` failures，再恢复默认 5% 后用 1 次真实失败 fallback 触发降权；Redis 状态为 `StrategyVersion=2`、`DegradeLevel=1`，runtime API 显示 `failure_rate`。
+- 慢率场景通过 fake upstream 延迟 3/10 个成功响应，runtime API 显示 `slow_window_successes=10`、`slow_window_slow_successes=3`、`slow_rate_percent=30` 并触发 `slow_rate` 降权。
+- 组级覆盖场景把全局错误阈值抬高为不可触发，再用 `smart_strategy_config` 覆盖为 `min=10`、`threshold=20%`；runtime API 显示策略来源为 `group` 并按组级阈值降权。
+- 仿真结束后临时 DB/Redis 数据已清理，`new-api-dev` 仍为 healthy。
+
+---
+
 # Relay Error Passthrough Settings
 
 ## Requirements

@@ -29,6 +29,21 @@ type AggregateGroupRuntimeRouteView struct {
 	RPM                         int    `json:"rpm"`
 	SuccessRPM                  int    `json:"success_rpm"`
 	FailureRPM                  int    `json:"failure_rpm"`
+	StrategyFailureRPM          int    `json:"strategy_failure_rpm"`
+	SlowSuccessRPM              int    `json:"slow_success_rpm"`
+	FailureWindowSeconds        int    `json:"failure_window_seconds"`
+	FailureWindowRequests       int    `json:"failure_window_requests"`
+	FailureWindowFailures       int    `json:"failure_window_failures"`
+	FailureRatePercent          int    `json:"failure_rate_percent"`
+	FailureRateMinRequests      int    `json:"failure_rate_min_requests"`
+	FailureRateThresholdPercent int    `json:"failure_rate_threshold_percent"`
+	SlowWindowSeconds           int    `json:"slow_window_seconds"`
+	SlowWindowSuccesses         int    `json:"slow_window_successes"`
+	SlowWindowSlowSuccesses     int    `json:"slow_window_slow_successes"`
+	SlowRatePercent             int    `json:"slow_rate_percent"`
+	SlowRateMinRequests         int    `json:"slow_rate_min_requests"`
+	SlowRateThresholdPercent    int    `json:"slow_rate_threshold_percent"`
+	StrategySource              string `json:"strategy_source"`
 	DegradedUntil               int64  `json:"degraded_until"`
 	ConsecutiveFailures         int    `json:"consecutive_failures"`
 	ConsecutiveSlows            int    `json:"consecutive_slows"`
@@ -41,6 +56,7 @@ type AggregateGroupRuntimeRouteView struct {
 	LastTriggerReason           string `json:"last_trigger_reason"`
 	LastTriggerAt               int64  `json:"last_trigger_at"`
 	LastSlowReason              string `json:"last_slow_reason"`
+	StrategyVersion             int    `json:"strategy_version"`
 }
 
 type AggregateGroupRuntimeClientRoutePoolView struct {
@@ -89,12 +105,20 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 
 	now := common.GetTimestamp()
 	isClusterMode := group.GetRoutingMode() == model.AggregateGroupRoutingModeCluster
+	strategy := GetAggregateGroupEffectiveSmartStrategy(group)
 	buildRouteView := func(routePool string, index int, target model.AggregateGroupTarget, routeActiveState *AggregateGroupRuntimeState, hasRouteActiveState bool) (*AggregateGroupRuntimeRouteView, error) {
 		routeView := &AggregateGroupRuntimeRouteView{
-			RouteGroup: target.RealGroup,
-			RouteIndex: index,
-			RoutePool:  routePool,
-			Weight:     target.GetWeight(),
+			RouteGroup:                  target.RealGroup,
+			RouteIndex:                  index,
+			RoutePool:                   routePool,
+			Weight:                      target.GetWeight(),
+			StrategySource:              formatAggregateSmartStrategySource(strategy),
+			FailureWindowSeconds:        strategy.FailureRateWindowSeconds,
+			FailureRateMinRequests:      strategy.FailureRateMinRequests,
+			FailureRateThresholdPercent: strategy.FailureRateThresholdPct,
+			SlowWindowSeconds:           strategy.SlowRateWindowSeconds,
+			SlowRateMinRequests:         strategy.SlowRateMinRequests,
+			SlowRateThresholdPercent:    strategy.SlowRateThresholdPct,
 		}
 		if routePool == aggregateClusterDefaultRoutePool {
 			routeView.RoutePool = ""
@@ -108,6 +132,16 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 		routeView.RPM = rpmStats.RPM
 		routeView.SuccessRPM = rpmStats.SuccessRPM
 		routeView.FailureRPM = rpmStats.FailureRPM
+		routeView.StrategyFailureRPM = rpmStats.StrategyFailureRPM
+		routeView.SlowSuccessRPM = rpmStats.SlowSuccessRPM
+		failureWindowStats := GetAggregateRouteWindowStatsForPool(group.Name, modelName, routePool, target.RealGroup, strategy.FailureRateWindowSeconds)
+		routeView.FailureWindowRequests = failureWindowStats.Attempts
+		routeView.FailureWindowFailures = failureWindowStats.StrategyFailures
+		routeView.FailureRatePercent = calculateAggregateRatePercent(failureWindowStats.StrategyFailures, failureWindowStats.Attempts)
+		slowWindowStats := GetAggregateRouteWindowStatsForPool(group.Name, modelName, routePool, target.RealGroup, strategy.SlowRateWindowSeconds)
+		routeView.SlowWindowSuccesses = slowWindowStats.Successes
+		routeView.SlowWindowSlowSuccesses = slowWindowStats.SlowSuccesses
+		routeView.SlowRatePercent = calculateAggregateRatePercent(slowWindowStats.SlowSuccesses, slowWindowStats.Successes)
 		if hasRouteActiveState {
 			if strings.TrimSpace(routeActiveState.ActiveGroup) != "" {
 				routeView.IsActive = routeActiveState.ActiveGroup == target.RealGroup
@@ -134,10 +168,11 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 			routeView.LastTriggerReason = state.LastTriggerReason
 			routeView.LastTriggerAt = state.LastTriggerAt
 			routeView.LastSlowReason = state.LastSlowReason
+			routeView.StrategyVersion = state.StrategyVersion
 		}
 		if routeView.PriorityCount > 0 {
 			if isClusterMode {
-				routeView.EffectiveWeight = calculateAggregateClusterEffectiveWeight(routeView.Weight, routeView.DegradeLevel)
+				routeView.EffectiveWeight = calculateAggregateClusterEffectiveWeightWithPercent(routeView.Weight, routeView.DegradeLevel, strategy.ClusterDegradedWeightPercent)
 			} else {
 				routeView.EffectiveWeight = routeView.Weight
 			}
