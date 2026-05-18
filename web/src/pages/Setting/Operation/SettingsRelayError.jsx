@@ -36,6 +36,7 @@ export default function SettingsRelayError(props) {
   const [inputs, setInputs] = useState({
     'relay_error_setting.passthrough_enabled': false,
     'relay_error_setting.passthrough_status_codes': '400,422',
+    'relay_error_setting.passthrough_block_keywords': '',
     'relay_error_setting.mask_sensitive': true,
   });
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -170,6 +171,21 @@ export default function SettingsRelayError(props) {
                   }
                   parsed={parsedPassthroughStatusCodes}
                   invalidText={t('错误透传状态码格式不正确')}
+                />
+                <Form.TextArea
+                  label={t('错误透传阻断关键词')}
+                  placeholder={t('一行一个，不区分大小写')}
+                  extraText={t(
+                    '状态码允许透传时，如果上游错误内容包含这些关键词，将返回通用错误，不透传原始错误。',
+                  )}
+                  field={'relay_error_setting.passthrough_block_keywords'}
+                  autosize={{ minRows: 4, maxRows: 10 }}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'relay_error_setting.passthrough_block_keywords': value,
+                    })
+                  }
                 />
               </Col>
             </Row>

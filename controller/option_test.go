@@ -250,6 +250,7 @@ func TestRelayErrorSettingOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.True(t, listResp.Success, listResp.Message)
 	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.passthrough_enabled"`)
 	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.passthrough_status_codes"`)
+	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.passthrough_block_keywords"`)
 	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.mask_sensitive"`)
 	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.passthrough_enabled","value":"false"`)
 
@@ -266,6 +267,21 @@ func TestRelayErrorSettingOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.Equal(t, "422,400,400", operation_setting.GetRelayErrorSetting().PassthroughStatusCodes)
 	require.False(t, operation_setting.GetRelayErrorSetting().PassthroughEnabled)
 	require.False(t, operation_setting.ShouldPassthroughRelayErrorStatusCode(http.StatusBadRequest))
+
+	blockKeywordsPayload := []byte(`{"key":"relay_error_setting.passthrough_block_keywords","value":"settings/usage\nThird-party apps now draw from your extra usage"}`)
+	blockKeywordsRecorder := httptest.NewRecorder()
+	blockKeywordsCtx, _ := gin.CreateTestContext(blockKeywordsRecorder)
+	blockKeywordsCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(blockKeywordsPayload))
+	blockKeywordsCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(blockKeywordsCtx)
+
+	var blockKeywordsResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(blockKeywordsRecorder.Body.Bytes(), &blockKeywordsResp))
+	require.True(t, blockKeywordsResp.Success, blockKeywordsResp.Message)
+	require.Equal(t, "settings/usage\nThird-party apps now draw from your extra usage", operation_setting.GetRelayErrorSetting().PassthroughBlockKeywords)
+	require.True(t, operation_setting.ShouldBlockRelayErrorPassthrough("Add more at https://example.com/settings/usage and keep going."))
+	require.True(t, operation_setting.ShouldBlockRelayErrorPassthrough("third-party apps now draw from your extra usage"))
+	require.False(t, operation_setting.ShouldBlockRelayErrorPassthrough("messages.46: tool_use ids were found without tool_result"))
 
 	enablePayload := []byte(`{"key":"relay_error_setting.passthrough_enabled","value":true}`)
 	enableRecorder := httptest.NewRecorder()

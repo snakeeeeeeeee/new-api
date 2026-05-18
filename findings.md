@@ -1,3 +1,21 @@
+# Relay Error Passthrough Keyword Blocklist
+
+## Requirements
+- 在错误透传已开启且状态码命中时，支持按关键词阻断透传。
+- 关键词一行一个，适合配置 `settings/usage`、`Third-party apps now draw from your extra usage` 这类短语。
+- 匹配应大小写不敏感、包含即命中、忽略空行。
+- 默认空值必须保持现有行为不变。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 配置字段用字符串 `passthrough_block_keywords` | 与现有 textarea option 模式一致，存现有 `options` 表 key/value，不改 DB schema |
+| 一行一个关键词 | 避免逗号分隔误切英文错误句子中的逗号 |
+| 在状态码命中后再判断关键词 | 保持原有“只允许 400/422 等状态码透传”的主规则，关键词只是额外阻断 |
+| 匹配 `err.Error()` 原始错误文本 | 先按真实上游内容判断是否阻断，再由既有 `MaskSensitive` 决定透传时如何展示 |
+
+---
+
 # Dump 分析与内置 Console
 
 ## Requirements

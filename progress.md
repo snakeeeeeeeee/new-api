@@ -1,3 +1,35 @@
+# Session: 2026-05-19 Relay Error Passthrough Keyword Blocklist
+
+## Scope
+- 在现有错误响应设置中新增透传阻断关键词，命中后返回通用错误，避免把 Max/账号用量类上游文案透传给客户。
+
+## Progress
+- 已确认当前提交后 tracked 工作树干净，只有未跟踪脚本/tmp/output 文件，本轮不触碰。
+- 已确认现有错误响应设置只支持 `passthrough_enabled`、`passthrough_status_codes`、`mask_sensitive`，不支持关键词阻断。
+- 已新增 `PassthroughBlockKeywords` 配置字段，默认空。
+- 已在 `shouldPassthroughClientFacingRelayError` 中增加关键词阻断：状态码允许透传后，对原始错误文本做大小写不敏感包含匹配。
+- 已在运营设置「错误响应设置」新增多行输入框，一行一个阻断关键词。
+- 已补充 controller/option 单测覆盖新 key 导出、保存和匹配。
+
+## Verification
+- `go test ./controller -run 'RelayError|RelayErrorSettingOptions' -count=1`: passed.
+- `go test ./controller ./setting/operation_setting ./service -count=1`: passed.
+- `git diff --check`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `docker compose -f docker-compose-dev.yml up -d --build`: passed; image rebuilt and `new-api-dev` restarted.
+- `docker compose -f docker-compose-dev.yml ps new-api-dev`: healthy.
+- `curl -fsS http://localhost:3001/api/status`: passed.
+- Root `/api/option/` verification passed with `New-Api-User: 1`: new `relay_error_setting.passthrough_block_keywords` key visible, write succeeded, value persisted in `options`, cleanup restored root access token and removed temporary option row.
+- `docker compose -f docker-compose-dev.yml logs --tail 120 new-api-dev`: startup clean for this change; observed existing invalid browser session cookie 401s and one failed probe using model API token instead of root access token.
+
+## Errors
+- First psql DB probe used wrong dev role `newapi`; corrected to compose user `root`.
+- First root option API probe used model API token from `tokens` table; corrected to root `users.access_token`.
+- First root access token test value exceeded `char(32)`; corrected to shorter value.
+- One psql variable attempt failed with `syntax error at or near ":"`; switched to fixed SQL literal for the temporary dev token and verified cleanup.
+
+---
+
 # Session: 2026-05-19 Dump 分析与内置 Console
 
 ## Scope

@@ -15,7 +15,7 @@ import (
 )
 
 func TestBuildClientFacingOpenAIError(t *testing.T) {
-	withRelayErrorSetting(t, false, "400,422", true)
+	withRelayErrorSetting(t, false, "400,422", "", true)
 	apiErr := types.NewOpenAIError(assertErr("upstream claude provider returned 429"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
 
 	got := buildClientFacingOpenAIError(apiErr)
@@ -29,7 +29,7 @@ func TestBuildClientFacingOpenAIError(t *testing.T) {
 }
 
 func TestBuildClientFacingClaudeError(t *testing.T) {
-	withRelayErrorSetting(t, false, "400,422", true)
+	withRelayErrorSetting(t, false, "400,422", "", true)
 	apiErr := types.WithClaudeError(types.ClaudeError{
 		Message: "upstream vendor example.com failed",
 		Type:    "upstream_error",
@@ -74,7 +74,7 @@ func TestShouldWrapClientFacingRelayError_DefaultDisabledWraps400(t *testing.T) 
 }
 
 func TestShouldWrapClientFacingRelayError_PassthroughEnabled400And422(t *testing.T) {
-	withRelayErrorSetting(t, true, "400,422", true)
+	withRelayErrorSetting(t, true, "400,422", "", true)
 
 	apiErr := types.WithOpenAIError(types.OpenAIError{
 		Message: "prompt is too long: 202805 tokens > 200000 maximum",
@@ -116,7 +116,7 @@ func TestShouldWrapClientFacingRelayError_PassthroughEnabled400And422(t *testing
 }
 
 func TestShouldWrapClientFacingRelayError_WrapsWhenDisabledOrStatusNotAllowed(t *testing.T) {
-	withRelayErrorSetting(t, true, "400,422", true)
+	withRelayErrorSetting(t, true, "400,422", "", true)
 
 	rateLimitErr := types.NewOpenAIError(assertErr("upstream capacity exceeded"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
 	require.True(t, shouldWrapClientFacingRelayError(rateLimitErr))
@@ -125,13 +125,40 @@ func TestShouldWrapClientFacingRelayError_WrapsWhenDisabledOrStatusNotAllowed(t 
 	serverErr := types.NewOpenAIError(assertErr("upstream internal error"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
 	require.True(t, shouldWrapClientFacingRelayError(serverErr))
 
-	withRelayErrorSetting(t, false, "400,422", true)
+	withRelayErrorSetting(t, false, "400,422", "", true)
 	badRequestErr := types.NewOpenAIError(assertErr("prompt is too long"), types.ErrorCodeBadResponseStatusCode, http.StatusBadRequest)
 	require.True(t, shouldWrapClientFacingRelayError(badRequestErr))
 }
 
+func TestShouldWrapClientFacingRelayError_BlocksConfiguredKeywords(t *testing.T) {
+	withRelayErrorSetting(t, true, "400,422", "settings/usage\nthird-party apps now draw from your extra usage", true)
+
+	blockedErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "Third-party apps now draw from your extra usage, not your plan limits. Add more at https://console.anthropic.com/settings/usage and keep going.",
+		Type:    "invalid_request_error",
+		Code:    "invalid_request",
+	}, http.StatusBadRequest)
+	require.True(t, shouldWrapClientFacingRelayError(blockedErr))
+	require.Equal(t, clientFacingRelayErrorMessage, buildClientFacingOpenAIError(blockedErr).Message)
+
+	unblockedErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "messages.46: tool_use ids were found without tool_result blocks immediately after",
+		Type:    "invalid_request_error",
+		Code:    "invalid_request",
+	}, http.StatusBadRequest)
+	require.False(t, shouldWrapClientFacingRelayError(unblockedErr))
+	require.Contains(t, buildClientFacingRelayOpenAIError(unblockedErr).Message, "tool_use ids")
+
+	claudeBlockedErr := types.WithClaudeError(types.ClaudeError{
+		Message: "Add more at https://console.anthropic.com/SETTINGS/USAGE and keep going.",
+		Type:    "invalid_request_error",
+	}, http.StatusBadRequest)
+	require.True(t, shouldWrapClientFacingRelayError(claudeBlockedErr))
+	require.Equal(t, clientFacingRelayErrorMessage, buildClientFacingClaudeError(claudeBlockedErr).Message)
+}
+
 func TestBuildClientFacingRelayErrorHonorsMaskSensitiveSetting(t *testing.T) {
-	withRelayErrorSetting(t, true, "400", true)
+	withRelayErrorSetting(t, true, "400", "", true)
 	apiErr := types.WithOpenAIError(types.OpenAIError{
 		Message: "upstream https://api.vendor.example/v1 failed",
 		Type:    "invalid_request_error",
@@ -139,7 +166,7 @@ func TestBuildClientFacingRelayErrorHonorsMaskSensitiveSetting(t *testing.T) {
 	}, http.StatusBadRequest)
 	require.Equal(t, "upstream https://***.example/*** failed", buildClientFacingRelayOpenAIError(apiErr).Message)
 
-	withRelayErrorSetting(t, true, "400", false)
+	withRelayErrorSetting(t, true, "400", "", false)
 	require.Equal(t, "upstream https://api.vendor.example/v1 failed", buildClientFacingRelayOpenAIError(apiErr).Message)
 }
 
@@ -217,14 +244,15 @@ func assertErr(msg string) error {
 	return &staticErr{msg: msg}
 }
 
-func withRelayErrorSetting(t *testing.T, passthroughEnabled bool, passthroughStatusCodes string, maskSensitive bool) {
+func withRelayErrorSetting(t *testing.T, passthroughEnabled bool, passthroughStatusCodes string, passthroughBlockKeywords string, maskSensitive bool) {
 	t.Helper()
 	setting := operation_setting.GetRelayErrorSetting()
 	original := *setting
 	*setting = operation_setting.RelayErrorSetting{
-		PassthroughEnabled:     passthroughEnabled,
-		PassthroughStatusCodes: passthroughStatusCodes,
-		MaskSensitive:          maskSensitive,
+		PassthroughEnabled:       passthroughEnabled,
+		PassthroughStatusCodes:   passthroughStatusCodes,
+		PassthroughBlockKeywords: passthroughBlockKeywords,
+		MaskSensitive:            maskSensitive,
 	}
 	t.Cleanup(func() {
 		*setting = original

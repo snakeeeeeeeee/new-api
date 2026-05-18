@@ -1,3 +1,37 @@
+# Task Plan: Relay Error Passthrough Keyword Blocklist
+
+## Goal
+在现有「错误响应设置」中新增一行一个的错误透传阻断关键词。状态码允许透传时，如果原始上游错误内容命中任意关键词，则返回通用错误，不向客户透传账号/用量类上游文案；默认空配置，升级后不改变现有行为。
+
+## Current Phase
+Phase 3 complete
+
+## Phases
+### Phase 1: Discovery
+- [x] 重新读取当前提交后的错误响应配置、controller 判断、option 更新和前端设置页。
+- **Status:** complete
+
+### Phase 2: Implementation
+- [x] 新增 `relay_error_setting.passthrough_block_keywords` 配置字段。
+- [x] 在状态码透传判断后增加大小写不敏感的包含匹配阻断。
+- [x] 后台设置页新增多行输入框，一行一个关键词。
+- **Status:** complete
+
+### Phase 3: Verification
+- [x] Focused Go tests。
+- [x] 相关 Go package tests。
+- [x] Frontend build。
+- [x] Docker dev build、health 和日志检查。
+- **Status:** complete
+
+## Key Constraints
+- 默认值为空，不能改变现有错误透传行为。
+- 不新增数据库表或字段，只增加现有 `options` 表中的 key/value 配置项。
+- 关键词只用于阻断透传，不影响渠道禁用、重试、计费和请求转发。
+- 匹配原始上游错误内容，先匹配再按旧逻辑决定是否脱敏展示。
+
+---
+
 # Task Plan: Dump 分析与内置 Console
 
 ## Goal

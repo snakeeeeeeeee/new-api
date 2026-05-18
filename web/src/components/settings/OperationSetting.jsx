@@ -69,6 +69,7 @@ const OperationSetting = () => {
     /* 错误响应设置 */
     'relay_error_setting.passthrough_enabled': false,
     'relay_error_setting.passthrough_status_codes': '400,422',
+    'relay_error_setting.passthrough_block_keywords': '',
     'relay_error_setting.mask_sensitive': true,
 
     /* 监控设置 */

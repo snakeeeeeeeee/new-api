@@ -338,7 +338,10 @@ func shouldPassthroughClientFacingRelayError(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
-	return operation_setting.ShouldPassthroughRelayErrorStatusCode(err.StatusCode)
+	if !operation_setting.ShouldPassthroughRelayErrorStatusCode(err.StatusCode) {
+		return false
+	}
+	return !operation_setting.ShouldBlockRelayErrorPassthrough(err.Error())
 }
 
 func buildClientFacingRelayOpenAIError(err *types.NewAPIError) types.OpenAIError {
