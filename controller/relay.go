@@ -105,7 +105,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				} else {
 					c.JSON(newAPIError.StatusCode, gin.H{
 						"type":  "error",
-						"error": newAPIError.ToClaudeError(),
+						"error": buildClientFacingRelayClaudeError(newAPIError),
 					})
 				}
 			default:
@@ -115,7 +115,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					})
 				} else {
 					c.JSON(newAPIError.StatusCode, gin.H{
-						"error": newAPIError.ToOpenAIError(),
+						"error": buildClientFacingRelayOpenAIError(newAPIError),
 					})
 				}
 			}
@@ -321,6 +321,62 @@ const (
 )
 
 func shouldWrapClientFacingRelayError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	switch err.GetErrorType() {
+	case types.ErrorTypeOpenAIError, types.ErrorTypeClaudeError:
+		return !shouldPassthroughClientFacingRelayError(err)
+	default:
+		return false
+	}
+}
+
+func shouldPassthroughClientFacingRelayError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	return operation_setting.ShouldPassthroughRelayErrorStatusCode(err.StatusCode)
+}
+
+func buildClientFacingRelayOpenAIError(err *types.NewAPIError) types.OpenAIError {
+	if !isUpstreamClientFacingRelayError(err) {
+		return err.ToOpenAIError()
+	}
+	openaiErr := err.ToOpenAIError()
+	openaiErr.Message = relayErrorMessageForClient(err)
+	if openaiErr.Message == "" {
+		openaiErr.Message = string(err.GetErrorType())
+	}
+	return openaiErr
+}
+
+func buildClientFacingRelayClaudeError(err *types.NewAPIError) types.ClaudeError {
+	if !isUpstreamClientFacingRelayError(err) {
+		return err.ToClaudeError()
+	}
+	claudeErr := err.ToClaudeError()
+	if openaiErr, ok := err.RelayError.(types.OpenAIError); ok && openaiErr.Type != "" {
+		claudeErr.Type = openaiErr.Type
+	}
+	claudeErr.Message = relayErrorMessageForClient(err)
+	if claudeErr.Message == "" {
+		claudeErr.Message = string(err.GetErrorType())
+	}
+	return claudeErr
+}
+
+func relayErrorMessageForClient(err *types.NewAPIError) string {
+	if err == nil {
+		return ""
+	}
+	if operation_setting.GetRelayErrorSetting().MaskSensitive {
+		return err.MaskSensitiveError()
+	}
+	return err.Error()
+}
+
+func isUpstreamClientFacingRelayError(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}

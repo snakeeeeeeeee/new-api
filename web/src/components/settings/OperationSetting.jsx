@@ -24,6 +24,7 @@ import SettingsHeaderNavModules from '../../pages/Setting/Operation/SettingsHead
 import SettingsSidebarModulesAdmin from '../../pages/Setting/Operation/SettingsSidebarModulesAdmin';
 import SettingsSensitiveWords from '../../pages/Setting/Operation/SettingsSensitiveWords';
 import SettingsLog from '../../pages/Setting/Operation/SettingsLog';
+import SettingsRelayError from '../../pages/Setting/Operation/SettingsRelayError';
 import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring';
 import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
@@ -64,6 +65,11 @@ const OperationSetting = () => {
     /* 日志设置 */
     LogConsumeEnabled: false,
     LogConsumeExcludedUserIDs: '',
+
+    /* 错误响应设置 */
+    'relay_error_setting.passthrough_enabled': false,
+    'relay_error_setting.passthrough_status_codes': '400,422',
+    'relay_error_setting.mask_sensitive': true,
 
     /* 监控设置 */
     ChannelDisableThreshold: 0,
@@ -142,6 +148,10 @@ const OperationSetting = () => {
         {/* 日志设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsLog options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* 错误响应设置 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsRelayError options={inputs} refresh={onRefresh} />
         </Card>
         {/* 监控设置 */}
         <Card style={{ marginTop: '10px' }}>

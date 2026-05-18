@@ -1,3 +1,27 @@
+# Relay Error Passthrough Settings
+
+## Requirements
+- 默认关闭上游错误透传；启用后默认透传 `400,422`，用于调用方可修复的参数、上下文和工具调用错误。
+- 继续隐藏 `401/403/429/5xx`，避免暴露上游渠道、密钥、账号和内部路由信息。
+- 透传时保留 OpenAI/Claude 原响应协议，只对 message 执行可配置脱敏。
+- 配置需要通过运营设置可见、可保存，并在运行时通过 `config.GlobalConfig` 生效。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 新增 `relay_error_setting` config 模块 | 符合现有分层配置模式，默认值自动导出到 `/api/option/` |
+| 只对 `OpenAIError` / `ClaudeError` 类型按状态码透传 | 限定为上游响应错误，本地计费、渠道选择、转换等内部错误继续按旧逻辑 |
+| 透传 message 用 `MaskSensitiveError()` / `Error()` | 保留 request id 增强后的错误文本，同时默认执行现有敏感信息脱敏 |
+| Claude 格式下 OpenAIError 也优先保留上游 `error.type` | Claude 原生 400 经过通用错误解析后可能表现为 OpenAIError，需要避免 type 退化为 `<nil>` |
+| UI 放在日志设置和监控设置之间 | 错误响应属于运营排障行为，位置贴近日志与监控 |
+
+## Verification Findings
+- Go 单测覆盖默认关闭时 400 包装、启用后 400/422 透传、Claude `tool_use/tool_result` message、429/5xx 包装、关闭透传、脱敏开关和非法状态码拒绝。
+- Docker dev 中 root API `/api/option/` 验证确认默认值可见，修改后刷新仍可见，非法 `400,abc` 被拒绝。
+- 验证结束后已清理临时 dev DB option 行和 root access token。
+
+---
+
 # Claude Large Context Relay Profiling
 
 ## Requirements
@@ -331,6 +355,15 @@
 ## Horizon Investigation
 
 ## 15m Sustained Load Findings
+# Relay Error Passthrough Settings Findings
+
+- Existing relay errors use `types.NewAPIError`; upstream OpenAI/Claude-style errors are wrapped for clients by `controller/relay.go`.
+- `service.RelayErrorHandler` already preserves upstream status code and parses common error JSON into `types.OpenAIError`.
+- Operation settings can use namespaced `config.GlobalConfig` modules, and `/api/option` already exports those keys.
+- Existing `operation_setting.ParseHTTPStatusCodeRanges` and `HttpStatusCodeRulesInput` cover the required status-code syntax for backend validation and UI.
+
+---
+
 - Local sustained run used fake OpenAI-compatible streaming upstream with no usage, `concurrency=20`, `body-size=50KB`, `response-size=200KB`, duration `900s`.
 - Result: `17803 / 17803` succeeded, with `status_503=0`, `system_cpu_overloaded=0`, and `errors=0`.
 - Consume logs for the formal 15m window all had `completion_tokens=100836`, proving the response-side usage fallback path was hit rather than bypassed.

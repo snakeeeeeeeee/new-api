@@ -1,3 +1,30 @@
+# Session: 2026-05-18 Relay Error Passthrough Settings
+
+## Scope
+- 为 relay 上游错误新增可配置透传策略，默认关闭，启用后默认透传 400/422，运营设置增加管理 UI。
+
+## Progress
+- 已新增 `relay_error_setting` 后端配置，默认关闭、状态码 `400,422`、敏感信息脱敏开启。
+- 已更新 relay 客户端错误包装逻辑：命中配置的上游 OpenAI/Claude 错误按原协议和原状态码返回，未命中继续包装为通用 service unavailable。
+- 已补充 Claude 格式透传时的 `type` 保留逻辑：通用上游错误解析为 OpenAIError 后，Claude 响应仍优先使用上游 `error.type`。
+- 已新增运营设置「错误响应设置」卡片。
+
+## Verification
+- `go test ./controller -run 'RelayError|RelayErrorSetting|AggregateGroupStrategyOptions' -count=1`: passed.
+- `go test ./setting/operation_setting -count=1`: passed.
+- `go test ./controller ./service ./setting/operation_setting ./model -count=1`: passed.
+- `git diff --check`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `docker compose -f docker-compose-dev.yml up -d --build`: passed; `new-api-dev` healthy.
+- `curl -fsS http://localhost:3001/api/status`: passed.
+- Root API `/api/option/` verification passed: defaults visible, updates persisted after refresh, invalid `400,abc` rejected.
+- Dev DB cleanup completed after API verification: temporary relay error option rows removed and root access token restored to NULL.
+
+## Errors
+- First API verification cleanup used incorrect SQL quoting in a shell `trap`, leaving temporary option rows until manually restored. Fixed by rerunning cleanup with properly quoted SQL and confirming option count is 0.
+
+---
+
 # Session: 2026-05-07 Claude Large Context Relay Profiling
 
 ## Scope

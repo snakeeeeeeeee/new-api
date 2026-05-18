@@ -8,12 +8,14 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBuildClientFacingOpenAIError(t *testing.T) {
+	withRelayErrorSetting(t, false, "400,422", true)
 	apiErr := types.NewOpenAIError(assertErr("upstream claude provider returned 429"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
 
 	got := buildClientFacingOpenAIError(apiErr)
@@ -27,6 +29,7 @@ func TestBuildClientFacingOpenAIError(t *testing.T) {
 }
 
 func TestBuildClientFacingClaudeError(t *testing.T) {
+	withRelayErrorSetting(t, false, "400,422", true)
 	apiErr := types.WithClaudeError(types.ClaudeError{
 		Message: "upstream vendor example.com failed",
 		Type:    "upstream_error",
@@ -45,6 +48,99 @@ func TestShouldWrapClientFacingRelayError_FalseForLocalErrors(t *testing.T) {
 	apiErr := types.NewErrorWithStatusCode(assertErr("model ratio not set"), types.ErrorCodeModelPriceError, http.StatusInternalServerError)
 
 	require.False(t, shouldWrapClientFacingRelayError(apiErr))
+}
+
+func TestShouldWrapClientFacingRelayError_DefaultDisabledWraps400(t *testing.T) {
+	setting := operation_setting.GetRelayErrorSetting()
+	original := *setting
+	*setting = operation_setting.RelayErrorSetting{
+		PassthroughEnabled:     false,
+		PassthroughStatusCodes: "400,422",
+		MaskSensitive:          true,
+	}
+	t.Cleanup(func() {
+		*setting = original
+	})
+
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "prompt is too long: 202805 tokens > 200000 maximum",
+		Type:    "invalid_request_error",
+		Code:    "invalid_request",
+	}, http.StatusBadRequest)
+
+	require.True(t, shouldWrapClientFacingRelayError(apiErr))
+	require.Equal(t, clientFacingRelayErrorMessage, buildClientFacingOpenAIError(apiErr).Message)
+	require.False(t, operation_setting.ShouldPassthroughRelayErrorStatusCode(http.StatusBadRequest))
+}
+
+func TestShouldWrapClientFacingRelayError_PassthroughEnabled400And422(t *testing.T) {
+	withRelayErrorSetting(t, true, "400,422", true)
+
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "prompt is too long: 202805 tokens > 200000 maximum",
+		Type:    "invalid_request_error",
+		Code:    "invalid_request",
+	}, http.StatusBadRequest)
+
+	require.False(t, shouldWrapClientFacingRelayError(apiErr))
+	got := buildClientFacingRelayOpenAIError(apiErr)
+	require.Equal(t, "prompt is too long: 202805 tokens > 200000 maximum", got.Message)
+	require.Equal(t, "invalid_request_error", got.Type)
+	require.Equal(t, "invalid_request", got.Code)
+
+	claudeErr := types.WithClaudeError(types.ClaudeError{
+		Message: "messages.46: tool_use ids were found without tool_result blocks immediately after",
+		Type:    "invalid_request_error",
+	}, http.StatusBadRequest)
+
+	require.False(t, shouldWrapClientFacingRelayError(claudeErr))
+	claudeGot := buildClientFacingRelayClaudeError(claudeErr)
+	require.Contains(t, claudeGot.Message, "tool_use ids were found without tool_result")
+	require.Equal(t, "invalid_request_error", claudeGot.Type)
+
+	parsedClaudeUpstreamErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "unexpected `tool_use_id` found in `tool_result` blocks",
+		Type:    "invalid_request_error",
+		Code:    nil,
+	}, http.StatusBadRequest)
+	parsedClaudeGot := buildClientFacingRelayClaudeError(parsedClaudeUpstreamErr)
+	require.Contains(t, parsedClaudeGot.Message, "tool_use_id")
+	require.Equal(t, "invalid_request_error", parsedClaudeGot.Type)
+
+	unprocessableErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "invalid JSON schema for tool",
+		Type:    "invalid_request_error",
+		Code:    "invalid_request",
+	}, http.StatusUnprocessableEntity)
+	require.False(t, shouldWrapClientFacingRelayError(unprocessableErr))
+}
+
+func TestShouldWrapClientFacingRelayError_WrapsWhenDisabledOrStatusNotAllowed(t *testing.T) {
+	withRelayErrorSetting(t, true, "400,422", true)
+
+	rateLimitErr := types.NewOpenAIError(assertErr("upstream capacity exceeded"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	require.True(t, shouldWrapClientFacingRelayError(rateLimitErr))
+	require.Equal(t, clientFacingRelayErrorMessage, buildClientFacingOpenAIError(rateLimitErr).Message)
+
+	serverErr := types.NewOpenAIError(assertErr("upstream internal error"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
+	require.True(t, shouldWrapClientFacingRelayError(serverErr))
+
+	withRelayErrorSetting(t, false, "400,422", true)
+	badRequestErr := types.NewOpenAIError(assertErr("prompt is too long"), types.ErrorCodeBadResponseStatusCode, http.StatusBadRequest)
+	require.True(t, shouldWrapClientFacingRelayError(badRequestErr))
+}
+
+func TestBuildClientFacingRelayErrorHonorsMaskSensitiveSetting(t *testing.T) {
+	withRelayErrorSetting(t, true, "400", true)
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "upstream https://api.vendor.example/v1 failed",
+		Type:    "invalid_request_error",
+		Code:    "invalid_request",
+	}, http.StatusBadRequest)
+	require.Equal(t, "upstream https://***.example/*** failed", buildClientFacingRelayOpenAIError(apiErr).Message)
+
+	withRelayErrorSetting(t, true, "400", false)
+	require.Equal(t, "upstream https://api.vendor.example/v1 failed", buildClientFacingRelayOpenAIError(apiErr).Message)
 }
 
 func TestProcessChannelErrorRecordsStreamState(t *testing.T) {
@@ -119,6 +215,20 @@ func TestProcessChannelErrorMarksInternalRetryLog(t *testing.T) {
 
 func assertErr(msg string) error {
 	return &staticErr{msg: msg}
+}
+
+func withRelayErrorSetting(t *testing.T, passthroughEnabled bool, passthroughStatusCodes string, maskSensitive bool) {
+	t.Helper()
+	setting := operation_setting.GetRelayErrorSetting()
+	original := *setting
+	*setting = operation_setting.RelayErrorSetting{
+		PassthroughEnabled:     passthroughEnabled,
+		PassthroughStatusCodes: passthroughStatusCodes,
+		MaskSensitive:          maskSensitive,
+	}
+	t.Cleanup(func() {
+		*setting = original
+	})
 }
 
 type staticErr struct {

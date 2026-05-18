@@ -1,3 +1,43 @@
+# Task Plan: Relay Error Passthrough Settings
+
+## Goal
+新增全局错误响应设置，让上游 400/422 等调用方可修复的错误透传给下游，同时继续隐藏 429/5xx 和权限/渠道类上游细节。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+### Phase 1: Backend Settings
+- [x] 新增 `relay_error_setting` 配置模块。
+- [x] 接入 option 导出、更新和状态码校验。
+- **Status:** complete
+
+### Phase 2: Relay Error Behavior
+- [x] 按配置决定是否包装上游 OpenAI/Claude 错误。
+- [x] 透传时保持原 HTTP 状态和响应协议，并按配置脱敏。
+- **Status:** complete
+
+### Phase 3: Admin UI
+- [x] 运营设置新增「错误响应设置」卡片。
+- [x] 复用状态码规则输入组件。
+- **Status:** complete
+
+### Phase 4: Verification
+- [x] Focused Go tests passed.
+- [x] Planned Go package tests passed.
+- [x] Frontend build.
+- [x] Docker dev build and smoke verification.
+- [x] Root API option read/update/refresh verification.
+- **Status:** complete
+
+## Key Constraints
+- 默认关闭透传；启用后默认状态码为 `400,422`。
+- 不做渠道级覆盖。
+- 不暴露敏感信息；默认启用脱敏。
+- 不修改无关未跟踪 probe/tmp 文件。
+
+---
+
 # Task Plan: Claude Large Context Relay Profiling
 
 ## Goal
