@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -76,15 +77,30 @@ func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark s
 func rateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
 	if common.RedisEnabled {
 		return func(c *gin.Context) {
+			if shouldSkipGlobalAPIRateLimit(c, mark) {
+				c.Next()
+				return
+			}
 			redisRateLimiter(c, maxRequestNum, duration, mark)
 		}
 	} else {
 		// It's safe to call multi times.
 		inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
 		return func(c *gin.Context) {
+			if shouldSkipGlobalAPIRateLimit(c, mark) {
+				c.Next()
+				return
+			}
 			memoryRateLimiter(c, maxRequestNum, duration, mark)
 		}
 	}
+}
+
+func shouldSkipGlobalAPIRateLimit(c *gin.Context, mark string) bool {
+	if c == nil || mark != "GA" || c.Request == nil || c.Request.URL == nil {
+		return false
+	}
+	return c.Request.URL.Path == "/api/request_dump" || strings.HasPrefix(c.Request.URL.Path, "/api/request_dump/")
 }
 
 func GlobalWebRateLimit() func(c *gin.Context) {

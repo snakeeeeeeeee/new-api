@@ -49,7 +49,7 @@ import { API, copy, showError, showSuccess } from '../../helpers';
 
 const { Text, Title } = Typography;
 
-const POLL_INTERVAL_MS = 1000;
+const POLL_INTERVAL_MS = 3000;
 const MAX_LOCAL_EVENTS = 500;
 
 const defaultForm = {
@@ -100,12 +100,18 @@ const RequestDumpPage = () => {
   const [search, setSearch] = useState('');
   const consoleRef = useRef(null);
   const lastEventIdRef = useRef(0);
+  const enabledRef = useRef(false);
+  const pausedRef = useRef(false);
+  const visibleRef = useRef(typeof document === 'undefined' || document.visibilityState === 'visible');
+  const enabled = status?.enabled === true;
 
   const loadStatus = async () => {
     try {
       const res = await API.get('/api/request_dump/status');
       if (res.data.success) {
-        setStatus(res.data.data);
+        const nextStatus = res.data.data;
+        setStatus(nextStatus);
+        enabledRef.current = nextStatus?.enabled === true;
       }
     } catch (error) {
       showError(error.message || t('加载失败'));
@@ -113,7 +119,7 @@ const RequestDumpPage = () => {
   };
 
   const fetchEvents = async () => {
-    if (paused) return;
+    if (pausedRef.current || !enabledRef.current || !visibleRef.current) return;
     try {
       const res = await API.get('/api/request_dump/events', {
         params: { after_id: lastEventIdRef.current, limit: 100 },
@@ -123,7 +129,9 @@ const RequestDumpPage = () => {
       }
       const payload = res.data.data || {};
       const nextEvents = payload.events || [];
-      setStatus(payload.status || null);
+      const nextStatus = payload.status || null;
+      setStatus(nextStatus);
+      enabledRef.current = nextStatus?.enabled === true;
       if (nextEvents.length === 0) {
         return;
       }
@@ -139,13 +147,35 @@ const RequestDumpPage = () => {
 
   useEffect(() => {
     loadStatus();
-    fetchEvents();
   }, []);
 
   useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+
+  useEffect(() => {
+    enabledRef.current = status?.enabled === true;
+  }, [status?.enabled]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      visibleRef.current = document.visibilityState === 'visible';
+      if (visibleRef.current && enabledRef.current && !pausedRef.current) {
+        fetchEvents();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    if (!enabled || paused) {
+      return undefined;
+    }
+    fetchEvents();
     const timer = window.setInterval(fetchEvents, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [paused]);
+  }, [enabled, paused]);
 
   useEffect(() => {
     if (following && consoleRef.current) {
@@ -190,6 +220,7 @@ const RequestDumpPage = () => {
       const res = await API.post('/api/request_dump/start', payload);
       if (res.data.success) {
         setStatus(res.data.data);
+        enabledRef.current = res.data.data?.enabled === true;
         lastEventIdRef.current = 0;
         setEvents([]);
         showSuccess(t('Dump 已启动'));
@@ -209,6 +240,7 @@ const RequestDumpPage = () => {
       const res = await API.post('/api/request_dump/stop');
       if (res.data.success) {
         setStatus(res.data.data);
+        enabledRef.current = res.data.data?.enabled === true;
         showSuccess(t('Dump 已停止'));
       } else {
         showError(res.data.message || t('停止失败'));
@@ -225,6 +257,7 @@ const RequestDumpPage = () => {
       const res = await API.post('/api/request_dump/clear');
       if (res.data.success) {
         setStatus(res.data.data);
+        enabledRef.current = res.data.data?.enabled === true;
         setEvents([]);
         lastEventIdRef.current = 0;
         showSuccess(t('Console 已清空'));
@@ -248,8 +281,6 @@ const RequestDumpPage = () => {
   const updateField = (field, value) => {
     setFormValues((current) => ({ ...current, [field]: value }));
   };
-
-  const enabled = status?.enabled === true;
 
   return (
     <div className='px-2 py-4 md:px-6'>
