@@ -5,15 +5,19 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
 func abortWithOpenAiMessage(c *gin.Context, statusCode int, message string, code ...types.ErrorCode) {
 	codeStr := ""
+	errorCode := types.ErrorCodeBadRequestBody
 	if len(code) > 0 {
-		codeStr = string(code[0])
+		errorCode = code[0]
+		codeStr = string(errorCode)
 	}
+	service.DumpRelayErrorIfNeeded(c, types.NewErrorWithStatusCode(fmt.Errorf("%s", message), errorCode, statusCode, types.ErrOptionWithSkipRetry()))
 	userId := c.GetInt("id")
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{

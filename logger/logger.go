@@ -94,6 +94,13 @@ func LogDebug(ctx context.Context, msg string, args ...any) {
 	}
 }
 
+func LogDebugForce(ctx context.Context, msg string, args ...any) {
+	if len(args) > 0 {
+		msg = fmt.Sprintf(msg, args...)
+	}
+	logHelper(ctx, loggerDebug, msg)
+}
+
 func logHelper(ctx context.Context, level string, msg string) {
 	id := ctx.Value(common.RequestIdKey)
 	if id == nil {

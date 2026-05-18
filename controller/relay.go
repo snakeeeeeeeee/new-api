@@ -87,6 +87,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	defer func() {
 		if newAPIError != nil {
+			service.DumpRelayErrorIfNeeded(c, newAPIError)
 			if common.GetContextKeyString(c, constant.ContextKeyAggregateGroup) != "" {
 				logger.LogError(c, buildAggregateRelayErrorLog(c, newAPIError))
 			} else {
@@ -217,6 +218,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		addUsedChannel(c, channel.Id)
+		service.DumpRawRequestIfNeeded(c)
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
 			// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
@@ -573,6 +575,7 @@ func buildAggregateRelayErrorLog(c *gin.Context, err *types.NewAPIError) string 
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, internalRetry ...bool) {
+	service.DumpRelayErrorIfNeeded(c, err)
 	if common.GetContextKeyString(c, constant.ContextKeyAggregateGroup) != "" {
 		logger.LogError(c, buildAggregateChannelErrorLog(c, channelError, err))
 		service.RecordAggregateRouteRPMFailure(c, c.GetString("original_model"))

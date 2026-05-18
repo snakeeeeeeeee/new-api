@@ -1,3 +1,40 @@
+# Dump 分析与内置 Console
+
+## Requirements
+- 管理员可以临时抓取指定用户请求，并在服务日志和页面 Console 查看。
+- Dump 规则必须打开立即生效，停止后不再新增事件。
+- 请求内容不落库、不进 Redis；页面 Console 仅进程内 ring buffer。
+- 请求原文需要完整保留，但 multipart、文件、音频、图片、视频、octet-stream 默认跳过 body。
+- Header/URL 需要支持打印，但凭证类 header 固定过滤。
+- 支持 grep 式关键词过滤和日志级别。
+- Dump 任意异常不能影响原始业务。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| Dump rule/status/events 放在 `service` 进程内内存 | 满足临时观察、不持久化、不引入 Redis/DB 风险 |
+| 关键词过滤在后端执行 | 类似服务器 grep，只输出命中的 request_dump，减少 Console 噪音 |
+| 未命中关键词不计入 `max_count` | `max_count` 表示真正打印的命中数，而不是扫描过的请求数 |
+| 关键词匹配已采集字段 | 覆盖 URL、Header、raw body、upstream body、错误信息、模型、聚合分组、渠道等 |
+| `debug` 级别强制输出 | Dump 是管理员显式观测动作，避免全局 Debug 关闭时“选择 debug 但无日志” |
+| 使用 rule generation 防止旧事件落入新规则 | stop/start 与请求并发时，保证关闭/重开语义清晰 |
+| `Token ID` 降为高级过滤 | 日常排查主要按用户、关键词、路径、模型过滤；Token ID 只是精确限定内部 token 记录 |
+
+## Verification Findings
+- 单元测试覆盖必填 user_ids、过滤命中/未命中、关闭/到期/max_count、ring buffer、敏感 header、body 可复用、unsupported content type、body too large、error_only、关键词 body/header/error/upstream 匹配、大小写匹配和 log_level 校验。
+- Docker dev 仿真通过真实 `/v1/chat/completions` 和 `/v1/audio/transcriptions` 网关请求验证：
+  - 未开启 Dump 不产生事件，正常 relay 响应可用。
+  - 开启后 raw/upstream 事件可见，敏感 header 被过滤，成功响应文本不变。
+  - 关键词未命中不打印也不计数；关键词命中后写 Console 和服务日志。
+  - `log_level=warn` 产生 `[WARN] request_dump` 服务日志。
+  - 关键词可以命中转换后的 upstream body，并只计一次 `max_count`。
+  - stop 后下一次请求无新增事件。
+  - `error_only` 捕获 relay_error 且错误响应语义不变。
+  - multipart/audio body 被跳过，只记录 metadata 和 `skip_reason=unsupported_content_type`。
+  - 无 `request_dump` Redis key；临时 DB/Redis 数据清理后 `new-api-dev` 保持 healthy。
+
+---
+
 # 聚合分组百分比智能降权
 
 ## Requirements
@@ -473,3 +510,14 @@
 - 前端日志看板使用 Semi UI Card/Tabs、VChart 和 CardTable，耗时区应复用这些模式。
 - `use_time` 是秒级字段；本轮只统计最终成功请求，不采集 TTFT。
 - service 测试环境此前未初始化 logGroupCol，dashboard 查询入口现在会确保日志列名已初始化。
+
+---
+
+# Dump 分析 Findings
+
+- `/api` 路由已使用 `middleware.BodyStorageCleanup()`，relay `/v1` 路由也会清理 body storage。
+- `controller.Relay` 在解析请求后通过 `relaycommon.GenRelayInfo` 得到 user/token/model 信息，并在 retry 循环中用 `common.GetBodyStorage(c)` 重置 `c.Request.Body`。
+- `common.GetBodyStorage(c)` 返回可重复读取的 `BodyStorage`，`Bytes()`/`Seek()` 路径可用于旁路读取，不应直接 `io.ReadAll(c.Request.Body)`。
+- Text relay 的上游请求 body 在 `relay/compatible_handler.go` 转换后、`adaptor.DoRequest` 前可见；其他格式也有各自 handler，v1 先覆盖 OpenAI-compatible text 的 upstream dump，raw/error 覆盖所有 relay 格式。
+- 管理员菜单在 `web/src/components/layout/SiderBar.jsx`，路由在 `web/src/App.jsx`。
+- 日志输出可复用 `logger.LogInfo(ctx, "request_dump ...")`，其会输出到 stdout/日志文件。

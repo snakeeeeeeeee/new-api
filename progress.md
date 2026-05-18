@@ -1,3 +1,35 @@
+# Session: 2026-05-19 Dump 分析与内置 Console
+
+## Scope
+- 新增管理员 Dump 分析页面、内存 Console、服务日志输出、关键词过滤、日志级别和真实 Docker dev 仿真验证。
+
+## Progress
+- 已新增 `service/request_dump.go` 进程内 dump 服务，支持 rule/status/events、过期、max_count、ring buffer、关键词匹配、日志级别、敏感 header 过滤、unsupported content type 跳过 body。
+- 已新增 admin-only API：`/api/request_dump/status/start/stop/events/clear`。
+- 已在 relay raw/upstream/error 路径挂入 Dump 旁路逻辑；所有入口 recover，使用 `common.GetBodyStorage(c)` 读取 body，不直接消费 `c.Request.Body`。
+- 已新增 `logger.LogDebugForce`，确保管理员选择 `debug` 级别时 request_dump 日志仍会输出。
+- 已新增 `/console/request-dump` 管理员页面和菜单入口；Token ID 放入高级过滤，新增关键词和日志级别。
+- 已新增/扩展 `2dev/script/simulate_request_dump.py` 真实仿真脚本。
+
+## Verification
+- `go test ./service -run RequestDump -count=1`: passed.
+- `go test ./controller -run RequestDump -count=1`: passed.
+- `go test ./...`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `python3 -m py_compile 2dev/script/simulate_request_dump.py`: passed.
+- `docker build -t new-api-local:dev .`: passed.
+- `docker compose -f docker-compose-dev.yml up -d --force-recreate new-api-dev postgres-dev redis-dev`: passed; `new-api-dev` healthy.
+- `python3 2dev/script/simulate_request_dump.py`: passed; verified disabled/no events, enabled raw/upstream capture, response unchanged, keyword grep behavior, WARN service logs, upstream-body keyword matching, stop immediacy, error_only relay_error, multipart body skip, no Redis dump keys, app healthy.
+- Cleanup verification: temporary `rdump%` users/channels/tokens/aggregate groups/options all `0`; Redis `*request_dump*` and `*rdump*` keys `0`; `new-api-dev` healthy.
+- `git diff --check`: passed.
+
+## Errors
+- First Docker simulation failed because `docker logs` WARN output was on stderr and script only read stdout; fixed `run_cmd(..., merge_stderr=True)` for log assertions.
+- Multipart simulation initially compared full response text including dynamic request id; fixed by normalizing request id.
+- Multipart/audio request can fail before raw_request is emitted and surface as relay_error with `skip_reason=unsupported_content_type`; adjusted validation to accept any event stage as long as body is skipped and response semantics remain unchanged.
+
+---
+
 # Session: 2026-05-19 聚合分组百分比智能降权
 
 ## Scope
@@ -685,3 +717,36 @@
   - `go test ./controller ./model -count=1`
   - `cd web && bun run build`
   - `git diff --check`
+
+---
+
+# Session: Dump 分析与内置 Console
+
+## Scope
+- 按用户计划实现 request dump 后端、前端、测试和 Docker dev 验证。
+
+## Progress
+- 已读取 planning-with-files 与 UI 技能说明。
+- 已确认工作树存在无关未跟踪文件，不触碰。
+- 已确认 body storage 与 relay retry 结构，Dump 必须用旁路读取并 recover。
+
+
+## Dump 分析 Implementation Log
+- 后端新增 `service/request_dump.go`、`controller/request_dump.go` 与 `/api/request_dump/*` admin API。
+- relay raw/error/upstream 阶段已接入旁路 Dump；raw body 只走 `common.GetBodyStorage(c)`。
+- 单元测试新增 `service/request_dump_test.go` 与 `controller/request_dump_test.go`。
+- 前端新增 `/console/request-dump` 页面和管理员菜单。
+
+## Dump 分析 Errors
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-05-19 04:56 CST | `bun run build` 失败：Semi UI 不导出 `Alert` | RequestDump 页面使用 `Alert` | 改用项目已有 `Banner` 组件 |
+
+## Dump 分析 Test Results
+| Test | Expected | Actual | Status |
+|------|----------|--------|--------|
+| `go test ./service -run RequestDump -count=1` | 通过 | 通过 | ✓ |
+| `go test ./controller -run RequestDump -count=1` | 通过 | 通过 | ✓ |
+| `go test ./service ./controller ./middleware ./relay -run 'RequestDump|TestNonExistent' -count=1` | 编译和相关测试通过 | 通过 | ✓ |
+| `go test ./...` | 通过 | 通过 | ✓ |
+| `cd web && bun run build` | 通过 | 通过（既有 Browserslist/lottie/chunk 警告） | ✓ |

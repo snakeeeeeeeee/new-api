@@ -50,6 +50,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     aggregate_group: true,
     invite_code: true,
     log_dashboard: true,
+    request_dump: true,
     models: true,
     deployment: true,
     redemption: true,

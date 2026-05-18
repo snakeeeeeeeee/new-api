@@ -165,6 +165,7 @@ func GeminiHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 
 		logger.LogDebug(c, "Gemini request body: "+string(jsonData))
 
+		service.DumpUpstreamRequestIfNeeded(c, jsonData)
 		requestBody = bytes.NewReader(jsonData)
 	}
 

@@ -223,6 +223,15 @@ func SetApiRouter(router *gin.Engine) {
 			ratioSyncRoute.GET("/channels", controller.GetSyncableChannels)
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
 		}
+		requestDumpRoute := apiRouter.Group("/request_dump")
+		requestDumpRoute.Use(middleware.AdminAuth())
+		{
+			requestDumpRoute.GET("/status", controller.GetRequestDumpStatus)
+			requestDumpRoute.POST("/start", controller.StartRequestDump)
+			requestDumpRoute.POST("/stop", controller.StopRequestDump)
+			requestDumpRoute.GET("/events", controller.GetRequestDumpEvents)
+			requestDumpRoute.POST("/clear", controller.ClearRequestDumpEvents)
+		}
 		channelRoute := apiRouter.Group("/channel")
 		channelRoute.Use(middleware.AdminAuth())
 		{

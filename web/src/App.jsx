@@ -48,6 +48,7 @@ import Playground from './pages/Playground';
 import Subscription from './pages/Subscription';
 import AggregateGroupPage from './pages/AggregateGroup';
 import LogDashboardPage from './pages/LogDashboard';
+import RequestDumpPage from './pages/RequestDump';
 import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Setup from './pages/Setup';
@@ -179,6 +180,14 @@ function App() {
           element={
             <AdminRoute>
               <LogDashboardPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/request-dump'
+          element={
+            <AdminRoute>
+              <RequestDumpPage />
             </AdminRoute>
           }
         />

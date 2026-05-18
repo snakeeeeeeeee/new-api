@@ -1,3 +1,52 @@
+# Task Plan: Dump 分析与内置 Console
+
+## Goal
+新增管理员“Dump 分析”页面和 admin-only API，临时抓取指定用户请求并输出到服务日志和内存 Console；支持 grep 式关键词过滤和日志级别选择。Dump 必须旁路失败，不能改变用户请求、鉴权、计费、路由、重试、上游转发或业务响应。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+### Phase 1: Backend Dump Service
+- [x] 新增进程内 Dump rule/status/events 服务、ring buffer、过期/max_count 自动停用。
+- [x] 新增 admin-only status/start/stop/events/clear API。
+- [x] 过滤敏感 Header，跳过 multipart/audio/image/video/octet-stream body。
+- [x] 新增关键词匹配、大小写选项和日志级别。
+- **Status:** complete
+
+### Phase 2: Relay Hooks
+- [x] relay 分发后记录 raw_request。
+- [x] 上游转换后可选记录 upstream_request。
+- [x] relay_error 记录状态码、错误码、渠道和必要 raw body。
+- [x] Dump 入口 recover，失败只写诊断日志。
+- **Status:** complete
+
+### Phase 3: Frontend
+- [x] 新增 `/console/request-dump` 管理员页面和侧边栏入口。
+- [x] 规则表单支持用户 ID、模型、路径、聚合分组、关键词、日志级别和打印开关。
+- [x] Token ID 放入高级可选过滤。
+- [x] Console 支持轮询、暂停、跟随、清空、复制和本地搜索。
+- **Status:** complete
+
+### Phase 4: Verification
+- [x] `go test ./...`。
+- [x] `cd web && bun run build`。
+- [x] `docker build -t new-api-local:dev .`。
+- [x] `docker compose -f docker-compose-dev.yml up -d --force-recreate new-api-dev postgres-dev redis-dev`。
+- [x] `python3 2dev/script/simulate_request_dump.py` 真实网关仿真通过。
+- [x] 清理临时 DB/Redis 数据，确认 `new-api-dev` healthy。
+- **Status:** complete
+
+## Key Constraints
+- Dump 不落 DB，不写 Redis；Console 只保留当前进程内 ring buffer。
+- `user_ids` 必填，其他过滤均可选。
+- 关键词是后端过滤：未命中不写服务日志、不进 Console、不消耗 `max_count`。
+- `debug` 日志级别由管理员显式选择时强制输出 request_dump，不受全局 Debug 开关影响。
+- Token ID 是内部 API Token 记录 ID，仅用于高级精确过滤。
+- 关闭或重新启动规则后，旧规则构建中的事件不会写入新规则 Console。
+
+---
+
 # Task Plan: 聚合分组百分比智能降权
 
 ## Goal
@@ -606,3 +655,50 @@ Phase 3 complete
 - 不新增接口、不迁移数据库。
 - 不修改受保护项目标识。
 - JSON marshal/unmarshal 遵循 common/json.go。
+
+---
+
+# Task Plan: Dump 分析与内置 Console
+
+## Goal
+实现管理员临时请求 Dump：按用户/令牌等条件旁路打印请求 URL、header、JSON 原文和可选上游 body 到服务日志与页面 Console，且不破坏用户原始请求、计费、路由、重试或业务响应。
+
+## Current Phase
+Phase 5 in progress
+
+## Phases
+### Phase 1: Discovery & Design Anchoring
+- [x] 读取 AGENTS.md 约束、relay 路由、body storage、admin 菜单和日志方式。
+- [x] 记录实现入口与安全约束。
+
+### Phase 2: Backend
+- [x] 新增 request dump service：内存规则、计数、过期、ring buffer、header 过滤、content-type 跳过。
+- [x] 新增 admin-only controller/API/route。
+- [x] 在 relay raw/upstream/error 阶段接入旁路 Dump，确保失败不影响主流程。
+
+### Phase 3: Frontend
+- [x] 新增 `/console/request-dump` 页面。
+- [x] 新增管理员菜单“Dump 分析”。
+- [x] Console 支持轮询、暂停、清空、复制、搜索、自动滚动。
+
+### Phase 4: Tests
+- [x] 补服务与控制器单元测试。
+- [x] 补请求体可复读/不破坏业务的测试。
+
+### Phase 5: Verification
+- [x] `go test ./...`
+- [x] `cd web && bun run build`
+- [ ] `docker build -t new-api-local:dev .`
+- [ ] `docker compose -f docker-compose-dev.yml up -d --force-recreate new-api-dev postgres-dev redis-dev`
+- [ ] Docker dev 创建临时数据并真实验证 Dump 开启/关闭/错误/body 跳过/业务不变。
+
+## Key Constraints
+- Dump 只用当前进程内存，不落 DB，不进 Redis。
+- JSON marshal/unmarshal 必须用 `common.*`。
+- 不直接读空 `c.Request.Body`；只通过 `common.GetBodyStorage(c)`。
+- Dump 任何异常必须 recover 并旁路失败，不能改变业务响应。
+- Header 默认排除凭证类字段。
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+|-------|---------|------------|
