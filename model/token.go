@@ -262,6 +262,7 @@ func GetTokenById(id int) (*Token, error) {
 }
 
 func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
+	ensureCommonColumnsInitialized()
 	defer func() {
 		// Update Redis cache asynchronously on successful DB read
 		if shouldUpdateRedis(fromDB, err) && token != nil {
@@ -385,19 +386,21 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
-	if common.RedisEnabled {
-		gopool.Go(func() {
-			err := cacheIncrTokenQuota(key, int64(quota))
-			if err != nil {
-				common.SysLog("failed to increase token quota: " + err.Error())
-			}
-		})
-	}
 	if common.BatchUpdateEnabled {
 		addNewRecord(BatchUpdateTypeTokenQuota, tokenId, quota)
 		return nil
 	}
-	return increaseTokenQuota(tokenId, quota)
+	if err = increaseTokenQuota(tokenId, quota); err != nil {
+		return err
+	}
+	if common.RedisEnabled {
+		gopool.Go(func() {
+			if err := cacheIncrTokenQuota(key, int64(quota)); err != nil {
+				common.SysLog("failed to increase token quota: " + err.Error())
+			}
+		})
+	}
+	return nil
 }
 
 func increaseTokenQuota(id int, quota int) (err error) {
@@ -415,30 +418,50 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
-	if common.RedisEnabled {
+	if quota == 0 {
+		return nil
+	}
+	unlimitedQuota, err := decreaseTokenQuota(id, quota)
+	if err != nil {
+		return err
+	}
+	if common.RedisEnabled && !unlimitedQuota {
 		gopool.Go(func() {
-			err := cacheDecrTokenQuota(key, int64(quota))
-			if err != nil {
+			if err := cacheDecrTokenQuota(key, int64(quota)); err != nil {
 				common.SysLog("failed to decrease token quota: " + err.Error())
 			}
 		})
 	}
-	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeTokenQuota, id, -quota)
-		return nil
-	}
-	return decreaseTokenQuota(id, quota)
+	return nil
 }
 
-func decreaseTokenQuota(id int, quota int) (err error) {
-	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
+func decreaseTokenQuota(id int, quota int) (unlimitedQuota bool, err error) {
+	var token Token
+	if err := DB.Model(&Token{}).Select("unlimited_quota").Where("id = ?", id).First(&token).Error; err != nil {
+		return false, err
+	}
+	if token.UnlimitedQuota {
+		return true, DB.Model(&Token{}).Where("id = ?", id).Updates(
+			map[string]interface{}{
+				"used_quota":    gorm.Expr("used_quota + ?", quota),
+				"accessed_time": common.GetTimestamp(),
+			},
+		).Error
+	}
+	result := DB.Model(&Token{}).Where("id = ? AND remain_quota >= ?", id, quota).Updates(
 		map[string]interface{}{
 			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
 			"used_quota":    gorm.Expr("used_quota + ?", quota),
 			"accessed_time": common.GetTimestamp(),
 		},
-	).Error
-	return err
+	)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return false, ErrQuotaInsufficient
+	}
+	return false, nil
 }
 
 // CountUserTokens returns total number of tokens for the given user, used for pagination

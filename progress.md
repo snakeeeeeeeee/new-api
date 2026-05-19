@@ -1,3 +1,29 @@
+# Session: 2026-05-19 数据库原子扣费防超扣
+
+## Scope
+- 按用户确认的最小方案实现 DB 条件原子扣减，防止高并发下用户余额/token 余额扣成负数，并完成 Go 与 Docker dev 验证。
+
+## Progress
+- 已确认工作树存在历史未跟踪脚本/tmp/output 文件，本轮不触碰。
+- 已确认主要入口：`model.DecreaseUserQuota`、`model.DecreaseTokenQuota`、`service.BillingSession.shouldTrust`。
+- 已确认 service 测试已有 SQLite 内存 DB 初始化和 seed/readback helper，可复用扩展。
+- 已实现用户钱包 DB 条件原子扣减：余额不足返回 `model.ErrQuotaInsufficient`，不再走 BatchUpdate，DB 成功后才更新 Redis。
+- 已实现 token 有限额 DB 条件原子扣减；无限额 token 不因 `remain_quota` 不足失败。
+- 已关闭钱包普通请求 trust bypass。
+- 已补用户/token 不足、并发扣减、无限额 token 和 BillingSession 额度不足语义测试。
+
+## Verification
+- `go test ./model ./service -run 'Quota|Billing' -count=1`: passed.
+- `go test ./...`: passed.
+- `git diff --check`: passed.
+- `docker build -t new-api-local:dev .`: passed.
+- `docker compose -f docker-compose-dev.yml up -d --force-recreate new-api-dev postgres-dev redis-dev`: passed.
+- `curl -fsS http://localhost:3001/api/status`: passed.
+- `docker compose -f docker-compose-dev.yml ps new-api-dev`: healthy.
+- `docker compose -f docker-compose-dev.yml logs --tail 120 new-api-dev`: startup clean for this change.
+
+---
+
 # Session: 2026-05-19 Relay Error Passthrough Keyword Blocklist
 
 ## Scope

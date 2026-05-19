@@ -3,14 +3,20 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,6 +88,21 @@ func seedToken(t *testing.T, id int, userId int, key string, remainQuota int) {
 		Status:      common.TokenStatusEnabled,
 		RemainQuota: remainQuota,
 		UsedQuota:   0,
+	}
+	require.NoError(t, model.DB.Create(token).Error)
+}
+
+func seedUnlimitedToken(t *testing.T, id int, userId int, key string, remainQuota int) {
+	t.Helper()
+	token := &model.Token{
+		Id:             id,
+		UserId:         userId,
+		Key:            key,
+		Name:           "test_unlimited_token",
+		Status:         common.TokenStatusEnabled,
+		RemainQuota:    remainQuota,
+		UnlimitedQuota: true,
+		UsedQuota:      0,
 	}
 	require.NoError(t, model.DB.Create(token).Error)
 }
@@ -180,6 +201,124 @@ func countLogs(t *testing.T) int64 {
 	var count int64
 	model.LOG_DB.Model(&model.Log{}).Count(&count)
 	return count
+}
+
+func testGinContext() *gin.Context {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	return c
+}
+
+// ===========================================================================
+// Atomic quota decrement tests
+// ===========================================================================
+
+func TestDecreaseUserQuota_InsufficientDoesNotGoNegative(t *testing.T) {
+	truncate(t)
+	const userID = 101
+	seedUser(t, userID, 100)
+
+	err := model.DecreaseUserQuota(userID, 150)
+
+	require.ErrorIs(t, err, model.ErrQuotaInsufficient)
+	assert.Equal(t, 100, getUserQuota(t, userID))
+}
+
+func TestDecreaseUserQuota_ConcurrentDoesNotOversell(t *testing.T) {
+	truncate(t)
+	const userID = 102
+	const initialQuota = 10
+	const attempts = 100
+	seedUser(t, userID, initialQuota)
+
+	var success int64
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := model.DecreaseUserQuota(userID, 1)
+			if err == nil {
+				atomic.AddInt64(&success, 1)
+				return
+			}
+			require.ErrorIs(t, err, model.ErrQuotaInsufficient)
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, int64(initialQuota), success)
+	assert.Equal(t, 0, getUserQuota(t, userID))
+}
+
+func TestDecreaseTokenQuota_ConcurrentDoesNotOversell(t *testing.T) {
+	truncate(t)
+	const userID, tokenID = 103, 103
+	const initialRemain = 10
+	const attempts = 100
+	const tokenKey = "sk-token-concurrent"
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, tokenKey, initialRemain)
+
+	var success int64
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err := model.DecreaseTokenQuota(tokenID, tokenKey, 1)
+			if err == nil {
+				atomic.AddInt64(&success, 1)
+				return
+			}
+			require.ErrorIs(t, err, model.ErrQuotaInsufficient)
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, int64(initialRemain), success)
+	assert.Equal(t, 0, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, initialRemain, getTokenUsedQuota(t, tokenID))
+}
+
+func TestDecreaseTokenQuota_UnlimitedDoesNotRequireRemainQuota(t *testing.T) {
+	truncate(t)
+	const userID, tokenID = 104, 104
+	const tokenKey = "sk-token-unlimited"
+	seedUser(t, userID, 1000)
+	seedUnlimitedToken(t, tokenID, userID, tokenKey, 0)
+
+	require.NoError(t, model.DecreaseTokenQuota(tokenID, tokenKey, 500))
+
+	assert.Equal(t, 0, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, 500, getTokenUsedQuota(t, tokenID))
+}
+
+func TestNewBillingSession_ConcurrentWalletPreConsumeMapsInsufficientQuota(t *testing.T) {
+	truncate(t)
+	const userID, tokenID = 105, 105
+	const tokenKey = "sk-billing-concurrent"
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, tokenKey, 10000)
+
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:     userID,
+		TokenId:    tokenID,
+		TokenKey:   tokenKey,
+		UsingGroup: "default",
+	}
+
+	session := &BillingSession{
+		relayInfo: relayInfo,
+		funding:   &WalletFunding{userId: userID},
+	}
+	apiErr := session.preConsume(testGinContext(), 100)
+	require.NotNil(t, apiErr)
+	assert.Equal(t, types.ErrorCodeInsufficientUserQuota, apiErr.GetErrorCode())
+	assert.True(t, errors.Is(apiErr, model.ErrQuotaInsufficient), "expected quota sentinel, got %v", apiErr.Err)
+	assert.Equal(t, 0, getUserQuota(t, userID))
+	assert.Equal(t, 10000, getTokenRemainQuota(t, tokenID))
 }
 
 // ===========================================================================

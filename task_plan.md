@@ -1,3 +1,44 @@
+# Task Plan: 数据库原子扣费防超扣
+
+## Goal
+以最小改动防止高并发下用户钱包额度和 token 剩余额度被扣成负数。扣费准入以数据库条件原子更新为准；Redis 只做缓存更新；统计、日志和报表不纳入本阶段。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+### Phase 1: Discovery
+- [x] 确认用户余额、token 余额扣减入口和 BillingSession 信任旁路位置。
+- [x] 确认现有测试 DB 初始化方式与可复用 seed/readback helper。
+- **Status:** complete
+
+### Phase 2: Implementation
+- [x] 用户余额扣减改成 `quota >= amount` 条件原子更新。
+- [x] token 扣减改成有限额 token 的 `remain_quota >= amount` 条件原子更新。
+- [x] 余额扣减绕过 BatchUpdate，并在 DB 成功后再更新 Redis 缓存。
+- [x] 钱包普通请求关闭 trust bypass。
+- **Status:** complete
+
+### Phase 3: Tests
+- [x] 添加用户/token 不足与并发扣减单测。
+- [x] 添加无限额 token 与 BillingSession 额度不足语义单测。
+- **Status:** complete
+
+### Phase 4: Verification
+- [x] Focused Go tests。
+- [x] `go test ./...`。
+- [x] `git diff --check`。
+- [x] Docker dev build、启动和 health/log 检查。
+- **Status:** complete
+
+## Key Constraints
+- 不重构统计、日志、消费报表。
+- JSON 规则不相关，本轮不新增 JSON 调用。
+- DB 逻辑必须兼容 SQLite/MySQL/PostgreSQL。
+- 不触碰现有未跟踪 probe/tmp/output 文件。
+
+---
+
 # Task Plan: Relay Error Passthrough Keyword Blocklist
 
 ## Goal

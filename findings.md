@@ -1,3 +1,20 @@
+# 数据库原子扣费防超扣 Findings
+
+## Requirements
+- 只先解决高并发下余额超扣/扣成负数问题。
+- 用户钱包与 token 剩余额度是准入账本，必须强一致。
+- 统计类字段可以保持最终一致，不纳入本阶段。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 用 DB 条件更新防超扣 | `WHERE id = ? AND quota >= ?` 是跨 SQLite/MySQL/PostgreSQL 的单行原子扣减 |
+| 扣减不走 BatchUpdate | 延迟批量落库无法作为强一致余额准入 |
+| DB 成功后再更新 Redis | 避免 DB 拒绝但缓存先扣成负数 |
+| 钱包禁用 trust bypass | 普通请求必须先预扣，避免高余额用户并发成功后集中补扣 |
+
+---
+
 # Relay Error Passthrough Keyword Blocklist
 
 ## Requirements
