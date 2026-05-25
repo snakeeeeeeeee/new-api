@@ -141,13 +141,21 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
+	needViolationDetect := service.IsViolationDetectionEnabled()
 	needCountToken := constant.CountToken
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
 	var meta *types.TokenCountMeta
-	if needSensitiveCheck || needCountToken {
+	if needSensitiveCheck || needCountToken || needViolationDetect {
 		meta = request.GetTokenCountMeta()
 	} else {
 		meta = fastTokenCountMetaForPricing(request)
+	}
+
+	if needViolationDetect && meta != nil {
+		newAPIError = service.CheckViolationAndHandle(c, relayInfo, meta.CombineText)
+		if newAPIError != nil {
+			return
+		}
 	}
 
 	if needSensitiveCheck && meta != nil {
@@ -217,6 +225,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 
+		service.FillViolationLogRouteContextIfNeeded(c, relayInfo)
 		addUsedChannel(c, channel.Id)
 		service.DumpRawRequestIfNeeded(c)
 		bodyStorage, bodyErr := common.GetBodyStorage(c)

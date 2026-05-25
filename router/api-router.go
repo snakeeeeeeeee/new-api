@@ -232,6 +232,14 @@ func SetApiRouter(router *gin.Engine) {
 			requestDumpRoute.GET("/events", controller.GetRequestDumpEvents)
 			requestDumpRoute.POST("/clear", controller.ClearRequestDumpEvents)
 		}
+		violationRoute := apiRouter.Group("/violation")
+		violationRoute.Use(middleware.AdminAuth())
+		{
+			violationRoute.GET("/status", controller.GetViolationStatus)
+			violationRoute.PUT("/setting", controller.UpdateViolationSetting)
+			violationRoute.GET("/logs", controller.GetViolationLogs)
+			violationRoute.DELETE("/logs", controller.DeleteViolationLogs)
+		}
 		channelRoute := apiRouter.Group("/channel")
 		channelRoute.Use(middleware.AdminAuth())
 		{

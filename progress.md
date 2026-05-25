@@ -1,3 +1,24 @@
+# Session: 2026-05-25 风险检测与命中拦截 v1
+
+## Scope
+- 实现管理员风险检测配置、命中日志、relay 拦截和阈值封禁，默认关闭并尽量降低未命中性能影响。
+
+## Progress
+- 已复核现有敏感词拦截、relay 预扣费前链路、错误返回包装、配置系统、用户缓存和管理员菜单接入点。
+- 已确认本轮新增计划写入 `task_plan.md` / `findings.md` / `progress.md`，不覆盖历史任务记录。
+- 已完成后端 `violation_logs` 表、启动迁移、配置项、管理员 API、relay 命中拦截、命中日志和阈值封禁逻辑。
+- 已完成前端 `/console/violation` 管理页、侧边栏入口、图标和模块开关。
+- 已补 model/service/controller 单元测试，覆盖关闭/未命中、只记录、拦截、阈值封禁、路由分组补录、日志查询/清理和配置保存。
+- 已将本轮触碰的 `model/user.go` JSON 读写改为 `common.*` 包装，符合项目约定。
+
+## Verification
+- `go test ./model ./service ./controller`: passed.
+- `go test ./...`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `git diff --check`: passed.
+
+---
+
 # Session: 2026-05-19 数据库原子扣费防超扣
 
 ## Scope
@@ -808,3 +829,28 @@
 | `go test ./service ./controller ./middleware ./relay -run 'RequestDump|TestNonExistent' -count=1` | 编译和相关测试通过 | 通过 | ✓ |
 | `go test ./...` | 通过 | 通过 | ✓ |
 | `cd web && bun run build` | 通过 | 通过（既有 Browserslist/lottie/chunk 警告） | ✓ |
+
+---
+
+# Session: 违规用途拦截能力排查
+
+## Scope
+- 静态排查当前 new-api 是否已有针对逆向、安全、破限等用途的拦截能力。
+
+## Progress
+- 2026-05-25 14:41 CST 已创建本次排查记录。
+- 已完成第一轮静态检索，确认真正请求侧内容拦截点是 `controller/relay.go` + `service/sensitive.go` 的 Prompt 屏蔽词。
+- 已确认 `/v1/moderations` 是上游接口转发，自动禁用关键词和错误透传阻断不是内容安全拦截。
+- 已确认上游拒绝原因记录到 admin-only 日志字段；Gemini 默认安全阈值是 `BLOCK_NONE`；本次未修改业务代码。
+
+---
+
+# Session: 违禁关键词检测记录菜单
+
+## Scope
+- 评估新增管理员菜单：配置违禁关键词检测，命中后记录并可查看。
+
+## Progress
+- 已读取 brainstorming 技能说明。
+- 已开始查看管理员菜单、前端路由和 API 路由。
+- 已确认菜单/API/迁移接入点；推荐方案是专用命中记录表 + 管理员页面，而不是复用普通 logs 或 request dump。

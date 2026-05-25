@@ -456,6 +456,15 @@ func UpdateOption(c *gin.Context) {
 		common.ApiErrorMsg(c, "请使用专用接口管理外部鉴权码")
 		return
 	}
+	if strings.HasPrefix(option.Key, "violation_setting.") {
+		if err := validateViolationOptionUpdate(option.Key, option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	}
 	switch option.Key {
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {
@@ -740,4 +749,52 @@ func UpdateOption(c *gin.Context) {
 		"message": "",
 	})
 	return
+}
+
+func validateViolationOptionUpdate(key string, value string) error {
+	configKey := strings.TrimPrefix(key, "violation_setting.")
+	next := *operation_setting.GetViolationSetting()
+	switch configKey {
+	case "enabled":
+		boolValue, err := strconv.ParseBool(value)
+		if err != nil {
+			return err
+		}
+		next.Enabled = boolValue
+	case "keywords":
+		next.Keywords = value
+	case "case_sensitive":
+		boolValue, err := strconv.ParseBool(value)
+		if err != nil {
+			return err
+		}
+		next.CaseSensitive = boolValue
+	case "action":
+		next.Action = value
+	case "http_status_code":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+		next.HTTPStatusCode = intValue
+	case "error_code":
+		next.ErrorCode = value
+	case "error_message":
+		next.ErrorMessage = value
+	case "max_excerpt_length":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+		next.MaxExcerptLength = intValue
+	case "ban_threshold":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+		next.BanThreshold = intValue
+	default:
+		return fmt.Errorf("unknown violation setting key")
+	}
+	return operation_setting.ValidateViolationSetting(next)
 }

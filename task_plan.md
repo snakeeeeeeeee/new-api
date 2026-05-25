@@ -1,3 +1,47 @@
+# Task Plan: 风险检测与命中拦截 v1
+
+## Goal
+新增管理员“风险检测”菜单，支持配置安全风控词和命中策略；relay 请求命中后记录 `violation_logs`，并按策略放行、拦截或累计达到阈值后禁用账号。未命中请求不查库、不写库，默认关闭。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+### Phase 1: Discovery & Design Anchoring
+- [x] 复核 relay 插入点、错误返回、配置系统、用户缓存和前端菜单/路由。
+- [x] 确认检测放在 `GetTokenCountMeta()` 后、预扣费前，复用 `meta.CombineText`。
+- **Status:** complete
+
+### Phase 2: Backend
+- [x] 新增 `violation_logs` 模型、查询/清理/计数函数和启动迁移。
+- [x] 新增 `violation_setting` 配置、规范化和管理员 API。
+- [x] 新增检测服务：内存关键词匹配、命中片段、日志写入、阈值封禁、拦截错误。
+- [x] 在 relay 预扣费前接入检测，确保命中拦截不扣费、不上游、不重试。
+- **Status:** complete
+
+### Phase 3: Frontend
+- [x] 新增 `/console/violation` 管理页。
+- [x] 新增侧边栏“风险检测”和模块开关。
+- **Status:** complete
+
+### Phase 4: Tests & Verification
+- [x] 补 model/service/controller 测试。
+- [x] `go test ./model ./service ./controller`。
+- [x] `go test ./...`。
+- [x] `cd web && bun run build`。
+- [x] `git diff --check`。
+- **Status:** complete
+
+## Key Constraints
+- 检测关闭时只做廉价开关判断。
+- 开启但未命中时只做内存匹配，不访问数据库。
+- 只保存上下文片段，不保存完整 prompt。
+- 封禁计数不使用时间窗口，只在命中后按当前保留日志累计计数。
+- DB 兼容 SQLite/MySQL/PostgreSQL；JSON 内容存 TEXT。
+- JSON marshal/unmarshal 使用 `common.*` 包装。
+
+---
+
 # Task Plan: 数据库原子扣费防超扣
 
 ## Goal
@@ -629,6 +673,59 @@ Phase 4
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |-------|---------|------------|
+
+---
+
+# 违禁关键词检测记录菜单可行性 Plan
+
+## Goal
+评估是否可以新增管理员菜单，用于配置/查看违禁关键词检测命中记录，并判断最佳接入点、数据存储方式和对 relay 主流程的影响。
+
+## Current Phase
+Phase 2 in progress
+
+## Phases
+### Phase 1: Discovery
+- [x] 阅读管理员菜单、路由、设置页、日志页、request dump、敏感词检测相关代码。
+- [x] 确认现有日志结构是否足够承载命中记录。
+
+### Phase 2: Design Options
+- [x] 比较复用 error log、复用 request dump、新增 violation log 表三种方案。
+- [x] 判断推荐方案和迁移/测试成本。
+
+### Phase 3: Answer
+- [ ] 给出可行性、推荐方案、需要确认的问题。
+
+## Constraints
+- 先只做排查和设计，不改业务代码。
+- 不修改受保护项目标识。
+- JSON marshal/unmarshal 遵循 `common.*`。
+
+---
+
+# 违规用途拦截能力排查 Plan
+
+## Goal
+确认当前系统是否已经对“逆向、安全、破限”等疑似违规用途做请求侧或响应侧拦截，并指出可配置位置、覆盖范围和缺口。
+
+## Current Phase
+Phase 3 complete
+
+## Phases
+### Phase 1: Static Discovery
+- [x] 搜索 moderation、内容过滤、敏感词、prompt/key blocking、模型映射和 relay 中断逻辑。
+- [x] 阅读相关 controller/service/middleware/relay 代码。
+
+### Phase 2: Behavior Assessment
+- [x] 判断拦截发生在用户输入、上游响应、日志/告警、还是只做额度/鉴权限制。
+- [x] 确认是否默认启用、是否 admin 可配置、是否支持“逆向/安全/破限”这类场景。
+
+### Phase 3: Answer
+- [x] 给出结论、证据文件和建议。
+
+## Constraints
+- 不做代码修改，除本排查记录追加外不触碰业务文件。
+- 遵守项目 JSON 和数据库兼容规则。
 | ui-ux skill bundled path lacks scripts directory | tried `/Users/zhangyu/.codex/skills/ui-ux-pro-max/scripts/search.py` | used `/Users/zhangyu/.agents/skills/ui-ux-pro-max/scripts/search.py` |
 
 ---

@@ -51,6 +51,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     invite_code: true,
     log_dashboard: true,
     request_dump: true,
+    violation: true,
     models: true,
     deployment: true,
     redemption: true,

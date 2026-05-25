@@ -49,6 +49,7 @@ import Subscription from './pages/Subscription';
 import AggregateGroupPage from './pages/AggregateGroup';
 import LogDashboardPage from './pages/LogDashboard';
 import RequestDumpPage from './pages/RequestDump';
+import ViolationPage from './pages/Violation';
 import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Setup from './pages/Setup';
@@ -188,6 +189,14 @@ function App() {
           element={
             <AdminRoute>
               <RequestDumpPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/violation'
+          element={
+            <AdminRoute>
+              <ViolationPage />
             </AdminRoute>
           }
         />

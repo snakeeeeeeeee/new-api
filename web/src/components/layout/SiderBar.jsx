@@ -35,6 +35,7 @@ const routerMap = {
   channel: '/console/channel',
   aggregate_group: '/console/aggregate-group',
   request_dump: '/console/request-dump',
+  violation: '/console/violation',
   invite_code: '/console/invite-code',
   log_dashboard: '/console/log-dashboard',
   token: '/console/token',
@@ -179,6 +180,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('Dump 分析'),
         itemKey: 'request_dump',
         to: '/request-dump',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('风险检测'),
+        itemKey: 'violation',
+        to: '/violation',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

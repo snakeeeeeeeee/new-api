@@ -1,3 +1,25 @@
+# 风险检测与命中拦截 v1 Findings
+
+## Requirements
+- 新增管理员“风险检测”菜单，管理员配置关键词、大小写和策略。
+- 默认关闭；默认策略 `block`，HTTP 403，业务码 `policy_violation`，文案 `Request blocked by policy.`，封禁阈值 3。
+- relay 检测必须在请求解析与 `GetTokenCountMeta()` 后、预扣费前。
+- 命中后按策略记录、拦截或达到阈值禁用账号；不扣费、不禁用 token、不禁用渠道。
+- 未命中不查库、不写库；只在关键词命中后查询累计命中次数。
+- 聚合分组字段需记录 `aggregate_group`、`route_group`、`using_group`。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 使用 `violation_logs` 专用主库表 | 便于管理员审计，避免混入普通消费/错误日志；启动 AutoMigrate 自动创建 |
+| 配置走 `violation_setting.*` | 复用现有 `config.GlobalConfig` + options 持久化模式，运行时更新生效 |
+| 检测服务只在 enabled 时构建 matcher | 默认关闭路径只有布尔判断；开启未命中不触发 DB |
+| 命中词列表用 TEXT JSON 字符串 | 兼容 SQLite/MySQL/PostgreSQL，不引入数据库专用 JSON 类型 |
+| 拦截错误使用 `types.WithOpenAIError` + skip retry | 返回管理员配置 code/message/status，同时避免 retry 和渠道自动处理 |
+| 封禁通过更新用户 status 并刷新 status cache | 只禁用账号，不影响 token/channel；重复禁用幂等 |
+
+---
+
 # 数据库原子扣费防超扣 Findings
 
 ## Requirements
@@ -556,3 +578,39 @@
 - Text relay 的上游请求 body 在 `relay/compatible_handler.go` 转换后、`adaptor.DoRequest` 前可见；其他格式也有各自 handler，v1 先覆盖 OpenAI-compatible text 的 upstream dump，raw/error 覆盖所有 relay 格式。
 - 管理员菜单在 `web/src/components/layout/SiderBar.jsx`，路由在 `web/src/App.jsx`。
 - 日志输出可复用 `logger.LogInfo(ctx, "request_dump ...")`，其会输出到 stdout/日志文件。
+
+---
+
+# 违规用途拦截能力排查 Findings
+
+- 2026-05-25 14:41 CST 开始排查。目标是确认是否已有针对“逆向、安全、破限”等用途的内容级拦截，而不是只确认鉴权、额度或渠道熔断。
+- 本地内容级拦截存在：`controller/relay.go` 在请求解析和 `GenRelayInfo` 之后、预扣费和转发上游之前调用 `setting.ShouldCheckPromptSensitive()`，若 `meta.CombineText` 命中则返回 `types.ErrorCodeSensitiveWordsDetected`。
+- 屏蔽词逻辑在 `service/sensitive.go`，使用 `strings.ToLower(text)` + AC 多模式匹配。它是关键词包含匹配，不是语义安全分类，也不理解“逆向/安全/破限”的意图。
+- 默认配置在 `setting/sensitive.go`：`CheckSensitiveEnabled=true`、`CheckSensitiveOnPromptEnabled=true`，但默认词表只有 `test_sensitive`，因此默认基本不能拦截真实违规用途。
+- 管理后台配置入口在 `web/src/pages/Setting/Operation/SettingsSensitiveWords.jsx`：运营设置下“屏蔽词过滤设置”，可启用总开关、启用 Prompt 检查、维护一行一个屏蔽词。
+- 覆盖范围依赖各请求 DTO 的 `GetTokenCountMeta()`：OpenAI Chat/Completion 会拼接 prompt/input/messages/tools；Responses 会拼接 input/instructions/metadata/text/tool_choice/prompt/tools；Image/Audio/Embedding/Rerank/Gemini/Claude 也各自提取文本。
+- `/v1/moderations` 路由只是 `controller.Relay(... RelayFormatOpenAI)` 转发上游 moderation 接口，不是网关自动对每次请求做 moderation。
+- 上游拒绝会被部分记录：OpenAI `finish_reason=content_filter`、Claude `stop_reason=refusal`、Gemini `PromptFeedback.BlockReason` 会写入 `ContextKeyAdminRejectReason`。
+- Gemini 安全阈值默认来自 `GEMINI_SAFETY_SETTING`，当前 `common/init.go` 默认值是 `BLOCK_NONE`；即默认倾向不让 Gemini 上游安全策略阻断。
+- “自动禁用关键词”针对的是上游错误内容命中后禁用渠道，不是禁用用户或拦截用户 prompt。
+- “错误透传阻断关键词”只在允许错误透传时隐藏特定上游错误内容，不是请求安全策略。
+- `service/violation_fee.go` 只针对包含 Grok/CSAM 类安全标记的上游错误做额外扣费，不是通用违规内容检测。
+- 本地屏蔽词命中会走 `types.NewError(... ErrorCodeSensitiveWordsDetected)`，默认状态码是 500；会记录错误日志，客户端拿到的是 `sensitive words detected` + request id。
+- 日志脱敏：用户查看日志时 `model/log.go` 会隐藏错误日志详情，并删除 `reject_reason` 等 admin-only 字段；管理员侧仍可看到更多诊断信息。
+
+## 排查结论
+- 有拦截：请求转发前的 Prompt 关键词屏蔽词。
+- 没有完整拦截：没有内置自动 moderation/classifier；没有针对“逆向、安全、破限”语义意图的默认规则；没有响应内容屏蔽链路；默认词表不足以防真实违规。
+
+---
+
+# 违禁关键词检测记录菜单 Findings
+
+- 2026-05-25 14:45 CST 开始排查新增管理员菜单与命中记录能力。
+- 管理员菜单接入点明确：`web/src/components/layout/SiderBar.jsx` 的 `routerMap` 和 `adminItems`，`web/src/App.jsx` 添加 `AdminRoute` 页面，`web/src/pages/Setting/Operation/SettingsSidebarModulesAdmin.jsx` 需要加入模块显示开关默认值。
+- API 接入点明确：`router/api-router.go` 可新增 `/api/violation/*` 或 `/api/risk/*` AdminAuth 分组，模式可参考 `/api/request_dump/*`。
+- 现有 `logs` 表可承载命中记录，但语义混杂，用户侧会隐藏错误日志内容；作为管理员专用菜单，专用表更适合。
+- 新增专用表可走 `model/main.go` 的主库 AutoMigrate，需同时加入常规和 fast migration 列表。字段应避免数据库特定 JSON 类型，用 `TEXT` 存 `matched_words`/`metadata` JSON 字符串，保证 SQLite/MySQL/PostgreSQL 兼容。
+- 检测接入点建议复用 `controller/relay.go` 已经生成的 `meta.CombineText`，在敏感词拦截前记录命中；这样不重复读取 body，也不会破坏 relay retry/body storage。
+- 如果要“仅记录不拦截”，需要和现有 `CheckSensitiveEnabled` 拆开：新增一个 risk detector setting，不直接依赖现有屏蔽词拦截开关。
+- 页面可以复用 CardPro/Table/Form 模式，筛选字段建议：时间、用户、token、模型、分组、关键词、request_id、处置状态。

@@ -76,6 +76,7 @@ import {
   Server,
   CalendarClock,
   Bug,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -130,6 +131,8 @@ export function getLucideIcon(key, selected = false) {
       return <BarChart3 {...commonProps} color={iconColor} />;
     case 'request_dump':
       return <Bug {...commonProps} color={iconColor} />;
+    case 'violation':
+      return <ShieldAlert {...commonProps} color={iconColor} />;
     case 'midjourney':
       return <ImageIcon {...commonProps} color={iconColor} />;
     case 'task':
