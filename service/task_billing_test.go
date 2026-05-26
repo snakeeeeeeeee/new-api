@@ -463,6 +463,38 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	assert.Equal(t, actualQuota-preConsumed, log.Quota)
 }
 
+func TestRecalculate_LogKeepsAggregateRatioOverrideInfo(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 15, 15, 15
+	const initQuota, preConsumed = 10000, 2000
+	const actualQuota = 3000
+	const tokenRemain = 5000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-recalc-override", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.GroupRatio = 0.5
+	task.PrivateData.BillingContext.OriginalGroupRatio = 2
+	task.PrivateData.BillingContext.RatioOverride = 0.5
+	task.PrivateData.BillingContext.HasRatioOverride = true
+
+	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	var other map[string]interface{}
+	require.NoError(t, common.Unmarshal([]byte(log.Other), &other))
+	assert.Equal(t, float64(0.5), other["group_ratio"])
+	assert.Equal(t, float64(2), other["original_group_ratio"])
+	assert.Equal(t, float64(2), other["original_ratio"])
+	assert.Equal(t, float64(0.5), other["ratio_override"])
+	assert.Equal(t, true, other["has_ratio_override"])
+}
+
 func TestRecalculate_NegativeDelta(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()

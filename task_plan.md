@@ -4,7 +4,7 @@
 Implement per-user aggregate-group ratio overrides with admin UI, billing/display integration, unit tests, frontend build, and Docker dev business regression.
 
 ## Current Phase
-Phase 5 complete
+Phase 6 complete
 
 ## Phases
 - [x] Discovery and work setup
@@ -13,11 +13,16 @@ Phase 5 complete
 - [x] Go/frontend verification
 - [x] Docker dev business regression
 - [x] Delivery review
+- [x] Optimization: filter override-configurable aggregate groups by target user visibility and improve selector display
 
 ## Verification
 - `go test ./service ./controller`: passed.
 - `go test ./...`: passed.
 - `cd web && bun run build`: passed with existing Browserslist/chunk warnings.
+- Optimization targeted test `go test ./controller -run 'UserAggregateGroupRatioOverrides|AggregateRatioOverride|GetUserGroupsReturnsAggregateRatioOverrideDetails' -count=1`: passed.
+- Optimization full regression `go test ./...`: passed.
+- Optimization frontend build `cd web && bun run build`: passed with existing Browserslist/lottie/chunk warnings.
+- `git diff --check`: passed.
 - Docker dev regression passed with mock upstream:
   - no override aggregate group: quota 300, group ratio 2
   - aggregate override 0.5: quota 75, group ratio 0.5, override fields in log

@@ -96,6 +96,11 @@ func Distribute() func(c *gin.Context) {
 						}
 						usingGroup = playgroundRequest.Group
 						common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
+						if aggregateGroup, ok := service.GetAggregateGroup(usingGroup, true); ok {
+							common.SetContextKey(c, constant.ContextKeyAggregateGroup, aggregateGroup.Name)
+						} else {
+							common.SetContextKey(c, constant.ContextKeyAggregateGroup, "")
+						}
 					}
 				}
 

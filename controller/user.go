@@ -1317,7 +1317,25 @@ type aggregateGroupRatioOverridesRequest struct {
 	Overrides map[string]float64 `json:"overrides"`
 }
 
-func normalizeAggregateGroupRatioOverrides(input map[string]float64) (map[string]float64, error) {
+func buildVisibleAggregateGroupResponses(userGroup string) []*aggregateGroupResponse {
+	groups := service.GetVisibleAggregateGroups(userGroup)
+	resp := make([]*aggregateGroupResponse, 0, len(groups))
+	for _, group := range groups {
+		resp = append(resp, buildAggregateGroupResponse(group))
+	}
+	return resp
+}
+
+func normalizeAggregateGroupRatioOverrides(input map[string]float64, userGroup string) (map[string]float64, error) {
+	visibleGroups := service.GetVisibleAggregateGroups(userGroup)
+	visibleGroupMap := make(map[string]struct{}, len(visibleGroups))
+	for _, group := range visibleGroups {
+		if group == nil {
+			continue
+		}
+		visibleGroupMap[group.Name] = struct{}{}
+	}
+
 	normalized := make(map[string]float64)
 	for group, ratio := range input {
 		group = strings.TrimSpace(group)
@@ -1327,8 +1345,8 @@ func normalizeAggregateGroupRatioOverrides(input map[string]float64) (map[string
 		if ratio < 0 {
 			return nil, fmt.Errorf("聚合分组 %s 特殊倍率不能小于 0", group)
 		}
-		if _, ok := service.GetAggregateGroup(group, true); !ok {
-			return nil, fmt.Errorf("聚合分组 %s 不存在或未启用", group)
+		if _, ok := visibleGroupMap[group]; !ok {
+			return nil, fmt.Errorf("聚合分组 %s 不存在、未启用或当前用户不可见", group)
 		}
 		normalized[group] = ratio
 	}
@@ -1355,7 +1373,8 @@ func GetUserAggregateGroupRatioOverrides(c *gin.Context) {
 		overrides = map[string]float64{}
 	}
 	common.ApiSuccess(c, gin.H{
-		"overrides": overrides,
+		"overrides":        overrides,
+		"aggregate_groups": buildVisibleAggregateGroupResponses(user.Group),
 	})
 }
 
@@ -1370,11 +1389,6 @@ func UpdateUserAggregateGroupRatioOverrides(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	normalized, err := normalizeAggregateGroupRatioOverrides(req.Overrides)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	user, err := model.GetUserById(id, true)
 	if err != nil {
 		common.ApiError(c, err)
@@ -1382,6 +1396,11 @@ func UpdateUserAggregateGroupRatioOverrides(c *gin.Context) {
 	}
 	if !canAdminManageUser(c, user) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		return
+	}
+	normalized, err := normalizeAggregateGroupRatioOverrides(req.Overrides, user.Group)
+	if err != nil {
+		common.ApiError(c, err)
 		return
 	}
 	userSetting := user.GetSetting()
@@ -1396,7 +1415,8 @@ func UpdateUserAggregateGroupRatioOverrides(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{
-		"overrides": normalized,
+		"overrides":        normalized,
+		"aggregate_groups": buildVisibleAggregateGroupResponses(user.Group),
 	})
 }
 

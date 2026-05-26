@@ -271,11 +271,111 @@ func TestUpdateUserAggregateGroupRatioOverridesPreservesUserSetting(t *testing.T
 	getResp := decodeAggregateGroupAPIResponse(t, getRecorder)
 	require.True(t, getResp.Success, getResp.Message)
 	var data struct {
-		Overrides map[string]float64 `json:"overrides"`
+		Overrides       map[string]float64       `json:"overrides"`
+		AggregateGroups []aggregateGroupResponse `json:"aggregate_groups"`
 	}
 	require.NoError(t, common.Unmarshal(getResp.Data, &data))
 	require.Equal(t, 0.1, data.Overrides["enterprise-stable"])
 	require.Equal(t, 0.0, data.Overrides["enterprise-fast"])
+	groupNames := make([]string, 0, len(data.AggregateGroups))
+	for _, group := range data.AggregateGroups {
+		groupNames = append(groupNames, group.Name)
+	}
+	require.ElementsMatch(t, []string{"enterprise-stable", "enterprise-fast"}, groupNames)
+}
+
+func TestUserAggregateGroupRatioOverridesOnlyExposeVisibleGroups(t *testing.T) {
+	db := setupAggregateGroupControllerTestDB(t)
+
+	visible := &model.AggregateGroup{
+		Name:                    "visible-aggregate",
+		DisplayName:             "Visible Aggregate",
+		Description:             "visible to vip",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.25,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, visible.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, visible.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+
+	hidden := &model.AggregateGroup{
+		Name:                    "hidden-aggregate",
+		DisplayName:             "Hidden Aggregate",
+		Description:             "visible to svip",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              2,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, hidden.SetVisibleUserGroups([]string{"svip"}))
+	require.NoError(t, hidden.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+
+	disabled := &model.AggregateGroup{
+		Name:                    "disabled-aggregate",
+		DisplayName:             "Disabled Aggregate",
+		Status:                  model.AggregateGroupStatusDisabled,
+		GroupRatio:              3,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, disabled.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, disabled.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+
+	seedAggregateGroupControllerUser(t, db, 43, "visible_list_user", "vip", common.RoleCommonUser, dto.UserSetting{})
+
+	getRecorder := httptest.NewRecorder()
+	getCtx, _ := gin.CreateTestContext(getRecorder)
+	getCtx.Request = httptest.NewRequest(http.MethodGet, "/api/user/43/aggregate_group_ratio_overrides", nil)
+	getCtx.Params = gin.Params{{Key: "id", Value: "43"}}
+	getCtx.Set("role", common.RoleRootUser)
+	GetUserAggregateGroupRatioOverrides(getCtx)
+
+	getResp := decodeAggregateGroupAPIResponse(t, getRecorder)
+	require.True(t, getResp.Success, getResp.Message)
+	var data struct {
+		AggregateGroups []aggregateGroupResponse `json:"aggregate_groups"`
+	}
+	require.NoError(t, common.Unmarshal(getResp.Data, &data))
+	require.Len(t, data.AggregateGroups, 1)
+	require.Equal(t, "visible-aggregate", data.AggregateGroups[0].Name)
+	require.Equal(t, "visible to vip", data.AggregateGroups[0].Description)
+	require.Equal(t, 1.25, data.AggregateGroups[0].GroupRatio)
+
+	putRecorder := httptest.NewRecorder()
+	putCtx, _ := gin.CreateTestContext(putRecorder)
+	putCtx.Request = httptest.NewRequest(http.MethodPut, "/api/user/43/aggregate_group_ratio_overrides", bytes.NewReader([]byte(`{
+		"overrides":{"hidden-aggregate":0.5}
+	}`)))
+	putCtx.Request.Header.Set("Content-Type", "application/json")
+	putCtx.Params = gin.Params{{Key: "id", Value: "43"}}
+	putCtx.Set("role", common.RoleRootUser)
+	UpdateUserAggregateGroupRatioOverrides(putCtx)
+
+	putResp := decodeAggregateGroupAPIResponse(t, putRecorder)
+	require.False(t, putResp.Success)
+	require.Contains(t, putResp.Message, "当前用户不可见")
+
+	okRecorder := httptest.NewRecorder()
+	okCtx, _ := gin.CreateTestContext(okRecorder)
+	okCtx.Request = httptest.NewRequest(http.MethodPut, "/api/user/43/aggregate_group_ratio_overrides", bytes.NewReader([]byte(`{
+		"overrides":{"visible-aggregate":0.5}
+	}`)))
+	okCtx.Request.Header.Set("Content-Type", "application/json")
+	okCtx.Params = gin.Params{{Key: "id", Value: "43"}}
+	okCtx.Set("role", common.RoleRootUser)
+	UpdateUserAggregateGroupRatioOverrides(okCtx)
+
+	okResp := decodeAggregateGroupAPIResponse(t, okRecorder)
+	require.True(t, okResp.Success, okResp.Message)
+	var okData struct {
+		Overrides       map[string]float64       `json:"overrides"`
+		AggregateGroups []aggregateGroupResponse `json:"aggregate_groups"`
+	}
+	require.NoError(t, common.Unmarshal(okResp.Data, &okData))
+	require.Equal(t, 0.5, okData.Overrides["visible-aggregate"])
+	require.Len(t, okData.AggregateGroups, 1)
+	require.Equal(t, "visible-aggregate", okData.AggregateGroups[0].Name)
 }
 
 func TestGetUserGroupsReturnsAggregateRatioOverrideDetails(t *testing.T) {

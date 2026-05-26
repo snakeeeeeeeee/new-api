@@ -15,6 +15,7 @@
 | Add dedicated `/api/user/:id/aggregate_group_ratio_overrides` admin endpoints | Keeps base user edit form and unrelated setting fields isolated. |
 | Resolve overrides only when `ContextKeyAggregateGroup` is set | Real groups and existing group-special-ratio behavior remain unchanged. |
 | Return effective `ratio` plus `original_ratio`/`ratio_override` metadata | Existing clients keep reading `ratio`; new UI can render strikethrough display. |
+| Override management lists only aggregate groups visible to the target user's group | Avoids configuring an override the target user can never select; backend also rejects invisible/disabled groups to prevent API bypass. |
 
 ---
 

@@ -85,7 +85,6 @@ const AggregateGroupRatioOverridesModal = ({
 }) => {
   const isMobile = useIsMobile();
   const [loading, setLoading] = useState(false);
-  const [groupsLoading, setGroupsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [aggregateGroups, setAggregateGroups] = useState([]);
   const [rows, setRows] = useState([]);
@@ -124,25 +123,84 @@ const AggregateGroupRatioOverridesModal = ({
     [aggregateGroups, selectedGroups],
   );
 
-  const loadAggregateGroups = async () => {
-    setGroupsLoading(true);
-    try {
-      const res = await API.get('/api/aggregate_group/');
-      if (res.data?.success) {
-        setAggregateGroups(res.data.data || []);
-      } else {
-        showError(res.data?.message || t('加载失败'));
-      }
-    } catch (error) {
-      showError(error.response?.data?.message || error.message);
-    } finally {
-      setGroupsLoading(false);
+  const renderAggregateGroupOption = (option) => {
+    const {
+      disabled,
+      selected,
+      focused,
+      className,
+      style,
+      onMouseEnter,
+      onClick,
+      group,
+      value,
+      empty,
+      emptyContent,
+    } = option;
+
+    if (empty) {
+      return emptyContent;
     }
+
+    const groupName = group?.name || value;
+    const displayName = group?.display_name || groupName;
+    const description = group?.description || groupName;
+
+    const optionClassName = [
+      'flex items-start gap-3 px-3 py-2 min-w-0',
+      disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+      className,
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    const optionStyle = {
+      ...style,
+      backgroundColor: selected
+        ? 'var(--semi-color-primary-light-default)'
+        : focused
+          ? 'var(--semi-color-fill-0)'
+          : undefined,
+    };
+
+    return (
+      <div
+        style={optionStyle}
+        className={optionClassName}
+        onMouseEnter={(event) => !disabled && onMouseEnter?.(event)}
+        onClick={() => !disabled && onClick?.()}
+      >
+        <div className='flex-1 min-w-0'>
+          <div className='flex items-center gap-2 min-w-0'>
+            <Text strong ellipsis={{ showTooltip: true }}>
+              {displayName}
+            </Text>
+            {groupName && groupName !== displayName ? (
+              <Tag color='blue' size='small' shape='circle'>
+                {groupName}
+              </Tag>
+            ) : null}
+          </div>
+          <Text
+            type='secondary'
+            size='small'
+            ellipsis={{ showTooltip: true }}
+            className='block mt-1'
+          >
+            {description}
+          </Text>
+        </div>
+        <Tag color='white' shape='circle' className='flex-shrink-0'>
+          {formatRatio(group?.group_ratio)}
+        </Tag>
+      </div>
+    );
   };
 
   const loadOverrides = async () => {
     if (!user?.id) {
       setRows([]);
+      setAggregateGroups([]);
       return;
     }
     setLoading(true);
@@ -152,6 +210,7 @@ const AggregateGroupRatioOverridesModal = ({
       );
       if (res.data?.success) {
         setRows(normalizeOverrides(res.data.data?.overrides));
+        setAggregateGroups(res.data.data?.aggregate_groups || []);
       } else {
         showError(res.data?.message || t('加载失败'));
       }
@@ -168,7 +227,6 @@ const AggregateGroupRatioOverridesModal = ({
     }
     setSelectedGroup(undefined);
     setNewRatio(1);
-    loadAggregateGroups();
     loadOverrides();
   }, [visible, user?.id]);
 
@@ -238,6 +296,7 @@ const AggregateGroupRatioOverridesModal = ({
       );
       if (res.data?.success) {
         setRows(normalizeOverrides(res.data.data?.overrides));
+        setAggregateGroups(res.data.data?.aggregate_groups || []);
         showSuccess(t('保存成功'));
         onSuccess?.();
       } else {
@@ -369,8 +428,12 @@ const AggregateGroupRatioOverridesModal = ({
               value={selectedGroup}
               onChange={setSelectedGroup}
               optionList={groupOptions}
-              loading={groupsLoading}
+              loading={loading}
               filter={selectFilter}
+              renderOptionItem={renderAggregateGroupOption}
+              renderSelectedItem={(option) =>
+                option?.group?.display_name || option?.value || ''
+              }
               searchPosition='dropdown'
               style={{ width: '100%' }}
               showClear

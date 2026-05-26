@@ -119,6 +119,14 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		other["model_price"] = bc.ModelPrice
 		other["group_ratio"] = bc.GroupRatio
+		if bc.OriginalGroupRatio != 0 {
+			other["original_group_ratio"] = bc.OriginalGroupRatio
+			other["original_ratio"] = bc.OriginalGroupRatio
+		}
+		if bc.HasRatioOverride {
+			other["ratio_override"] = bc.RatioOverride
+			other["has_ratio_override"] = true
+		}
 		if len(bc.OtherRatios) > 0 {
 			for k, v := range bc.OtherRatios {
 				other[k] = v

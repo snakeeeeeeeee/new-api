@@ -21,6 +21,12 @@
 - Docker dev used a temporary access-token root user and temporary model/channel/token/group data, all cleaned up after regression.
 - Channel abilities were refreshed via `/api/channel/fix` during regression so newly created dev channels were available immediately.
 
+## Optimization Update
+- Added target-user visibility filtering to the aggregate group override management payload.
+- Added backend save validation so invisible, disabled, or missing aggregate groups cannot be stored as user overrides.
+- Updated the admin selector to show aggregate group name above description with the base ratio aligned to the right.
+- Targeted controller regression passed for override preservation, visible-list filtering, invisible-group rejection, and user group ratio override details.
+
 ---
 
 # Session: 2026-05-25 风险检测与命中拦截 v1
