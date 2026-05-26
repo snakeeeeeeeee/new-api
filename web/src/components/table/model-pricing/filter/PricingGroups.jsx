@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import SelectableButtonGroup from '../../../common/ui/SelectableButtonGroup';
+import { formatRatioLabel } from '../../../../helpers';
 
 /**
  * 分组筛选组件
@@ -35,6 +36,7 @@ const PricingGroups = ({
   setFilterGroup,
   usableGroup = {},
   groupRatio = {},
+  groupRatioDetails = {},
   models = [],
   loading = false,
   t,
@@ -54,9 +56,19 @@ const PricingGroups = ({
     if (g === 'all') {
       // ratioDisplay = t('全部');
     } else {
+      const detail = groupRatioDetails[g];
       const ratio = groupRatio[g];
-      if (ratio !== undefined && ratio !== null) {
-        ratioDisplay = `${ratio}x`;
+      if (detail?.has_ratio_override) {
+        ratioDisplay = (
+          <span style={{ display: 'inline-flex', gap: 4 }}>
+            <span style={{ textDecoration: 'line-through' }}>
+              {formatRatioLabel(detail.original_ratio)}x
+            </span>
+            <span>{formatRatioLabel(detail.ratio)}x</span>
+          </span>
+        );
+      } else if (ratio !== undefined && ratio !== null) {
+        ratioDisplay = `${formatRatioLabel(ratio)}x`;
       } else {
         ratioDisplay = '1x';
       }

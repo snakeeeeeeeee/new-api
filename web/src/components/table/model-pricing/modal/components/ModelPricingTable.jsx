@@ -20,13 +20,18 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { Card, Avatar, Typography, Table, Tag } from '@douyinfe/semi-ui';
 import { IconCoinMoneyStroked } from '@douyinfe/semi-icons';
-import { calculateModelPrice, getModelPriceItems } from '../../../../../helpers';
+import {
+  calculateModelPrice,
+  formatRatioLabel,
+  getModelPriceItems,
+} from '../../../../../helpers';
 
 const { Text } = Typography;
 
 const ModelPricingTable = ({
   modelData,
   groupRatio,
+  groupRatioDetails = {},
   currency,
   siteDisplayType,
   tokenUnit,
@@ -64,12 +69,14 @@ const ModelPricingTable = ({
 
       // 获取分组倍率
       const groupRatioValue =
-        groupRatio && groupRatio[group] ? groupRatio[group] : 1;
+        groupRatio && groupRatio[group] !== undefined ? groupRatio[group] : 1;
+      const groupRatioDetail = groupRatioDetails[group];
 
       return {
         key: group,
         group: group,
         ratio: groupRatioValue,
+        ratioDetail: groupRatioDetail,
         billingType:
           modelData?.quota_type === 0
             ? t('按量计费')
@@ -99,9 +106,18 @@ const ModelPricingTable = ({
       columns.push({
         title: t('倍率'),
         dataIndex: 'ratio',
-        render: (text) => (
+        render: (text, record) => (
           <Tag color='white' size='small' shape='circle'>
-            {text}x
+            {record?.ratioDetail?.has_ratio_override ? (
+              <span style={{ display: 'inline-flex', gap: 4 }}>
+                <span style={{ textDecoration: 'line-through' }}>
+                  {formatRatioLabel(record.ratioDetail.original_ratio)}x
+                </span>
+                <span>{formatRatioLabel(record.ratioDetail.ratio)}x</span>
+              </span>
+            ) : (
+              `${formatRatioLabel(text)}x`
+            )}
           </Tag>
         ),
       });

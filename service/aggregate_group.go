@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -68,6 +69,41 @@ func GetAggregateGroupRatio(group string) (float64, bool) {
 	return aggregateGroup.GroupRatio, true
 }
 
+type GroupRatioView struct {
+	Ratio            float64  `json:"ratio"`
+	OriginalRatio    float64  `json:"original_ratio"`
+	RatioOverride    *float64 `json:"ratio_override,omitempty"`
+	HasRatioOverride bool     `json:"has_ratio_override"`
+}
+
+func GetAggregateGroupRatioOverride(userSetting dto.UserSetting, aggregateGroup string) (float64, bool) {
+	if strings.TrimSpace(aggregateGroup) == "" || userSetting.AggregateGroupRatioOverrides == nil {
+		return 0, false
+	}
+	ratio, ok := userSetting.AggregateGroupRatioOverrides[aggregateGroup]
+	if !ok || ratio < 0 {
+		return 0, false
+	}
+	return ratio, true
+}
+
+func GetAggregateGroupRatioView(userSetting dto.UserSetting, aggregateGroup string) (GroupRatioView, bool) {
+	ratio, ok := GetAggregateGroupRatio(aggregateGroup)
+	if !ok {
+		return GroupRatioView{}, false
+	}
+	view := GroupRatioView{
+		Ratio:         ratio,
+		OriginalRatio: ratio,
+	}
+	if override, hasOverride := GetAggregateGroupRatioOverride(userSetting, aggregateGroup); hasOverride {
+		view.Ratio = override
+		view.RatioOverride = common.GetPointer(override)
+		view.HasRatioOverride = true
+	}
+	return view, true
+}
+
 func GetUserVisibleGroups(userGroup string) map[string]string {
 	return GetUserUsableGroups(userGroup)
 }
@@ -78,14 +114,23 @@ func CanUserSelectGroup(userGroup, group string) bool {
 }
 
 func GetUserGroupRatio(userGroup, group string) float64 {
-	if ratio, ok := GetAggregateGroupRatio(group); ok {
-		return ratio
+	return GetUserGroupRatioWithSetting(userGroup, group, dto.UserSetting{})
+}
+
+func GetUserGroupRatioWithSetting(userGroup, group string, userSetting dto.UserSetting) float64 {
+	return GetUserGroupRatioView(userGroup, group, userSetting).Ratio
+}
+
+func GetUserGroupRatioView(userGroup, group string, userSetting dto.UserSetting) GroupRatioView {
+	if view, ok := GetAggregateGroupRatioView(userSetting, group); ok {
+		return view
 	}
 	ratio, ok := ratio_setting.GetGroupGroupRatio(userGroup, group)
 	if ok {
-		return ratio
+		return GroupRatioView{Ratio: ratio, OriginalRatio: ratio}
 	}
-	return ratio_setting.GetGroupRatio(group)
+	ratio = ratio_setting.GetGroupRatio(group)
+	return GroupRatioView{Ratio: ratio, OriginalRatio: ratio}
 }
 
 func GetModelsForGroup(group string) []string {
@@ -388,16 +433,29 @@ func BuildAggregateGroupVisibilityLabel(group *model.AggregateGroup) string {
 
 func ResolveContextGroupRatioInfo(ctx *gin.Context, userGroup string, logicalGroup string) types.GroupRatioInfo {
 	groupRatioInfo := types.GroupRatioInfo{
-		GroupRatio:        1.0,
-		GroupSpecialRatio: -1,
+		GroupRatio:         1.0,
+		GroupSpecialRatio:  -1,
+		OriginalGroupRatio: 1.0,
+		RatioOverride:      -1,
 	}
 	aggregateGroup := ""
+	userSetting := dto.UserSetting{}
 	if ctx != nil {
 		aggregateGroup = common.GetContextKeyString(ctx, constant.ContextKeyAggregateGroup)
+		if settingFromContext, ok := common.GetContextKeyType[dto.UserSetting](ctx, constant.ContextKeyUserSetting); ok {
+			userSetting = settingFromContext
+		}
 	}
 	if aggregateGroup != "" {
-		if ratio, ok := GetAggregateGroupRatio(aggregateGroup); ok {
-			groupRatioInfo.GroupRatio = ratio
+		if ratioView, ok := GetAggregateGroupRatioView(userSetting, aggregateGroup); ok {
+			groupRatioInfo.GroupRatio = ratioView.Ratio
+			groupRatioInfo.OriginalGroupRatio = ratioView.OriginalRatio
+			if ratioView.HasRatioOverride && ratioView.RatioOverride != nil {
+				groupRatioInfo.GroupSpecialRatio = *ratioView.RatioOverride
+				groupRatioInfo.HasSpecialRatio = true
+				groupRatioInfo.RatioOverride = *ratioView.RatioOverride
+				groupRatioInfo.HasRatioOverride = true
+			}
 			return groupRatioInfo
 		}
 	}
@@ -409,10 +467,12 @@ func ResolveContextGroupRatioInfo(ctx *gin.Context, userGroup string, logicalGro
 	if ratio, ok := ratio_setting.GetGroupGroupRatio(userGroup, logicalGroup); ok {
 		groupRatioInfo.GroupSpecialRatio = ratio
 		groupRatioInfo.GroupRatio = ratio
+		groupRatioInfo.OriginalGroupRatio = ratio
 		groupRatioInfo.HasSpecialRatio = true
 		return groupRatioInfo
 	}
 	groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(logicalGroup)
+	groupRatioInfo.OriginalGroupRatio = groupRatioInfo.GroupRatio
 	return groupRatioInfo
 }
 

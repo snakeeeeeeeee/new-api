@@ -227,6 +227,25 @@ export const filterVisibleGroupRatioMap = (groupRatio = {}, usableGroup = {}) =>
   );
 };
 
+export const filterVisibleGroupRatioDetailsMap = (
+  groupRatioDetails = {},
+  usableGroup = {},
+) => {
+  const visibleGroups = new Set(Object.keys(filterVisibleGroupsMap(usableGroup)));
+
+  return Object.fromEntries(
+    Object.entries(groupRatioDetails || {}).filter(([group]) => {
+      if (isHiddenGroup(group)) {
+        return false;
+      }
+      if (visibleGroups.size === 0) {
+        return true;
+      }
+      return visibleGroups.has(group);
+    }),
+  );
+};
+
 // 处理分组数据
 export const processGroupsData = (data, userGroup) => {
   const visibleGroups = filterVisibleGroupsMap(data);
@@ -235,6 +254,9 @@ export const processGroupsData = (data, userGroup) => {
       info.desc.length > 20 ? info.desc.substring(0, 20) + '...' : info.desc,
     value: group,
     ratio: info.ratio,
+    originalRatio: info.original_ratio,
+    ratioOverride: info.ratio_override,
+    hasRatioOverride: Boolean(info.has_ratio_override),
     fullLabel: info.desc,
     groupType: info.type || 'real',
   }));

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -29,17 +30,22 @@ func GetPricing(c *gin.Context) {
 	userId, exists := c.Get("id")
 	usableGroup := map[string]string{}
 	groupRatio := map[string]float64{}
+	groupRatioDetails := map[string]service.GroupRatioView{}
 	var group string
+	userSetting := dto.UserSetting{}
 	if exists {
 		user, err := model.GetUserCache(userId.(int))
 		if err == nil {
 			group = user.Group
+			userSetting = user.GetSetting()
 		}
 	}
 
 	usableGroup = service.GetUserVisibleGroups(group)
 	for groupName := range usableGroup {
-		groupRatio[groupName] = service.GetUserGroupRatio(group, groupName)
+		ratioView := service.GetUserGroupRatioView(group, groupName, userSetting)
+		groupRatio[groupName] = ratioView.Ratio
+		groupRatioDetails[groupName] = ratioView
 	}
 	for i := range pricing {
 		pricing[i].EnableGroup = service.MapVisibleModelGroups(group, pricing[i].EnableGroup)
@@ -47,14 +53,15 @@ func GetPricing(c *gin.Context) {
 	autoGroups := service.MapVisibleModelGroups(group, service.GetUserAutoGroup(group))
 
 	c.JSON(200, gin.H{
-		"success":            true,
-		"data":               pricing,
-		"vendors":            model.GetVendors(),
-		"group_ratio":        groupRatio,
-		"usable_group":       usableGroup,
-		"supported_endpoint": model.GetSupportedEndpointMap(),
-		"auto_groups":        autoGroups,
-		"_":                  "a42d372ccf0b5dd13ecf71203521f9d2",
+		"success":             true,
+		"data":                pricing,
+		"vendors":             model.GetVendors(),
+		"group_ratio":         groupRatio,
+		"group_ratio_details": groupRatioDetails,
+		"usable_group":        usableGroup,
+		"supported_endpoint":  model.GetSupportedEndpointMap(),
+		"auto_groups":         autoGroups,
+		"_":                   "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }
 

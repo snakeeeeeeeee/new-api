@@ -830,18 +830,46 @@ export function renderGroup(group) {
   );
 }
 
-export function renderRatio(ratio) {
+export const formatRatioLabel = (ratio) => {
+  const numberValue = Number(ratio);
+  if (!Number.isFinite(numberValue)) {
+    return ratio;
+  }
+  return Number(numberValue.toFixed(6));
+};
+
+export function renderRatio(ratio, ratioInfo = {}) {
+  const numberRatio = Number(ratio);
+  if (!Number.isFinite(numberRatio)) {
+    return <Tag color='grey'>{ratio}</Tag>;
+  }
   let color = 'green';
-  if (ratio > 5) {
+  if (numberRatio > 5) {
     color = 'red';
-  } else if (ratio > 3) {
+  } else if (numberRatio > 3) {
     color = 'orange';
-  } else if (ratio > 1) {
+  } else if (numberRatio > 1) {
     color = 'blue';
   }
+  const originalRatio = ratioInfo.originalRatio ?? ratio;
   return (
     <Tag color={color}>
-      {ratio}x {i18next.t('倍率')}
+      {ratioInfo?.hasRatioOverride ? (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span
+            style={{
+              textDecoration: 'line-through',
+              color: 'var(--semi-color-text-2)',
+            }}
+          >
+            {formatRatioLabel(originalRatio)}x
+          </span>
+          <span>{formatRatioLabel(numberRatio)}x</span>
+        </span>
+      ) : (
+        `${formatRatioLabel(numberRatio)}x`
+      )}{' '}
+      {i18next.t('倍率')}
     </Tag>
   );
 }
@@ -1006,7 +1034,9 @@ export const renderGroupOption = (item) => {
           {label}
         </Typography.Text>
       </div>
-      {item.ratio && renderRatio(item.ratio)}
+      {item.ratio !== undefined && item.ratio !== null
+        ? renderRatio(item.ratio, item)
+        : null}
     </div>
   );
 };

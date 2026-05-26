@@ -1,3 +1,31 @@
+# Task Plan: User Aggregate Group Ratio Overrides
+
+## Goal
+Implement per-user aggregate-group ratio overrides with admin UI, billing/display integration, unit tests, frontend build, and Docker dev business regression.
+
+## Current Phase
+Phase 5 complete
+
+## Phases
+- [x] Discovery and work setup
+- [x] Backend implementation
+- [x] Frontend implementation
+- [x] Go/frontend verification
+- [x] Docker dev business regression
+- [x] Delivery review
+
+## Verification
+- `go test ./service ./controller`: passed.
+- `go test ./...`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/chunk warnings.
+- Docker dev regression passed with mock upstream:
+  - no override aggregate group: quota 300, group ratio 2
+  - aggregate override 0.5: quota 75, group ratio 0.5, override fields in log
+  - real group default: quota 150, group ratio 1, no override fields
+  - log `other` includes `original_group_ratio`, `original_ratio`, `ratio_override`, and `has_ratio_override`
+
+---
+
 # Task Plan: 风险检测与命中拦截 v1
 
 ## Goal

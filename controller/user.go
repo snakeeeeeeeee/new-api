@@ -1313,6 +1313,93 @@ type ManageRequest struct {
 	Action string `json:"action"`
 }
 
+type aggregateGroupRatioOverridesRequest struct {
+	Overrides map[string]float64 `json:"overrides"`
+}
+
+func normalizeAggregateGroupRatioOverrides(input map[string]float64) (map[string]float64, error) {
+	normalized := make(map[string]float64)
+	for group, ratio := range input {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if ratio < 0 {
+			return nil, fmt.Errorf("聚合分组 %s 特殊倍率不能小于 0", group)
+		}
+		if _, ok := service.GetAggregateGroup(group, true); !ok {
+			return nil, fmt.Errorf("聚合分组 %s 不存在或未启用", group)
+		}
+		normalized[group] = ratio
+	}
+	return normalized, nil
+}
+
+func GetUserAggregateGroupRatioOverrides(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	user, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !canAdminManageUser(c, user) {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		return
+	}
+	overrides := user.GetSetting().AggregateGroupRatioOverrides
+	if overrides == nil {
+		overrides = map[string]float64{}
+	}
+	common.ApiSuccess(c, gin.H{
+		"overrides": overrides,
+	})
+}
+
+func UpdateUserAggregateGroupRatioOverrides(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	var req aggregateGroupRatioOverridesRequest
+	if err = common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	normalized, err := normalizeAggregateGroupRatioOverrides(req.Overrides)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	user, err := model.GetUserById(id, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !canAdminManageUser(c, user) {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		return
+	}
+	userSetting := user.GetSetting()
+	if len(normalized) == 0 {
+		userSetting.AggregateGroupRatioOverrides = nil
+	} else {
+		userSetting.AggregateGroupRatioOverrides = normalized
+	}
+	user.SetSetting(userSetting)
+	if err = user.Update(false); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"overrides": normalized,
+	})
+}
+
 // ManageUser Only admin user can do this
 func ManageUser(c *gin.Context) {
 	var req ManageRequest
@@ -1616,6 +1703,10 @@ func UpdateUserSetting(c *gin.Context) {
 		UpstreamModelUpdateNotifyEnabled: upstreamModelUpdateNotifyEnabled,
 		AcceptUnsetRatioModel:            req.AcceptUnsetModelRatioModel,
 		RecordIpLog:                      req.RecordIpLog,
+		SidebarModules:                   existingSettings.SidebarModules,
+		BillingPreference:                existingSettings.BillingPreference,
+		Language:                         existingSettings.Language,
+		AggregateGroupRatioOverrides:     existingSettings.AggregateGroupRatioOverrides,
 	}
 
 	// 如果是webhook类型,添加webhook相关设置

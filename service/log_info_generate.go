@@ -52,6 +52,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["cache_ratio"] = cacheRatio
 	other["model_price"] = modelPrice
 	other["user_group_ratio"] = userGroupRatio
+	appendGroupRatioOverrideInfo(relayInfo, other)
 	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort
@@ -89,6 +90,21 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendBillingInfo(relayInfo, other)
 	appendParamOverrideInfo(relayInfo, other)
 	return other
+}
+
+func appendGroupRatioOverrideInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
+	if relayInfo == nil || other == nil {
+		return
+	}
+	ratioInfo := relayInfo.PriceData.GroupRatioInfo
+	if ratioInfo.OriginalGroupRatio != 0 {
+		other["original_group_ratio"] = ratioInfo.OriginalGroupRatio
+		other["original_ratio"] = ratioInfo.OriginalGroupRatio
+	}
+	if ratioInfo.HasRatioOverride {
+		other["ratio_override"] = ratioInfo.RatioOverride
+		other["has_ratio_override"] = true
+	}
 }
 
 func appendParamOverrideInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
@@ -243,6 +259,7 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
 	}
+	appendGroupRatioOverrideInfo(relayInfo, other)
 	appendRequestPath(nil, relayInfo, other)
 	return other
 }

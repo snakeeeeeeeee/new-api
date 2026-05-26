@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -50,7 +51,7 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.Channel{}, &model.Ability{}, &model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.Channel{}, &model.Ability{}, &model.Option{}))
 
 	t.Cleanup(func() {
 		setting.AggregateGroupSmartStrategyEnabled = originalSmartStrategyEnabled
@@ -91,6 +92,29 @@ func seedAggregateGroupControllerAbilityChannel(t *testing.T, id int, group stri
 	}
 	require.NoError(t, model.DB.Create(channel).Error)
 	require.NoError(t, channel.AddAbilities(nil))
+}
+
+func seedAggregateGroupControllerUser(t *testing.T, db *gorm.DB, id int, username string, group string, role int, setting dto.UserSetting) *model.User {
+	t.Helper()
+	user := &model.User{
+		Id:          id,
+		Username:    username,
+		Password:    "password123",
+		DisplayName: username,
+		Status:      common.UserStatusEnabled,
+		Role:        role,
+		Group:       group,
+	}
+	user.SetSetting(setting)
+	require.NoError(t, db.Create(user).Error)
+	return user
+}
+
+func decodeAggregateGroupAPIResponse(t *testing.T, recorder *httptest.ResponseRecorder) tokenAPIResponse {
+	t.Helper()
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	return resp
 }
 
 func TestCreateAggregateGroupAndList(t *testing.T) {
@@ -171,6 +195,143 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"smart_strategy_config"`)
 	require.Contains(t, string(listResp.Data), `"failure_rate_threshold_percent":8`)
 	require.Contains(t, string(listResp.Data), `"cluster_degraded_weight_percent":35`)
+}
+
+func TestUpdateUserAggregateGroupRatioOverridesPreservesUserSetting(t *testing.T) {
+	db := setupAggregateGroupControllerTestDB(t)
+
+	stable := &model.AggregateGroup{
+		Name:                    "enterprise-stable",
+		DisplayName:             "Enterprise Stable",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.5,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, stable.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, stable.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+
+	fast := &model.AggregateGroup{
+		Name:                    "enterprise-fast",
+		DisplayName:             "Enterprise Fast",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              2,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, fast.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, fast.InsertWithTargets(service.NormalizeAggregateTargets([]string{"vip"})))
+
+	seedAggregateGroupControllerUser(t, db, 41, "override_user", "vip", common.RoleCommonUser, dto.UserSetting{
+		NotifyType:            dto.NotifyTypeWebhook,
+		QuotaWarningThreshold: 0.25,
+		WebhookUrl:            "https://example.com/hook",
+		WebhookSecret:         "secret",
+		SidebarModules:        `{"dashboard":true}`,
+		BillingPreference:     "wallet_first",
+		Language:              "en",
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/user/41/aggregate_group_ratio_overrides", bytes.NewReader([]byte(`{
+		"overrides":{"enterprise-stable":0.1,"enterprise-fast":0}
+	}`)))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Params = gin.Params{{Key: "id", Value: "41"}}
+	ctx.Set("role", common.RoleRootUser)
+
+	UpdateUserAggregateGroupRatioOverrides(ctx)
+
+	resp := decodeAggregateGroupAPIResponse(t, recorder)
+	require.True(t, resp.Success, resp.Message)
+
+	updated, err := model.GetUserById(41, true)
+	require.NoError(t, err)
+	setting := updated.GetSetting()
+	require.Equal(t, dto.NotifyTypeWebhook, setting.NotifyType)
+	require.Equal(t, 0.25, setting.QuotaWarningThreshold)
+	require.Equal(t, "https://example.com/hook", setting.WebhookUrl)
+	require.Equal(t, "secret", setting.WebhookSecret)
+	require.Equal(t, `{"dashboard":true}`, setting.SidebarModules)
+	require.Equal(t, "wallet_first", setting.BillingPreference)
+	require.Equal(t, "en", setting.Language)
+	require.Equal(t, map[string]float64{
+		"enterprise-stable": 0.1,
+		"enterprise-fast":   0,
+	}, setting.AggregateGroupRatioOverrides)
+
+	getRecorder := httptest.NewRecorder()
+	getCtx, _ := gin.CreateTestContext(getRecorder)
+	getCtx.Request = httptest.NewRequest(http.MethodGet, "/api/user/41/aggregate_group_ratio_overrides", nil)
+	getCtx.Params = gin.Params{{Key: "id", Value: "41"}}
+	getCtx.Set("role", common.RoleRootUser)
+	GetUserAggregateGroupRatioOverrides(getCtx)
+
+	getResp := decodeAggregateGroupAPIResponse(t, getRecorder)
+	require.True(t, getResp.Success, getResp.Message)
+	var data struct {
+		Overrides map[string]float64 `json:"overrides"`
+	}
+	require.NoError(t, common.Unmarshal(getResp.Data, &data))
+	require.Equal(t, 0.1, data.Overrides["enterprise-stable"])
+	require.Equal(t, 0.0, data.Overrides["enterprise-fast"])
+}
+
+func TestGetUserGroupsReturnsAggregateRatioOverrideDetails(t *testing.T) {
+	db := setupAggregateGroupControllerTestDB(t)
+	originalGroups := setting.UserUsableGroups2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组"}`))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalGroups))
+	})
+
+	group := &model.AggregateGroup{
+		Name:                    "enterprise-stable",
+		DisplayName:             "Enterprise Stable",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.5,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, group.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+
+	seedAggregateGroupControllerUser(t, db, 42, "visible_override_user", "vip", common.RoleCommonUser, dto.UserSetting{
+		AggregateGroupRatioOverrides: map[string]float64{
+			"enterprise-stable": 0.1,
+			"default":           0.2,
+		},
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/self/groups", nil)
+	ctx.Set("id", 42)
+	GetUserGroups(ctx)
+
+	resp := decodeAggregateGroupAPIResponse(t, recorder)
+	require.True(t, resp.Success, resp.Message)
+	var groups map[string]struct {
+		Ratio            float64  `json:"ratio"`
+		OriginalRatio    float64  `json:"original_ratio"`
+		RatioOverride    *float64 `json:"ratio_override"`
+		HasRatioOverride bool     `json:"has_ratio_override"`
+		Type             string   `json:"type"`
+	}
+	require.NoError(t, common.Unmarshal(resp.Data, &groups))
+
+	require.Equal(t, "aggregate", groups["enterprise-stable"].Type)
+	require.Equal(t, 0.1, groups["enterprise-stable"].Ratio)
+	require.Equal(t, 1.5, groups["enterprise-stable"].OriginalRatio)
+	require.True(t, groups["enterprise-stable"].HasRatioOverride)
+	require.NotNil(t, groups["enterprise-stable"].RatioOverride)
+	require.Equal(t, 0.1, *groups["enterprise-stable"].RatioOverride)
+
+	require.Equal(t, "real", groups["default"].Type)
+	require.Equal(t, 1.0, groups["default"].Ratio)
+	require.False(t, groups["default"].HasRatioOverride)
+	require.Nil(t, groups["default"].RatioOverride)
 }
 
 func TestCreateAggregateGroupRejectsInvalidSmartStrategyConfig(t *testing.T) {

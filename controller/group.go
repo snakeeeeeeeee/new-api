@@ -27,18 +27,25 @@ func GetUserGroups(c *gin.Context) {
 	usableGroups := make(map[string]map[string]interface{})
 	userGroup := ""
 	userId := c.GetInt("id")
+	userSetting, _ := model.GetUserSetting(userId, false)
 	userGroup, _ = model.GetUserGroup(userId, false)
 	userVisibleGroups := service.GetUserVisibleGroups(userGroup)
 	for groupName, desc := range userVisibleGroups {
+		ratioView := service.GetUserGroupRatioView(userGroup, groupName, userSetting)
 		usableGroups[groupName] = map[string]interface{}{
-			"ratio": service.GetUserGroupRatio(userGroup, groupName),
-			"desc":  desc,
+			"ratio":              ratioView.Ratio,
+			"original_ratio":     ratioView.OriginalRatio,
+			"has_ratio_override": ratioView.HasRatioOverride,
+			"desc":               desc,
 			"type": func() string {
 				if service.IsAggregateGroup(groupName) {
 					return "aggregate"
 				}
 				return "real"
 			}(),
+		}
+		if ratioView.RatioOverride != nil {
+			usableGroups[groupName]["ratio_override"] = *ratioView.RatioOverride
 		}
 	}
 	if _, ok := service.GetUserUsableGroups(userGroup)["auto"]; ok {

@@ -1,3 +1,28 @@
+# Session: 2026-05-26 User Aggregate Group Ratio Overrides
+
+## Scope
+- Implement per-user aggregate group special ratio overrides, admin UI management, user-facing ratio display, and billing/log integration.
+
+## Progress
+- Added `AggregateGroupRatioOverrides` to user settings.
+- Added override-aware aggregate group ratio helpers and billing resolution.
+- Added admin read/update APIs under `/api/user/:id/aggregate_group_ratio_overrides`.
+- Added user-facing and pricing ratio metadata for aggregate groups.
+- Added admin modal for searchable multi-aggregate-group override management.
+- Added strikethrough original-ratio display in user/pricing group UI.
+
+## Verification
+- `go test ./service ./controller`: passed.
+- `go test ./...`: passed.
+- `cd web && bun run build`: passed with existing warnings.
+- Docker dev regression passed with local mock upstream. Verified quota/token/log deltas for aggregate no override, aggregate override, and real group unaffected scenarios, including `original_ratio` and override fields in consume log `other`.
+
+## Notes
+- Docker dev used a temporary access-token root user and temporary model/channel/token/group data, all cleaned up after regression.
+- Channel abilities were refreshed via `/api/channel/fix` during regression so newly created dev channels were available immediately.
+
+---
+
 # Session: 2026-05-25 风险检测与命中拦截 v1
 
 ## Scope

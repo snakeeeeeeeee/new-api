@@ -207,7 +207,9 @@ const SelectableButtonGroup = ({
                   <ConditionalTooltipText text={item.label} />
                   {item.tagCount !== undefined && shouldShowTags && (
                     <span className={`sbg-badge ${isActive ? 'sbg-badge-active' : ''}`}>
-                      {item.tagCount}
+                      {React.isValidElement(item.tagCount)
+                        ? item.tagCount
+                        : item.tagCount}
                     </span>
                   )}
                 </div>
@@ -230,7 +232,9 @@ const SelectableButtonGroup = ({
                 <ConditionalTooltipText text={item.label} />
                 {item.tagCount !== undefined && shouldShowTags && item.tagCount !== '' && (
                   <span className={`sbg-badge ${isActive ? 'sbg-badge-active' : ''}`}>
-                    {item.tagCount}
+                    {React.isValidElement(item.tagCount)
+                      ? item.tagCount
+                      : item.tagCount}
                   </span>
                 )}
               </div>

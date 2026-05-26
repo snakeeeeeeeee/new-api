@@ -33,6 +33,7 @@ import ResetPasskeyModal from './modals/ResetPasskeyModal';
 import ResetTwoFAModal from './modals/ResetTwoFAModal';
 import UserSubscriptionsModal from './modals/UserSubscriptionsModal';
 import InviteBindingModal from './modals/InviteBindingModal';
+import AggregateGroupRatioOverridesModal from './modals/AggregateGroupRatioOverridesModal';
 
 const UsersTable = (usersData) => {
   const {
@@ -66,6 +67,10 @@ const UsersTable = (usersData) => {
   const [showUserSubscriptionsModal, setShowUserSubscriptionsModal] =
     useState(false);
   const [showInviteBindingModal, setShowInviteBindingModal] = useState(false);
+  const [
+    showAggregateGroupRatioOverridesModal,
+    setShowAggregateGroupRatioOverridesModal,
+  ] = useState(false);
 
   // Modal handlers
   const showPromoteUserModal = (user) => {
@@ -109,6 +114,11 @@ const UsersTable = (usersData) => {
     setShowInviteBindingModal(true);
   };
 
+  const showAggregateGroupRatioOverridesUserModal = (user) => {
+    setModalUser(user);
+    setShowAggregateGroupRatioOverridesModal(true);
+  };
+
   // Modal confirm handlers
   const handlePromoteConfirm = () => {
     manageUser(modalUser.id, 'promote', modalUser);
@@ -149,6 +159,8 @@ const UsersTable = (usersData) => {
       showResetTwoFAModal: showResetTwoFAUserModal,
       showUserSubscriptionsModal: showUserSubscriptionsUserModal,
       showInviteBindingModal: showInviteBindingUserModal,
+      showAggregateGroupRatioOverridesModal:
+        showAggregateGroupRatioOverridesUserModal,
     });
   }, [
     t,
@@ -162,6 +174,7 @@ const UsersTable = (usersData) => {
     showResetTwoFAUserModal,
     showUserSubscriptionsUserModal,
     showInviteBindingUserModal,
+    showAggregateGroupRatioOverridesUserModal,
   ]);
 
   // Handle compact mode by removing fixed positioning
@@ -276,6 +289,14 @@ const UsersTable = (usersData) => {
         user={modalUser}
         refresh={refresh}
         t={t}
+      />
+
+      <AggregateGroupRatioOverridesModal
+        visible={showAggregateGroupRatioOverridesModal}
+        onCancel={() => setShowAggregateGroupRatioOverridesModal(false)}
+        user={modalUser}
+        t={t}
+        onSuccess={() => refresh?.()}
       />
     </>
   );

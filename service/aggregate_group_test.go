@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -253,6 +254,9 @@ func TestVisibleAggregateGroupsAndRatios(t *testing.T) {
 	require.Contains(t, visibleGroups, "default")
 	require.Contains(t, visibleGroups, "enterprise-stable")
 	require.Equal(t, 1.5, GetUserGroupRatio("vip", "enterprise-stable"))
+	ratioView := GetUserGroupRatioView("vip", "enterprise-stable", dto.UserSetting{})
+	require.Equal(t, 1.5, ratioView.Ratio)
+	require.False(t, ratioView.HasRatioOverride)
 
 	rec := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(rec)
@@ -260,6 +264,48 @@ func TestVisibleAggregateGroupsAndRatios(t *testing.T) {
 	ratioInfo := ResolveContextGroupRatioInfo(ctx, "vip", "enterprise-stable")
 	require.Equal(t, 1.5, ratioInfo.GroupRatio)
 	require.False(t, ratioInfo.HasSpecialRatio)
+}
+
+func TestAggregateGroupUserRatioOverrides(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	seedAggregateGroup(t, "enterprise-stable", 1.5, 300, []string{"vip"}, []string{"default"})
+	seedAggregateGroup(t, "enterprise-fast", 2.0, 300, []string{"vip"}, []string{"vip"})
+
+	userSetting := dto.UserSetting{
+		AggregateGroupRatioOverrides: map[string]float64{
+			"enterprise-stable": 0.1,
+			"enterprise-fast":   0.8,
+			"default":           0.2,
+		},
+	}
+
+	stableView := GetUserGroupRatioView("vip", "enterprise-stable", userSetting)
+	require.Equal(t, 0.1, stableView.Ratio)
+	require.Equal(t, 1.5, stableView.OriginalRatio)
+	require.True(t, stableView.HasRatioOverride)
+	require.NotNil(t, stableView.RatioOverride)
+	require.Equal(t, 0.1, *stableView.RatioOverride)
+
+	fastView := GetUserGroupRatioView("vip", "enterprise-fast", userSetting)
+	require.Equal(t, 0.8, fastView.Ratio)
+	require.Equal(t, 2.0, fastView.OriginalRatio)
+	require.True(t, fastView.HasRatioOverride)
+
+	realGroupView := GetUserGroupRatioView("vip", "default", userSetting)
+	require.Equal(t, 1.0, realGroupView.Ratio)
+	require.False(t, realGroupView.HasRatioOverride)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-stable")
+	common.SetContextKey(ctx, constant.ContextKeyUserSetting, userSetting)
+	ratioInfo := ResolveContextGroupRatioInfo(ctx, "vip", "enterprise-stable")
+	require.Equal(t, 0.1, ratioInfo.GroupRatio)
+	require.Equal(t, 1.5, ratioInfo.OriginalGroupRatio)
+	require.Equal(t, 0.1, ratioInfo.GroupSpecialRatio)
+	require.True(t, ratioInfo.HasSpecialRatio)
+	require.True(t, ratioInfo.HasRatioOverride)
+	require.Equal(t, 0.1, ratioInfo.RatioOverride)
 }
 
 func TestCacheGetRandomSatisfiedChannelUsesAggregateFallbackAndRecovery(t *testing.T) {

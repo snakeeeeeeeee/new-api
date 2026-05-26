@@ -26,6 +26,7 @@ import {
   showInfo,
   showSuccess,
   filterVisibleGroupRatioMap,
+  filterVisibleGroupRatioDetailsMap,
   filterVisibleGroupsMap,
 } from '../../helpers';
 import { Modal } from '@douyinfe/semi-ui';
@@ -57,6 +58,7 @@ export const useModelPricingData = () => {
   const [vendorsMap, setVendorsMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [groupRatio, setGroupRatio] = useState({});
+  const [groupRatioDetails, setGroupRatioDetails] = useState({});
   const [usableGroup, setUsableGroup] = useState({});
   const [endpointMap, setEndpointMap] = useState({});
   const [autoGroups, setAutoGroups] = useState([]);
@@ -203,11 +205,12 @@ export const useModelPricingData = () => {
     return `$${priceInUSD.toFixed(3)}`;
   };
 
-  const setModelsFormat = (models, groupRatio, vendorMap) => {
+  const setModelsFormat = (models, groupRatio, groupRatioDetails, vendorMap) => {
     for (let i = 0; i < models.length; i++) {
       const m = models[i];
       m.key = m.model_name;
       m.group_ratio = groupRatio[m.model_name];
+      m.group_ratio_details = groupRatioDetails[m.model_name];
 
       if (m.vendor_id && vendorMap[m.vendor_id]) {
         const vendor = vendorMap[m.vendor_id];
@@ -246,6 +249,7 @@ export const useModelPricingData = () => {
       data,
       vendors,
       group_ratio,
+      group_ratio_details,
       usable_group,
       supported_endpoint,
       auto_groups,
@@ -256,7 +260,12 @@ export const useModelPricingData = () => {
         group_ratio || {},
         visibleUsableGroup,
       );
+      const visibleGroupRatioDetails = filterVisibleGroupRatioDetailsMap(
+        group_ratio_details || {},
+        visibleUsableGroup,
+      );
       setGroupRatio(visibleGroupRatio);
+      setGroupRatioDetails(visibleGroupRatioDetails);
       setUsableGroup(visibleUsableGroup);
       setSelectedGroup('all');
       // 构建供应商 Map 方便查找
@@ -269,7 +278,7 @@ export const useModelPricingData = () => {
       setVendorsMap(vendorMap);
       setEndpointMap(supported_endpoint || {});
       setAutoGroups(auto_groups || []);
-      setModelsFormat(data, visibleGroupRatio, vendorMap);
+      setModelsFormat(data, visibleGroupRatio, visibleGroupRatioDetails, vendorMap);
     } else {
       showError(message);
     }
@@ -410,6 +419,7 @@ export const useModelPricingData = () => {
     models,
     loading,
     groupRatio,
+    groupRatioDetails,
     usableGroup,
     endpointMap,
     autoGroups,

@@ -1,3 +1,23 @@
+# User Aggregate Group Ratio Overrides Findings
+
+## Requirements
+- Per-user special ratios for aggregate groups only.
+- A user can configure many aggregate-group overrides.
+- No override by default; no behavior change for old users.
+- Override replaces aggregate group ratio rather than multiplying it.
+- Admin UI entry is the user management row three-dot menu.
+- User-facing group cards show original ratio struck through followed by effective override ratio.
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| Store overrides in `users.setting` | No migration; compatible with SQLite/MySQL/PostgreSQL. |
+| Add dedicated `/api/user/:id/aggregate_group_ratio_overrides` admin endpoints | Keeps base user edit form and unrelated setting fields isolated. |
+| Resolve overrides only when `ContextKeyAggregateGroup` is set | Real groups and existing group-special-ratio behavior remain unchanged. |
+| Return effective `ratio` plus `original_ratio`/`ratio_override` metadata | Existing clients keep reading `ratio`; new UI can render strikethrough display. |
+
+---
+
 # 风险检测与命中拦截 v1 Findings
 
 ## Requirements
