@@ -1,3 +1,25 @@
+# Session: 2026-06-02 邀请统计 v1
+
+## Scope
+- 实现邀请人下级用户余额消费报表，包含后端聚合接口、后台页面、侧栏入口、i18n、测试和构建验证。
+
+## Progress
+- 已接手现有实现草稿：后端接口、前端页面、路由和侧栏入口已初步完成。
+- 已核对后端聚合方案：先查主库下级用户 ID，再查 `LOG_DB` 消费日志，Go 侧解析 `other.billing_source` 排除订阅。
+- 已完成 i18n、Go 格式化、后端测试、前端构建和 `git diff --check`。
+
+## Verification
+- `go test ./model ./controller`: passed.
+- `cd web && bun run build`: passed with existing warnings.
+- `git diff --check`: passed.
+- Docker dev rebuild and smoke verification passed:
+  - `docker compose -f docker-compose-dev.yml up -d --build`
+  - `new-api-dev` healthy on `127.0.0.1:3001`
+  - seeded direct invitee wallet/subscription/out-of-range/non-invited logs and verified `/api/invite_code/consumption` returns wallet quota 6000, request count 3, excluded subscription quota 9000.
+  - cleaned temporary seed users, invite code, logs, and root access token.
+
+---
+
 # Session: 2026-05-26 User Aggregate Group Ratio Overrides
 
 ## Scope

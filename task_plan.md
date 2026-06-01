@@ -1,3 +1,37 @@
+# Task Plan: 邀请统计 v1 余额消费报表
+
+## Goal
+新增管理员邀请统计页面和 `/api/invite_code/consumption` 接口，按邀请人用户名和日期范围统计直接邀请用户的余额消费，排除订阅包消费。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+- [x] Phase 1: 后端接口与聚合逻辑
+- [x] Phase 2: 前端页面、路由和侧栏入口
+- [x] Phase 3: i18n、格式化和编译修复
+- [x] Phase 4: `go test ./model ./controller` 与 `cd web && bun run build`
+
+## Verification
+- `go test ./model ./controller`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `git diff --check`: passed.
+- `docker compose -f docker-compose-dev.yml up -d --build`: passed; `new-api-dev` healthy on `127.0.0.1:3001`.
+- Docker dev HTTP verification passed against `/api/invite_code/consumption` with seeded invite users/logs:
+  - direct invitees counted: 2
+  - wallet quota: 6000, wallet requests: 3, model count: 2
+  - subscription quota excluded: 9000, excluded requests: 1
+  - non-invited and out-of-range logs excluded
+  - temporary seed data and temporary root access token cleaned up.
+
+## Key Constraints
+- v1 只统计余额/充值额度消费，不统计订阅包内部额度消费。
+- 日志 `other` 解析在 Go 侧完成，不使用数据库 JSON 函数。
+- 路由 `/api/invite_code/consumption` 必须位于 `/:id` 前。
+- 日期范围由前端 DatePicker 日历范围转换为本地日初/日末 Unix 秒。
+
+---
+
 # Task Plan: User Aggregate Group Ratio Overrides
 
 ## Goal

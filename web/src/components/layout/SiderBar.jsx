@@ -37,6 +37,7 @@ const routerMap = {
   request_dump: '/console/request-dump',
   violation: '/console/violation',
   invite_code: '/console/invite-code',
+  invite_stats: '/console/invite-stats',
   log_dashboard: '/console/log-dashboard',
   token: '/console/token',
   redemption: '/console/redemption',
@@ -168,6 +169,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('邀请码管理'),
         itemKey: 'invite_code',
         to: '/invite-code',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('邀请统计'),
+        itemKey: 'invite_stats',
+        to: '/invite-stats',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

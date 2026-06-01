@@ -1,3 +1,20 @@
+# 邀请统计 v1 Findings
+
+## Requirements
+- 管理员通过邀请人用户名和日期范围查看直接邀请用户的余额消费。
+- 只统计 `LogTypeConsume` 中非订阅包来源的消费；`other.billing_source = subscription` 进入排除统计。
+- 展示汇总、模型排行、每日趋势和模型明细表。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 先查主库 invitee IDs，再查 `LOG_DB` | 兼容日志独立库配置，避免跨库 join。 |
+| Go 侧解析 `logs.other` | 避免 SQLite/MySQL/PostgreSQL JSON 函数差异。 |
+| 后端返回 `quota` 和 `amount` | 前端只负责展示，金额口径统一为 `quota / common.QuotaPerUnit`。 |
+| 新页面放独立 `/console/invite-stats` | 报表查询与邀请码 CRUD 分开，侧栏紧跟“邀请码管理”。 |
+
+---
+
 # User Aggregate Group Ratio Overrides Findings
 
 ## Requirements

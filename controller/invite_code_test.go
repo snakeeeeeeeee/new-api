@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -235,4 +236,60 @@ func TestUpdateInviteCodeRejectsTotalUsesBelowUsedUses(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.False(t, resp.Success)
 	require.Contains(t, resp.Message, "赠送总次数不能小于已使用次数")
+}
+
+func TestGetInviteConsumptionStatsController(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	originalQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 1000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
+	seedInviteCodeControllerUser(t, db, 50, "owner_consumption", "aff-owner-consumption")
+	code := &model.InviteCode{
+		Code:        "CTRL-CONSUME",
+		Prefix:      "CTRL",
+		OwnerUserId: 50,
+		TargetGroup: "default",
+		Status:      model.InviteCodeStatusEnabled,
+	}
+	require.NoError(t, code.Insert())
+	require.NoError(t, db.Create(&model.User{
+		Id:                501,
+		Username:          "controller_invitee",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "default",
+		AffCode:           "aff-controller-invitee",
+		InviteCodeId:      code.Id,
+		InviteCodeOwnerId: 50,
+		InviterId:         50,
+	}).Error)
+	eventTime := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.Local).Unix()
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		UserId:    501,
+		Username:  "controller_invitee",
+		CreatedAt: eventTime,
+		Type:      model.LogTypeConsume,
+		ModelName: "gpt-4o",
+		Quota:     2000,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/invite_code/consumption?username=owner_consumption&start_time=%d&end_time=%d", eventTime-10, eventTime+10), nil)
+	GetInviteConsumptionStats(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+
+	var data model.InviteConsumptionStatsResponse
+	require.NoError(t, common.Unmarshal(resp.Data, &data))
+	require.Equal(t, "owner_consumption", data.Inviter.Username)
+	require.Equal(t, int64(2000), data.Summary.WalletQuota)
+	require.Equal(t, 2.0, data.Summary.WalletAmount)
+	require.Len(t, data.Models, 1)
+	require.Equal(t, "gpt-4o", data.Models[0].ModelName)
 }

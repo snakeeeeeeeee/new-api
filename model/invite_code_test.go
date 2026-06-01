@@ -70,6 +70,19 @@ func seedInviteConsumeLogAt(t *testing.T, userID int, username string, quota int
 	}).Error)
 }
 
+func seedInviteModelConsumeLogAt(t *testing.T, userID int, username string, modelName string, quota int, createdAt int64, other map[string]interface{}) {
+	t.Helper()
+	require.NoError(t, LOG_DB.Create(&Log{
+		UserId:    userID,
+		CreatedAt: createdAt,
+		Type:      LogTypeConsume,
+		Username:  username,
+		ModelName: modelName,
+		Quota:     quota,
+		Other:     common.MapToJsonStr(other),
+	}).Error)
+}
+
 func fixedInviteStatsTime(year int, month time.Month, day int) int64 {
 	return time.Date(year, month, day, 12, 0, 0, 0, time.Local).Unix()
 }
@@ -196,6 +209,90 @@ func TestGetInviteStatsAggregatesUsersRechargeAndConsume(t *testing.T) {
 	require.Equal(t, int64(150), codeStats[inviteCode.Id].InviteTotalRechargeAmount)
 	require.Equal(t, 20.0, codeStats[inviteCode.Id].InviteTotalRechargeMoney)
 	require.Equal(t, 8000, codeStats[inviteCode.Id].InviteTotalConsume)
+}
+
+func TestGetInviteConsumptionStatsAggregatesWalletLogsByModel(t *testing.T) {
+	truncateTables(t)
+	originalQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 1000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
+
+	seedInviteOwner(t, 120, "wallet_owner")
+	inviteCode := seedInviteCode(t, "WALLET-STATS", 120, "vip", 0, 0, 0, InviteCodeStatusEnabled)
+	require.NoError(t, DB.Create(&User{
+		Id:                1201,
+		Username:          "wallet_invitee_a",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		InviteCodeId:      inviteCode.Id,
+		InviteCodeOwnerId: 120,
+		InviterId:         120,
+		AffCode:           "aff-wallet-a",
+	}).Error)
+	require.NoError(t, DB.Create(&User{
+		Id:                1202,
+		Username:          "wallet_invitee_b",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		InviteCodeId:      inviteCode.Id,
+		InviteCodeOwnerId: 120,
+		InviterId:         120,
+		AffCode:           "aff-wallet-b",
+	}).Error)
+	require.NoError(t, DB.Create(&User{
+		Id:       1203,
+		Username: "not_invited",
+		Password: "password123",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		AffCode:  "aff-not-invited",
+	}).Error)
+
+	may10 := fixedInviteStatsTime(2026, time.May, 10)
+	may11 := fixedInviteStatsTime(2026, time.May, 11)
+	may12 := fixedInviteStatsTime(2026, time.May, 12)
+	seedInviteModelConsumeLogAt(t, 1201, "wallet_invitee_a", "gpt-4o", 1000, may10, nil)
+	seedInviteModelConsumeLogAt(t, 1201, "wallet_invitee_a", "gpt-4o", 2000, may10+60, map[string]interface{}{"billing_source": "wallet"})
+	seedInviteModelConsumeLogAt(t, 1202, "wallet_invitee_b", "claude-sonnet", 3000, may11, nil)
+	seedInviteModelConsumeLogAt(t, 1202, "wallet_invitee_b", "gpt-4o", 9000, may11+60, map[string]interface{}{"billing_source": "subscription"})
+	seedInviteModelConsumeLogAt(t, 1202, "wallet_invitee_b", "gpt-4o", 5000, may12, nil)
+	seedInviteModelConsumeLogAt(t, 1203, "not_invited", "gpt-4o", 7000, may10, nil)
+
+	stats, err := GetInviteConsumptionStats("wallet_owner", may10-10, may11+3600)
+	require.NoError(t, err)
+	require.Equal(t, 120, stats.Inviter.Id)
+	require.Equal(t, "wallet_owner", stats.Inviter.Username)
+	require.Equal(t, int64(2), stats.Summary.InviteUserCount)
+	require.Equal(t, int64(6000), stats.Summary.WalletQuota)
+	require.Equal(t, 6.0, stats.Summary.WalletAmount)
+	require.Equal(t, int64(3), stats.Summary.RequestCount)
+	require.Equal(t, 2, stats.Summary.ModelCount)
+	require.Equal(t, int64(9000), stats.Summary.ExcludedSubscriptionQuota)
+	require.Equal(t, int64(1), stats.Summary.ExcludedSubscriptionRequestCount)
+	require.Len(t, stats.Models, 2)
+	require.Equal(t, "gpt-4o", stats.Models[0].ModelName)
+	require.Equal(t, int64(3000), stats.Models[0].Quota)
+	require.Equal(t, int64(2), stats.Models[0].RequestCount)
+	require.Equal(t, 50.0, stats.Models[0].Percent)
+	require.Equal(t, "claude-sonnet", stats.Models[1].ModelName)
+	require.Equal(t, int64(3000), stats.Models[1].Quota)
+	require.Len(t, stats.Trend, 2)
+	require.Equal(t, int64(3000), stats.Trend[0].Quota)
+	require.Equal(t, int64(3000), stats.Trend[1].Quota)
+}
+
+func TestGetInviteConsumptionStatsReturnsErrorForMissingOwner(t *testing.T) {
+	truncateTables(t)
+	_, err := GetInviteConsumptionStats("missing_owner", fixedInviteStatsTime(2026, time.May, 10), fixedInviteStatsTime(2026, time.May, 11))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "邀请人不存在")
 }
 
 func TestGetInviteCodesByOwnerUserIDIncludesDeletedCodes(t *testing.T) {
