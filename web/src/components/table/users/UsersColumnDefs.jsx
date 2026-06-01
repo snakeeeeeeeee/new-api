@@ -267,10 +267,24 @@ const renderInviteInfo = (text, record, t) => {
     record.inviter_id === 0
       ? t('无邀请人')
       : `${t('邀请人')}: #${record.inviter_id}${record.inviter_username ? ` ${record.inviter_username}` : ''}`;
+  const breakdown = record.invite_consumption_breakdown;
+  const breakdownLoading = record.invite_consumption_breakdown_loading;
+  const breakdownError = record.invite_consumption_breakdown_error;
+  const walletQuota = breakdown?.wallet_quota ?? 0;
+  const subscriptionQuota = breakdown?.subscription_quota ?? 0;
+  const totalUsedQuota =
+    breakdown?.total_used_quota ?? record.invite_total_consume ?? 0;
+  const logTotalQuota = breakdown?.log_total_quota ?? 0;
+  const hasLogDiff =
+    breakdown &&
+    Math.abs(Number(logTotalQuota || 0) - Number(totalUsedQuota || 0)) > 0;
+  const splitHint = hasLogDiff
+    ? `${t('日志拆分合计')} ${renderQuota(logTotalQuota || 0)}，${t('总使用')} ${renderQuota(totalUsedQuota || 0)}。${t('差异可能来自历史日志缺失、日志关闭、排除用户或旧数据未标记。')}`
+    : t('按消费日志拆分余额消费和订阅使用。');
 
   return (
     <div>
-      <Space spacing={1}>
+      <div className='flex flex-wrap gap-1'>
         <Tag color='white' shape='circle' className='!text-xs'>
           {t('邀请')}: {renderNumber(record.invite_user_count || 0)}
         </Tag>
@@ -286,13 +300,45 @@ const renderInviteInfo = (text, record, t) => {
               0,
           )}
         </Tag>
-        <Tag color='white' shape='circle' className='!text-xs'>
-          {t('消费额')}: {renderQuota(record.invite_total_consume || 0)}
-        </Tag>
+        {breakdown ? (
+          <Tooltip content={splitHint} position='top' showArrow>
+            <Tag color='white' shape='circle' className='!text-xs'>
+              {t('余额消费')}: {renderQuota(walletQuota)}
+            </Tag>
+          </Tooltip>
+        ) : (
+          <Tag color='white' shape='circle' className='!text-xs'>
+            {t('余额消费')}: {breakdownLoading ? t('拆分中') : '-'}
+          </Tag>
+        )}
+        {breakdown ? (
+          <Tooltip content={splitHint} position='top' showArrow>
+            <Tag color='white' shape='circle' className='!text-xs'>
+              {t('订阅使用')}: {renderQuota(subscriptionQuota)}
+            </Tag>
+          </Tooltip>
+        ) : (
+          <Tag color='white' shape='circle' className='!text-xs'>
+            {t('订阅使用')}: {breakdownLoading ? t('拆分中') : '-'}
+          </Tag>
+        )}
+        <Tooltip
+          content={
+            breakdownError
+              ? t('消费拆分加载失败，当前仅显示总使用。')
+              : splitHint
+          }
+          position='top'
+          showArrow
+        >
+          <Tag color={hasLogDiff ? 'yellow' : 'white'} shape='circle' className='!text-xs'>
+            {t('总使用')}: {renderQuota(totalUsedQuota)}
+          </Tag>
+        </Tooltip>
         <Tag color='white' shape='circle' className='!text-xs'>
           {inviterText}
         </Tag>
-      </Space>
+      </div>
     </div>
   );
 };

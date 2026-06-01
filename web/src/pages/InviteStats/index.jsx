@@ -39,6 +39,7 @@ import {
 import {
   BarChart3,
   CalendarDays,
+  CreditCard,
   RefreshCw,
   Search,
   TrendingUp,
@@ -50,6 +51,7 @@ import { DATE_RANGE_PRESETS } from '../../constants/console.constants';
 import {
   API,
   renderNumber,
+  renderPaymentAmount,
   renderQuota,
   renderQuotaWithAmount,
   showError,
@@ -65,6 +67,7 @@ const defaultDateRange = () => [
 ];
 
 const formatPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
+const formatMoney = (value) => renderPaymentAmount(value || 0);
 
 const SummaryCard = ({ title, value, hint, icon }) => (
   <Card className='!rounded-lg shadow-sm border-0'>
@@ -150,7 +153,22 @@ const InviteStats = () => {
   const summary = stats?.summary || {};
   const models = stats?.models || [];
   const trend = stats?.trend || [];
-  const hasData = models.length > 0 || trend.some((item) => item.quota > 0);
+  const subscriptionUsage = stats?.subscription_usage || {};
+  const subscriptionUsageSummary = subscriptionUsage.summary || {};
+  const subscriptionUsageModels = subscriptionUsage.models || [];
+  const subscriptionUsageTrend = subscriptionUsage.trend || [];
+  const subscriptionPurchase = stats?.subscription_purchase || {};
+  const subscriptionPurchaseSummary = subscriptionPurchase.summary || {};
+  const subscriptionPurchasePlans = subscriptionPurchase.plans || [];
+  const subscriptionPurchaseTrend = subscriptionPurchase.trend || [];
+  const hasWalletData =
+    models.length > 0 || trend.some((item) => item.quota > 0);
+  const hasSubscriptionUsageData =
+    subscriptionUsageModels.length > 0 ||
+    subscriptionUsageTrend.some((item) => item.quota > 0);
+  const hasSubscriptionPurchaseData =
+    subscriptionPurchasePlans.length > 0 ||
+    subscriptionPurchaseTrend.some((item) => item.amount > 0);
 
   const modelRankSpec = useMemo(
     () => ({
@@ -249,7 +267,104 @@ const InviteStats = () => {
     [trend, t],
   );
 
-  const columns = useMemo(
+  const subscriptionUsageRankSpec = useMemo(
+    () => ({
+      type: 'bar',
+      data: [
+        {
+          id: 'invite-subscription-usage-rank',
+          values: subscriptionUsageModels.slice(0, 20).map((item) => ({
+            model_name: item.model_name,
+            amount: item.amount || 0,
+            quota: item.quota || 0,
+            request_count: item.request_count || 0,
+          })),
+        },
+      ],
+      direction: 'horizontal',
+      xField: 'amount',
+      yField: 'model_name',
+      title: {
+        visible: true,
+        text: t('订阅额度使用排行'),
+        subtext: t('仅表示订阅包额度消耗，不等同于收入'),
+      },
+      axes: [
+        { orient: 'bottom', type: 'linear', title: { visible: true, text: t('额度金额') } },
+        { orient: 'left', type: 'band', label: { visible: true } },
+      ],
+      tooltip: {
+        mark: {
+          content: [
+            {
+              key: t('折算额度'),
+              value: (datum) => renderQuotaWithAmount(datum.amount || 0),
+            },
+            {
+              key: t('消费额度'),
+              value: (datum) => renderQuota(datum.quota || 0),
+            },
+            {
+              key: t('请求数'),
+              value: (datum) => renderNumber(datum.request_count || 0),
+            },
+          ],
+        },
+      },
+    }),
+    [subscriptionUsageModels, t],
+  );
+
+  const subscriptionPurchaseTrendSpec = useMemo(
+    () => ({
+      type: 'line',
+      data: [
+        {
+          id: 'invite-subscription-purchase-trend',
+          values: subscriptionPurchaseTrend.map((item) => ({
+            label: item.label,
+            amount: item.amount || 0,
+            order_count: item.order_count || 0,
+            buyer_count: item.buyer_count || 0,
+          })),
+        },
+      ],
+      xField: 'label',
+      yField: 'amount',
+      point: { visible: true },
+      line: { style: { lineWidth: 2 } },
+      title: {
+        visible: true,
+        text: t('订阅包购买趋势'),
+        subtext: t('按天汇总成功支付的订阅订单金额'),
+      },
+      axes: [
+        { orient: 'bottom', type: 'band' },
+        { orient: 'left', type: 'linear', title: { visible: true, text: t('实付金额') } },
+      ],
+      tooltip: {
+        mark: {
+          content: [
+            {
+              key: t('实付金额'),
+              value: (datum) => formatMoney(datum.amount || 0),
+            },
+            {
+              key: t('订单数'),
+              value: (datum) => renderNumber(datum.order_count || 0),
+            },
+            {
+              key: t('购买人数'),
+              value: (datum) => renderNumber(datum.buyer_count || 0),
+            },
+          ],
+        },
+      },
+    }),
+    [subscriptionPurchaseTrend, t],
+  );
+
+  const walletColumns = useMemo(
     () => [
       {
         title: t('模型'),
@@ -284,6 +399,78 @@ const InviteStats = () => {
     [t],
   );
 
+  const subscriptionUsageColumns = useMemo(
+    () => [
+      {
+        title: t('模型'),
+        dataIndex: 'model_name',
+        render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
+      },
+      {
+        title: t('折算额度'),
+        dataIndex: 'amount',
+        render: (value) => renderQuotaWithAmount(value || 0),
+        sorter: (a, b) => (a.amount || 0) - (b.amount || 0),
+      },
+      {
+        title: t('消费额度'),
+        dataIndex: 'quota',
+        render: (value) => renderQuota(value || 0),
+        sorter: (a, b) => (a.quota || 0) - (b.quota || 0),
+      },
+      {
+        title: t('请求数'),
+        dataIndex: 'request_count',
+        render: (value) => renderNumber(value || 0),
+        sorter: (a, b) => (a.request_count || 0) - (b.request_count || 0),
+      },
+      {
+        title: t('占比'),
+        dataIndex: 'percent',
+        render: (value) => formatPercent(value),
+        sorter: (a, b) => (a.percent || 0) - (b.percent || 0),
+      },
+    ],
+    [t],
+  );
+
+  const subscriptionPurchaseColumns = useMemo(
+    () => [
+      {
+        title: t('订阅包'),
+        dataIndex: 'plan_title',
+        render: (value, record) => (
+          <Tag shape='circle'>{value || `#${record.plan_id || '-'}`}</Tag>
+        ),
+      },
+      {
+        title: t('实付金额'),
+        dataIndex: 'amount',
+        render: (value) => formatMoney(value || 0),
+        sorter: (a, b) => (a.amount || 0) - (b.amount || 0),
+      },
+      {
+        title: t('订单数'),
+        dataIndex: 'order_count',
+        render: (value) => renderNumber(value || 0),
+        sorter: (a, b) => (a.order_count || 0) - (b.order_count || 0),
+      },
+      {
+        title: t('购买人数'),
+        dataIndex: 'buyer_count',
+        render: (value) => renderNumber(value || 0),
+        sorter: (a, b) => (a.buyer_count || 0) - (b.buyer_count || 0),
+      },
+      {
+        title: t('占比'),
+        dataIndex: 'percent',
+        render: (value) => formatPercent(value),
+        sorter: (a, b) => (a.percent || 0) - (b.percent || 0),
+      },
+    ],
+    [t],
+  );
+
   return (
     <div className='mt-[60px] px-2'>
       <div className='flex flex-col gap-4'>
@@ -295,11 +482,11 @@ const InviteStats = () => {
                   {t('邀请统计')}
                 </Title>
                 <Text type='tertiary'>
-                  {t('按邀请人查询下级用户的余额消费贡献')}
+                  {t('按邀请人查询下级用户的余额消费、订阅使用和订阅购买')}
                 </Text>
               </div>
               <Tag color='blue' shape='circle'>
-                {t('不含订阅包额度消费')}
+                {t('余额消费和订阅口径分开展示')}
               </Tag>
             </div>
             <div className='grid grid-cols-1 lg:grid-cols-[minmax(180px,280px)_minmax(260px,1fr)_auto] gap-3'>
@@ -360,15 +547,41 @@ const InviteStats = () => {
             icon={<Users size={20} />}
           />
           <SummaryCard
-            title={t('消费请求数')}
+            title={t('余额请求数')}
             value={renderNumber(summary.request_count || 0)}
             hint={`${t('模型数')} ${renderNumber(summary.model_count || 0)}`}
             icon={<TrendingUp size={20} />}
           />
           <SummaryCard
-            title={t('已排除订阅消费')}
+            title={t('订阅额度使用')}
+            value={renderQuota(subscriptionUsageSummary.quota || 0)}
+            hint={`${t('请求数')} ${renderNumber(subscriptionUsageSummary.request_count || 0)}`}
+            icon={<CalendarDays size={20} />}
+          />
+        </div>
+        <div className='grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4'>
+          <SummaryCard
+            title={t('订阅包购买金额')}
+            value={formatMoney(subscriptionPurchaseSummary.amount || 0)}
+            hint={`${t('订单数')} ${renderNumber(subscriptionPurchaseSummary.order_count || 0)}`}
+            icon={<CreditCard size={20} />}
+          />
+          <SummaryCard
+            title={t('订阅购买人数')}
+            value={renderNumber(subscriptionPurchaseSummary.buyer_count || 0)}
+            hint={`${t('订阅包数')} ${renderNumber(subscriptionPurchaseSummary.plan_count || 0)}`}
+            icon={<Users size={20} />}
+          />
+          <SummaryCard
+            title={t('订阅使用模型数')}
+            value={renderNumber(subscriptionUsageSummary.model_count || 0)}
+            hint={t('不等同于订阅收入')}
+            icon={<TrendingUp size={20} />}
+          />
+          <SummaryCard
+            title={t('订阅消费拆分提示')}
             value={renderQuota(summary.excluded_subscription_quota || 0)}
-            hint={`${t('请求数')} ${renderNumber(summary.excluded_subscription_request_count || 0)}`}
+            hint={`${t('已从余额消费中排除')} ${renderNumber(summary.excluded_subscription_request_count || 0)} ${t('个请求')}`}
             icon={<CalendarDays size={20} />}
           />
         </div>
@@ -376,7 +589,7 @@ const InviteStats = () => {
         <div className='grid grid-cols-1 xl:grid-cols-2 gap-4'>
           <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
             <div className='h-96'>
-              {hasData ? (
+              {hasWalletData ? (
                 <VChart spec={modelRankSpec} option={CHART_CONFIG} />
               ) : (
                 <Empty
@@ -390,7 +603,7 @@ const InviteStats = () => {
           </Card>
           <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
             <div className='h-96'>
-              {hasData ? (
+              {hasWalletData ? (
                 <VChart spec={trendSpec} option={CHART_CONFIG} />
               ) : (
                 <Empty
@@ -398,6 +611,36 @@ const InviteStats = () => {
                   darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
                   title={t('暂无趋势数据')}
                   description={t('余额消费趋势将在查询后展示')}
+                />
+              )}
+            </div>
+          </Card>
+        </div>
+        <div className='grid grid-cols-1 xl:grid-cols-2 gap-4'>
+          <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
+            <div className='h-96'>
+              {hasSubscriptionUsageData ? (
+                <VChart spec={subscriptionUsageRankSpec} option={CHART_CONFIG} />
+              ) : (
+                <Empty
+                  image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
+                  darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                  title={t('暂无订阅额度使用数据')}
+                  description={t('订阅包额度使用将在查询后展示')}
+                />
+              )}
+            </div>
+          </Card>
+          <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
+            <div className='h-96'>
+              {hasSubscriptionPurchaseData ? (
+                <VChart spec={subscriptionPurchaseTrendSpec} option={CHART_CONFIG} />
+              ) : (
+                <Empty
+                  image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
+                  darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                  title={t('暂无订阅包购买数据')}
+                  description={t('成功支付的订阅订单将在查询后展示')}
                 />
               )}
             </div>
@@ -415,7 +658,7 @@ const InviteStats = () => {
         >
           <Table
             rowKey='model_name'
-            columns={columns}
+            columns={walletColumns}
             dataSource={models}
             loading={loading}
             pagination={false}
@@ -429,6 +672,58 @@ const InviteStats = () => {
             }
           />
         </Card>
+        <div className='grid grid-cols-1 xl:grid-cols-2 gap-4'>
+          <Card
+            className='!rounded-lg'
+            title={
+              <div className='flex items-center gap-2'>
+                <BarChart3 size={16} />
+                {t('订阅额度使用明细')}
+              </div>
+            }
+          >
+            <Table
+              rowKey='model_name'
+              columns={subscriptionUsageColumns}
+              dataSource={subscriptionUsageModels}
+              loading={loading}
+              pagination={false}
+              scroll={{ x: 'max-content' }}
+              empty={
+                <Empty
+                  image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
+                  darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                  title={t('暂无数据')}
+                />
+              }
+            />
+          </Card>
+          <Card
+            className='!rounded-lg'
+            title={
+              <div className='flex items-center gap-2'>
+                <CreditCard size={16} />
+                {t('订阅包购买明细')}
+              </div>
+            }
+          >
+            <Table
+              rowKey='plan_id'
+              columns={subscriptionPurchaseColumns}
+              dataSource={subscriptionPurchasePlans}
+              loading={loading}
+              pagination={false}
+              scroll={{ x: 'max-content' }}
+              empty={
+                <Empty
+                  image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
+                  darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                  title={t('暂无数据')}
+                />
+              }
+            />
+          </Card>
+        </div>
       </div>
     </div>
   );
