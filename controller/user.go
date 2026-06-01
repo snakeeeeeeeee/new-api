@@ -508,6 +508,42 @@ func SearchUsers(c *gin.Context) {
 	return
 }
 
+func GetInviteConsumptionBreakdown(c *gin.Context) {
+	rawOwnerIDs := strings.TrimSpace(c.Query("owner_ids"))
+	if rawOwnerIDs == "" {
+		common.ApiErrorMsg(c, "owner_ids 不能为空")
+		return
+	}
+	parts := strings.Split(rawOwnerIDs, ",")
+	ownerIDs := make([]int, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.Atoi(part)
+		if err != nil || id <= 0 {
+			common.ApiErrorMsg(c, "owner_ids 参数无效")
+			return
+		}
+		ownerIDs = append(ownerIDs, id)
+	}
+	if len(ownerIDs) == 0 {
+		common.ApiErrorMsg(c, "owner_ids 不能为空")
+		return
+	}
+	if len(ownerIDs) > model.MaxInviteConsumptionBreakdownOwnerIDs {
+		common.ApiErrorMsg(c, "owner_ids 数量过多")
+		return
+	}
+	breakdown, err := model.GetInviteConsumptionBreakdownByOwnerIDs(ownerIDs)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, breakdown)
+}
+
 func populateAdminUserDetail(user *model.User) error {
 	if user == nil {
 		return nil

@@ -1,3 +1,30 @@
+# Task Plan: 邀请统计 v1.1 拆分余额/订阅消费 + 订阅购买
+
+## Goal
+扩展邀请统计和用户管理邀请信息：用户管理首屏快速返回并异步补齐余额/订阅消费拆分；邀请统计页同时展示余额消费、订阅额度使用和订阅包成功购买金额。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+- [x] Phase 1: 后端聚合模型、接口、路由和索引
+- [x] Phase 2: 前端用户管理异步拆分展示
+- [x] Phase 3: 前端邀请统计订阅使用/购买展示与 i18n
+- [x] Phase 4: 单测、构建和回归验证
+
+## Verification
+- `go test ./model ./controller`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `git diff --check`: passed.
+
+## Key Constraints
+- 用户管理列表不能同步等待日志累计拆分。
+- 消费拆分基于 `logs.other.billing_source`，历史空值按余额/未标记归类。
+- 订阅购买收入只来自成功 `subscription_orders.money`，不把订阅额度使用当真实收入。
+- JSON 解析继续使用 `common.*`/`common.StrToMap`，不使用数据库 JSON 函数。
+
+---
+
 # Task Plan: 邀请统计 v1 余额消费报表
 
 ## Goal

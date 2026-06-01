@@ -194,15 +194,15 @@ func (p *SubscriptionPlan) BeforeUpdate(tx *gorm.DB) error {
 // Subscription order (payment -> webhook -> create UserSubscription)
 type SubscriptionOrder struct {
 	Id     int     `json:"id"`
-	UserId int     `json:"user_id" gorm:"index"`
+	UserId int     `json:"user_id" gorm:"index;index:idx_subscription_orders_user_status_time,priority:1"`
 	PlanId int     `json:"plan_id" gorm:"index"`
 	Money  float64 `json:"money"`
 
 	TradeNo       string `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod string `json:"payment_method" gorm:"type:varchar(50)"`
-	Status        string `json:"status"`
+	Status        string `json:"status" gorm:"index:idx_subscription_orders_user_status_time,priority:2"`
 	CreateTime    int64  `json:"create_time"`
-	CompleteTime  int64  `json:"complete_time"`
+	CompleteTime  int64  `json:"complete_time" gorm:"index:idx_subscription_orders_user_status_time,priority:3"`
 
 	ProviderPayload string `json:"provider_payload" gorm:"type:text"`
 }

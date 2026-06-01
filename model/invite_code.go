@@ -172,16 +172,75 @@ type InviteConsumptionTrendPoint struct {
 	RequestCount int64   `json:"request_count"`
 }
 
-type InviteConsumptionStatsResponse struct {
-	Inviter                          InviteConsumptionInviter      `json:"inviter"`
-	StartTime                        int64                         `json:"start_time"`
-	EndTime                          int64                         `json:"end_time"`
-	Summary                          InviteConsumptionSummary      `json:"summary"`
-	Models                           []InviteConsumptionModelStat  `json:"models"`
-	Trend                            []InviteConsumptionTrendPoint `json:"trend"`
-	ExcludedSubscriptionQuota        int64                         `json:"excluded_subscription_quota"`
-	ExcludedSubscriptionRequestCount int64                         `json:"excluded_subscription_request_count"`
+type InviteSubscriptionUsageSummary struct {
+	Quota        int64   `json:"quota"`
+	Amount       float64 `json:"amount"`
+	RequestCount int64   `json:"request_count"`
+	ModelCount   int     `json:"model_count"`
 }
+
+type InviteSubscriptionUsageStats struct {
+	Summary InviteSubscriptionUsageSummary `json:"summary"`
+	Models  []InviteConsumptionModelStat   `json:"models"`
+	Trend   []InviteConsumptionTrendPoint  `json:"trend"`
+}
+
+type InviteSubscriptionPurchaseSummary struct {
+	Amount     float64 `json:"amount"`
+	OrderCount int64   `json:"order_count"`
+	BuyerCount int64   `json:"buyer_count"`
+	PlanCount  int     `json:"plan_count"`
+}
+
+type InviteSubscriptionPlanStat struct {
+	PlanId     int     `json:"plan_id"`
+	PlanTitle  string  `json:"plan_title"`
+	Amount     float64 `json:"amount"`
+	OrderCount int64   `json:"order_count"`
+	BuyerCount int64   `json:"buyer_count"`
+	Percent    float64 `json:"percent"`
+}
+
+type InviteSubscriptionPurchaseTrendPoint struct {
+	BucketStart int64   `json:"bucket_start"`
+	Label       string  `json:"label"`
+	Amount      float64 `json:"amount"`
+	OrderCount  int64   `json:"order_count"`
+	BuyerCount  int64   `json:"buyer_count"`
+}
+
+type InviteSubscriptionPurchaseStats struct {
+	Summary InviteSubscriptionPurchaseSummary      `json:"summary"`
+	Plans   []InviteSubscriptionPlanStat           `json:"plans"`
+	Trend   []InviteSubscriptionPurchaseTrendPoint `json:"trend"`
+}
+
+type InviteConsumptionStatsResponse struct {
+	Inviter                          InviteConsumptionInviter        `json:"inviter"`
+	StartTime                        int64                           `json:"start_time"`
+	EndTime                          int64                           `json:"end_time"`
+	Summary                          InviteConsumptionSummary        `json:"summary"`
+	Models                           []InviteConsumptionModelStat    `json:"models"`
+	Trend                            []InviteConsumptionTrendPoint   `json:"trend"`
+	SubscriptionUsage                InviteSubscriptionUsageStats    `json:"subscription_usage"`
+	SubscriptionPurchase             InviteSubscriptionPurchaseStats `json:"subscription_purchase"`
+	ExcludedSubscriptionQuota        int64                           `json:"excluded_subscription_quota"`
+	ExcludedSubscriptionRequestCount int64                           `json:"excluded_subscription_request_count"`
+}
+
+type InviteConsumptionBreakdown struct {
+	OwnerId                  int   `json:"owner_id"`
+	InviteUserCount          int64 `json:"invite_user_count"`
+	WalletQuota              int64 `json:"wallet_quota"`
+	SubscriptionQuota        int64 `json:"subscription_quota"`
+	LogTotalQuota            int64 `json:"log_total_quota"`
+	TotalUsedQuota           int64 `json:"total_used_quota"`
+	WalletRequestCount       int64 `json:"wallet_request_count"`
+	SubscriptionRequestCount int64 `json:"subscription_request_count"`
+	LogRequestCount          int64 `json:"log_request_count"`
+}
+
+const MaxInviteConsumptionBreakdownOwnerIDs = 100
 
 func (code *InviteCode) normalizeDerivedFields() {
 	remaining := code.RewardTotalUses - code.RewardUsedUses
@@ -636,10 +695,17 @@ func GetInviteStatsByInviteCodeIDs(inviteCodeIDs []int) (map[int]InviteStats, er
 }
 
 type inviteConsumptionLogRow struct {
+	UserId    int    `gorm:"column:user_id"`
 	ModelName string `gorm:"column:model_name"`
 	Quota     int    `gorm:"column:quota"`
 	CreatedAt int64  `gorm:"column:created_at"`
 	Other     string `gorm:"column:other"`
+}
+
+type inviteOwnerUserRow struct {
+	OwnerID   int   `gorm:"column:owner_id"`
+	UserID    int   `gorm:"column:user_id"`
+	UsedQuota int64 `gorm:"column:used_quota"`
 }
 
 func GetInviteConsumptionStats(username string, startTime int64, endTime int64) (*InviteConsumptionStatsResponse, error) {
@@ -684,6 +750,14 @@ func GetInviteConsumptionStats(username string, startTime int64, endTime int64) 
 		},
 		Models: []InviteConsumptionModelStat{},
 		Trend:  emptyInviteConsumptionTrend(startTime, endTime),
+		SubscriptionUsage: InviteSubscriptionUsageStats{
+			Models: []InviteConsumptionModelStat{},
+			Trend:  emptyInviteConsumptionTrend(startTime, endTime),
+		},
+		SubscriptionPurchase: InviteSubscriptionPurchaseStats{
+			Plans: []InviteSubscriptionPlanStat{},
+			Trend: emptyInviteSubscriptionPurchaseTrend(startTime, endTime),
+		},
 	}
 	if len(invitees) == 0 {
 		return resp, nil
@@ -701,14 +775,16 @@ func GetInviteConsumptionStats(username string, startTime int64, endTime int64) 
 
 	var rows []inviteConsumptionLogRow
 	if err := LOG_DB.Model(&Log{}).
-		Select("model_name, quota, created_at, other").
+		Select("user_id, model_name, quota, created_at, other").
 		Where("user_id IN ? AND type = ? AND created_at >= ? AND created_at <= ?", inviteeIDs, LogTypeConsume, startTime, endTime).
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
 
 	modelStats := make(map[string]*InviteConsumptionModelStat)
+	subscriptionModelStats := make(map[string]*InviteConsumptionModelStat)
 	trendIndex := inviteConsumptionTrendIndex(resp.Trend)
+	subscriptionTrendIndex := inviteConsumptionTrendIndex(resp.SubscriptionUsage.Trend)
 	for _, row := range rows {
 		quota := int64(row.Quota)
 		if quota <= 0 {
@@ -717,6 +793,21 @@ func GetInviteConsumptionStats(username string, startTime int64, endTime int64) 
 		if inviteConsumptionLogIsSubscription(row.Other) {
 			resp.Summary.ExcludedSubscriptionQuota += quota
 			resp.Summary.ExcludedSubscriptionRequestCount++
+			modelName := normalizeInviteConsumptionModelName(row.ModelName)
+			stat := subscriptionModelStats[modelName]
+			if stat == nil {
+				stat = &InviteConsumptionModelStat{ModelName: modelName}
+				subscriptionModelStats[modelName] = stat
+			}
+			stat.Quota += quota
+			stat.RequestCount++
+			resp.SubscriptionUsage.Summary.Quota += quota
+			resp.SubscriptionUsage.Summary.RequestCount++
+			bucket, _ := bucketInviteTime(row.CreatedAt, "day")
+			if idx, ok := subscriptionTrendIndex[bucket]; ok {
+				resp.SubscriptionUsage.Trend[idx].Quota += quota
+				resp.SubscriptionUsage.Trend[idx].RequestCount++
+			}
 			continue
 		}
 
@@ -742,27 +833,273 @@ func GetInviteConsumptionStats(username string, startTime int64, endTime int64) 
 	resp.Summary.ModelCount = len(modelStats)
 	resp.ExcludedSubscriptionQuota = resp.Summary.ExcludedSubscriptionQuota
 	resp.ExcludedSubscriptionRequestCount = resp.Summary.ExcludedSubscriptionRequestCount
-	resp.Models = make([]InviteConsumptionModelStat, 0, len(modelStats))
-	for _, stat := range modelStats {
-		stat.Amount = quotaToInviteConsumptionAmount(stat.Quota)
-		if resp.Summary.WalletQuota > 0 {
-			stat.Percent = float64(stat.Quota) * 100 / float64(resp.Summary.WalletQuota)
-		}
-		resp.Models = append(resp.Models, *stat)
-	}
-	sort.Slice(resp.Models, func(i, j int) bool {
-		if resp.Models[i].Quota == resp.Models[j].Quota {
-			if resp.Models[i].RequestCount != resp.Models[j].RequestCount {
-				return resp.Models[i].RequestCount > resp.Models[j].RequestCount
-			}
-			return resp.Models[i].ModelName < resp.Models[j].ModelName
-		}
-		return resp.Models[i].Quota > resp.Models[j].Quota
-	})
+	resp.Models = inviteConsumptionModelStatsToSlice(modelStats, resp.Summary.WalletQuota)
+	resp.SubscriptionUsage.Summary.Amount = quotaToInviteConsumptionAmount(resp.SubscriptionUsage.Summary.Quota)
+	resp.SubscriptionUsage.Summary.ModelCount = len(subscriptionModelStats)
+	resp.SubscriptionUsage.Models = inviteConsumptionModelStatsToSlice(subscriptionModelStats, resp.SubscriptionUsage.Summary.Quota)
 	for i := range resp.Trend {
 		resp.Trend[i].Amount = quotaToInviteConsumptionAmount(resp.Trend[i].Quota)
 	}
+	for i := range resp.SubscriptionUsage.Trend {
+		resp.SubscriptionUsage.Trend[i].Amount = quotaToInviteConsumptionAmount(resp.SubscriptionUsage.Trend[i].Quota)
+	}
+	if err := populateInviteSubscriptionPurchaseStats(resp, inviteeIDs, startTime, endTime); err != nil {
+		return nil, err
+	}
 	return resp, nil
+}
+
+func GetInviteConsumptionBreakdownByOwnerIDs(ownerIDs []int) (map[int]InviteConsumptionBreakdown, error) {
+	ownerIDs = normalizePositiveUniqueIDs(ownerIDs, MaxInviteConsumptionBreakdownOwnerIDs)
+	result := make(map[int]InviteConsumptionBreakdown, len(ownerIDs))
+	if len(ownerIDs) == 0 {
+		return result, nil
+	}
+	for _, ownerID := range ownerIDs {
+		result[ownerID] = InviteConsumptionBreakdown{OwnerId: ownerID}
+	}
+
+	inviteesByOwner, inviteeOwnerMap, err := getInviteOwnerRows(ownerIDs)
+	if err != nil {
+		return nil, err
+	}
+	inviteeIDs := make([]int, 0, len(inviteeOwnerMap))
+	for _, ownerID := range ownerIDs {
+		rows := inviteesByOwner[ownerID]
+		breakdown := result[ownerID]
+		breakdown.InviteUserCount = int64(len(rows))
+		for _, row := range rows {
+			breakdown.TotalUsedQuota += row.UsedQuota
+		}
+		result[ownerID] = breakdown
+	}
+	for inviteeID := range inviteeOwnerMap {
+		inviteeIDs = append(inviteeIDs, inviteeID)
+	}
+	if len(inviteeIDs) == 0 {
+		return result, nil
+	}
+
+	var rows []inviteConsumptionLogRow
+	if err := LOG_DB.Model(&Log{}).
+		Select("user_id, quota, other").
+		Where("user_id IN ? AND type = ?", inviteeIDs, LogTypeConsume).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		quota := int64(row.Quota)
+		if quota <= 0 {
+			continue
+		}
+		ownerID, ok := inviteeOwnerMap[row.UserId]
+		if !ok {
+			continue
+		}
+		breakdown := result[ownerID]
+		breakdown.LogTotalQuota += quota
+		breakdown.LogRequestCount++
+		if inviteConsumptionLogIsSubscription(row.Other) {
+			breakdown.SubscriptionQuota += quota
+			breakdown.SubscriptionRequestCount++
+		} else {
+			breakdown.WalletQuota += quota
+			breakdown.WalletRequestCount++
+		}
+		result[ownerID] = breakdown
+	}
+	return result, nil
+}
+
+func getInviteOwnerRows(ownerIDs []int) (map[int][]inviteOwnerUserRow, map[int]int, error) {
+	inviteesByOwner := make(map[int][]inviteOwnerUserRow, len(ownerIDs))
+	inviteeOwnerMap := make(map[int]int)
+	if len(ownerIDs) == 0 {
+		return inviteesByOwner, inviteeOwnerMap, nil
+	}
+	var rows []inviteOwnerUserRow
+	if err := DB.Model(&User{}).
+		Select("invite_code_owner_id as owner_id, id as user_id, used_quota").
+		Where("invite_code_owner_id IN ? AND invite_code_id > 0", ownerIDs).
+		Find(&rows).Error; err != nil {
+		return nil, nil, err
+	}
+	for _, row := range rows {
+		if row.OwnerID <= 0 || row.UserID <= 0 {
+			continue
+		}
+		inviteesByOwner[row.OwnerID] = append(inviteesByOwner[row.OwnerID], row)
+		inviteeOwnerMap[row.UserID] = row.OwnerID
+	}
+	return inviteesByOwner, inviteeOwnerMap, nil
+}
+
+func inviteConsumptionModelStatsToSlice(statsMap map[string]*InviteConsumptionModelStat, totalQuota int64) []InviteConsumptionModelStat {
+	items := make([]InviteConsumptionModelStat, 0, len(statsMap))
+	for _, stat := range statsMap {
+		stat.Amount = quotaToInviteConsumptionAmount(stat.Quota)
+		if totalQuota > 0 {
+			stat.Percent = float64(stat.Quota) * 100 / float64(totalQuota)
+		}
+		items = append(items, *stat)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Quota == items[j].Quota {
+			if items[i].RequestCount != items[j].RequestCount {
+				return items[i].RequestCount > items[j].RequestCount
+			}
+			return items[i].ModelName < items[j].ModelName
+		}
+		return items[i].Quota > items[j].Quota
+	})
+	return items
+}
+
+type inviteSubscriptionOrderRow struct {
+	UserId       int     `gorm:"column:user_id"`
+	PlanId       int     `gorm:"column:plan_id"`
+	Money        float64 `gorm:"column:money"`
+	CompleteTime int64   `gorm:"column:complete_time"`
+}
+
+func populateInviteSubscriptionPurchaseStats(resp *InviteConsumptionStatsResponse, inviteeIDs []int, startTime int64, endTime int64) error {
+	if resp == nil || len(inviteeIDs) == 0 {
+		return nil
+	}
+	var rows []inviteSubscriptionOrderRow
+	if err := DB.Model(&SubscriptionOrder{}).
+		Select("user_id, plan_id, money, complete_time").
+		Where("user_id IN ? AND status = ? AND complete_time >= ? AND complete_time <= ?", inviteeIDs, common.TopUpStatusSuccess, startTime, endTime).
+		Find(&rows).Error; err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	planStats := make(map[int]*InviteSubscriptionPlanStat)
+	buyers := make(map[int]struct{})
+	trendBuyers := make(map[int64]map[int]struct{})
+	planBuyers := make(map[int]map[int]struct{})
+	trendIndex := inviteSubscriptionPurchaseTrendIndex(resp.SubscriptionPurchase.Trend)
+	planIDs := make([]int, 0)
+	planIDSeen := make(map[int]struct{})
+	for _, row := range rows {
+		if row.Money < 0 {
+			continue
+		}
+		resp.SubscriptionPurchase.Summary.Amount += row.Money
+		resp.SubscriptionPurchase.Summary.OrderCount++
+		buyers[row.UserId] = struct{}{}
+		if _, ok := planIDSeen[row.PlanId]; !ok && row.PlanId > 0 {
+			planIDSeen[row.PlanId] = struct{}{}
+			planIDs = append(planIDs, row.PlanId)
+		}
+
+		stat := planStats[row.PlanId]
+		if stat == nil {
+			stat = &InviteSubscriptionPlanStat{PlanId: row.PlanId, PlanTitle: fallbackInviteSubscriptionPlanTitle(row.PlanId)}
+			planStats[row.PlanId] = stat
+		}
+		stat.Amount += row.Money
+		stat.OrderCount++
+		if planBuyers[row.PlanId] == nil {
+			planBuyers[row.PlanId] = make(map[int]struct{})
+		}
+		planBuyers[row.PlanId][row.UserId] = struct{}{}
+
+		bucket, _ := bucketInviteTime(row.CompleteTime, "day")
+		if idx, ok := trendIndex[bucket]; ok {
+			resp.SubscriptionPurchase.Trend[idx].Amount += row.Money
+			resp.SubscriptionPurchase.Trend[idx].OrderCount++
+			if trendBuyers[bucket] == nil {
+				trendBuyers[bucket] = make(map[int]struct{})
+			}
+			trendBuyers[bucket][row.UserId] = struct{}{}
+		}
+	}
+	planTitles, err := getInviteSubscriptionPlanTitles(planIDs)
+	if err != nil {
+		return err
+	}
+	for planID, title := range planTitles {
+		if stat := planStats[planID]; stat != nil {
+			stat.PlanTitle = title
+		}
+	}
+	resp.SubscriptionPurchase.Summary.BuyerCount = int64(len(buyers))
+	resp.SubscriptionPurchase.Summary.PlanCount = len(planStats)
+	resp.SubscriptionPurchase.Plans = make([]InviteSubscriptionPlanStat, 0, len(planStats))
+	for planID, stat := range planStats {
+		stat.BuyerCount = int64(len(planBuyers[planID]))
+		if resp.SubscriptionPurchase.Summary.Amount > 0 {
+			stat.Percent = stat.Amount * 100 / resp.SubscriptionPurchase.Summary.Amount
+		}
+		resp.SubscriptionPurchase.Plans = append(resp.SubscriptionPurchase.Plans, *stat)
+	}
+	sort.Slice(resp.SubscriptionPurchase.Plans, func(i, j int) bool {
+		if resp.SubscriptionPurchase.Plans[i].Amount == resp.SubscriptionPurchase.Plans[j].Amount {
+			if resp.SubscriptionPurchase.Plans[i].OrderCount != resp.SubscriptionPurchase.Plans[j].OrderCount {
+				return resp.SubscriptionPurchase.Plans[i].OrderCount > resp.SubscriptionPurchase.Plans[j].OrderCount
+			}
+			return resp.SubscriptionPurchase.Plans[i].PlanTitle < resp.SubscriptionPurchase.Plans[j].PlanTitle
+		}
+		return resp.SubscriptionPurchase.Plans[i].Amount > resp.SubscriptionPurchase.Plans[j].Amount
+	})
+	for i := range resp.SubscriptionPurchase.Trend {
+		bucket := resp.SubscriptionPurchase.Trend[i].BucketStart
+		resp.SubscriptionPurchase.Trend[i].BuyerCount = int64(len(trendBuyers[bucket]))
+	}
+	return nil
+}
+
+func getInviteSubscriptionPlanTitles(planIDs []int) (map[int]string, error) {
+	titles := make(map[int]string)
+	planIDs = normalizePositiveUniqueIDs(planIDs, 0)
+	if len(planIDs) == 0 {
+		return titles, nil
+	}
+	var plans []SubscriptionPlan
+	if err := DB.Model(&SubscriptionPlan{}).Select("id", "title").Where("id IN ?", planIDs).Find(&plans).Error; err != nil {
+		return nil, err
+	}
+	for _, plan := range plans {
+		title := strings.TrimSpace(plan.Title)
+		if title == "" {
+			title = fallbackInviteSubscriptionPlanTitle(plan.Id)
+		}
+		titles[plan.Id] = title
+	}
+	return titles, nil
+}
+
+func fallbackInviteSubscriptionPlanTitle(planID int) string {
+	if planID <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("#%d", planID)
+}
+
+func normalizePositiveUniqueIDs(ids []int, limit int) []int {
+	if len(ids) == 0 {
+		return []int{}
+	}
+	result := make([]int, 0, len(ids))
+	seen := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
+	return result
 }
 
 func inviteConsumptionLogIsSubscription(other string) bool {
@@ -812,7 +1149,30 @@ func emptyInviteConsumptionTrend(startTime int64, endTime int64) []InviteConsump
 	return points
 }
 
+func emptyInviteSubscriptionPurchaseTrend(startTime int64, endTime int64) []InviteSubscriptionPurchaseTrendPoint {
+	startBucket, _ := bucketInviteTime(startTime, "day")
+	endBucket, _ := bucketInviteTime(endTime, "day")
+	points := make([]InviteSubscriptionPurchaseTrendPoint, 0)
+	for cursor := time.Unix(startBucket, 0); !cursor.After(time.Unix(endBucket, 0)); cursor = cursor.AddDate(0, 0, 1) {
+		bucketStart := cursor.Unix()
+		_, label := bucketInviteTime(bucketStart, "day")
+		points = append(points, InviteSubscriptionPurchaseTrendPoint{
+			BucketStart: bucketStart,
+			Label:       label,
+		})
+	}
+	return points
+}
+
 func inviteConsumptionTrendIndex(points []InviteConsumptionTrendPoint) map[int64]int {
+	index := make(map[int64]int, len(points))
+	for i := range points {
+		index[points[i].BucketStart] = i
+	}
+	return index
+}
+
+func inviteSubscriptionPurchaseTrendIndex(points []InviteSubscriptionPurchaseTrendPoint) map[int64]int {
 	index := make(map[int64]int, len(points))
 	for i := range points {
 		index[points[i].BucketStart] = i

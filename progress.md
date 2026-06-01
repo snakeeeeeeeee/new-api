@@ -1,3 +1,22 @@
+# Session: 2026-06-02 邀请统计 v1.1
+
+## Scope
+- 在 v1 邀请统计基础上加入订阅使用/购买统计，并让用户管理邀请信息异步展示余额/订阅消费拆分。
+
+## Progress
+- 已确认现有用户管理邀请信息来自 `users.used_quota` 与 `top_ups` 累计。
+- 已确认 v1 邀请统计基于消费日志并排除 `billing_source=subscription`。
+- 已确认订阅购买成功订单存于 `subscription_orders`，含 `user_id`、`plan_id`、`money`、`status`、`complete_time`。
+- 已完成后端：`/api/user/invite_consumption_breakdown`、邀请统计订阅使用/购买扩展、日志/订阅订单复合索引和单测。
+- 已完成前端：用户管理邀请信息异步拆分；邀请统计页新增订阅使用与订阅购买图表/表格。
+
+## Verification
+- `go test ./model ./controller`: passed.
+- `cd web && bun run build`: passed with existing warnings.
+- `git diff --check`: passed.
+
+---
+
 # Session: 2026-06-02 邀请统计 v1
 
 ## Scope

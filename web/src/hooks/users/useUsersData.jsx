@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API, showError, showSuccess } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
@@ -35,6 +35,7 @@ export const useUsersData = () => {
   const [searching, setSearching] = useState(false);
   const [groupOptions, setGroupOptions] = useState([]);
   const [userCount, setUserCount] = useState(0);
+  const inviteBreakdownRequestRef = useRef(0);
 
   // Modal states
   const [showAddUser, setShowAddUser] = useState(false);
@@ -62,11 +63,77 @@ export const useUsersData = () => {
   };
 
   // Set user format with key field
-  const setUserFormat = (users) => {
-    for (let i = 0; i < users.length; i++) {
-      users[i].key = users[i].id;
+  const loadInviteConsumptionBreakdown = async (targetUsers) => {
+    const ownerIds = (targetUsers || [])
+      .map((user) => Number(user.id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    const uniqueOwnerIds = [...new Set(ownerIds)];
+    const requestId = ++inviteBreakdownRequestRef.current;
+    if (uniqueOwnerIds.length === 0) {
+      return;
     }
-    setUsers(users);
+    setUsers((currentUsers) =>
+      currentUsers.map((user) =>
+        uniqueOwnerIds.includes(Number(user.id))
+          ? { ...user, invite_consumption_breakdown_loading: true }
+          : user,
+      ),
+    );
+    try {
+      const res = await API.get('/api/user/invite_consumption_breakdown', {
+        params: { owner_ids: uniqueOwnerIds.join(',') },
+      });
+      if (requestId !== inviteBreakdownRequestRef.current) {
+        return;
+      }
+      const { success, data } = res.data;
+      if (!success) {
+        throw new Error(res.data?.message || t('加载失败'));
+      }
+      setUsers((currentUsers) =>
+        currentUsers.map((user) => {
+          const breakdown = data?.[user.id] || data?.[String(user.id)];
+          if (!breakdown) {
+            return {
+              ...user,
+              invite_consumption_breakdown_loading: false,
+              invite_consumption_breakdown: null,
+            };
+          }
+          return {
+            ...user,
+            invite_consumption_breakdown_loading: false,
+            invite_consumption_breakdown: breakdown,
+          };
+        }),
+      );
+    } catch (error) {
+      if (requestId !== inviteBreakdownRequestRef.current) {
+        return;
+      }
+      setUsers((currentUsers) =>
+        currentUsers.map((user) =>
+          uniqueOwnerIds.includes(Number(user.id))
+            ? {
+                ...user,
+                invite_consumption_breakdown_loading: false,
+                invite_consumption_breakdown_error: true,
+              }
+            : user,
+        ),
+      );
+    }
+  };
+
+  const setUserFormat = (users) => {
+    const formattedUsers = users.map((user) => ({
+      ...user,
+      key: user.id,
+      invite_consumption_breakdown_loading: true,
+      invite_consumption_breakdown_error: false,
+    }));
+    setUsers(formattedUsers);
+    loadInviteConsumptionBreakdown(formattedUsers);
   };
 
   // Load users data

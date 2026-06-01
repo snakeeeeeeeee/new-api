@@ -56,7 +56,7 @@ func setupInviteCodeControllerTestDB(t *testing.T) *gorm.DB {
 
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.InviteCode{}, &model.TopUp{}, &model.Token{}, &model.Log{}, &model.UserSubscription{}, &model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.InviteCode{}, &model.TopUp{}, &model.Token{}, &model.Log{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.Option{}))
 
 	t.Cleanup(func() {
 		common.UsingSQLite = originalUsingSQLite
@@ -292,4 +292,54 @@ func TestGetInviteConsumptionStatsController(t *testing.T) {
 	require.Equal(t, 2.0, data.Summary.WalletAmount)
 	require.Len(t, data.Models, 1)
 	require.Equal(t, "gpt-4o", data.Models[0].ModelName)
+}
+
+func TestGetInviteConsumptionBreakdownController(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	seedInviteCodeControllerUser(t, db, 60, "breakdown_controller_owner", "aff-breakdown-controller-owner")
+	code := &model.InviteCode{
+		Code:        "CTRL-BREAKDOWN",
+		Prefix:      "CTRL",
+		OwnerUserId: 60,
+		TargetGroup: "default",
+		Status:      model.InviteCodeStatusEnabled,
+	}
+	require.NoError(t, code.Insert())
+	require.NoError(t, db.Create(&model.User{
+		Id:                601,
+		Username:          "breakdown_controller_invitee",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "default",
+		AffCode:           "aff-breakdown-controller-invitee",
+		UsedQuota:         5000,
+		InviteCodeId:      code.Id,
+		InviteCodeOwnerId: 60,
+		InviterId:         60,
+	}).Error)
+	eventTime := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.Local).Unix()
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		UserId:    601,
+		Username:  "breakdown_controller_invitee",
+		CreatedAt: eventTime,
+		Type:      model.LogTypeConsume,
+		ModelName: "gpt-4o",
+		Quota:     2000,
+		Other:     common.MapToJsonStr(map[string]interface{}{"billing_source": "subscription"}),
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/invite_consumption_breakdown?owner_ids=60", nil)
+	GetInviteConsumptionBreakdown(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+	var data map[string]model.InviteConsumptionBreakdown
+	require.NoError(t, common.Unmarshal(resp.Data, &data))
+	require.Equal(t, int64(5000), data["60"].TotalUsedQuota)
+	require.Equal(t, int64(2000), data["60"].SubscriptionQuota)
+	require.Equal(t, int64(1), data["60"].SubscriptionRequestCount)
 }

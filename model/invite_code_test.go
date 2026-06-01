@@ -83,6 +83,37 @@ func seedInviteModelConsumeLogAt(t *testing.T, userID int, username string, mode
 	}).Error)
 }
 
+func seedInviteSubscriptionPlan(t *testing.T, id int, title string, price float64) *SubscriptionPlan {
+	t.Helper()
+	plan := &SubscriptionPlan{
+		Id:            id,
+		Title:         title,
+		PriceAmount:   price,
+		Currency:      "USD",
+		DurationUnit:  "month",
+		DurationValue: 1,
+		Enabled:       true,
+		TotalAmount:   10000,
+	}
+	require.NoError(t, DB.Create(plan).Error)
+	return plan
+}
+
+func seedInviteSubscriptionOrderAt(t *testing.T, userID int, planID int, tradeNo string, money float64, status string, completeTime int64) {
+	t.Helper()
+	order := &SubscriptionOrder{
+		UserId:        userID,
+		PlanId:        planID,
+		Money:         money,
+		TradeNo:       tradeNo,
+		PaymentMethod: "stripe",
+		CreateTime:    completeTime - 60,
+		CompleteTime:  completeTime,
+		Status:        status,
+	}
+	require.NoError(t, order.Insert())
+}
+
 func fixedInviteStatsTime(year int, month time.Month, day int) int64 {
 	return time.Date(year, month, day, 12, 0, 0, 0, time.Local).Unix()
 }
@@ -286,6 +317,176 @@ func TestGetInviteConsumptionStatsAggregatesWalletLogsByModel(t *testing.T) {
 	require.Len(t, stats.Trend, 2)
 	require.Equal(t, int64(3000), stats.Trend[0].Quota)
 	require.Equal(t, int64(3000), stats.Trend[1].Quota)
+}
+
+func TestGetInviteConsumptionStatsIncludesSubscriptionUsageAndPurchases(t *testing.T) {
+	truncateTables(t)
+	originalQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 1000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
+
+	seedInviteOwner(t, 121, "sub_owner")
+	inviteCode := seedInviteCode(t, "SUB-STATS", 121, "vip", 0, 0, 0, InviteCodeStatusEnabled)
+	require.NoError(t, DB.Create(&User{
+		Id:                1211,
+		Username:          "sub_invitee_a",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		InviteCodeId:      inviteCode.Id,
+		InviteCodeOwnerId: 121,
+		InviterId:         121,
+		AffCode:           "aff-sub-a",
+	}).Error)
+	require.NoError(t, DB.Create(&User{
+		Id:                1212,
+		Username:          "sub_invitee_b",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		InviteCodeId:      inviteCode.Id,
+		InviteCodeOwnerId: 121,
+		InviterId:         121,
+		AffCode:           "aff-sub-b",
+	}).Error)
+	require.NoError(t, DB.Create(&User{
+		Id:       1213,
+		Username: "sub_not_invited",
+		Password: "password123",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		AffCode:  "aff-sub-not-invited",
+	}).Error)
+
+	may10 := fixedInviteStatsTime(2026, time.May, 10)
+	may11 := fixedInviteStatsTime(2026, time.May, 11)
+	may12 := fixedInviteStatsTime(2026, time.May, 12)
+	seedInviteModelConsumeLogAt(t, 1211, "sub_invitee_a", "claude-opus", 4000, may10, map[string]interface{}{"billing_source": "subscription"})
+	seedInviteModelConsumeLogAt(t, 1212, "sub_invitee_b", "claude-opus", 2000, may11, map[string]interface{}{"billing_source": "subscription"})
+	seedInviteModelConsumeLogAt(t, 1212, "sub_invitee_b", "gpt-4o", 1000, may11+60, map[string]interface{}{"billing_source": "wallet"})
+	seedInviteModelConsumeLogAt(t, 1213, "sub_not_invited", "claude-opus", 9000, may10, map[string]interface{}{"billing_source": "subscription"})
+
+	seedInviteSubscriptionPlan(t, 701, "Pro Monthly", 29.9)
+	seedInviteSubscriptionPlan(t, 702, "Team Monthly", 99)
+	seedInviteSubscriptionOrderAt(t, 1211, 701, "sub_order_success_a", 29.9, common.TopUpStatusSuccess, may10)
+	seedInviteSubscriptionOrderAt(t, 1212, 701, "sub_order_success_b", 29.9, common.TopUpStatusSuccess, may11)
+	seedInviteSubscriptionOrderAt(t, 1212, 702, "sub_order_pending", 99, common.TopUpStatusPending, may11)
+	seedInviteSubscriptionOrderAt(t, 1212, 702, "sub_order_out_of_range", 99, common.TopUpStatusSuccess, may12)
+	seedInviteSubscriptionOrderAt(t, 1213, 702, "sub_order_not_invited", 99, common.TopUpStatusSuccess, may10)
+
+	stats, err := GetInviteConsumptionStats("sub_owner", may10-10, may11+3600)
+	require.NoError(t, err)
+	require.Equal(t, int64(1000), stats.Summary.WalletQuota)
+	require.Equal(t, int64(6000), stats.Summary.ExcludedSubscriptionQuota)
+	require.Equal(t, int64(6000), stats.SubscriptionUsage.Summary.Quota)
+	require.Equal(t, 6.0, stats.SubscriptionUsage.Summary.Amount)
+	require.Equal(t, int64(2), stats.SubscriptionUsage.Summary.RequestCount)
+	require.Equal(t, 1, stats.SubscriptionUsage.Summary.ModelCount)
+	require.Len(t, stats.SubscriptionUsage.Models, 1)
+	require.Equal(t, "claude-opus", stats.SubscriptionUsage.Models[0].ModelName)
+	require.Equal(t, int64(6000), stats.SubscriptionUsage.Models[0].Quota)
+	require.Len(t, stats.SubscriptionUsage.Trend, 2)
+	require.Equal(t, int64(4000), stats.SubscriptionUsage.Trend[0].Quota)
+	require.Equal(t, int64(2000), stats.SubscriptionUsage.Trend[1].Quota)
+
+	require.InDelta(t, 59.8, stats.SubscriptionPurchase.Summary.Amount, 0.0001)
+	require.Equal(t, int64(2), stats.SubscriptionPurchase.Summary.OrderCount)
+	require.Equal(t, int64(2), stats.SubscriptionPurchase.Summary.BuyerCount)
+	require.Equal(t, 1, stats.SubscriptionPurchase.Summary.PlanCount)
+	require.Len(t, stats.SubscriptionPurchase.Plans, 1)
+	require.Equal(t, 701, stats.SubscriptionPurchase.Plans[0].PlanId)
+	require.Equal(t, "Pro Monthly", stats.SubscriptionPurchase.Plans[0].PlanTitle)
+	require.Equal(t, int64(2), stats.SubscriptionPurchase.Plans[0].OrderCount)
+	require.InDelta(t, 59.8, stats.SubscriptionPurchase.Plans[0].Amount, 0.0001)
+	require.Len(t, stats.SubscriptionPurchase.Trend, 2)
+	require.InDelta(t, 29.9, stats.SubscriptionPurchase.Trend[0].Amount, 0.0001)
+	require.Equal(t, int64(1), stats.SubscriptionPurchase.Trend[0].BuyerCount)
+	require.InDelta(t, 29.9, stats.SubscriptionPurchase.Trend[1].Amount, 0.0001)
+}
+
+func TestGetInviteConsumptionBreakdownByOwnerIDsSplitsWalletAndSubscription(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 122, "breakdown_owner_a")
+	seedInviteOwner(t, 123, "breakdown_owner_b")
+	codeA := seedInviteCode(t, "BREAKDOWN-A", 122, "default", 0, 0, 0, InviteCodeStatusEnabled)
+	codeB := seedInviteCode(t, "BREAKDOWN-B", 123, "default", 0, 0, 0, InviteCodeStatusEnabled)
+	require.NoError(t, DB.Create(&User{
+		Id:                1221,
+		Username:          "breakdown_a1",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "default",
+		UsedQuota:         10000,
+		InviteCodeId:      codeA.Id,
+		InviteCodeOwnerId: 122,
+		InviterId:         122,
+		AffCode:           "aff-breakdown-a1",
+	}).Error)
+	require.NoError(t, DB.Create(&User{
+		Id:                1222,
+		Username:          "breakdown_a2",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "default",
+		UsedQuota:         5000,
+		InviteCodeId:      codeA.Id,
+		InviteCodeOwnerId: 122,
+		InviterId:         122,
+		AffCode:           "aff-breakdown-a2",
+	}).Error)
+	require.NoError(t, DB.Create(&User{
+		Id:                1231,
+		Username:          "breakdown_b1",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "default",
+		UsedQuota:         3000,
+		InviteCodeId:      codeB.Id,
+		InviteCodeOwnerId: 123,
+		InviterId:         123,
+		AffCode:           "aff-breakdown-b1",
+	}).Error)
+	require.NoError(t, DB.Create(&User{
+		Id:        1241,
+		Username:  "breakdown_not_invited",
+		Password:  "password123",
+		Role:      common.RoleCommonUser,
+		Status:    common.UserStatusEnabled,
+		Group:     "default",
+		UsedQuota: 9000,
+		AffCode:   "aff-breakdown-not",
+	}).Error)
+
+	now := fixedInviteStatsTime(2026, time.May, 10)
+	seedInviteModelConsumeLogAt(t, 1221, "breakdown_a1", "gpt-4o", 2000, now, map[string]interface{}{"billing_source": "wallet"})
+	seedInviteModelConsumeLogAt(t, 1221, "breakdown_a1", "gpt-4o", 3000, now+1, map[string]interface{}{"billing_source": "subscription"})
+	seedInviteModelConsumeLogAt(t, 1222, "breakdown_a2", "gpt-4o", 4000, now+2, nil)
+	seedInviteModelConsumeLogAt(t, 1231, "breakdown_b1", "gpt-4o", 5000, now+3, map[string]interface{}{"billing_source": "subscription"})
+	seedInviteModelConsumeLogAt(t, 1241, "breakdown_not_invited", "gpt-4o", 9000, now+4, nil)
+
+	stats, err := GetInviteConsumptionBreakdownByOwnerIDs([]int{122, 123, 122, -1})
+	require.NoError(t, err)
+	require.Len(t, stats, 2)
+	require.Equal(t, int64(2), stats[122].InviteUserCount)
+	require.Equal(t, int64(15000), stats[122].TotalUsedQuota)
+	require.Equal(t, int64(6000), stats[122].WalletQuota)
+	require.Equal(t, int64(3000), stats[122].SubscriptionQuota)
+	require.Equal(t, int64(9000), stats[122].LogTotalQuota)
+	require.Equal(t, int64(3), stats[122].LogRequestCount)
+	require.Equal(t, int64(2), stats[122].WalletRequestCount)
+	require.Equal(t, int64(1), stats[122].SubscriptionRequestCount)
+	require.Equal(t, int64(1), stats[123].InviteUserCount)
+	require.Equal(t, int64(3000), stats[123].TotalUsedQuota)
+	require.Equal(t, int64(0), stats[123].WalletQuota)
+	require.Equal(t, int64(5000), stats[123].SubscriptionQuota)
 }
 
 func TestGetInviteConsumptionStatsReturnsErrorForMissingOwner(t *testing.T) {
