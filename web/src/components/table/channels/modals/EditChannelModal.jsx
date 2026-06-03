@@ -208,6 +208,7 @@ const EditChannelModal = (props) => {
     allow_include_obfuscation: false,
     allow_inference_geo: false,
     claude_beta_query: false,
+    claude_tool_schema_compat_enabled: false,
     upstream_model_update_check_enabled: false,
     upstream_model_update_auto_sync_enabled: false,
     upstream_model_update_last_check_time: 0,
@@ -857,6 +858,8 @@ const EditChannelModal = (props) => {
           data.allow_inference_geo =
             parsedSettings.allow_inference_geo || false;
           data.claude_beta_query = parsedSettings.claude_beta_query || false;
+          data.claude_tool_schema_compat_enabled =
+            parsedSettings.claude_tool_schema_compat_enabled || false;
           data.upstream_model_update_check_enabled =
             parsedSettings.upstream_model_update_check_enabled === true;
           data.upstream_model_update_auto_sync_enabled =
@@ -887,6 +890,7 @@ const EditChannelModal = (props) => {
           data.allow_include_obfuscation = false;
           data.allow_inference_geo = false;
           data.claude_beta_query = false;
+          data.claude_tool_schema_compat_enabled = false;
           data.upstream_model_update_check_enabled = false;
           data.upstream_model_update_auto_sync_enabled = false;
           data.upstream_model_update_last_check_time = 0;
@@ -905,6 +909,7 @@ const EditChannelModal = (props) => {
         data.allow_include_obfuscation = false;
         data.allow_inference_geo = false;
         data.claude_beta_query = false;
+        data.claude_tool_schema_compat_enabled = false;
         data.upstream_model_update_check_enabled = false;
         data.upstream_model_update_auto_sync_enabled = false;
         data.upstream_model_update_last_check_time = 0;
@@ -986,6 +991,7 @@ const EditChannelModal = (props) => {
         data.allow_include_obfuscation ||
         data.allow_inference_geo ||
         data.claude_beta_query ||
+        data.claude_tool_schema_compat_enabled ||
         data.system_prompt_override ||
         data.upstream_model_update_check_enabled ||
         data.upstream_model_update_auto_sync_enabled;
@@ -1729,6 +1735,8 @@ const EditChannelModal = (props) => {
     // type === 33 (AWS): 保存 aws_key_type 到 settings
     if (localInputs.type === 33) {
       settings.aws_key_type = localInputs.aws_key_type || 'ak_sk';
+      settings.claude_tool_schema_compat_enabled =
+        localInputs.claude_tool_schema_compat_enabled === true;
     }
 
     // type === 41 (Vertex): 始终保存 vertex_key_type 到 settings，避免编辑时被重置
@@ -1752,6 +1760,8 @@ const EditChannelModal = (props) => {
       if (localInputs.type === 14) {
         settings.allow_inference_geo = localInputs.allow_inference_geo === true;
         settings.claude_beta_query = localInputs.claude_beta_query === true;
+        settings.claude_tool_schema_compat_enabled =
+          localInputs.claude_tool_schema_compat_enabled === true;
       }
     }
 
@@ -1800,6 +1810,7 @@ const EditChannelModal = (props) => {
     delete localInputs.allow_include_obfuscation;
     delete localInputs.allow_inference_geo;
     delete localInputs.claude_beta_query;
+    delete localInputs.claude_tool_schema_compat_enabled;
     delete localInputs.upstream_model_update_check_enabled;
     delete localInputs.upstream_model_update_auto_sync_enabled;
     delete localInputs.upstream_model_update_last_check_time;
@@ -2459,6 +2470,10 @@ const EditChannelModal = (props) => {
                     <Form.Switch field='claude_beta_query' label={t('Claude 强制 beta=true')} initValue={inputs.claude_beta_query === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_beta_query', value)} extraText={t('开启后，该渠道请求 Claude 时将强制追加 ?beta=true（无需客户端手动传参）')} />
                   )}
 
+                  {inputs.type === 14 && (
+                    <Form.Switch field='claude_tool_schema_compat_enabled' label={t('Claude 工具 Schema 兼容修复')} initValue={inputs.claude_tool_schema_compat_enabled === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_tool_schema_compat_enabled', value)} extraText={t('开启后会修复 tools.input_schema 中 required:null、properties:null 等明显不符合 JSON Schema 的字段，用于兼容 Bedrock/Claude 严格校验上游。默认关闭。')} />
+                  )}
+
                   {inputs.type === 1 && (
                     <Form.Switch field='force_format' label={t('强制格式化')} initValue={inputs.force_format === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('force_format', value)} extraText={t('强制将响应格式化为 OpenAI 标准格式（只适用于OpenAI渠道类型）')} />
                   )}
@@ -2623,6 +2638,22 @@ const EditChannelModal = (props) => {
                           }}
                           extraText={t(
                             'AK/SK 模式：使用 AccessKey 和 SecretAccessKey；API Key 模式：使用 API Key',
+                          )}
+                        />
+                        <Form.Switch
+                          field='claude_tool_schema_compat_enabled'
+                          label={t('Claude 工具 Schema 兼容修复')}
+                          initValue={inputs.claude_tool_schema_compat_enabled === true}
+                          checkedText={t('开')}
+                          uncheckedText={t('关')}
+                          onChange={(value) =>
+                            handleChannelOtherSettingsChange(
+                              'claude_tool_schema_compat_enabled',
+                              value,
+                            )
+                          }
+                          extraText={t(
+                            '开启后会修复 tools.input_schema 中 required:null、properties:null 等明显不符合 JSON Schema 的字段，用于兼容 Bedrock/Claude 严格校验上游。默认关闭。',
                           )}
                         />
                       </>

@@ -44,7 +44,7 @@ func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
 	}
 }
 
-func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRequest) (*dto.ClaudeRequest, error) {
+func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, textRequest dto.GeneralOpenAIRequest) (*dto.ClaudeRequest, error) {
 	claudeTools := make([]any, 0, len(textRequest.Tools))
 
 	for _, tool := range textRequest.Tools {
@@ -55,7 +55,13 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 			}
 			claudeTool.InputSchema = make(map[string]interface{})
 			if params["type"] != nil {
-				claudeTool.InputSchema["type"] = params["type"].(string)
+				if paramType, ok := params["type"].(string); ok {
+					claudeTool.InputSchema["type"] = paramType
+				} else if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
+					claudeTool.InputSchema["type"] = params["type"]
+				} else {
+					claudeTool.InputSchema["type"] = params["type"].(string)
+				}
 			}
 			claudeTool.InputSchema["properties"] = params["properties"]
 			claudeTool.InputSchema["required"] = params["required"]
@@ -64,6 +70,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 					continue
 				}
 				claudeTool.InputSchema[s] = a
+			}
+			if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
+				relaycommon.NormalizeClaudeToolsValue([]any{&claudeTool}, info)
 			}
 			claudeTools = append(claudeTools, &claudeTool)
 		}

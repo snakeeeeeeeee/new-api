@@ -3987,6 +3987,8 @@
     "成功支付的订阅订单将在查询后展示": "Successfully paid subscription orders will appear after query",
     "订阅额度使用明细": "Subscription Quota Usage Details",
     "订阅包购买明细": "Subscription Purchase Details",
-    "余额请求数": "Wallet Requests"
+    "余额请求数": "Wallet Requests",
+    "Claude 工具 Schema 兼容修复": "Claude Tool Schema Compatibility Fix",
+    "开启后会修复 tools.input_schema 中 required:null、properties:null 等明显不符合 JSON Schema 的字段，用于兼容 Bedrock/Claude 严格校验上游。默认关闭。": "When enabled, fixes clearly invalid JSON Schema fields such as required:null and properties:null in tools.input_schema for strict Bedrock/Claude upstream validation. Disabled by default."
   }
 }

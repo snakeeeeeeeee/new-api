@@ -926,3 +926,25 @@
 - 已读取 brainstorming 技能说明。
 - 已开始查看管理员菜单、前端路由和 API 路由。
 - 已确认菜单/API/迁移接入点；推荐方案是专用命中记录表 + 管理员页面，而不是复用普通 logs 或 request dump。
+
+---
+
+# Session: Claude/Bedrock Tool Schema 兼容修复开关
+
+## Scope
+- 实现渠道级 `claude_tool_schema_compat_enabled` 开关，默认关闭。
+- 开启后仅修复 Claude/Bedrock tools input_schema 中低风险 JSON Schema 类型错误。
+- 补单测、前端构建和 Docker dev 验证，覆盖开启/关闭行为。
+
+## Progress
+- 已确认实现计划、现有渠道 settings 结构、Claude/AWS 请求路径和前端渠道编辑保存逻辑。
+- 已完成后端渠道级 `claude_tool_schema_compat_enabled` 开关，默认关闭；覆盖 OpenAI->Claude 转换、Claude 原生请求、Claude pass-through、AWS Bedrock 最终组包。
+- 已完成前端渠道编辑页开关，仅 Anthropic Claude 与 AWS Claude/Bedrock 渠道展示，保存到 `settings` JSON。
+- 已完成 Go 单元测试：helper 低风险修复/关闭不变/内置工具跳过/复杂 schema 不改、OpenAI->Claude、AWS pass-through 与非 pass-through。
+- 验证通过：
+  - `go test ./relay/common ./relay/channel/claude ./relay/channel/aws -count=1`
+  - `go test ./...`
+  - `cd web && bun run build`
+  - `git diff --check`
+- Docker dev 验证：`new-api-dev` 已重建并健康；使用 mock Anthropic upstream 与临时 channel/token 验证关闭时上游仍收到 `properties:null,required:null` 并失败，开启时上游收到 `properties:{}` 且无 `required` 并成功，再关闭后恢复旧行为；测试后已删除临时 channel/token/user 和 mock 容器。
+- 注意：按原命令执行 `docker build -t new-api-local:dev .` 时 Docker 卡在基础镜像 metadata 解析；为完成 dev 验证，改用本地编译当前 Linux 二进制并覆盖现有 dev 运行时镜像后执行 compose 重建。

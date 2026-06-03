@@ -3948,6 +3948,8 @@
     "成功支付的订阅订单将在查询后展示": "成功支付的訂閱訂單將在查詢後展示",
     "订阅额度使用明细": "訂閱額度使用明細",
     "订阅包购买明细": "訂閱包購買明細",
-    "余额请求数": "餘額請求數"
+    "余额请求数": "餘額請求數",
+    "Claude 工具 Schema 兼容修复": "Claude 工具 Schema 相容修復",
+    "开启后会修复 tools.input_schema 中 required:null、properties:null 等明显不符合 JSON Schema 的字段，用于兼容 Bedrock/Claude 严格校验上游。默认关闭。": "開啟後會修復 tools.input_schema 中 required:null、properties:null 等明顯不符合 JSON Schema 的欄位，用於相容 Bedrock/Claude 嚴格校驗上游。預設關閉。"
   }
 }

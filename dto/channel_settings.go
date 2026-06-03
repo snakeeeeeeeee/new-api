@@ -28,7 +28,8 @@ type ChannelOtherSettings struct {
 	ImageResponseAdapter                  string        `json:"image_response_adapter,omitempty"`
 	VertexKeyType                         VertexKeyType `json:"vertex_key_type,omitempty"` // "json" or "api_key"
 	OpenRouterEnterprise                  *bool         `json:"openrouter_enterprise,omitempty"`
-	ClaudeBetaQuery                       bool          `json:"claude_beta_query,omitempty"`         // Claude 渠道是否强制追加 ?beta=true
+	ClaudeBetaQuery                       bool          `json:"claude_beta_query,omitempty"` // Claude 渠道是否强制追加 ?beta=true
+	ClaudeToolSchemaCompatEnabled         bool          `json:"claude_tool_schema_compat_enabled,omitempty"`
 	AllowServiceTier                      bool          `json:"allow_service_tier,omitempty"`        // 是否允许 service_tier 透传（默认过滤以避免额外计费）
 	AllowInferenceGeo                     bool          `json:"allow_inference_geo,omitempty"`       // 是否允许 inference_geo 透传（仅 Claude，默认过滤以满足数据驻留合规
 	AllowSafetyIdentifier                 bool          `json:"allow_safety_identifier,omitempty"`   // 是否允许 safety_identifier 透传（默认过滤以保护用户隐私）

@@ -187,7 +187,11 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 		}
 		delete(data, "model")
 		delete(data, "stream")
+		relaycommon.NormalizeClaudeToolsValue(data["tools"], info)
 		return common.Marshal(data)
+	}
+	if req, ok := awsClaudeReq.(*AwsClaudeRequest); ok {
+		relaycommon.NormalizeClaudeToolsValue(req.Tools, info)
 	}
 	return common.Marshal(awsClaudeReq)
 }

@@ -3957,6 +3957,8 @@
     "成功支付的订阅订单将在查询后展示": "",
     "订阅额度使用明细": "",
     "订阅包购买明细": "",
-    "余额请求数": ""
+    "余额请求数": "",
+    "Claude 工具 Schema 兼容修复": "Correction de compatibilité du schéma d’outil Claude",
+    "开启后会修复 tools.input_schema 中 required:null、properties:null 等明显不符合 JSON Schema 的字段，用于兼容 Bedrock/Claude 严格校验上游。默认关闭。": "Une fois activé, corrige dans tools.input_schema les champs manifestement non conformes au JSON Schema, comme required:null et properties:null, pour les amonts Bedrock/Claude à validation stricte. Désactivé par défaut."
   }
 }
