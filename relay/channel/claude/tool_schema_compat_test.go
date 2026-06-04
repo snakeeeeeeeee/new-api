@@ -10,6 +10,7 @@ import (
 
 func relayInfoWithToolSchemaCompat(enabled bool) *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{
+		UserId: 256,
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelId: 456,
 			ChannelOtherSettings: dto.ChannelOtherSettings{
@@ -45,6 +46,22 @@ func TestRequestOpenAI2ClaudeMessageToolSchemaCompatDisabledKeepsRequiredNull(t 
 	t.Parallel()
 
 	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), requestWithNullableToolSchema())
+	require.NoError(t, err)
+
+	tool := claudeReq.GetTools()[0].(*dto.Tool)
+	require.Equal(t, "custom", tool.Name)
+	require.Contains(t, tool.InputSchema, "required")
+	require.Nil(t, tool.InputSchema["required"])
+	require.Contains(t, tool.InputSchema, "properties")
+	require.Nil(t, tool.InputSchema["properties"])
+}
+
+func TestRequestOpenAI2ClaudeMessageToolSchemaCompatWhitelistMissKeepsRequiredNull(t *testing.T) {
+	t.Parallel()
+
+	info := relayInfoWithToolSchemaCompat(true)
+	info.ChannelOtherSettings.ClaudeToolSchemaCompatUserIDs = []int{1001}
+	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, info, requestWithNullableToolSchema())
 	require.NoError(t, err)
 
 	tool := claudeReq.GetTools()[0].(*dto.Tool)

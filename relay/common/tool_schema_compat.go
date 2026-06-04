@@ -23,7 +23,20 @@ type ClaudeToolSchemaCompatOriginalSchema struct {
 }
 
 func ShouldApplyClaudeToolSchemaCompat(info *RelayInfo) bool {
-	return info != nil && info.ChannelOtherSettings.ClaudeToolSchemaCompatEnabled
+	if info == nil || !info.ChannelOtherSettings.ClaudeToolSchemaCompatEnabled {
+		return false
+	}
+
+	userIDs := info.ChannelOtherSettings.ClaudeToolSchemaCompatUserIDs
+	if len(userIDs) == 0 {
+		return true
+	}
+	for _, userID := range userIDs {
+		if userID == info.UserId {
+			return true
+		}
+	}
+	return false
 }
 
 func NormalizeClaudeRequestToolSchemas(request *dto.ClaudeRequest, info *RelayInfo) {
@@ -106,6 +119,87 @@ func CaptureClaudeToolSchemaCompatOriginalSchemas(tools any, info *RelayInfo) {
 			captureClaudeToolSchemaCompatOriginalSchema(tool, info)
 		}
 	}
+}
+
+func CaptureClaudeToolSchemaCompatFinalSchemas(tools any, info *RelayInfo) {
+	if tools == nil || !ShouldApplyClaudeToolSchemaCompat(info) {
+		return
+	}
+
+	info.ClaudeToolSchemaCompatFinalSchemas = nil
+	captureClaudeToolSchemaCompatFinalSchemas(tools, info)
+}
+
+func CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData []byte, info *RelayInfo) {
+	if len(jsonData) == 0 || !ShouldApplyClaudeToolSchemaCompat(info) {
+		return
+	}
+
+	var payload map[string]any
+	if err := common.Unmarshal(jsonData, &payload); err != nil {
+		return
+	}
+	CaptureClaudeToolSchemaCompatFinalSchemas(payload["tools"], info)
+}
+
+func captureClaudeToolSchemaCompatFinalSchemas(tools any, info *RelayInfo) {
+	switch typedTools := tools.(type) {
+	case []any:
+		for _, tool := range typedTools {
+			captureClaudeToolSchemaCompatFinalSchema(tool, info)
+		}
+	case []*dto.Tool:
+		for _, tool := range typedTools {
+			captureClaudeToolSchemaCompatFinalSchema(tool, info)
+		}
+	case []dto.Tool:
+		for i := range typedTools {
+			captureClaudeToolSchemaCompatFinalSchema(&typedTools[i], info)
+		}
+	case []map[string]any:
+		for _, tool := range typedTools {
+			captureClaudeToolSchemaCompatFinalSchema(tool, info)
+		}
+	}
+}
+
+func captureClaudeToolSchemaCompatFinalSchema(tool any, info *RelayInfo) {
+	if info == nil || tool == nil {
+		return
+	}
+
+	var toolName string
+	var schema any
+	var ok bool
+
+	switch typedTool := tool.(type) {
+	case map[string]any:
+		if isClaudeBuiltInToolMap(typedTool) {
+			return
+		}
+		toolName = common.Interface2String(typedTool["name"])
+		schema, ok = typedTool["input_schema"]
+	case *dto.Tool:
+		if typedTool == nil {
+			return
+		}
+		toolName = typedTool.Name
+		schema = typedTool.InputSchema
+		ok = typedTool.InputSchema != nil
+	default:
+		return
+	}
+
+	if toolName == "" {
+		toolName = "<unknown>"
+	}
+	if !ok {
+		schema = nil
+	}
+	info.ClaudeToolSchemaCompatFinalSchemas = append(info.ClaudeToolSchemaCompatFinalSchemas, ClaudeToolSchemaCompatOriginalSchema{
+		ToolName:    toolName,
+		InputSchema: cloneClaudeToolSchemaCompatOriginalSchema(schema),
+	})
 }
 
 func captureClaudeToolSchemaCompatOriginalSchema(tool any, info *RelayInfo) {
@@ -334,14 +428,14 @@ func normalizeClaudeInputSchemaMap(schema map[string]any, toolName string) (map[
 	normalizeClaudeAnnotationTypes(schema, &report, "annotation_removed")
 	normalizeClaudeAdditionalProperties(schema, &report, "additional_properties_removed")
 
-	if normalizeClaudeNestedPropertySchemas(schema["properties"], &report) {
+	if normalizeClaudeNestedPropertySchemas(schema["properties"], &report, false) {
 		return schema, report, true
 	}
 
 	return schema, report, len(report.Fixes) > 0
 }
 
-func normalizeClaudeNestedPropertySchemas(properties any, report *toolSchemaCompatReport) bool {
+func normalizeClaudeNestedPropertySchemas(properties any, report *toolSchemaCompatReport, dropKeywordNamedProperties bool) bool {
 	propertiesMap, ok := properties.(map[string]any)
 	if !ok {
 		return false
@@ -349,6 +443,12 @@ func normalizeClaudeNestedPropertySchemas(properties any, report *toolSchemaComp
 
 	changed := false
 	for propertyName, propertySchemaValue := range propertiesMap {
+		if dropKeywordNamedProperties && propertyName == "required" {
+			delete(propertiesMap, propertyName)
+			report.Fixes = append(report.Fixes, "nested_required_property_removed")
+			changed = true
+			continue
+		}
 		switch propertySchema := propertySchemaValue.(type) {
 		case nil:
 			propertiesMap[propertyName] = map[string]any{}
@@ -400,7 +500,7 @@ func normalizeClaudeNestedSchemaMap(schema map[string]any, report *toolSchemaCom
 			schema["properties"] = map[string]any{}
 			report.Fixes = append(report.Fixes, "nested_properties_defaulted")
 			changed = true
-		} else if normalizeClaudeNestedPropertySchemas(properties, report) {
+		} else if normalizeClaudeNestedPropertySchemas(properties, report, true) {
 			changed = true
 		}
 	}
@@ -785,6 +885,7 @@ func LogClaudeToolSchemaCompatOriginalSchemasOnError(info *RelayInfo, err error)
 	if !isClaudeToolSchemaCompatError(err.Error()) {
 		return
 	}
+	logClaudeToolSchemaCompatFinalSchemasOnError(info)
 	if len(info.ClaudeToolSchemaCompatOriginalSchemas) == 0 {
 		return
 	}
@@ -812,6 +913,34 @@ func LogClaudeToolSchemaCompatOriginalSchemasOnError(info *RelayInfo, err error)
 	}
 }
 
+func logClaudeToolSchemaCompatFinalSchemasOnError(info *RelayInfo) {
+	if len(info.ClaudeToolSchemaCompatFinalSchemas) == 0 {
+		return
+	}
+	if info.claudeToolSchemaCompatFinalLogged {
+		return
+	}
+	info.claudeToolSchemaCompatFinalLogged = true
+
+	channelId := 0
+	userId := 0
+	endpoint := ""
+	requestId := info.RequestId
+	if info.ChannelMeta != nil {
+		channelId = info.ChannelId
+	}
+	userId = info.UserId
+	endpoint = info.RequestURLPath
+
+	for _, schema := range info.ClaudeToolSchemaCompatFinalSchemas {
+		schemaJSON, marshalErr := common.Marshal(schema.InputSchema)
+		if marshalErr != nil {
+			schemaJSON = []byte(fmt.Sprintf("%q", fmt.Sprintf("<marshal_failed:%v>", marshalErr)))
+		}
+		logClaudeToolSchemaCompatFinalSchema(channelId, userId, endpoint, requestId, schema.ToolName, string(schemaJSON))
+	}
+}
+
 func logClaudeToolSchemaCompatOriginalSchema(channelId int, userId int, endpoint string, requestId string, toolName string, schemaJSON string) {
 	if len(schemaJSON) <= claudeOriginalSchemaLogChunk {
 		logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_error_original_schema channel=%d user_id=%d endpoint=%q request_id=%q tool=%q input_schema_json=%s", channelId, userId, endpoint, requestId, toolName, schemaJSON))
@@ -826,6 +955,23 @@ func logClaudeToolSchemaCompatOriginalSchema(channelId int, userId int, endpoint
 			end = len(schemaJSON)
 		}
 		logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_error_original_schema_part channel=%d user_id=%d endpoint=%q request_id=%q tool=%q part=%d/%d input_schema_json_chunk=%s", channelId, userId, endpoint, requestId, toolName, part+1, totalParts, schemaJSON[start:end]))
+	}
+}
+
+func logClaudeToolSchemaCompatFinalSchema(channelId int, userId int, endpoint string, requestId string, toolName string, schemaJSON string) {
+	if len(schemaJSON) <= claudeOriginalSchemaLogChunk {
+		logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_error_final_schema channel=%d user_id=%d endpoint=%q request_id=%q tool=%q input_schema_json=%s", channelId, userId, endpoint, requestId, toolName, schemaJSON))
+		return
+	}
+
+	totalParts := (len(schemaJSON) + claudeOriginalSchemaLogChunk - 1) / claudeOriginalSchemaLogChunk
+	for part := 0; part < totalParts; part++ {
+		start := part * claudeOriginalSchemaLogChunk
+		end := start + claudeOriginalSchemaLogChunk
+		if end > len(schemaJSON) {
+			end = len(schemaJSON)
+		}
+		logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_error_final_schema_part channel=%d user_id=%d endpoint=%q request_id=%q tool=%q part=%d/%d input_schema_json_chunk=%s", channelId, userId, endpoint, requestId, toolName, part+1, totalParts, schemaJSON[start:end]))
 	}
 }
 

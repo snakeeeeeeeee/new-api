@@ -103,6 +103,48 @@ const REGION_EXAMPLE = {
 };
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8;
 
+const formatClaudeToolSchemaCompatUserIDs = (value) => {
+  if (!Array.isArray(value)) {
+    return typeof value === 'string' ? value : '';
+  }
+  return value
+    .map((id) => Number(id))
+    .filter((id) => Number.isSafeInteger(id) && id > 0)
+    .join(',');
+};
+
+const parseClaudeToolSchemaCompatUserIDs = (value) => {
+  const rawValue = String(value || '').trim();
+  if (!rawValue) {
+    return { userIDs: [], invalidTokens: [] };
+  }
+
+  const tokens = rawValue
+    .split(/[\s,，]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  const invalidTokens = [];
+  const userIDs = [];
+  const seen = new Set();
+  tokens.forEach((token) => {
+    if (!/^\d+$/.test(token)) {
+      invalidTokens.push(token);
+      return;
+    }
+    const id = Number(token);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      invalidTokens.push(token);
+      return;
+    }
+    if (!seen.has(id)) {
+      seen.add(id);
+      userIDs.push(id);
+    }
+  });
+
+  return { userIDs, invalidTokens };
+};
+
 const PARAM_OVERRIDE_LEGACY_TEMPLATE = {
   temperature: 0,
 };
@@ -209,6 +251,7 @@ const EditChannelModal = (props) => {
     allow_inference_geo: false,
     claude_beta_query: false,
     claude_tool_schema_compat_enabled: false,
+    claude_tool_schema_compat_user_ids: '',
     upstream_model_update_check_enabled: false,
     upstream_model_update_auto_sync_enabled: false,
     upstream_model_update_last_check_time: 0,
@@ -860,6 +903,10 @@ const EditChannelModal = (props) => {
           data.claude_beta_query = parsedSettings.claude_beta_query || false;
           data.claude_tool_schema_compat_enabled =
             parsedSettings.claude_tool_schema_compat_enabled || false;
+          data.claude_tool_schema_compat_user_ids =
+            formatClaudeToolSchemaCompatUserIDs(
+              parsedSettings.claude_tool_schema_compat_user_ids,
+            );
           data.upstream_model_update_check_enabled =
             parsedSettings.upstream_model_update_check_enabled === true;
           data.upstream_model_update_auto_sync_enabled =
@@ -891,6 +938,7 @@ const EditChannelModal = (props) => {
           data.allow_inference_geo = false;
           data.claude_beta_query = false;
           data.claude_tool_schema_compat_enabled = false;
+          data.claude_tool_schema_compat_user_ids = '';
           data.upstream_model_update_check_enabled = false;
           data.upstream_model_update_auto_sync_enabled = false;
           data.upstream_model_update_last_check_time = 0;
@@ -910,6 +958,7 @@ const EditChannelModal = (props) => {
         data.allow_inference_geo = false;
         data.claude_beta_query = false;
         data.claude_tool_schema_compat_enabled = false;
+        data.claude_tool_schema_compat_user_ids = '';
         data.upstream_model_update_check_enabled = false;
         data.upstream_model_update_auto_sync_enabled = false;
         data.upstream_model_update_last_check_time = 0;
@@ -992,6 +1041,8 @@ const EditChannelModal = (props) => {
         data.allow_inference_geo ||
         data.claude_beta_query ||
         data.claude_tool_schema_compat_enabled ||
+        (data.claude_tool_schema_compat_user_ids &&
+          data.claude_tool_schema_compat_user_ids.trim()) ||
         data.system_prompt_override ||
         data.upstream_model_update_check_enabled ||
         data.upstream_model_update_auto_sync_enabled;
@@ -1698,6 +1749,22 @@ const EditChannelModal = (props) => {
       localInputs.other = 'v2.1';
     }
 
+    let claudeToolSchemaCompatUserIDs = [];
+    if (localInputs.type === 14 || localInputs.type === 33) {
+      const parsedCompatUserIDs = parseClaudeToolSchemaCompatUserIDs(
+        localInputs.claude_tool_schema_compat_user_ids,
+      );
+      if (parsedCompatUserIDs.invalidTokens.length > 0) {
+        showError(
+          t('Claude 工具 Schema 兼容修复用户白名单只能填写正整数用户 ID：{{ids}}', {
+            ids: parsedCompatUserIDs.invalidTokens.join(', '),
+          }),
+        );
+        return;
+      }
+      claudeToolSchemaCompatUserIDs = parsedCompatUserIDs.userIDs;
+    }
+
     // 生成渠道额外设置JSON
     const channelExtraSettings = {
       force_format: localInputs.force_format || false,
@@ -1737,6 +1804,8 @@ const EditChannelModal = (props) => {
       settings.aws_key_type = localInputs.aws_key_type || 'ak_sk';
       settings.claude_tool_schema_compat_enabled =
         localInputs.claude_tool_schema_compat_enabled === true;
+      settings.claude_tool_schema_compat_user_ids =
+        claudeToolSchemaCompatUserIDs;
     }
 
     // type === 41 (Vertex): 始终保存 vertex_key_type 到 settings，避免编辑时被重置
@@ -1762,6 +1831,8 @@ const EditChannelModal = (props) => {
         settings.claude_beta_query = localInputs.claude_beta_query === true;
         settings.claude_tool_schema_compat_enabled =
           localInputs.claude_tool_schema_compat_enabled === true;
+        settings.claude_tool_schema_compat_user_ids =
+          claudeToolSchemaCompatUserIDs;
       }
     }
 
@@ -1811,6 +1882,7 @@ const EditChannelModal = (props) => {
     delete localInputs.allow_inference_geo;
     delete localInputs.claude_beta_query;
     delete localInputs.claude_tool_schema_compat_enabled;
+    delete localInputs.claude_tool_schema_compat_user_ids;
     delete localInputs.upstream_model_update_check_enabled;
     delete localInputs.upstream_model_update_auto_sync_enabled;
     delete localInputs.upstream_model_update_last_check_time;
@@ -2471,7 +2543,10 @@ const EditChannelModal = (props) => {
                   )}
 
                   {inputs.type === 14 && (
-                    <Form.Switch field='claude_tool_schema_compat_enabled' label={t('Claude 工具 Schema 兼容修复')} initValue={inputs.claude_tool_schema_compat_enabled === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_tool_schema_compat_enabled', value)} extraText={t('开启后会修复 tools.input_schema 中 required:null、properties:null 等明显不符合 JSON Schema 的字段，用于兼容 Bedrock/Claude 严格校验上游。默认关闭。')} />
+                    <>
+                      <Form.Switch field='claude_tool_schema_compat_enabled' label={t('Claude 工具 Schema 兼容修复')} initValue={inputs.claude_tool_schema_compat_enabled === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_tool_schema_compat_enabled', value)} extraText={t('开启后会修复 tools.input_schema 中 required:null、properties:null 等明显不符合 JSON Schema 的字段，用于兼容 Bedrock/Claude 严格校验上游。默认关闭。')} />
+                      <Form.Input field='claude_tool_schema_compat_user_ids' label={t('兼容修复用户白名单')} placeholder={t('例如：256,1001')} initValue={inputs.claude_tool_schema_compat_user_ids || ''} onChange={(value) => handleChannelOtherSettingsChange('claude_tool_schema_compat_user_ids', value)} showClear extraText={t('仅在开启 Claude 工具 Schema 兼容修复后生效。留空表示该渠道所有用户生效；填写后只对指定用户 ID 生效。')} />
+                    </>
                   )}
 
                   {inputs.type === 1 && (
@@ -2654,6 +2729,22 @@ const EditChannelModal = (props) => {
                           }
                           extraText={t(
                             '开启后会修复 tools.input_schema 中 required:null、properties:null 等明显不符合 JSON Schema 的字段，用于兼容 Bedrock/Claude 严格校验上游。默认关闭。',
+                          )}
+                        />
+                        <Form.Input
+                          field='claude_tool_schema_compat_user_ids'
+                          label={t('兼容修复用户白名单')}
+                          placeholder={t('例如：256,1001')}
+                          initValue={inputs.claude_tool_schema_compat_user_ids || ''}
+                          onChange={(value) =>
+                            handleChannelOtherSettingsChange(
+                              'claude_tool_schema_compat_user_ids',
+                              value,
+                            )
+                          }
+                          showClear
+                          extraText={t(
+                            '仅在开启 Claude 工具 Schema 兼容修复后生效。留空表示该渠道所有用户生效；填写后只对指定用户 ID 生效。',
                           )}
                         />
                       </>

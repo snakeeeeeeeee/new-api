@@ -14,6 +14,7 @@ import (
 
 func compatRelayInfo(enabled bool) *RelayInfo {
 	return &RelayInfo{
+		UserId: 256,
 		ChannelMeta: &ChannelMeta{
 			ChannelId: 123,
 			ChannelOtherSettings: dto.ChannelOtherSettings{
@@ -21,6 +22,45 @@ func compatRelayInfo(enabled bool) *RelayInfo {
 			},
 		},
 	}
+}
+
+func TestShouldApplyClaudeToolSchemaCompatRespectsUserWhitelist(t *testing.T) {
+	t.Parallel()
+
+	info := compatRelayInfo(true)
+	require.True(t, ShouldApplyClaudeToolSchemaCompat(info))
+
+	info.ChannelOtherSettings.ClaudeToolSchemaCompatUserIDs = []int{256, 1001}
+	require.True(t, ShouldApplyClaudeToolSchemaCompat(info))
+
+	info.ChannelOtherSettings.ClaudeToolSchemaCompatUserIDs = []int{1001}
+	require.False(t, ShouldApplyClaudeToolSchemaCompat(info))
+}
+
+func TestNormalizeClaudeRequestToolSchemasWhitelistMissKeepsRequiredNull(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "custom",
+				"input_schema": map[string]any{
+					"type":       "object",
+					"properties": nil,
+					"required":   nil,
+				},
+			},
+		},
+	}
+	info := compatRelayInfo(true)
+	info.ChannelOtherSettings.ClaudeToolSchemaCompatUserIDs = []int{1001}
+
+	NormalizeClaudeRequestToolSchemas(req, info)
+
+	tool := req.Tools.([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	require.Nil(t, schema["required"])
+	require.Nil(t, schema["properties"])
 }
 
 func TestNormalizeClaudeRequestToolSchemasDisabledKeepsRequiredNull(t *testing.T) {
@@ -311,6 +351,53 @@ func TestNormalizeClaudeRequestToolSchemasDefaultsNestedObjectProperties(t *test
 	require.NotContains(t, refObject, "properties")
 }
 
+func TestNormalizeClaudeRequestToolSchemasRemovesNestedRequiredNamedProperty(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "report",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"required": map[string]any{
+							"description": "root business field should stay",
+							"type":        "boolean",
+						},
+						"params": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"name": map[string]any{"type": "string"},
+									"required": map[string]any{
+										"description": "nested business field conflicts with Bedrock keyword parsing",
+										"type":        "boolean",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	NormalizeClaudeRequestToolSchemas(req, compatRelayInfo(true))
+
+	tool := req.Tools.([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	require.Contains(t, properties, "required")
+
+	params := properties["params"].(map[string]any)
+	paramsItems := params["items"].(map[string]any)
+	paramsProperties := paramsItems["properties"].(map[string]any)
+	require.NotContains(t, paramsProperties, "required")
+	require.Contains(t, paramsProperties, "name")
+}
+
 func TestNormalizeClaudeRequestToolSchemasDisabledKeepsNestedObjectWithoutProperties(t *testing.T) {
 	t.Parallel()
 
@@ -399,6 +486,19 @@ func TestNormalizeClaudeRequestToolSchemasCapturesOriginalSchemaBeforeFix(t *tes
 	schema := tool["input_schema"].(map[string]any)
 	require.Equal(t, map[string]any{}, schema["properties"])
 	require.NotContains(t, schema, "required")
+}
+
+func TestCaptureClaudeToolSchemaCompatFinalSchemasInJSON(t *testing.T) {
+	t.Parallel()
+
+	info := compatRelayInfo(true)
+	CaptureClaudeToolSchemaCompatFinalSchemasInJSON([]byte(`{"tools":[{"name":"custom","input_schema":{"type":"object","properties":{}}}]}`), info)
+
+	require.Len(t, info.ClaudeToolSchemaCompatFinalSchemas, 1)
+	require.Equal(t, "custom", info.ClaudeToolSchemaCompatFinalSchemas[0].ToolName)
+	schema := info.ClaudeToolSchemaCompatFinalSchemas[0].InputSchema.(map[string]any)
+	require.Equal(t, "object", schema["type"])
+	require.Equal(t, map[string]any{}, schema["properties"])
 }
 
 func TestNormalizeClaudeRequestToolSchemasLeavesComplexArrayItemsUntouched(t *testing.T) {
@@ -756,6 +856,44 @@ func TestLogClaudeToolSchemaCompatOriginalSchemasOnError(t *testing.T) {
 	require.Contains(t, logText, `request_id="req-schema"`)
 	require.Contains(t, logText, `tool="report"`)
 	require.Contains(t, logText, `"items":["invalid"]`)
+}
+
+func TestLogClaudeToolSchemaCompatFinalSchemasOnError(t *testing.T) {
+	var buf bytes.Buffer
+	commonpkg.LogWriterMu.Lock()
+	originalWriter := gin.DefaultWriter
+	gin.DefaultWriter = &buf
+	commonpkg.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		commonpkg.LogWriterMu.Lock()
+		gin.DefaultWriter = originalWriter
+		commonpkg.LogWriterMu.Unlock()
+	})
+
+	info := compatRelayInfo(true)
+	info.UserId = 256
+	info.RequestURLPath = "/v1/chat/completions"
+	info.RequestId = "req-final-schema"
+	info.ClaudeToolSchemaCompatFinalSchemas = []ClaudeToolSchemaCompatOriginalSchema{
+		{
+			ToolName: "report",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	}
+
+	LogClaudeToolSchemaCompatOriginalSchemasOnError(info, errors.New("custom.input_schema: JSON schema is invalid"))
+
+	logText := buf.String()
+	require.Contains(t, logText, "tool_schema_compat_error_final_schema")
+	require.Contains(t, logText, "channel=123")
+	require.Contains(t, logText, "user_id=256")
+	require.Contains(t, logText, `endpoint="/v1/chat/completions"`)
+	require.Contains(t, logText, `request_id="req-final-schema"`)
+	require.Contains(t, logText, `tool="report"`)
+	require.Contains(t, logText, `"properties":{}`)
 }
 
 func TestLogClaudeToolSchemaCompatOriginalSchemasIgnoresUnrelatedError(t *testing.T) {

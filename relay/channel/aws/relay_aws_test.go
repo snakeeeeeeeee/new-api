@@ -103,6 +103,11 @@ func TestBuildAwsRequestBodyToolSchemaCompatNonPassThrough(t *testing.T) {
 	schema = decodeFirstToolSchema(t, body)
 	require.NotContains(t, schema, "required")
 	require.Equal(t, map[string]any{}, schema["properties"])
+	require.Len(t, info.ClaudeToolSchemaCompatFinalSchemas, 1)
+	require.Equal(t, "custom", info.ClaudeToolSchemaCompatFinalSchemas[0].ToolName)
+	finalSchema := info.ClaudeToolSchemaCompatFinalSchemas[0].InputSchema.(map[string]any)
+	require.NotContains(t, finalSchema, "required")
+	require.Equal(t, map[string]any{}, finalSchema["properties"])
 }
 
 func TestBuildAwsRequestBodyToolSchemaCompatPassThrough(t *testing.T) {
@@ -132,6 +137,49 @@ func TestBuildAwsRequestBodyToolSchemaCompatPassThrough(t *testing.T) {
 	require.Equal(t, "object", schema["type"])
 	require.Equal(t, map[string]any{}, schema["properties"])
 	require.NotContains(t, schema, "required")
+}
+
+func TestBuildAwsRequestBodyToolSchemaCompatWhitelistMissKeepsSchema(t *testing.T) {
+	oldPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	model_setting.GetGlobalSettings().PassThroughRequestEnabled = false
+	t.Cleanup(func() {
+		model_setting.GetGlobalSettings().PassThroughRequestEnabled = oldPassThrough
+	})
+
+	info := awsRelayInfoWithToolSchemaCompat(true, false)
+	info.UserId = 256
+	info.ChannelOtherSettings.ClaudeToolSchemaCompatUserIDs = []int{1001}
+	req := &AwsClaudeRequest{
+		Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}},
+		Tools: []any{
+			map[string]any{
+				"name": "custom",
+				"input_schema": map[string]any{
+					"type":       "object",
+					"properties": nil,
+					"required":   nil,
+				},
+			},
+		},
+	}
+	body, err := buildAwsRequestBody(nil, info, req)
+	require.NoError(t, err)
+	schema := decodeFirstToolSchema(t, body)
+	require.Nil(t, schema["required"])
+	require.Nil(t, schema["properties"])
+	require.Empty(t, info.ClaudeToolSchemaCompatFinalSchemas)
+
+	passThroughInfo := awsRelayInfoWithToolSchemaCompat(true, true)
+	passThroughInfo.UserId = 256
+	passThroughInfo.ChannelOtherSettings.ClaudeToolSchemaCompatUserIDs = []int{1001}
+	rawBody := `{"model":"claude-opus-4-7","stream":true,"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"custom","input_schema":{"type":"","properties":null,"required":null}}]}`
+	ctx := awsTestContext(rawBody)
+	body, err = buildAwsRequestBody(ctx, passThroughInfo, &AwsClaudeRequest{})
+	require.NoError(t, err)
+	schema = decodeFirstToolSchema(t, body)
+	require.Equal(t, "", schema["type"])
+	require.Nil(t, schema["required"])
+	require.Nil(t, schema["properties"])
 }
 
 func TestBuildAwsRequestBodyToolSchemaCompatFixesArrayItems(t *testing.T) {

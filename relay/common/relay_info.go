@@ -168,6 +168,10 @@ type RelayInfo struct {
 	ClaudeToolSchemaCompatOriginalSchemas []ClaudeToolSchemaCompatOriginalSchema
 	claudeToolSchemaCompatOriginalSeen    map[string]struct{}
 	claudeToolSchemaCompatOriginalLogged  bool
+	// ClaudeToolSchemaCompatFinalSchemas stores tool input schemas after final upstream normalization.
+	// It is used only for diagnostic logging when a strict upstream still rejects a tool schema.
+	ClaudeToolSchemaCompatFinalSchemas []ClaudeToolSchemaCompatOriginalSchema
+	claudeToolSchemaCompatFinalLogged  bool
 
 	ThinkingContentInfo
 	TokenCountMeta

@@ -141,6 +141,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			if err != nil {
 				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 			}
+			relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)
 			service.DumpUpstreamRequestIfNeeded(c, jsonData)
 			requestBody = bytes.NewBuffer(jsonData)
 		} else {
@@ -178,6 +179,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
+		relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)
 		if common.DebugEnabled {
 			println("requestBody: ", string(jsonData))
 		}
