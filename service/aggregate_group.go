@@ -226,6 +226,7 @@ func NormalizeAggregateTargets(realGroups []string) []model.AggregateGroupTarget
 			RealGroup:  group,
 			OrderIndex: len(targets),
 			Weight:     common.GetPointer(model.AggregateGroupTargetDefaultWeight),
+			RPMLimit:   0,
 		})
 	}
 	return targets
@@ -254,18 +255,26 @@ func NormalizeAggregateTargetsWithWeights(inputTargets []model.AggregateGroupTar
 			RealGroup:  realGroup,
 			OrderIndex: len(targets),
 			Weight:     common.GetPointer(weight),
+			RPMLimit:   target.GetRPMLimit(),
 		})
 	}
 	return targets
 }
 
-func ValidateAggregateTargetWeights(targets []model.AggregateGroupTarget) error {
+func ValidateAggregateTargetLimits(targets []model.AggregateGroupTarget) error {
 	for _, target := range targets {
 		if target.Weight != nil && *target.Weight < 0 {
 			return fmt.Errorf("真实分组 %s 权重不能小于 0", strings.TrimSpace(target.RealGroup))
 		}
+		if target.RPMLimit < 0 {
+			return fmt.Errorf("真实分组 %s RPM 上限不能小于 0", strings.TrimSpace(target.RealGroup))
+		}
 	}
 	return nil
+}
+
+func ValidateAggregateTargetWeights(targets []model.AggregateGroupTarget) error {
+	return ValidateAggregateTargetLimits(targets)
 }
 
 func NormalizeAndValidateAggregateRouteAffinityKeySources(inputSources []model.AggregateGroupRouteAffinityKeySource) ([]model.AggregateGroupRouteAffinityKeySource, error) {
@@ -336,6 +345,9 @@ func normalizeAndValidateAggregateClientRoutePoolTargets(poolName string, inputT
 		if weight < 0 {
 			return nil, fmt.Errorf("客户端专用流量池 %s 真实分组 %s 权重不能小于 0", poolName, realGroup)
 		}
+		if target.RPMLimit < 0 {
+			return nil, fmt.Errorf("客户端专用流量池 %s 真实分组 %s RPM 上限不能小于 0", poolName, realGroup)
+		}
 		if realGroup == "auto" {
 			return nil, fmt.Errorf("客户端专用流量池 %s 真实分组不能为 auto", poolName)
 		}
@@ -348,9 +360,87 @@ func normalizeAndValidateAggregateClientRoutePoolTargets(poolName string, inputT
 		targets = append(targets, model.AggregateGroupClientRoutePoolTarget{
 			RealGroup: realGroup,
 			Weight:    common.GetPointer(weight),
+			RPMLimit:  target.GetRPMLimit(),
 		})
 	}
 	return targets, nil
+}
+
+func ValidateAggregateRouteRPMLimitConsistency(targets []model.AggregateGroupTarget, clientRoutePools model.AggregateGroupClientRoutePools) error {
+	limits := make(map[string]int)
+	check := func(realGroup string, rpmLimit int, source string) error {
+		realGroup = strings.TrimSpace(realGroup)
+		if realGroup == "" {
+			return nil
+		}
+		if rpmLimit < 0 {
+			return fmt.Errorf("%s 真实分组 %s RPM 上限不能小于 0", source, realGroup)
+		}
+		if existing, exists := limits[realGroup]; exists && existing != rpmLimit {
+			return fmt.Errorf("真实分组 %s 在多个流量池中的 RPM 上限必须一致", realGroup)
+		}
+		limits[realGroup] = rpmLimit
+		return nil
+	}
+	for _, target := range targets {
+		if err := check(target.RealGroup, target.GetRPMLimit(), "默认流量池"); err != nil {
+			return err
+		}
+	}
+	if clientRoutePools.Enabled && clientRoutePools.ClaudeCodeCLI.Enabled {
+		for _, target := range clientRoutePools.ClaudeCodeCLI.Targets {
+			if err := check(target.RealGroup, target.GetRPMLimit(), "客户端专用流量池"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func IsAggregateTargetRPMLimited(aggregateGroup *model.AggregateGroup, target model.AggregateGroupTarget) bool {
+	if aggregateGroup == nil || strings.TrimSpace(aggregateGroup.Name) == "" || strings.TrimSpace(target.RealGroup) == "" {
+		return false
+	}
+	rpmLimit := target.GetRPMLimit()
+	if rpmLimit <= 0 {
+		return false
+	}
+	return !IsAggregateRouteRPMAllowed(aggregateGroup.Name, target.RealGroup, rpmLimit)
+}
+
+func GetAggregateRouteConfiguredRPMLimit(aggregateGroup *model.AggregateGroup, routeGroup string) int {
+	if aggregateGroup == nil {
+		return 0
+	}
+	routeGroup = strings.TrimSpace(routeGroup)
+	if routeGroup == "" {
+		return 0
+	}
+	for _, target := range aggregateGroup.Targets {
+		if strings.TrimSpace(target.RealGroup) == routeGroup {
+			return target.GetRPMLimit()
+		}
+	}
+	clientRoutePools := aggregateGroup.GetClientRoutePools()
+	if clientRoutePools.Enabled && clientRoutePools.ClaudeCodeCLI.Enabled {
+		for _, target := range clientRoutePools.ClaudeCodeCLI.Targets {
+			if strings.TrimSpace(target.RealGroup) == routeGroup {
+				return target.GetRPMLimit()
+			}
+		}
+	}
+	return 0
+}
+
+func IsAggregateRouteGroupRPMLimited(aggregateGroup *model.AggregateGroup, routeGroup string) bool {
+	if aggregateGroup == nil || strings.TrimSpace(aggregateGroup.Name) == "" {
+		return false
+	}
+	rpmLimit := GetAggregateRouteConfiguredRPMLimit(aggregateGroup, routeGroup)
+	if rpmLimit <= 0 {
+		return false
+	}
+	return !IsAggregateRouteRPMAllowed(aggregateGroup.Name, routeGroup, rpmLimit)
 }
 
 func ValidateAggregateGroupConfig(group *model.AggregateGroup, visibleUserGroups []string, realGroups []string) error {

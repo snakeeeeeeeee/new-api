@@ -135,6 +135,10 @@ const normalizeClientRoutePools = (value) => {
           target.weight === undefined || target.weight === null
             ? 100
             : target.weight,
+        rpm_limit:
+          target.rpm_limit === undefined || target.rpm_limit === null
+            ? 0
+            : target.rpm_limit,
       })),
     },
   };
@@ -255,6 +259,10 @@ const EditAggregateGroupModal = ({
               item.weight === undefined || item.weight === null
                 ? 100
                 : item.weight,
+            rpm_limit:
+              item.rpm_limit === undefined || item.rpm_limit === null
+                ? 0
+                : item.rpm_limit,
           })),
           client_route_pools: normalizeClientRoutePools(
             data.client_route_pools,
@@ -430,6 +438,7 @@ const EditAggregateGroupModal = ({
           return {
             real_group: realGroup,
             weight: 100,
+            rpm_limit: 0,
           };
         }),
       };
@@ -445,6 +454,24 @@ const EditAggregateGroupModal = ({
         return {
           ...target,
           weight: Math.max(0, Number(value || 0)),
+        };
+      });
+      return {
+        ...prev,
+        targets: nextTargets,
+      };
+    });
+  };
+
+  const updateTargetRPMLimit = (index, value) => {
+    setInputs((prev) => {
+      const nextTargets = prev.targets.map((target, currentIndex) => {
+        if (currentIndex !== index) {
+          return target;
+        }
+        return {
+          ...target,
+          rpm_limit: Math.max(0, Number(value || 0)),
         };
       });
       return {
@@ -486,6 +513,7 @@ const EditAggregateGroupModal = ({
             return {
               real_group: realGroup,
               weight: 100,
+              rpm_limit: 0,
             };
           }),
         },
@@ -505,6 +533,24 @@ const EditAggregateGroupModal = ({
           return {
             ...target,
             weight: Math.max(0, Number(value || 0)),
+          };
+        }),
+      },
+    }));
+  };
+
+  const updateClaudeCliPoolRPMLimit = (index, value) => {
+    updateClientRoutePools((current) => ({
+      ...current,
+      claude_code_cli: {
+        ...current.claude_code_cli,
+        targets: current.claude_code_cli.targets.map((target, targetIndex) => {
+          if (targetIndex !== index) {
+            return target;
+          }
+          return {
+            ...target,
+            rpm_limit: Math.max(0, Number(value || 0)),
           };
         }),
       },
@@ -757,6 +803,23 @@ const EditAggregateGroupModal = ({
                       />
                     </div>
                   )}
+                  <div className='flex items-center gap-2'>
+                    <div className='text-right leading-tight'>
+                      <Text type='secondary' className='text-xs'>
+                        {t('RPM 上限')}
+                      </Text>
+                      <div className='text-[11px] text-gray-500'>
+                        {t('0 为不限制')}
+                      </div>
+                    </div>
+                    <InputNumber
+                      min={0}
+                      value={target.rpm_limit || 0}
+                      onChange={(value) => updateTargetRPMLimit(index, value)}
+                      aria-label={t('子分组 RPM 上限')}
+                      style={{ width: 112 }}
+                    />
+                  </div>
                   <Button
                     theme='borderless'
                     icon={<IconArrowUp />}
@@ -1053,6 +1116,26 @@ const EditAggregateGroupModal = ({
                         </div>
                       </div>
                     )}
+                    <div className='flex items-center gap-2'>
+                      <div className='text-right leading-tight'>
+                        <Text type='secondary' className='text-xs'>
+                          {t('RPM 上限')}
+                        </Text>
+                        <div className='text-[11px] text-gray-500'>
+                          {t('共享总量')}
+                        </div>
+                      </div>
+                      <InputNumber
+                        min={0}
+                        value={target.rpm_limit || 0}
+                        onChange={(value) =>
+                          updateClaudeCliPoolRPMLimit(index, value)
+                        }
+                        disabled={!clientRoutePools.enabled || !claudeCliPool.enabled}
+                        aria-label={t('Claude CLI 专用池 RPM 上限')}
+                        style={{ width: 112 }}
+                      />
+                    </div>
                     <Button
                       theme='borderless'
                       icon={<IconArrowUp />}
@@ -1112,6 +1195,7 @@ const EditAggregateGroupModal = ({
         targets: inputs.targets.map((target) => ({
           real_group: target.real_group,
           weight: Number(target.weight || 0),
+          rpm_limit: Number(target.rpm_limit || 0),
         })),
         client_route_pools: {
           enabled: clientRoutePools.enabled,
@@ -1121,6 +1205,7 @@ const EditAggregateGroupModal = ({
             targets: claudeCliPool.targets.map((target) => ({
               real_group: target.real_group,
               weight: Number(target.weight || 0),
+              rpm_limit: Number(target.rpm_limit || 0),
             })),
           },
         },

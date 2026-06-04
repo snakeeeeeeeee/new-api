@@ -1482,6 +1482,95 @@ func TestAggregateClusterZeroEffectiveWeightRoutesAreNotPicked(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestAggregateFailoverSkipsRouteAtSharedRPMLimit(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "failover-rpm-limit", model.AggregateGroupRoutingModeFailover, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(100), RPMLimit: 0},
+	})
+	seedAggregateAbilityChannel(t, 1401, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1402, "vip", "gpt-4.1", 10)
+	recordAggregateRouteTotalRPM(group.Name, "default")
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1402, channel.Id)
+	require.Equal(t, "vip", selectedGroup)
+	require.Equal(t, "vip", common.GetContextKeyString(ctx, constant.ContextKeyRouteGroup))
+}
+
+func TestAggregateClusterSkipsRouteAtSharedRPMLimit(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-rpm-limit", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(100), RPMLimit: 0},
+	})
+	seedAggregateAbilityChannel(t, 1411, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1412, "vip", "gpt-4.1", 10)
+	recordAggregateRouteTotalRPM(group.Name, "default")
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	healthy, candidates, err := buildAggregateClusterRouteCandidates(ctx, group, "gpt-4.1", false, false)
+	require.NoError(t, err)
+	require.Len(t, healthy, 1)
+	require.Len(t, candidates, 1)
+	require.Equal(t, "vip", candidates[0].Target.RealGroup)
+
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1412, channel.Id)
+	require.Equal(t, "vip", selectedGroup)
+}
+
+func TestAggregateClientRoutePoolSharesRPMLimitWithDefaultPool(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "client-pool-shared-rpm", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(100), RPMLimit: 0},
+	})
+	seedAggregateAbilityChannel(t, 1421, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1422, "vip", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(100), RPMLimit: 0},
+	})
+	recordAggregateRouteTotalRPM(group.Name, "default")
+
+	ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1422, channel.Id)
+	require.Equal(t, "vip", selectedGroup)
+	require.Equal(t, model.AggregateGroupClientRoutePoolClaudeCodeCLI, common.GetContextKeyString(ctx, constant.ContextKeyAggregateRoutePool))
+}
+
 func TestAggregateClusterRouteAffinityTTLAllowsWeightedReselect(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	common.MemoryCacheEnabled = false
@@ -2784,4 +2873,49 @@ func TestAggregateRouteRPMStatsAreIsolatedByRoutePool(t *testing.T) {
 	require.Equal(t, 1, cliStats.RPM)
 	require.Equal(t, 1, cliStats.SuccessRPM)
 	require.Equal(t, 0, cliStats.FailureRPM)
+
+	require.Equal(t, 1, GetAggregateRouteTotalRPM("cluster-route", "shared-route"))
+}
+
+func TestAggregateRouteTotalRPMIsNotIsolatedByModelOrRoutePool(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	base := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
+	aggregateRouteRPMNow = func() time.Time { return base }
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "cluster-route")
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRoutePool, aggregateClusterDefaultRoutePool)
+	RecordAggregateRouteRPMAttempt(ctx, "gpt-4.1", "shared-route")
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRoutePool, model.AggregateGroupClientRoutePoolClaudeCodeCLI)
+	RecordAggregateRouteRPMAttempt(ctx, "claude-sonnet-4-6", "shared-route")
+
+	require.Equal(t, 2, GetAggregateRouteTotalRPM("cluster-route", "shared-route"))
+	require.False(t, IsAggregateRouteRPMAllowed("cluster-route", "shared-route", 2))
+	require.True(t, IsAggregateRouteRPMAllowed("cluster-route", "shared-route", 3))
+}
+
+func TestAggregateRuntimeViewReturnsTotalRPMAndLimitState(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "runtime-rpm-limit", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 2},
+	})
+	seedAggregateAbilityChannel(t, 1431, "default", "gpt-4.1", 10)
+
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, group.Name)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRoutePool, aggregateClusterDefaultRoutePool)
+	RecordAggregateRouteRPMAttempt(ctx, "gpt-4.1", "default")
+	RecordAggregateRouteRPMAttempt(ctx, "claude-sonnet-4-6", "default")
+
+	view, err := BuildAggregateGroupRuntimeView(group, "gpt-4.1")
+	require.NoError(t, err)
+	require.Len(t, view.Routes, 1)
+	require.Equal(t, 1, view.Routes[0].RPM)
+	require.Equal(t, 2, view.Routes[0].TotalRPM)
+	require.Equal(t, 2, view.Routes[0].RPMLimit)
+	require.True(t, view.Routes[0].RPMLimited)
 }

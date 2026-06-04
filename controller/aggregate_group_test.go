@@ -150,13 +150,13 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 			"slow_first_response_threshold_seconds":1
 		},
 		"visible_user_groups":["vip"],
-		"targets":[{"real_group":"default","weight":50},{"real_group":"vip","weight":150}],
+		"targets":[{"real_group":"default","weight":50,"rpm_limit":0},{"real_group":"vip","weight":150,"rpm_limit":80}],
 		"client_route_pools":{
 			"enabled":true,
 			"claude_code_cli":{
 				"enabled":true,
 				"fallback_to_default":false,
-				"targets":[{"real_group":"vip","weight":250}]
+				"targets":[{"real_group":"vip","weight":250,"rpm_limit":80}]
 			}
 		}
 	}`)
@@ -189,6 +189,7 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"route_affinity_key_sources"`)
 	require.Contains(t, string(listResp.Data), `"X-Aggregate-Affinity-Key"`)
 	require.Contains(t, string(listResp.Data), `"weight":150`)
+	require.Contains(t, string(listResp.Data), `"rpm_limit":80`)
 	require.Contains(t, string(listResp.Data), `"client_route_pools"`)
 	require.Contains(t, string(listResp.Data), `"fallback_to_default":false`)
 	require.Contains(t, string(listResp.Data), `"weight":250`)
@@ -489,6 +490,33 @@ func TestCreateAggregateGroupRejectsNegativeTargetWeight(t *testing.T) {
 	require.Contains(t, resp.Message, "权重不能小于 0")
 }
 
+func TestCreateAggregateGroupRejectsNegativeTargetRPMLimit(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+
+	payload := []byte(`{
+		"name":"enterprise-stable",
+		"display_name":"企业稳定组",
+		"status":1,
+		"group_ratio":1.5,
+		"routing_mode":"cluster",
+		"recovery_enabled":true,
+		"recovery_interval_seconds":300,
+		"visible_user_groups":["vip"],
+		"targets":[{"real_group":"default","weight":100,"rpm_limit":-1}]
+	}`)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/aggregate_group", bytes.NewReader(payload))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	CreateAggregateGroup(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "RPM 上限不能小于 0")
+}
+
 func TestCreateAggregateGroupRejectsInvalidRouteAffinitySource(t *testing.T) {
 	setupAggregateGroupControllerTestDB(t)
 
@@ -551,6 +579,41 @@ func TestCreateAggregateGroupRejectsNegativeClientRoutePoolWeight(t *testing.T) 
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
 	require.False(t, resp.Success)
 	require.Contains(t, resp.Message, "权重不能小于 0")
+}
+
+func TestCreateAggregateGroupRejectsConflictingSharedRouteRPMLimits(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+
+	payload := []byte(`{
+		"name":"enterprise-stable",
+		"display_name":"企业稳定组",
+		"status":1,
+		"group_ratio":1.5,
+		"routing_mode":"cluster",
+		"recovery_enabled":true,
+		"recovery_interval_seconds":300,
+		"visible_user_groups":["vip"],
+		"targets":[{"real_group":"vip","weight":100,"rpm_limit":80}],
+		"client_route_pools":{
+			"enabled":true,
+			"claude_code_cli":{
+				"enabled":true,
+				"fallback_to_default":true,
+				"targets":[{"real_group":"vip","weight":100,"rpm_limit":0}]
+			}
+		}
+	}`)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/aggregate_group", bytes.NewReader(payload))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	CreateAggregateGroup(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "RPM 上限必须一致")
 }
 
 func TestCreateAggregateGroupRejectsInvalidRetryStatusCodes(t *testing.T) {

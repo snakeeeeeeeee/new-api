@@ -27,6 +27,9 @@ type AggregateGroupRuntimeRouteView struct {
 	IsSoftFallback              bool   `json:"is_soft_fallback"`
 	PriorityCount               int    `json:"priority_count"`
 	RPM                         int    `json:"rpm"`
+	TotalRPM                    int    `json:"total_rpm"`
+	RPMLimit                    int    `json:"rpm_limit"`
+	RPMLimited                  bool   `json:"rpm_limited"`
 	SuccessRPM                  int    `json:"success_rpm"`
 	FailureRPM                  int    `json:"failure_rpm"`
 	StrategyFailureRPM          int    `json:"strategy_failure_rpm"`
@@ -130,6 +133,9 @@ func BuildAggregateGroupRuntimeView(group *model.AggregateGroup, modelName strin
 		routeView.PriorityCount = priorityCount
 		rpmStats := GetAggregateRouteRPMStatsForPool(group.Name, modelName, routePool, target.RealGroup)
 		routeView.RPM = rpmStats.RPM
+		routeView.TotalRPM = GetAggregateRouteTotalRPM(group.Name, target.RealGroup)
+		routeView.RPMLimit = target.GetRPMLimit()
+		routeView.RPMLimited = routeView.RPMLimit > 0 && routeView.TotalRPM >= routeView.RPMLimit
 		routeView.SuccessRPM = rpmStats.SuccessRPM
 		routeView.FailureRPM = rpmStats.FailureRPM
 		routeView.StrategyFailureRPM = rpmStats.StrategyFailureRPM

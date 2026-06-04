@@ -124,6 +124,10 @@ func selectAggregateGroupChannelFromTargets(param *RetryParam, aggregateGroup *m
 	routePool = normalizeAggregateClusterRoutePool(routePool)
 	for i := startIndex; i < len(targets); i++ {
 		target := targets[i]
+		if IsAggregateTargetRPMLimited(aggregateGroup, target) {
+			logger.LogWarn(param.Ctx, fmt.Sprintf("aggregate route skipped by rpm limit: aggregate_group=%s, model=%s, route_group=%s(index=%d), rpm=%d, rpm_limit=%d", aggregateGroup.Name, param.ModelName, target.RealGroup, i, GetAggregateRouteTotalRPM(aggregateGroup.Name, target.RealGroup), target.GetRPMLimit()))
+			continue
+		}
 		if skipDegraded {
 			degraded, state, recovered, err := IsAggregateGroupRouteTemporarilyDegraded(aggregateGroup.Name, param.ModelName, target.RealGroup)
 			if err != nil {
@@ -292,33 +296,40 @@ func PrepareAggregateGroupRetry(c *gin.Context, currentRetry int, modelName stri
 		targets = aggregateClientRoutePoolTargetsToClusterTargets(aggregateGroup.GetClientRoutePools().ClaudeCodeCLI.Targets)
 	}
 
-	priorityCount, err := model.GetSatisfiedChannelPriorityCount(failedGroup, modelName)
-	if err == nil && priorityCount > 0 {
-		priorityRetry := currentRetry - retryBase
-		if priorityRetry < 0 {
-			priorityRetry = 0
-		}
-		if priorityRetry < maxInternalRetries {
-			transition.HasNext = true
-			transition.WithinCurrentGroup = true
-			transition.NextGroup = failedGroup
-			transition.NextIndex = failedIndex
-			setAggregateClusterNextRetryRoute(c, aggregateClusterRouteCandidate{
-				Target: model.AggregateGroupTarget{
-					RealGroup: failedGroup,
-				},
-				Index:     failedIndex,
-				RoutePool: currentRoutePool,
-			}, retryBase)
-			return transition
+	if !IsAggregateRouteGroupRPMLimited(aggregateGroup, failedGroup) {
+		priorityCount, err := model.GetSatisfiedChannelPriorityCount(failedGroup, modelName)
+		if err == nil && priorityCount > 0 {
+			priorityRetry := currentRetry - retryBase
+			if priorityRetry < 0 {
+				priorityRetry = 0
+			}
+			if priorityRetry < maxInternalRetries {
+				transition.HasNext = true
+				transition.WithinCurrentGroup = true
+				transition.NextGroup = failedGroup
+				transition.NextIndex = failedIndex
+				setAggregateClusterNextRetryRoute(c, aggregateClusterRouteCandidate{
+					Target: model.AggregateGroupTarget{
+						RealGroup: failedGroup,
+					},
+					Index:     failedIndex,
+					RoutePool: currentRoutePool,
+				}, retryBase)
+				return transition
+			}
 		}
 	}
 
 	nextIndex := failedIndex + 1
 	transition.NextIndex = nextIndex
-	if nextIndex >= 0 && nextIndex < len(targets) {
+	for nextIndex >= 0 && nextIndex < len(targets) {
+		if IsAggregateTargetRPMLimited(aggregateGroup, targets[nextIndex]) {
+			nextIndex++
+			continue
+		}
 		transition.HasNext = true
 		transition.NextGroup = targets[nextIndex].RealGroup
+		transition.NextIndex = nextIndex
 		setAggregateClusterNextRetryRoute(c, aggregateClusterRouteCandidate{
 			Target:    targets[nextIndex],
 			Index:     nextIndex,
@@ -334,13 +345,23 @@ func PrepareAggregateGroupRetry(c *gin.Context, currentRetry int, modelName stri
 		if !clientConfig.GetFallbackToDefault() || len(aggregateGroup.Targets) == 0 {
 			return transition
 		}
+		fallbackIndex := -1
+		for i, target := range aggregateGroup.Targets {
+			if !IsAggregateTargetRPMLimited(aggregateGroup, target) {
+				fallbackIndex = i
+				break
+			}
+		}
+		if fallbackIndex < 0 {
+			return transition
+		}
 		transition.HasNext = true
-		transition.NextIndex = 0
-		transition.NextGroup = aggregateGroup.Targets[0].RealGroup
+		transition.NextIndex = fallbackIndex
+		transition.NextGroup = aggregateGroup.Targets[fallbackIndex].RealGroup
 		setAggregateClientRouteContext(c, model.AggregateGroupClientTypeClaudeCodeCLI, currentRoutePool, "", true)
 		setAggregateClusterNextRetryRoute(c, aggregateClusterRouteCandidate{
-			Target:    aggregateGroup.Targets[0],
-			Index:     0,
+			Target:    aggregateGroup.Targets[fallbackIndex],
+			Index:     fallbackIndex,
 			RoutePool: aggregateClusterDefaultRoutePool,
 		}, currentRetry+1)
 		return transition

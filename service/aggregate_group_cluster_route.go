@@ -155,6 +155,10 @@ func buildAggregateClusterRouteCandidatesFromTargets(ctx *gin.Context, aggregate
 		if excludeAttempted && isAggregateRouteCandidateAttempted(ctx, routePool, index, target.RealGroup) {
 			continue
 		}
+		if IsAggregateTargetRPMLimited(aggregateGroup, target) {
+			logger.LogWarn(ctx, fmt.Sprintf("aggregate cluster route skipped by rpm limit: aggregate_group=%s, model=%s, route_pool=%s, route_group=%s(index=%d), rpm=%d, rpm_limit=%d", aggregateGroup.Name, modelName, routePool, target.RealGroup, index, GetAggregateRouteTotalRPM(aggregateGroup.Name, target.RealGroup), target.GetRPMLimit()))
+			continue
+		}
 		priorityCount, err := model.GetSatisfiedChannelPriorityCount(target.RealGroup, modelName)
 		if err != nil {
 			return nil, nil, err
@@ -284,6 +288,7 @@ func aggregateClientRoutePoolTargetsToClusterTargets(inputTargets []model.Aggreg
 			RealGroup:  realGroup,
 			OrderIndex: len(targets),
 			Weight:     common.GetPointer(weight),
+			RPMLimit:   target.GetRPMLimit(),
 		})
 	}
 	return targets
@@ -361,6 +366,10 @@ func selectAggregateClusterChannelFromIndex(param *RetryParam, aggregateGroup *m
 
 func selectAggregateClusterChannelFromCandidate(param *RetryParam, aggregateGroup *model.AggregateGroup, candidate aggregateClusterRouteCandidate, retryBase int) (*model.Channel, string, error) {
 	target := candidate.Target
+	if IsAggregateTargetRPMLimited(aggregateGroup, target) {
+		logger.LogWarn(param.Ctx, fmt.Sprintf("aggregate cluster selected route skipped by rpm limit: aggregate_group=%s, model=%s, route_pool=%s, route_group=%s(index=%d), rpm=%d, rpm_limit=%d", aggregateGroup.Name, param.ModelName, normalizeAggregateClusterRoutePool(candidate.RoutePool), target.RealGroup, candidate.Index, GetAggregateRouteTotalRPM(aggregateGroup.Name, target.RealGroup), target.GetRPMLimit()))
+		return nil, target.RealGroup, nil
+	}
 	priorityRetry := param.GetRetry() - retryBase
 	if priorityRetry < 0 {
 		priorityRetry = 0
@@ -533,25 +542,27 @@ func prepareAggregateClusterRetry(c *gin.Context, aggregateGroup *model.Aggregat
 	failedIndex := transition.FailedIndex
 	currentRoutePool := normalizeAggregateClusterRoutePool(common.GetContextKeyString(c, constant.ContextKeyAggregateRoutePool))
 	retryBase, _ := resolveExplicitAggregateRetryBase(c)
-	priorityCount, err := model.GetSatisfiedChannelPriorityCount(transition.FailedGroup, modelName)
-	if err == nil && priorityCount > 0 {
-		priorityRetry := currentRetry - retryBase
-		if priorityRetry < 0 {
-			priorityRetry = 0
-		}
-		if priorityRetry < maxInternalRetries {
-			transition.HasNext = true
-			transition.WithinCurrentGroup = true
-			transition.NextGroup = transition.FailedGroup
-			transition.NextIndex = failedIndex
-			setAggregateClusterNextRetryRoute(c, aggregateClusterRouteCandidate{
-				Target: model.AggregateGroupTarget{
-					RealGroup: transition.FailedGroup,
-				},
-				Index:     failedIndex,
-				RoutePool: currentRoutePool,
-			}, retryBase)
-			return transition
+	if !IsAggregateRouteGroupRPMLimited(aggregateGroup, transition.FailedGroup) {
+		priorityCount, err := model.GetSatisfiedChannelPriorityCount(transition.FailedGroup, modelName)
+		if err == nil && priorityCount > 0 {
+			priorityRetry := currentRetry - retryBase
+			if priorityRetry < 0 {
+				priorityRetry = 0
+			}
+			if priorityRetry < maxInternalRetries {
+				transition.HasNext = true
+				transition.WithinCurrentGroup = true
+				transition.NextGroup = transition.FailedGroup
+				transition.NextIndex = failedIndex
+				setAggregateClusterNextRetryRoute(c, aggregateClusterRouteCandidate{
+					Target: model.AggregateGroupTarget{
+						RealGroup: transition.FailedGroup,
+					},
+					Index:     failedIndex,
+					RoutePool: currentRoutePool,
+				}, retryBase)
+				return transition
+			}
 		}
 	}
 

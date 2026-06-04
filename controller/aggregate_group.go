@@ -15,6 +15,7 @@ import (
 type aggregateGroupTargetRequest struct {
 	RealGroup string `json:"real_group"`
 	Weight    *int   `json:"weight"`
+	RPMLimit  int    `json:"rpm_limit"`
 }
 
 type aggregateGroupUpsertRequest struct {
@@ -134,6 +135,7 @@ func buildAggregateTargets(targets []aggregateGroupTargetRequest) []model.Aggreg
 		modelTargets = append(modelTargets, model.AggregateGroupTarget{
 			RealGroup: realGroup,
 			Weight:    common.GetPointer(weight),
+			RPMLimit:  target.RPMLimit,
 		})
 	}
 	return modelTargets
@@ -242,12 +244,17 @@ func CreateAggregateGroup(c *gin.Context) {
 		return
 	}
 	targets := buildAggregateTargets(req.Targets)
-	if err := service.ValidateAggregateTargetWeights(targets); err != nil {
+	if err := service.ValidateAggregateTargetLimits(targets); err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	clientRoutePools, err := service.NormalizeAndValidateAggregateClientRoutePools(req.ClientRoutePools)
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	normalizedTargets := service.NormalizeAggregateTargetsWithWeights(targets)
+	if err := service.ValidateAggregateRouteRPMLimitConsistency(normalizedTargets, clientRoutePools); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -284,7 +291,7 @@ func CreateAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := group.InsertWithTargets(service.NormalizeAggregateTargetsWithWeights(targets)); err != nil {
+	if err := group.InsertWithTargets(normalizedTargets); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -330,12 +337,17 @@ func UpdateAggregateGroup(c *gin.Context) {
 		return
 	}
 	targets := buildAggregateTargets(req.Targets)
-	if err := service.ValidateAggregateTargetWeights(targets); err != nil {
+	if err := service.ValidateAggregateTargetLimits(targets); err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	clientRoutePools, err := service.NormalizeAndValidateAggregateClientRoutePools(req.ClientRoutePools)
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	normalizedTargets := service.NormalizeAggregateTargetsWithWeights(targets)
+	if err := service.ValidateAggregateRouteRPMLimitConsistency(normalizedTargets, clientRoutePools); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -372,7 +384,7 @@ func UpdateAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := group.UpdateWithTargets(service.NormalizeAggregateTargetsWithWeights(targets)); err != nil {
+	if err := group.UpdateWithTargets(normalizedTargets); err != nil {
 		common.ApiError(c, err)
 		return
 	}

@@ -78,7 +78,13 @@ const getSlowReasonLabel = (reason, t) => {
 };
 
 const isRouteRecentlyUsed = (route) => {
-  return (route?.rpm ?? 0) > 0;
+  return (route?.total_rpm ?? route?.rpm ?? 0) > 0;
+};
+
+const formatRouteRPMLimit = (route, t) => {
+  const totalRPM = route?.total_rpm ?? route?.rpm ?? 0;
+  const rpmLimit = route?.rpm_limit ?? 0;
+  return rpmLimit > 0 ? `${totalRPM}/${rpmLimit}` : `${totalRPM}/${t('不限')}`;
 };
 
 const formatRouteSuccessRate = (route) => {
@@ -110,6 +116,9 @@ const getRouteStatusConfig = (route, t, routingMode = 'failover') => {
   if ((route?.priority_count ?? 0) <= 0) {
     return { color: 'grey', text: 'Unavailable' };
   }
+  if (route?.rpm_limited) {
+    return { color: 'red', text: 'RPM Limit' };
+  }
   if (routingMode === 'cluster') {
     if (route?.is_soft_fallback) {
       return { color: 'orange', text: 'Fallback' };
@@ -129,6 +138,29 @@ const getRouteStatusConfig = (route, t, routingMode = 'failover') => {
     return { color: 'green', text: 'In Use' };
   }
   return { color: 'blue', text: 'Standby' };
+};
+
+const getRouteStatusText = (status, t) => {
+  switch (status) {
+    case 'RPM Limit':
+      return t('RPM 限制');
+    case 'Unavailable':
+      return t('不可用');
+    case 'Fallback':
+      return t('回退');
+    case 'Reduced':
+      return t('降权');
+    case 'Skipped':
+      return t('跳过');
+    case 'In Use':
+      return t('使用中');
+    case 'Available':
+      return t('可用');
+    case 'Standby':
+      return t('备用');
+    default:
+      return status || '-';
+  }
 };
 
 const renderSwitchTag = (enabled, t) => {
@@ -154,6 +186,7 @@ const getRouteVisualStyle = (route, t, routingMode = 'failover') => {
         badgeStroke: 'rgba(34, 197, 94, 0.18)',
       };
     case 'Skipped':
+    case 'RPM Limit':
       return {
         ...statusConfig,
         fillStart: '#fff1f2',
@@ -269,7 +302,10 @@ const AggregateClusterTopologyCanvas = ({
   const sourceCenterX = sourceX + sourceWidth / 2;
   const sourceCenterY = sourceY + sourceHeight / 2;
   const sourceRightX = sourceX + sourceWidth;
-  const totalRPM = routes.reduce((sum, route) => sum + (route?.rpm || 0), 0);
+  const totalRPM = routes.reduce(
+    (sum, route) => sum + (route?.total_rpm ?? route?.rpm ?? 0),
+    0,
+  );
 
   const nodes = routes.map((route, index) => {
     const y = paddingY + index * (nodeHeight + nodeGap);
@@ -478,7 +514,7 @@ const AggregateClusterTopologyCanvas = ({
         {nodes.map((node) => {
           const gradientId = `${idPrefix}-node-gradient-${node.route.route_index}`;
           const glowId = `${idPrefix}-node-glow-${node.route.route_index}`;
-          const statusText = node.visualStyle.text;
+          const statusText = getRouteStatusText(node.visualStyle.text, t);
           const badgeWidth = getPillWidth(statusText, 72, 8.1, 24);
           const badgeX = node.x + node.width - badgeWidth - 16;
           const level = node.route.degrade_level ?? 0;
@@ -490,7 +526,12 @@ const AggregateClusterTopologyCanvas = ({
             isMobile ? 22 : expanded ? 36 : 30,
           );
           const metrics = [
-            { label: 'RPM', value: node.route.rpm ?? 0 },
+            {
+              label: t('总 RPM'),
+              value: formatRouteRPMLimit(node.route, t),
+              labelColor: node.route.rpm_limited ? '#b91c1c' : undefined,
+              valueColor: node.route.rpm_limited ? '#dc2626' : undefined,
+            },
             { label: t('成功'), value: node.route.success_rpm ?? 0 },
             {
               label: t('失败'),
@@ -913,7 +954,7 @@ const AggregateTopologyCanvas = ({
         {nodes.map((node) => {
           const gradientId = `${idPrefix}-node-gradient-${node.route.route_index}`;
           const glowId = `${idPrefix}-node-glow-${node.route.route_index}`;
-          const statusText = node.visualStyle.text;
+          const statusText = getRouteStatusText(node.visualStyle.text, t);
           const badgeHeight = 24;
           const badgeRadius = 12;
           const headerInset = 16;
@@ -1111,7 +1152,7 @@ const AggregateTopologyCanvas = ({
                 fontSize='10.5'
                 fontWeight='600'
               >
-                RPM
+                {t('总 RPM')}
               </text>
               <text
                 x={node.x + metricInset + 14}
@@ -1120,7 +1161,7 @@ const AggregateTopologyCanvas = ({
                 fontSize='16'
                 fontWeight='700'
               >
-                {node.route.rpm ?? 0}
+                {formatRouteRPMLimit(node.route, t)}
               </text>
 
               <rect
@@ -1173,11 +1214,14 @@ const AggregateGroupRuntimeDrawer = ({
   const [reducedMotion, setReducedMotion] = useState(false);
   const [topologyModalVisible, setTopologyModalVisible] = useState(false);
 
-  const fetchRuntime = async (modelName = '') => {
+  const fetchRuntime = async (modelName = '', options = {}) => {
     if (!aggregateGroup?.id) {
       return;
     }
-    setLoading(true);
+    const { silent = false, preserveRoute = false } = options;
+    if (!silent) {
+      setLoading(true);
+    }
     try {
       const params = modelName ? { model: modelName } : undefined;
       const res = await API.get(
@@ -1193,18 +1237,24 @@ const AggregateGroupRuntimeDrawer = ({
       }
       setRuntimeData(data);
       setSelectedModel(data?.selected_model || '');
-      const nextSelectedRoute =
-        data?.runtime?.routes?.find((route) => route?.is_active) ||
-        data?.runtime?.routes?.[0] ||
-        data?.runtime?.client_route_pools?.[0]?.routes?.[0] ||
-        null;
-      setSelectedRouteKey(
-        nextSelectedRoute ? getRuntimeRouteKey(nextSelectedRoute) : '',
-      );
+      if (!preserveRoute) {
+        const nextSelectedRoute =
+          data?.runtime?.routes?.find((route) => route?.is_active) ||
+          data?.runtime?.routes?.[0] ||
+          data?.runtime?.client_route_pools?.[0]?.routes?.[0] ||
+          null;
+        setSelectedRouteKey(
+          nextSelectedRoute ? getRuntimeRouteKey(nextSelectedRoute) : '',
+        );
+      }
     } catch (error) {
-      showError(error?.message || t('获取聚合分组运行态失败'));
+      if (!silent) {
+        showError(error?.message || t('获取聚合分组运行态失败'));
+      }
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   };
 
@@ -1217,6 +1267,16 @@ const AggregateGroupRuntimeDrawer = ({
     setSelectedModel('');
     setTopologyModalVisible(false);
   }, [visible, aggregateGroup?.id]);
+
+  useEffect(() => {
+    if (!visible || !aggregateGroup?.id || !runtimeData) {
+      return undefined;
+    }
+    const timer = window.setInterval(() => {
+      fetchRuntime(selectedModel, { silent: true, preserveRoute: true });
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [visible, aggregateGroup?.id, selectedModel, runtimeData]);
 
   useEffect(() => {
     if (
@@ -1281,7 +1341,22 @@ const AggregateGroupRuntimeDrawer = ({
     [allRuntimeRoutes],
   );
   const routeTotalRPM = useMemo(
-    () => allRuntimeRoutes.reduce((sum, route) => sum + (route?.rpm || 0), 0),
+    () => {
+      const routeRPMMap = new Map();
+      allRuntimeRoutes.forEach((route) => {
+        if (!route?.route_group) {
+          return;
+        }
+        routeRPMMap.set(
+          route.route_group,
+          route?.total_rpm ?? route?.rpm ?? 0,
+        );
+      });
+      return Array.from(routeRPMMap.values()).reduce(
+        (sum, rpm) => sum + rpm,
+        0,
+      );
+    },
     [allRuntimeRoutes],
   );
 
@@ -1669,8 +1744,40 @@ const AggregateGroupRuntimeDrawer = ({
                             value: selectedRoute.route_pool || t('默认流量池'),
                           },
                           {
-                            key: 'RPM',
+                            key: t('当前模型 RPM'),
                             value: selectedRoute.rpm ?? 0,
+                          },
+                          {
+                            key: t('总 RPM'),
+                            value: (
+                              <Text
+                                strong={selectedRoute?.rpm_limited}
+                                type={
+                                  selectedRoute?.rpm_limited
+                                    ? 'danger'
+                                    : 'tertiary'
+                                }
+                              >
+                                {selectedRoute.total_rpm ??
+                                  selectedRoute.rpm ??
+                                  0}
+                              </Text>
+                            ),
+                          },
+                          {
+                            key: t('RPM 上限'),
+                            value:
+                              (selectedRoute.rpm_limit ?? 0) > 0
+                                ? selectedRoute.rpm_limit
+                                : t('不限'),
+                          },
+                          {
+                            key: t('RPM 限制'),
+                            value: selectedRoute?.rpm_limited ? (
+                              <Tag color='red'>{t('已限制')}</Tag>
+                            ) : (
+                              <Tag color='green'>{t('未限制')}</Tag>
+                            ),
                           },
                           {
                             key: t('成功 RPM'),

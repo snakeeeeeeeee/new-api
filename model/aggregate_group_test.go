@@ -34,8 +34,8 @@ func TestAggregateGroupVisibleUserGroupsRoundTrip(t *testing.T) {
 	}
 	require.NoError(t, group.SetVisibleUserGroups([]string{"vip", "svip"}))
 	require.NoError(t, group.InsertWithTargets([]AggregateGroupTarget{
-		{RealGroup: "default", OrderIndex: 0, Weight: aggregateTargetWeightForTest(AggregateGroupTargetDefaultWeight)},
-		{RealGroup: "vip", OrderIndex: 1, Weight: aggregateTargetWeightForTest(AggregateGroupTargetDefaultWeight)},
+		{RealGroup: "default", OrderIndex: 0, Weight: aggregateTargetWeightForTest(AggregateGroupTargetDefaultWeight), RPMLimit: 0},
+		{RealGroup: "vip", OrderIndex: 1, Weight: aggregateTargetWeightForTest(AggregateGroupTargetDefaultWeight), RPMLimit: 120},
 	}))
 
 	loaded, err := GetAggregateGroupByName("enterprise-stable", true)
@@ -47,8 +47,10 @@ func TestAggregateGroupVisibleUserGroupsRoundTrip(t *testing.T) {
 	require.Len(t, loaded.Targets, 2)
 	require.Equal(t, "default", loaded.Targets[0].RealGroup)
 	require.Equal(t, AggregateGroupTargetDefaultWeight, loaded.Targets[0].GetWeight())
+	require.Equal(t, 0, loaded.Targets[0].GetRPMLimit())
 	require.Equal(t, "vip", loaded.Targets[1].RealGroup)
 	require.Equal(t, AggregateGroupTargetDefaultWeight, loaded.Targets[1].GetWeight())
+	require.Equal(t, 120, loaded.Targets[1].GetRPMLimit())
 }
 
 func TestAggregateGroupRouteAffinityKeySourcesRoundTrip(t *testing.T) {
@@ -103,7 +105,7 @@ func TestAggregateGroupClientRoutePoolsRoundTrip(t *testing.T) {
 			Enabled:           true,
 			FallbackToDefault: &fallbackToDefault,
 			Targets: []AggregateGroupClientRoutePoolTarget{
-				{RealGroup: "cli-a", Weight: aggregateTargetWeightForTest(200)},
+				{RealGroup: "cli-a", Weight: aggregateTargetWeightForTest(200), RPMLimit: 90},
 			},
 		},
 	}))
@@ -120,6 +122,7 @@ func TestAggregateGroupClientRoutePoolsRoundTrip(t *testing.T) {
 	require.Len(t, config.ClaudeCodeCLI.Targets, 1)
 	require.Equal(t, "cli-a", config.ClaudeCodeCLI.Targets[0].RealGroup)
 	require.Equal(t, 200, config.ClaudeCodeCLI.Targets[0].GetWeight())
+	require.Equal(t, 90, config.ClaudeCodeCLI.Targets[0].GetRPMLimit())
 
 	empty := (&AggregateGroup{}).GetClientRoutePools()
 	require.False(t, empty.Enabled)

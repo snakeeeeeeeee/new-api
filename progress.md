@@ -1,3 +1,23 @@
+# Session: 2026-06-04 聚合子分组软 RPM 总量限制
+
+## Scope
+- 实现聚合分组 target 级 `rpm_limit`，按真实子分组总量软限制路由，并在运行态拓扑实时展示。
+
+## Progress
+- 已确认工作区存在历史未跟踪脚本/tmp/output 文件，本轮不触碰。
+- 已确认现有 runtime drawer 只有手动刷新，需要新增 5 秒轮询。
+- 已确认现有 RPM 统计按 `aggregate_group + model + route_pool + route_group`，本轮需要新增 `aggregate_group + route_group` 总量统计。
+- 已完成后端字段/API、总量 RPM 统计、failover/cluster/client pool 路由过滤和运行态字段。
+- 已补聚合分组 focused 单测，`go test ./model ./service ./controller -run 'Aggregate|Option' -count=1` 通过。
+- 已完成前端编辑表单 `rpm_limit`、拓扑总 RPM/限制状态展示和运行态抽屉 5 秒轮询。
+- `cd web && bun run build` 通过，仍有既有 Browserslist/lottie/chunk-size 警告。
+- 全量指定回归 `go test ./model ./service ./controller ./middleware` 通过。
+- `git diff --check` 通过。
+- Docker dev build/health 通过：`new-api-dev` healthy，`http://localhost:3001/api/status` 返回成功。
+- Docker dev 业务 smoke 通过：临时聚合组 primary `rpm_limit=1` 首次命中后，第二次请求切到 secondary；runtime API 返回 primary `total_rpm=1/rpm_limit=1/rpm_limited=true`，secondary `total_rpm=1/rpm_limit=0/rpm_limited=false`。临时用户、token、渠道、聚合组、fake upstream 和 RPM Redis key 已清理。
+
+---
+
 # Session: 2026-06-02 邀请统计 v1.1
 
 ## Scope

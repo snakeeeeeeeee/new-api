@@ -1,3 +1,39 @@
+# Task Plan: 聚合子分组软 RPM 总量限制
+
+## Goal
+为聚合分组每个真实子分组增加软 RPM 总量限制，默认不限制；路由选择阶段跳过已达到总量 RPM 上限的子分组，并在运行态拓扑中实时展示总 RPM、上限和限制状态。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+- [x] Phase 1: 后端字段、API、总量 RPM 统计和路由过滤
+- [x] Phase 2: 后端单元测试
+- [x] Phase 3: 前端编辑表单、拓扑展示和 5 秒轮询
+- [x] Phase 4: Go/frontend/Docker dev 验证
+
+## Verification
+- `go test ./model ./service ./controller ./middleware`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `git diff --check`: passed.
+- Docker dev rebuild/health passed:
+  - `docker compose -f docker-compose-dev.yml up -d --build new-api-dev`
+  - `curl -fsS http://localhost:3001/api/status`: passed.
+  - `new-api-dev` healthy on `127.0.0.1:3001`.
+- Docker dev business smoke passed with temporary aggregate group:
+  - first request selected `rpm_limit=1` primary route.
+  - second request within the 60s window skipped primary and selected unlimited secondary route.
+  - runtime API returned primary `total_rpm=1`, `rpm_limit=1`, `rpm_limited=true`; secondary `total_rpm=1`, `rpm_limit=0`, `rpm_limited=false`.
+  - temporary users/tokens/channels/aggregate group/fake upstream/RPM keys cleaned up.
+
+## Key Constraints
+- `rpm_limit <= 0` 表示不限制，老数据默认不限制。
+- 限制按 `aggregate_group + route_group` 总量生效，不区分模型和流量池。
+- 同一聚合分组内同一真实分组跨流量池重复配置时，RPM 上限必须一致。
+- 软限制只跳过候选，不做原子预占用、不主动返回 429。
+
+---
+
 # Task Plan: 邀请统计 v1.1 拆分余额/订阅消费 + 订阅购买
 
 ## Goal

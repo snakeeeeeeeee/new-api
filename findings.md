@@ -1,3 +1,21 @@
+# 聚合子分组软 RPM 总量限制
+
+## Requirements
+- 每个聚合子分组支持 `rpm_limit`，默认 `0` 不限制。
+- 限制按同一聚合分组下真实子分组总量生效，不区分模型、不区分流量池。
+- 达到上限时在路由选择阶段跳过，不主动 429。
+- 运行态拓扑需要 5 秒刷新并显示总 RPM、上限和限制状态。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 新增不含 model/route_pool 维度的总量 RPM bucket | 计划要求按子分组总量限制，现有统计按模型和流量池拆分，不能直接复用。 |
+| `rpm_limit` 使用 `int` 默认 0 | GORM 新增字段默认 0，老数据天然不限制。 |
+| 重复真实分组跨流量池必须配置相同 RPM 上限 | 限制计数共享，保存时避免语义冲突。 |
+| 路由候选阶段过滤超限子分组 | 同时覆盖 failover、cluster 和 client route pool，且不改变错误返回模型。 |
+
+---
+
 # 邀请统计 v1.1 Findings
 
 ## Requirements

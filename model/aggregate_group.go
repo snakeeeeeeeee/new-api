@@ -57,6 +57,7 @@ type AggregateGroupTarget struct {
 	RealGroup        string `json:"real_group" gorm:"size:64;not null;uniqueIndex:uk_aggregate_group_target"`
 	OrderIndex       int    `json:"order_index" gorm:"index"`
 	Weight           *int   `json:"weight" gorm:"default:100"`
+	RPMLimit         int    `json:"rpm_limit" gorm:"default:0"`
 }
 
 type AggregateGroupClientRoutePools struct {
@@ -73,6 +74,7 @@ type AggregateGroupClientRoutePool struct {
 type AggregateGroupClientRoutePoolTarget struct {
 	RealGroup string `json:"real_group"`
 	Weight    *int   `json:"weight"`
+	RPMLimit  int    `json:"rpm_limit"`
 }
 
 type AggregateGroupRouteAffinityKeySource struct {
@@ -155,11 +157,25 @@ func (t *AggregateGroupTarget) GetWeight() int {
 	return *t.Weight
 }
 
+func (t *AggregateGroupTarget) GetRPMLimit() int {
+	if t == nil || t.RPMLimit < 0 {
+		return 0
+	}
+	return t.RPMLimit
+}
+
 func (t *AggregateGroupClientRoutePoolTarget) GetWeight() int {
 	if t == nil || t.Weight == nil {
 		return AggregateGroupTargetDefaultWeight
 	}
 	return *t.Weight
+}
+
+func (t *AggregateGroupClientRoutePoolTarget) GetRPMLimit() int {
+	if t == nil || t.RPMLimit < 0 {
+		return 0
+	}
+	return t.RPMLimit
 }
 
 func (p *AggregateGroupClientRoutePool) GetFallbackToDefault() bool {
