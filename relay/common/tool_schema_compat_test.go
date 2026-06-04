@@ -1,9 +1,12 @@
 package common
 
 import (
+	"bytes"
 	"testing"
 
+	commonpkg "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -233,4 +236,35 @@ func TestNormalizeClaudeRequestToolSchemasLeavesExplicitNonObjectSchemaUntouched
 	require.Equal(t, "array", schema["type"])
 	require.NotContains(t, schema, "properties")
 	require.Nil(t, schema["required"])
+}
+
+func TestLogToolSchemaCompatIncludesUserAndEndpoint(t *testing.T) {
+	var buf bytes.Buffer
+	commonpkg.LogWriterMu.Lock()
+	originalWriter := gin.DefaultWriter
+	gin.DefaultWriter = &buf
+	commonpkg.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		commonpkg.LogWriterMu.Lock()
+		gin.DefaultWriter = originalWriter
+		commonpkg.LogWriterMu.Unlock()
+	})
+
+	logToolSchemaCompat(&RelayInfo{
+		UserId:         256,
+		RequestURLPath: "/v1/chat/completions",
+		ChannelMeta: &ChannelMeta{
+			ChannelId: 77,
+		},
+	}, toolSchemaCompatReport{
+		ToolName: "Workflow",
+		Fixes:    []string{"required_removed"},
+	})
+
+	logText := buf.String()
+	require.Contains(t, logText, "tool_schema_compat_applied")
+	require.Contains(t, logText, "channel=77")
+	require.Contains(t, logText, "user_id=256")
+	require.Contains(t, logText, `endpoint="/v1/chat/completions"`)
+	require.Contains(t, logText, `tool="Workflow"`)
 }

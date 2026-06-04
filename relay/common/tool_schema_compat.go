@@ -329,10 +329,14 @@ func logToolSchemaCompat(info *RelayInfo, report toolSchemaCompatReport) {
 	fixes := uniqueStrings(report.Fixes)
 	sort.Strings(fixes)
 	channelId := 0
+	userId := 0
+	endpoint := ""
 	if info != nil {
 		channelId = info.ChannelId
+		userId = info.UserId
+		endpoint = info.RequestURLPath
 	}
-	logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_applied channel=%d tool=%q fixes=%s", channelId, report.ToolName, strings.Join(fixes, ",")))
+	logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_applied channel=%d user_id=%d endpoint=%q tool=%q fixes=%s", channelId, userId, endpoint, report.ToolName, strings.Join(fixes, ",")))
 }
 
 func uniqueStrings(values []string) []string {
