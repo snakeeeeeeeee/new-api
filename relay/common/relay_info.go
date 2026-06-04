@@ -163,6 +163,10 @@ type RelayInfo struct {
 	// 最终请求到上游的格式。可由 adaptor 显式设置；
 	// 若为空，调用 GetFinalRequestRelayFormat 会回退到 RequestConversionChain 的最后一项或 RelayFormat。
 	FinalRequestRelayFormat types.RelayFormat
+	// ClaudeToolSchemaCompatOriginalSchemas stores original tool input schemas before compat normalization.
+	// It is used only for diagnostic logging when a strict upstream rejects a tool schema.
+	ClaudeToolSchemaCompatOriginalSchemas []ClaudeToolSchemaCompatOriginalSchema
+	claudeToolSchemaCompatOriginalSeen    map[string]struct{}
 
 	ThinkingContentInfo
 	TokenCountMeta

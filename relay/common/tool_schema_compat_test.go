@@ -2,6 +2,8 @@ package common
 
 import (
 	"bytes"
+	"errors"
+	"strings"
 	"testing"
 
 	commonpkg "github.com/QuantumNous/new-api/common"
@@ -280,6 +282,38 @@ func TestNormalizeClaudeRequestToolSchemasDisabledKeepsTypelessDescriptionOnlyLe
 	require.Equal(t, "sql text", sql["description"])
 }
 
+func TestNormalizeClaudeRequestToolSchemasCapturesOriginalSchemaBeforeFix(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "custom",
+				"input_schema": map[string]any{
+					"type":       "object",
+					"properties": nil,
+					"required":   nil,
+				},
+			},
+		},
+	}
+	info := compatRelayInfo(true)
+
+	NormalizeClaudeRequestToolSchemas(req, info)
+
+	require.Len(t, info.ClaudeToolSchemaCompatOriginalSchemas, 1)
+	original := info.ClaudeToolSchemaCompatOriginalSchemas[0]
+	require.Equal(t, "custom", original.ToolName)
+	originalSchema := original.InputSchema.(map[string]any)
+	require.Nil(t, originalSchema["properties"])
+	require.Nil(t, originalSchema["required"])
+
+	tool := req.Tools.([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	require.Equal(t, map[string]any{}, schema["properties"])
+	require.NotContains(t, schema, "required")
+}
+
 func TestNormalizeClaudeRequestToolSchemasLeavesComplexArrayItemsUntouched(t *testing.T) {
 	t.Parallel()
 
@@ -552,4 +586,111 @@ func TestNormalizeClaudeRequestToolSchemasLogsTypelessLeafFix(t *testing.T) {
 	require.Contains(t, logText, `tool="algo_exec"`)
 	require.Contains(t, logText, "nested_leaf_type_defaulted")
 	require.Contains(t, logText, "sql:{keys=[description,type] type=string}")
+}
+
+func TestLogClaudeToolSchemaCompatOriginalSchemasOnError(t *testing.T) {
+	var buf bytes.Buffer
+	commonpkg.LogWriterMu.Lock()
+	originalWriter := gin.DefaultWriter
+	gin.DefaultWriter = &buf
+	commonpkg.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		commonpkg.LogWriterMu.Lock()
+		gin.DefaultWriter = originalWriter
+		commonpkg.LogWriterMu.Unlock()
+	})
+
+	info := compatRelayInfo(true)
+	info.UserId = 256
+	info.RequestURLPath = "/v1/chat/completions"
+	info.RequestId = "req-schema"
+	info.ClaudeToolSchemaCompatOriginalSchemas = []ClaudeToolSchemaCompatOriginalSchema{
+		{
+			ToolName: "report",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"params": map[string]any{
+						"type":  "array",
+						"items": []any{"invalid"},
+					},
+				},
+			},
+		},
+	}
+
+	LogClaudeToolSchemaCompatOriginalSchemasOnError(info, errors.New("Bedrock error message: custom.input_schema: JSON schema is invalid"))
+
+	logText := buf.String()
+	require.Contains(t, logText, "tool_schema_compat_error_original_schema")
+	require.Contains(t, logText, "channel=123")
+	require.Contains(t, logText, "user_id=256")
+	require.Contains(t, logText, `endpoint="/v1/chat/completions"`)
+	require.Contains(t, logText, `request_id="req-schema"`)
+	require.Contains(t, logText, `tool="report"`)
+	require.Contains(t, logText, `"items":["invalid"]`)
+}
+
+func TestLogClaudeToolSchemaCompatOriginalSchemasIgnoresUnrelatedError(t *testing.T) {
+	var buf bytes.Buffer
+	commonpkg.LogWriterMu.Lock()
+	originalWriter := gin.DefaultWriter
+	gin.DefaultWriter = &buf
+	commonpkg.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		commonpkg.LogWriterMu.Lock()
+		gin.DefaultWriter = originalWriter
+		commonpkg.LogWriterMu.Unlock()
+	})
+
+	info := compatRelayInfo(true)
+	info.ClaudeToolSchemaCompatOriginalSchemas = []ClaudeToolSchemaCompatOriginalSchema{
+		{ToolName: "custom", InputSchema: map[string]any{"type": "object"}},
+	}
+
+	LogClaudeToolSchemaCompatOriginalSchemasOnError(info, errors.New("upstream rate limited"))
+
+	require.Empty(t, buf.String())
+}
+
+func TestLogClaudeToolSchemaCompatOriginalSchemasChunksLargeSchema(t *testing.T) {
+	var buf bytes.Buffer
+	commonpkg.LogWriterMu.Lock()
+	originalWriter := gin.DefaultWriter
+	gin.DefaultWriter = &buf
+	commonpkg.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		commonpkg.LogWriterMu.Lock()
+		gin.DefaultWriter = originalWriter
+		commonpkg.LogWriterMu.Unlock()
+	})
+
+	info := compatRelayInfo(true)
+	info.UserId = 256
+	info.RequestURLPath = "/v1/chat/completions"
+	info.RequestId = "req-large-schema"
+	info.ClaudeToolSchemaCompatOriginalSchemas = []ClaudeToolSchemaCompatOriginalSchema{
+		{
+			ToolName: "report",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"long": map[string]any{
+						"type":        "string",
+						"description": strings.Repeat("x", claudeOriginalSchemaLogChunk+200),
+					},
+				},
+			},
+		},
+	}
+
+	LogClaudeToolSchemaCompatOriginalSchemasOnError(info, errors.New("TOOL_SCHEMA_INVALID"))
+
+	logText := buf.String()
+	require.Contains(t, logText, "tool_schema_compat_error_original_schema_part")
+	require.Contains(t, logText, `request_id="req-large-schema"`)
+	require.Contains(t, logText, `tool="report"`)
+	require.Contains(t, logText, "part=1/")
+	require.Contains(t, logText, "input_schema_json_chunk=")
+	require.NotContains(t, logText, "tool_schema_compat_error_original_schema channel=")
 }

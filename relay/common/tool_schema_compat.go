@@ -17,6 +17,11 @@ type toolSchemaCompatReport struct {
 	SchemaShape string
 }
 
+type ClaudeToolSchemaCompatOriginalSchema struct {
+	ToolName    string
+	InputSchema any
+}
+
 func ShouldApplyClaudeToolSchemaCompat(info *RelayInfo) bool {
 	return info != nil && info.ChannelOtherSettings.ClaudeToolSchemaCompatEnabled
 }
@@ -47,6 +52,7 @@ func NormalizeClaudeToolsValue(tools any, info *RelayInfo) {
 	if tools == nil || !ShouldApplyClaudeToolSchemaCompat(info) {
 		return
 	}
+	CaptureClaudeToolSchemaCompatOriginalSchemas(tools, info)
 
 	switch typedTools := tools.(type) {
 	case []any:
@@ -73,7 +79,94 @@ func normalizeClaudeToolsInMap(payload map[string]any, info *RelayInfo) bool {
 	if !ok || tools == nil {
 		return false
 	}
+	CaptureClaudeToolSchemaCompatOriginalSchemas(tools, info)
 	return normalizeClaudeToolsJSONValue(tools, info)
+}
+
+func CaptureClaudeToolSchemaCompatOriginalSchemas(tools any, info *RelayInfo) {
+	if tools == nil || !ShouldApplyClaudeToolSchemaCompat(info) {
+		return
+	}
+
+	switch typedTools := tools.(type) {
+	case []any:
+		for _, tool := range typedTools {
+			captureClaudeToolSchemaCompatOriginalSchema(tool, info)
+		}
+	case []*dto.Tool:
+		for _, tool := range typedTools {
+			captureClaudeToolSchemaCompatOriginalSchema(tool, info)
+		}
+	case []dto.Tool:
+		for i := range typedTools {
+			captureClaudeToolSchemaCompatOriginalSchema(&typedTools[i], info)
+		}
+	case []map[string]any:
+		for _, tool := range typedTools {
+			captureClaudeToolSchemaCompatOriginalSchema(tool, info)
+		}
+	}
+}
+
+func captureClaudeToolSchemaCompatOriginalSchema(tool any, info *RelayInfo) {
+	if info == nil || tool == nil {
+		return
+	}
+
+	var toolName string
+	var schema any
+	var ok bool
+
+	switch typedTool := tool.(type) {
+	case map[string]any:
+		if isClaudeBuiltInToolMap(typedTool) {
+			return
+		}
+		toolName = common.Interface2String(typedTool["name"])
+		schema, ok = typedTool["input_schema"]
+	case *dto.Tool:
+		if typedTool == nil {
+			return
+		}
+		toolName = typedTool.Name
+		schema = typedTool.InputSchema
+		ok = typedTool.InputSchema != nil
+	default:
+		return
+	}
+
+	if toolName == "" {
+		toolName = "<unknown>"
+	}
+	key := toolName
+	if info.claudeToolSchemaCompatOriginalSeen == nil {
+		info.claudeToolSchemaCompatOriginalSeen = make(map[string]struct{})
+	}
+	if _, exists := info.claudeToolSchemaCompatOriginalSeen[key]; exists {
+		return
+	}
+	info.claudeToolSchemaCompatOriginalSeen[key] = struct{}{}
+
+	if !ok {
+		schema = nil
+	}
+	schema = cloneClaudeToolSchemaCompatOriginalSchema(schema)
+	info.ClaudeToolSchemaCompatOriginalSchemas = append(info.ClaudeToolSchemaCompatOriginalSchemas, ClaudeToolSchemaCompatOriginalSchema{
+		ToolName:    toolName,
+		InputSchema: schema,
+	})
+}
+
+func cloneClaudeToolSchemaCompatOriginalSchema(schema any) any {
+	raw, err := common.Marshal(schema)
+	if err != nil {
+		return schema
+	}
+	var cloned any
+	if err := common.Unmarshal(raw, &cloned); err != nil {
+		return schema
+	}
+	return cloned
 }
 
 func normalizeClaudeToolsJSONValue(tools any, info *RelayInfo) bool {
@@ -493,6 +586,7 @@ const (
 	claudeSchemaShapeMaxDepth      = 3
 	claudeSchemaShapeMaxProperties = 16
 	claudeSchemaShapeMaxLength     = 2000
+	claudeOriginalSchemaLogChunk   = 3000
 )
 
 func claudeSchemaShape(value any) string {
@@ -663,6 +757,65 @@ func logToolSchemaCompatChecked(info *RelayInfo, toolName string, schema any) {
 		endpoint = info.RequestURLPath
 	}
 	logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_checked channel=%d user_id=%d endpoint=%q tool=%q schema_shape=%q", channelId, userId, endpoint, toolName, claudeSchemaShape(schema)))
+}
+
+func LogClaudeToolSchemaCompatOriginalSchemasOnError(info *RelayInfo, err error) {
+	if info == nil || err == nil || !ShouldApplyClaudeToolSchemaCompat(info) {
+		return
+	}
+	if !isClaudeToolSchemaCompatError(err.Error()) {
+		return
+	}
+	if len(info.ClaudeToolSchemaCompatOriginalSchemas) == 0 {
+		return
+	}
+
+	channelId := 0
+	userId := 0
+	endpoint := ""
+	requestId := info.RequestId
+	if info.ChannelMeta != nil {
+		channelId = info.ChannelId
+	}
+	userId = info.UserId
+	endpoint = info.RequestURLPath
+
+	for _, schema := range info.ClaudeToolSchemaCompatOriginalSchemas {
+		schemaJSON, marshalErr := common.Marshal(schema.InputSchema)
+		if marshalErr != nil {
+			schemaJSON = []byte(fmt.Sprintf("%q", fmt.Sprintf("<marshal_failed:%v>", marshalErr)))
+		}
+		logClaudeToolSchemaCompatOriginalSchema(channelId, userId, endpoint, requestId, schema.ToolName, string(schemaJSON))
+	}
+}
+
+func logClaudeToolSchemaCompatOriginalSchema(channelId int, userId int, endpoint string, requestId string, toolName string, schemaJSON string) {
+	if len(schemaJSON) <= claudeOriginalSchemaLogChunk {
+		logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_error_original_schema channel=%d user_id=%d endpoint=%q request_id=%q tool=%q input_schema_json=%s", channelId, userId, endpoint, requestId, toolName, schemaJSON))
+		return
+	}
+
+	totalParts := (len(schemaJSON) + claudeOriginalSchemaLogChunk - 1) / claudeOriginalSchemaLogChunk
+	for part := 0; part < totalParts; part++ {
+		start := part * claudeOriginalSchemaLogChunk
+		end := start + claudeOriginalSchemaLogChunk
+		if end > len(schemaJSON) {
+			end = len(schemaJSON)
+		}
+		logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_error_original_schema_part channel=%d user_id=%d endpoint=%q request_id=%q tool=%q part=%d/%d input_schema_json_chunk=%s", channelId, userId, endpoint, requestId, toolName, part+1, totalParts, schemaJSON[start:end]))
+	}
+}
+
+func isClaudeToolSchemaCompatError(message string) bool {
+	if message == "" {
+		return false
+	}
+	lowerMessage := strings.ToLower(message)
+	return strings.Contains(lowerMessage, "custom.input_schema") ||
+		strings.Contains(lowerMessage, "tool_schema_invalid") ||
+		strings.Contains(lowerMessage, "json schema is invalid") ||
+		strings.Contains(lowerMessage, "inputschema is invalid") ||
+		strings.Contains(lowerMessage, "input_schema is invalid")
 }
 
 func uniqueStrings(values []string) []string {
