@@ -134,6 +134,49 @@ func TestBuildAwsRequestBodyToolSchemaCompatPassThrough(t *testing.T) {
 	require.NotContains(t, schema, "required")
 }
 
+func TestBuildAwsRequestBodyToolSchemaCompatFixesArrayItems(t *testing.T) {
+	oldPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	model_setting.GetGlobalSettings().PassThroughRequestEnabled = false
+	t.Cleanup(func() {
+		model_setting.GetGlobalSettings().PassThroughRequestEnabled = oldPassThrough
+	})
+
+	req := &AwsClaudeRequest{
+		Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}},
+		Tools: []any{
+			map[string]any{
+				"name": "read_pdf_pages",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"pages": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type":       "object",
+								"properties": nil,
+								"required":   nil,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	body, err := buildAwsRequestBody(nil, awsRelayInfoWithToolSchemaCompat(true, false), req)
+	require.NoError(t, err)
+	items := decodeFirstToolArrayItemsSchema(t, body, "pages")
+	require.Equal(t, map[string]any{}, items["properties"])
+	require.NotContains(t, items, "required")
+
+	rawBody := `{"model":"claude-opus-4-7","stream":true,"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"read_pdf_pages","input_schema":{"type":"object","properties":{"pages":{"type":"array","items":{"type":"object","properties":null,"required":null}}}}}]}`
+	ctx := awsTestContext(rawBody)
+	body, err = buildAwsRequestBody(ctx, awsRelayInfoWithToolSchemaCompat(true, true), &AwsClaudeRequest{})
+	require.NoError(t, err)
+	items = decodeFirstToolArrayItemsSchema(t, body, "pages")
+	require.Equal(t, map[string]any{}, items["properties"])
+	require.NotContains(t, items, "required")
+}
+
 func awsRelayInfoWithToolSchemaCompat(enabled bool, passThrough bool) *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{
@@ -170,4 +213,17 @@ func decodeFirstToolSchema(t *testing.T, body []byte) map[string]any {
 	schema, ok := tool["input_schema"].(map[string]any)
 	require.True(t, ok)
 	return schema
+}
+
+func decodeFirstToolArrayItemsSchema(t *testing.T, body []byte, propertyName string) map[string]any {
+	t.Helper()
+
+	schema := decodeFirstToolSchema(t, body)
+	properties, ok := schema["properties"].(map[string]any)
+	require.True(t, ok)
+	property, ok := properties[propertyName].(map[string]any)
+	require.True(t, ok)
+	items, ok := property["items"].(map[string]any)
+	require.True(t, ok)
+	return items
 }

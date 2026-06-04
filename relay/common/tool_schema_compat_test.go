@@ -158,6 +158,95 @@ func TestNormalizeClaudeRequestToolSchemasFixesNestedObjectSchemaIssues(t *testi
 	require.Nil(t, ref["required"])
 }
 
+func TestNormalizeClaudeRequestToolSchemasFixesArrayItemsObjectSchemaIssues(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "custom",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"pages": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type":       "object",
+								"properties": nil,
+								"required":   nil,
+							},
+						},
+						"data_sources": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"properties": map[string]any{
+									"name": map[string]any{
+										"required": []any{"value", float64(123), nil, "value"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	NormalizeClaudeRequestToolSchemas(req, compatRelayInfo(true))
+
+	tool := req.Tools.([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	pages := properties["pages"].(map[string]any)
+	pagesItems := pages["items"].(map[string]any)
+	require.Equal(t, "object", pagesItems["type"])
+	require.Equal(t, map[string]any{}, pagesItems["properties"])
+	require.NotContains(t, pagesItems, "required")
+
+	dataSources := properties["data_sources"].(map[string]any)
+	dataSourceItems := dataSources["items"].(map[string]any)
+	require.Equal(t, "object", dataSourceItems["type"])
+	dataSourceProperties := dataSourceItems["properties"].(map[string]any)
+	name := dataSourceProperties["name"].(map[string]any)
+	require.Equal(t, []any{"value"}, name["required"])
+}
+
+func TestNormalizeClaudeRequestToolSchemasLeavesComplexArrayItemsUntouched(t *testing.T) {
+	t.Parallel()
+
+	items := map[string]any{
+		"$ref":     "#/$defs/page",
+		"oneOf":    []any{map[string]any{"type": "string"}},
+		"enum":     []any{"a", "b"},
+		"required": nil,
+	}
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "custom",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"pages": map[string]any{
+							"type":  "array",
+							"items": items,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	NormalizeClaudeRequestToolSchemas(req, compatRelayInfo(true))
+
+	tool := req.Tools.([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	pages := properties["pages"].(map[string]any)
+	require.Equal(t, items, pages["items"])
+	require.Nil(t, items["required"])
+}
+
 func TestNormalizeClaudeRequestToolSchemasLeavesBuiltInToolsUntouched(t *testing.T) {
 	t.Parallel()
 
@@ -309,4 +398,49 @@ func TestNormalizeClaudeRequestToolSchemasLogsCheckedSchemaShape(t *testing.T) {
 	require.Contains(t, logText, `tool="custom"`)
 	require.Contains(t, logText, "schema_shape=")
 	require.Contains(t, logText, "properties={path:")
+}
+
+func TestNormalizeClaudeRequestToolSchemasLogsArrayItemsShape(t *testing.T) {
+	var buf bytes.Buffer
+	commonpkg.LogWriterMu.Lock()
+	originalWriter := gin.DefaultWriter
+	gin.DefaultWriter = &buf
+	commonpkg.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		commonpkg.LogWriterMu.Lock()
+		gin.DefaultWriter = originalWriter
+		commonpkg.LogWriterMu.Unlock()
+	})
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "read_pdf_pages",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"pages": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type":       "object",
+								"properties": nil,
+								"required":   nil,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	info := compatRelayInfo(true)
+	info.UserId = 256
+	info.RequestURLPath = "/v1/chat/completions"
+
+	NormalizeClaudeRequestToolSchemas(req, info)
+
+	logText := buf.String()
+	require.Contains(t, logText, "tool_schema_compat_applied")
+	require.Contains(t, logText, `tool="read_pdf_pages"`)
+	require.Contains(t, logText, "nested_items_schema_fixed")
+	require.Contains(t, logText, "pages:{keys=[items,type] type=array items={keys=[properties,type] type=object properties={}}}")
 }

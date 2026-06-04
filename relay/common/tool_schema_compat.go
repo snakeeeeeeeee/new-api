@@ -276,11 +276,16 @@ func normalizeClaudeNestedPropertySchemas(properties any, report *toolSchemaComp
 }
 
 func normalizeClaudeNestedSchemaMap(schema map[string]any, report *toolSchemaCompatReport) bool {
-	if schema == nil || hasClaudeComplexSchemaKeyword(schema) || isExplicitClaudeNonObjectSchema(schema) {
+	if schema == nil || hasClaudeComplexSchemaKeyword(schema) {
 		return false
 	}
 
-	changed := false
+	changed := normalizeClaudeItemsSchema(schema, report)
+	if isExplicitClaudeNonObjectSchema(schema) {
+		return changed
+	}
+
+	changed = normalizeClaudeObjectLikeType(schema, report) || changed
 	if typ, exists := schema["type"]; exists {
 		typeString, ok := typ.(string)
 		if !ok || strings.TrimSpace(typeString) == "" {
@@ -346,6 +351,37 @@ func normalizeClaudeNestedSchemaMap(schema map[string]any, report *toolSchemaCom
 	return changed
 }
 
+func normalizeClaudeItemsSchema(schema map[string]any, report *toolSchemaCompatReport) bool {
+	itemsValue, exists := schema["items"]
+	if !exists {
+		return false
+	}
+	itemsSchema, ok := itemsValue.(map[string]any)
+	if !ok || itemsSchema == nil || hasClaudeComplexSchemaKeyword(itemsSchema) {
+		return false
+	}
+
+	if normalizeClaudeNestedSchemaMap(itemsSchema, report) {
+		report.Fixes = append(report.Fixes, "nested_items_schema_fixed")
+		return true
+	}
+	return false
+}
+
+func normalizeClaudeObjectLikeType(schema map[string]any, report *toolSchemaCompatReport) bool {
+	if _, exists := schema["type"]; exists {
+		return false
+	}
+	if _, exists := schema["properties"]; !exists {
+		if _, exists := schema["additionalProperties"]; !exists {
+			return false
+		}
+	}
+	schema["type"] = "object"
+	report.Fixes = append(report.Fixes, "nested_type_defaulted")
+	return true
+}
+
 func normalizeClaudeAdditionalProperties(schema map[string]any, report *toolSchemaCompatReport, fixName string) bool {
 	value, exists := schema["additionalProperties"]
 	if !exists {
@@ -376,7 +412,7 @@ func claudeRootSchemaSkipReason(schema map[string]any) string {
 }
 
 func hasClaudeComplexSchemaKeyword(schema map[string]any) bool {
-	for _, key := range []string{"$ref", "oneOf", "anyOf", "allOf", "items", "enum"} {
+	for _, key := range []string{"$ref", "oneOf", "anyOf", "allOf", "enum"} {
 		if _, exists := schema[key]; exists {
 			return true
 		}
@@ -465,7 +501,11 @@ func appendClaudeSchemaMapShape(builder *strings.Builder, schema map[string]any,
 			builder.WriteString(" ")
 			builder.WriteString(keyword)
 			builder.WriteString("=")
-			builder.WriteString(valueKind(keywordValue))
+			if keyword == "items" {
+				appendClaudeSchemaShape(builder, keywordValue, depth+1)
+			} else {
+				builder.WriteString(valueKind(keywordValue))
+			}
 		}
 	}
 	if properties, exists := schema["properties"]; exists {
