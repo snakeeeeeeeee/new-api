@@ -257,8 +257,9 @@ func TestLogToolSchemaCompatIncludesUserAndEndpoint(t *testing.T) {
 			ChannelId: 77,
 		},
 	}, toolSchemaCompatReport{
-		ToolName: "Workflow",
-		Fixes:    []string{"required_removed"},
+		ToolName:    "Workflow",
+		Fixes:       []string{"required_removed"},
+		SchemaShape: "{keys=[properties,type] type=object properties={}}",
 	})
 
 	logText := buf.String()
@@ -267,4 +268,45 @@ func TestLogToolSchemaCompatIncludesUserAndEndpoint(t *testing.T) {
 	require.Contains(t, logText, "user_id=256")
 	require.Contains(t, logText, `endpoint="/v1/chat/completions"`)
 	require.Contains(t, logText, `tool="Workflow"`)
+	require.Contains(t, logText, `schema_shape="{keys=[properties,type] type=object properties={}}"`)
+}
+
+func TestNormalizeClaudeRequestToolSchemasLogsCheckedSchemaShape(t *testing.T) {
+	var buf bytes.Buffer
+	commonpkg.LogWriterMu.Lock()
+	originalWriter := gin.DefaultWriter
+	gin.DefaultWriter = &buf
+	commonpkg.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		commonpkg.LogWriterMu.Lock()
+		gin.DefaultWriter = originalWriter
+		commonpkg.LogWriterMu.Unlock()
+	})
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "custom",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string"},
+					},
+				},
+			},
+		},
+	}
+	info := compatRelayInfo(true)
+	info.UserId = 256
+	info.RequestURLPath = "/v1/chat/completions"
+
+	NormalizeClaudeRequestToolSchemas(req, info)
+
+	logText := buf.String()
+	require.Contains(t, logText, "tool_schema_compat_checked")
+	require.Contains(t, logText, "channel=123")
+	require.Contains(t, logText, "user_id=256")
+	require.Contains(t, logText, `tool="custom"`)
+	require.Contains(t, logText, "schema_shape=")
+	require.Contains(t, logText, "properties={path:")
 }

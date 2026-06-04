@@ -12,8 +12,9 @@ import (
 )
 
 type toolSchemaCompatReport struct {
-	ToolName string
-	Fixes    []string
+	ToolName    string
+	Fixes       []string
+	SchemaShape string
 }
 
 func ShouldApplyClaudeToolSchemaCompat(info *RelayInfo) bool {
@@ -115,10 +116,17 @@ func normalizeClaudeDTOInputSchema(tool *dto.Tool, info *RelayInfo) bool {
 	if tool == nil {
 		return false
 	}
+	if reason := claudeRootSchemaSkipReason(tool.InputSchema); reason != "" {
+		logToolSchemaCompatSkipped(info, tool.Name, reason, tool.InputSchema)
+		return false
+	}
 	schema, report, changed := normalizeClaudeInputSchemaMap(tool.InputSchema, tool.Name)
 	if changed {
 		tool.InputSchema = schema
+		report.SchemaShape = claudeSchemaShape(schema)
 		logToolSchemaCompat(info, report)
+	} else {
+		logToolSchemaCompatChecked(info, tool.Name, schema)
 	}
 	return changed
 }
@@ -131,11 +139,16 @@ func normalizeClaudeToolMap(tool map[string]any, info *RelayInfo) bool {
 	toolName := common.Interface2String(tool["name"])
 	schemaValue, exists := tool["input_schema"]
 	if !exists || schemaValue == nil {
-		tool["input_schema"] = map[string]any{
+		defaultSchema := map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
 		}
-		logToolSchemaCompat(info, toolSchemaCompatReport{ToolName: toolName, Fixes: []string{"input_schema_defaulted"}})
+		tool["input_schema"] = defaultSchema
+		logToolSchemaCompat(info, toolSchemaCompatReport{
+			ToolName:    toolName,
+			Fixes:       []string{"input_schema_defaulted"},
+			SchemaShape: claudeSchemaShape(defaultSchema),
+		})
 		return true
 	}
 
@@ -145,14 +158,25 @@ func normalizeClaudeToolMap(tool map[string]any, info *RelayInfo) bool {
 			"type":       "object",
 			"properties": map[string]any{},
 		}
-		logToolSchemaCompat(info, toolSchemaCompatReport{ToolName: toolName, Fixes: []string{"input_schema_defaulted"}})
+		logToolSchemaCompat(info, toolSchemaCompatReport{
+			ToolName:    toolName,
+			Fixes:       []string{"input_schema_defaulted"},
+			SchemaShape: claudeSchemaShape(schemaValue),
+		})
 		return true
+	}
+	if reason := claudeRootSchemaSkipReason(schema); reason != "" {
+		logToolSchemaCompatSkipped(info, toolName, reason, schema)
+		return false
 	}
 
 	normalized, report, changed := normalizeClaudeInputSchemaMap(schema, toolName)
 	if changed {
 		tool["input_schema"] = normalized
+		report.SchemaShape = claudeSchemaShape(normalized)
 		logToolSchemaCompat(info, report)
+	} else {
+		logToolSchemaCompatChecked(info, toolName, normalized)
 	}
 	return changed
 }
@@ -175,6 +199,9 @@ func normalizeClaudeInputSchemaMap(schema map[string]any, toolName string) (map[
 	}
 
 	if properties, exists := schema["properties"]; !exists || properties == nil {
+		schema["properties"] = map[string]any{}
+		report.Fixes = append(report.Fixes, "properties_defaulted")
+	} else if _, ok := properties.(map[string]any); !ok {
 		schema["properties"] = map[string]any{}
 		report.Fixes = append(report.Fixes, "properties_defaulted")
 	}
@@ -211,6 +238,8 @@ func normalizeClaudeInputSchemaMap(schema map[string]any, toolName string) (map[
 		}
 	}
 
+	normalizeClaudeAdditionalProperties(schema, &report, "additional_properties_removed")
+
 	if normalizeClaudeNestedPropertySchemas(schema["properties"], &report) {
 		return schema, report, true
 	}
@@ -225,12 +254,21 @@ func normalizeClaudeNestedPropertySchemas(properties any, report *toolSchemaComp
 	}
 
 	changed := false
-	for _, propertySchemaValue := range propertiesMap {
-		propertySchema, ok := propertySchemaValue.(map[string]any)
-		if !ok {
+	for propertyName, propertySchemaValue := range propertiesMap {
+		switch propertySchema := propertySchemaValue.(type) {
+		case nil:
+			propertiesMap[propertyName] = map[string]any{}
+			report.Fixes = append(report.Fixes, "nested_property_schema_defaulted")
+			changed = true
+		case bool:
 			continue
-		}
-		if normalizeClaudeNestedSchemaMap(propertySchema, report) {
+		case map[string]any:
+			if normalizeClaudeNestedSchemaMap(propertySchema, report) {
+				changed = true
+			}
+		default:
+			propertiesMap[propertyName] = map[string]any{}
+			report.Fixes = append(report.Fixes, "nested_property_schema_defaulted")
 			changed = true
 		}
 	}
@@ -254,6 +292,10 @@ func normalizeClaudeNestedSchemaMap(schema map[string]any, report *toolSchemaCom
 
 	if properties, exists := schema["properties"]; exists {
 		if properties == nil {
+			schema["properties"] = map[string]any{}
+			report.Fixes = append(report.Fixes, "nested_properties_defaulted")
+			changed = true
+		} else if _, ok := properties.(map[string]any); !ok {
 			schema["properties"] = map[string]any{}
 			report.Fixes = append(report.Fixes, "nested_properties_defaulted")
 			changed = true
@@ -297,7 +339,40 @@ func normalizeClaudeNestedSchemaMap(schema map[string]any, report *toolSchemaCom
 		}
 	}
 
+	if normalizeClaudeAdditionalProperties(schema, report, "nested_additional_properties_removed") {
+		changed = true
+	}
+
 	return changed
+}
+
+func normalizeClaudeAdditionalProperties(schema map[string]any, report *toolSchemaCompatReport, fixName string) bool {
+	value, exists := schema["additionalProperties"]
+	if !exists {
+		return false
+	}
+	switch typedValue := value.(type) {
+	case bool:
+		return false
+	case map[string]any:
+		return normalizeClaudeNestedSchemaMap(typedValue, report)
+	case nil:
+		delete(schema, "additionalProperties")
+		report.Fixes = append(report.Fixes, fixName)
+		return true
+	default:
+		delete(schema, "additionalProperties")
+		report.Fixes = append(report.Fixes, fixName)
+		return true
+	}
+}
+
+func claudeRootSchemaSkipReason(schema map[string]any) string {
+	typeString, ok := schema["type"].(string)
+	if !ok || strings.TrimSpace(typeString) == "" || typeString == "object" {
+		return ""
+	}
+	return "explicit_non_object_schema:" + typeString
 }
 
 func hasClaudeComplexSchemaKeyword(schema map[string]any) bool {
@@ -322,6 +397,137 @@ func isClaudeBuiltInToolMap(tool map[string]any) bool {
 	return strings.HasPrefix(toolType, "web_search_")
 }
 
+const (
+	claudeSchemaShapeMaxDepth      = 3
+	claudeSchemaShapeMaxProperties = 16
+	claudeSchemaShapeMaxLength     = 2000
+)
+
+func claudeSchemaShape(value any) string {
+	var builder strings.Builder
+	appendClaudeSchemaShape(&builder, value, 0)
+	shape := builder.String()
+	if len(shape) > claudeSchemaShapeMaxLength {
+		return shape[:claudeSchemaShapeMaxLength] + "...truncated"
+	}
+	return shape
+}
+
+func appendClaudeSchemaShape(builder *strings.Builder, value any, depth int) {
+	if builder.Len() > claudeSchemaShapeMaxLength {
+		return
+	}
+	if depth > claudeSchemaShapeMaxDepth {
+		builder.WriteString("...")
+		return
+	}
+
+	switch typedValue := value.(type) {
+	case nil:
+		builder.WriteString("null")
+	case bool:
+		builder.WriteString(fmt.Sprintf("bool(%t)", typedValue))
+	case string:
+		builder.WriteString("string")
+	case []any:
+		builder.WriteString(fmt.Sprintf("array(len=%d)", len(typedValue)))
+	case map[string]any:
+		appendClaudeSchemaMapShape(builder, typedValue, depth)
+	default:
+		builder.WriteString(fmt.Sprintf("%T", value))
+	}
+}
+
+func appendClaudeSchemaMapShape(builder *strings.Builder, schema map[string]any, depth int) {
+	builder.WriteString("{")
+	keys := sortedMapKeys(schema)
+	builder.WriteString("keys=[")
+	builder.WriteString(strings.Join(keys, ","))
+	builder.WriteString("]")
+	if typeValue, exists := schema["type"]; exists {
+		builder.WriteString(" type=")
+		if typeString, ok := typeValue.(string); ok {
+			builder.WriteString(typeString)
+		} else {
+			builder.WriteString(valueKind(typeValue))
+		}
+	}
+	if required, exists := schema["required"]; exists {
+		builder.WriteString(" required=")
+		builder.WriteString(valueKind(required))
+	}
+	if additionalProperties, exists := schema["additionalProperties"]; exists {
+		builder.WriteString(" additionalProperties=")
+		builder.WriteString(valueKind(additionalProperties))
+	}
+	for _, keyword := range []string{"$ref", "oneOf", "anyOf", "allOf", "items", "enum"} {
+		if keywordValue, exists := schema[keyword]; exists {
+			builder.WriteString(" ")
+			builder.WriteString(keyword)
+			builder.WriteString("=")
+			builder.WriteString(valueKind(keywordValue))
+		}
+	}
+	if properties, exists := schema["properties"]; exists {
+		builder.WriteString(" properties=")
+		appendClaudePropertiesShape(builder, properties, depth+1)
+	}
+	builder.WriteString("}")
+}
+
+func appendClaudePropertiesShape(builder *strings.Builder, properties any, depth int) {
+	propertiesMap, ok := properties.(map[string]any)
+	if !ok {
+		builder.WriteString(valueKind(properties))
+		return
+	}
+	builder.WriteString("{")
+	propertyNames := sortedMapKeys(propertiesMap)
+	limit := len(propertyNames)
+	if limit > claudeSchemaShapeMaxProperties {
+		limit = claudeSchemaShapeMaxProperties
+	}
+	for i := 0; i < limit; i++ {
+		if i > 0 {
+			builder.WriteString(",")
+		}
+		propertyName := propertyNames[i]
+		builder.WriteString(propertyName)
+		builder.WriteString(":")
+		appendClaudeSchemaShape(builder, propertiesMap[propertyName], depth)
+	}
+	if len(propertyNames) > limit {
+		builder.WriteString(fmt.Sprintf(",...+%d", len(propertyNames)-limit))
+	}
+	builder.WriteString("}")
+}
+
+func sortedMapKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func valueKind(value any) string {
+	switch typedValue := value.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "bool"
+	case string:
+		return "string"
+	case []any:
+		return fmt.Sprintf("array(len=%d)", len(typedValue))
+	case map[string]any:
+		return "object"
+	default:
+		return fmt.Sprintf("%T", value)
+	}
+}
+
 func logToolSchemaCompat(info *RelayInfo, report toolSchemaCompatReport) {
 	if len(report.Fixes) == 0 {
 		return
@@ -336,7 +542,31 @@ func logToolSchemaCompat(info *RelayInfo, report toolSchemaCompatReport) {
 		userId = info.UserId
 		endpoint = info.RequestURLPath
 	}
-	logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_applied channel=%d user_id=%d endpoint=%q tool=%q fixes=%s", channelId, userId, endpoint, report.ToolName, strings.Join(fixes, ",")))
+	logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_applied channel=%d user_id=%d endpoint=%q tool=%q fixes=%s schema_shape=%q", channelId, userId, endpoint, report.ToolName, strings.Join(fixes, ","), report.SchemaShape))
+}
+
+func logToolSchemaCompatSkipped(info *RelayInfo, toolName string, reason string, schema any) {
+	channelId := 0
+	userId := 0
+	endpoint := ""
+	if info != nil {
+		channelId = info.ChannelId
+		userId = info.UserId
+		endpoint = info.RequestURLPath
+	}
+	logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_skipped channel=%d user_id=%d endpoint=%q tool=%q reason=%q schema_shape=%q", channelId, userId, endpoint, toolName, reason, claudeSchemaShape(schema)))
+}
+
+func logToolSchemaCompatChecked(info *RelayInfo, toolName string, schema any) {
+	channelId := 0
+	userId := 0
+	endpoint := ""
+	if info != nil {
+		channelId = info.ChannelId
+		userId = info.UserId
+		endpoint = info.RequestURLPath
+	}
+	logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_checked channel=%d user_id=%d endpoint=%q tool=%q schema_shape=%q", channelId, userId, endpoint, toolName, claudeSchemaShape(schema)))
 }
 
 func uniqueStrings(values []string) []string {
