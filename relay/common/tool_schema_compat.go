@@ -404,6 +404,11 @@ func normalizeClaudeNestedSchemaMap(schema map[string]any, report *toolSchemaCom
 			changed = true
 		}
 	}
+	if isClaudeObjectSchemaWithoutProperties(schema) {
+		schema["properties"] = map[string]any{}
+		report.Fixes = append(report.Fixes, "nested_object_properties_defaulted")
+		changed = true
+	}
 
 	if required, exists := schema["required"]; exists {
 		requiredList, ok := required.([]any)
@@ -445,6 +450,20 @@ func normalizeClaudeNestedSchemaMap(schema map[string]any, report *toolSchemaCom
 	}
 
 	return changed
+}
+
+func isClaudeObjectSchemaWithoutProperties(schema map[string]any) bool {
+	typeString, ok := schema["type"].(string)
+	if !ok || typeString != "object" {
+		return false
+	}
+	if _, exists := schema["properties"]; exists {
+		return false
+	}
+	if _, exists := schema["additionalProperties"]; exists {
+		return false
+	}
+	return true
 }
 
 func normalizeClaudeTypelessDescribedLeafSchema(schema map[string]any, report *toolSchemaCompatReport) bool {

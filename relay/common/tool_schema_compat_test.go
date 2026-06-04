@@ -253,6 +253,93 @@ func TestNormalizeClaudeRequestToolSchemasFixesTypelessDescriptionOnlyLeaf(t *te
 	require.Equal(t, "string", badDescription["type"])
 }
 
+func TestNormalizeClaudeRequestToolSchemasDefaultsNestedObjectProperties(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "report",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"filters": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"param_mapping": map[string]any{
+										"description": "parameter mapping object",
+										"type":        "object",
+									},
+								},
+							},
+						},
+						"config": map[string]any{
+							"description": "chart config object",
+							"type":        "object",
+						},
+						"free_form": map[string]any{
+							"type":                 "object",
+							"additionalProperties": true,
+						},
+						"ref_object": map[string]any{
+							"type": "object",
+							"$ref": "#/$defs/config",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	NormalizeClaudeRequestToolSchemas(req, compatRelayInfo(true))
+
+	tool := req.Tools.([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	config := properties["config"].(map[string]any)
+	require.Equal(t, map[string]any{}, config["properties"])
+	filters := properties["filters"].(map[string]any)
+	filterItems := filters["items"].(map[string]any)
+	filterProperties := filterItems["properties"].(map[string]any)
+	paramMapping := filterProperties["param_mapping"].(map[string]any)
+	require.Equal(t, map[string]any{}, paramMapping["properties"])
+	freeForm := properties["free_form"].(map[string]any)
+	require.NotContains(t, freeForm, "properties")
+	refObject := properties["ref_object"].(map[string]any)
+	require.NotContains(t, refObject, "properties")
+}
+
+func TestNormalizeClaudeRequestToolSchemasDisabledKeepsNestedObjectWithoutProperties(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "report",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"config": map[string]any{
+							"description": "chart config object",
+							"type":        "object",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	NormalizeClaudeRequestToolSchemas(req, compatRelayInfo(false))
+
+	tool := req.Tools.([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	config := properties["config"].(map[string]any)
+	require.NotContains(t, config, "properties")
+}
+
 func TestNormalizeClaudeRequestToolSchemasDisabledKeepsTypelessDescriptionOnlyLeaf(t *testing.T) {
 	t.Parallel()
 
@@ -586,6 +673,46 @@ func TestNormalizeClaudeRequestToolSchemasLogsTypelessLeafFix(t *testing.T) {
 	require.Contains(t, logText, `tool="algo_exec"`)
 	require.Contains(t, logText, "nested_leaf_type_defaulted")
 	require.Contains(t, logText, "sql:{keys=[description,type] type=string}")
+}
+
+func TestNormalizeClaudeRequestToolSchemasLogsNestedObjectPropertiesDefault(t *testing.T) {
+	var buf bytes.Buffer
+	commonpkg.LogWriterMu.Lock()
+	originalWriter := gin.DefaultWriter
+	gin.DefaultWriter = &buf
+	commonpkg.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		commonpkg.LogWriterMu.Lock()
+		gin.DefaultWriter = originalWriter
+		commonpkg.LogWriterMu.Unlock()
+	})
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "report",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"config": map[string]any{
+							"type": "object",
+						},
+					},
+				},
+			},
+		},
+	}
+	info := compatRelayInfo(true)
+	info.UserId = 256
+	info.RequestURLPath = "/v1/chat/completions"
+
+	NormalizeClaudeRequestToolSchemas(req, info)
+
+	logText := buf.String()
+	require.Contains(t, logText, "tool_schema_compat_applied")
+	require.Contains(t, logText, `tool="report"`)
+	require.Contains(t, logText, "nested_object_properties_defaulted")
+	require.Contains(t, logText, "config:{keys=[properties,type] type=object properties={}}")
 }
 
 func TestLogClaudeToolSchemaCompatOriginalSchemasOnError(t *testing.T) {
