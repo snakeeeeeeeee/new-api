@@ -196,6 +196,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		// Only return quota if downstream failed and quota was actually pre-consumed
 		if newAPIError != nil {
 			newAPIError = service.NormalizeViolationFeeError(newAPIError)
+			relaycommon.LogClaudeToolSchemaCompatOriginalSchemasOnError(relayInfo, newAPIError)
 			if relayInfo.Billing != nil {
 				relayInfo.Billing.Refund(c)
 			}
@@ -258,6 +259,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
+		relaycommon.LogClaudeToolSchemaCompatOriginalSchemasOnError(relayInfo, newAPIError)
 		service.RecordRelayTimingContext(c, relayInfo)
 
 		shouldRetryRequest := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())

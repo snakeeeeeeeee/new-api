@@ -694,3 +694,27 @@ func TestLogClaudeToolSchemaCompatOriginalSchemasChunksLargeSchema(t *testing.T)
 	require.Contains(t, logText, "input_schema_json_chunk=")
 	require.NotContains(t, logText, "tool_schema_compat_error_original_schema channel=")
 }
+
+func TestLogClaudeToolSchemaCompatOriginalSchemasOnlyLogsOnce(t *testing.T) {
+	var buf bytes.Buffer
+	commonpkg.LogWriterMu.Lock()
+	originalWriter := gin.DefaultWriter
+	gin.DefaultWriter = &buf
+	commonpkg.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		commonpkg.LogWriterMu.Lock()
+		gin.DefaultWriter = originalWriter
+		commonpkg.LogWriterMu.Unlock()
+	})
+
+	info := compatRelayInfo(true)
+	info.ClaudeToolSchemaCompatOriginalSchemas = []ClaudeToolSchemaCompatOriginalSchema{
+		{ToolName: "custom", InputSchema: map[string]any{"type": "object"}},
+	}
+
+	schemaErr := errors.New("custom.input_schema: JSON schema is invalid")
+	LogClaudeToolSchemaCompatOriginalSchemasOnError(info, schemaErr)
+	LogClaudeToolSchemaCompatOriginalSchemasOnError(info, schemaErr)
+
+	require.Equal(t, 1, strings.Count(buf.String(), "tool_schema_compat_error_original_schema"))
+}

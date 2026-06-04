@@ -167,6 +167,7 @@ type RelayInfo struct {
 	// It is used only for diagnostic logging when a strict upstream rejects a tool schema.
 	ClaudeToolSchemaCompatOriginalSchemas []ClaudeToolSchemaCompatOriginalSchema
 	claudeToolSchemaCompatOriginalSeen    map[string]struct{}
+	claudeToolSchemaCompatOriginalLogged  bool
 
 	ThinkingContentInfo
 	TokenCountMeta

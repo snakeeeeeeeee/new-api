@@ -769,6 +769,10 @@ func LogClaudeToolSchemaCompatOriginalSchemasOnError(info *RelayInfo, err error)
 	if len(info.ClaudeToolSchemaCompatOriginalSchemas) == 0 {
 		return
 	}
+	if info.claudeToolSchemaCompatOriginalLogged {
+		return
+	}
+	info.claudeToolSchemaCompatOriginalLogged = true
 
 	channelId := 0
 	userId := 0
