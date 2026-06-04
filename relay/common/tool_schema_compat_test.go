@@ -99,6 +99,62 @@ func TestNormalizeClaudeRequestToolSchemasFiltersRequiredArray(t *testing.T) {
 	require.Equal(t, []any{"path"}, schema["required"])
 }
 
+func TestNormalizeClaudeRequestToolSchemasFixesNestedObjectSchemaIssues(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "custom",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"config": map[string]any{
+							"type":       "object",
+							"properties": nil,
+							"required":   nil,
+						},
+						"nested": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"path": map[string]any{
+									"required": []any{"value", nil, "value"},
+								},
+							},
+						},
+						"list": map[string]any{
+							"type":     "array",
+							"items":    map[string]any{"type": "string"},
+							"required": nil,
+						},
+						"ref": map[string]any{
+							"$ref":     "#/$defs/ref",
+							"required": nil,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	NormalizeClaudeRequestToolSchemas(req, compatRelayInfo(true))
+
+	tool := req.Tools.([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	config := properties["config"].(map[string]any)
+	require.Equal(t, map[string]any{}, config["properties"])
+	require.NotContains(t, config, "required")
+	nested := properties["nested"].(map[string]any)
+	nestedProperties := nested["properties"].(map[string]any)
+	path := nestedProperties["path"].(map[string]any)
+	require.Equal(t, []any{"value"}, path["required"])
+	list := properties["list"].(map[string]any)
+	require.Nil(t, list["required"])
+	ref := properties["ref"].(map[string]any)
+	require.Nil(t, ref["required"])
+}
+
 func TestNormalizeClaudeRequestToolSchemasLeavesBuiltInToolsUntouched(t *testing.T) {
 	t.Parallel()
 

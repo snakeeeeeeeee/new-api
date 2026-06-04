@@ -211,7 +211,107 @@ func normalizeClaudeInputSchemaMap(schema map[string]any, toolName string) (map[
 		}
 	}
 
+	if normalizeClaudeNestedPropertySchemas(schema["properties"], &report) {
+		return schema, report, true
+	}
+
 	return schema, report, len(report.Fixes) > 0
+}
+
+func normalizeClaudeNestedPropertySchemas(properties any, report *toolSchemaCompatReport) bool {
+	propertiesMap, ok := properties.(map[string]any)
+	if !ok {
+		return false
+	}
+
+	changed := false
+	for _, propertySchemaValue := range propertiesMap {
+		propertySchema, ok := propertySchemaValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		if normalizeClaudeNestedSchemaMap(propertySchema, report) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+func normalizeClaudeNestedSchemaMap(schema map[string]any, report *toolSchemaCompatReport) bool {
+	if schema == nil || hasClaudeComplexSchemaKeyword(schema) || isExplicitClaudeNonObjectSchema(schema) {
+		return false
+	}
+
+	changed := false
+	if typ, exists := schema["type"]; exists {
+		typeString, ok := typ.(string)
+		if !ok || strings.TrimSpace(typeString) == "" {
+			schema["type"] = "object"
+			report.Fixes = append(report.Fixes, "nested_type_defaulted")
+			changed = true
+		}
+	}
+
+	if properties, exists := schema["properties"]; exists {
+		if properties == nil {
+			schema["properties"] = map[string]any{}
+			report.Fixes = append(report.Fixes, "nested_properties_defaulted")
+			changed = true
+		} else if normalizeClaudeNestedPropertySchemas(properties, report) {
+			changed = true
+		}
+	}
+
+	if required, exists := schema["required"]; exists {
+		requiredList, ok := required.([]any)
+		if !ok {
+			delete(schema, "required")
+			report.Fixes = append(report.Fixes, "nested_required_removed")
+			changed = true
+		} else {
+			seen := make(map[string]struct{}, len(requiredList))
+			normalizedRequired := make([]any, 0, len(requiredList))
+			removedInvalid := false
+			for _, item := range requiredList {
+				value, ok := item.(string)
+				if !ok {
+					removedInvalid = true
+					continue
+				}
+				if _, exists := seen[value]; exists {
+					removedInvalid = true
+					continue
+				}
+				seen[value] = struct{}{}
+				normalizedRequired = append(normalizedRequired, value)
+			}
+			if len(normalizedRequired) == 0 {
+				delete(schema, "required")
+				report.Fixes = append(report.Fixes, "nested_required_empty_removed")
+				changed = true
+			} else if removedInvalid || len(normalizedRequired) != len(requiredList) {
+				schema["required"] = normalizedRequired
+				report.Fixes = append(report.Fixes, "nested_required_filtered")
+				changed = true
+			}
+		}
+	}
+
+	return changed
+}
+
+func hasClaudeComplexSchemaKeyword(schema map[string]any) bool {
+	for _, key := range []string{"$ref", "oneOf", "anyOf", "allOf", "items", "enum"} {
+		if _, exists := schema[key]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func isExplicitClaudeNonObjectSchema(schema map[string]any) bool {
+	typeString, ok := schema["type"].(string)
+	return ok && strings.TrimSpace(typeString) != "" && typeString != "object"
 }
 
 func isClaudeBuiltInToolMap(tool map[string]any) bool {
@@ -226,11 +326,24 @@ func logToolSchemaCompat(info *RelayInfo, report toolSchemaCompatReport) {
 	if len(report.Fixes) == 0 {
 		return
 	}
-	fixes := append([]string(nil), report.Fixes...)
+	fixes := uniqueStrings(report.Fixes)
 	sort.Strings(fixes)
 	channelId := 0
 	if info != nil {
 		channelId = info.ChannelId
 	}
 	logger.LogInfo(context.Background(), fmt.Sprintf("tool_schema_compat_applied channel=%d tool=%q fixes=%s", channelId, report.ToolName, strings.Join(fixes, ",")))
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
