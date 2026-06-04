@@ -238,6 +238,7 @@ func normalizeClaudeInputSchemaMap(schema map[string]any, toolName string) (map[
 		}
 	}
 
+	normalizeClaudeAnnotationTypes(schema, &report, "annotation_removed")
 	normalizeClaudeAdditionalProperties(schema, &report, "additional_properties_removed")
 
 	if normalizeClaudeNestedPropertySchemas(schema["properties"], &report) {
@@ -280,11 +281,13 @@ func normalizeClaudeNestedSchemaMap(schema map[string]any, report *toolSchemaCom
 		return false
 	}
 
-	changed := normalizeClaudeItemsSchema(schema, report)
+	changed := normalizeClaudeAnnotationTypes(schema, report, "nested_annotation_removed")
+	changed = normalizeClaudeItemsSchema(schema, report) || changed
 	if isExplicitClaudeNonObjectSchema(schema) {
 		return changed
 	}
 
+	changed = normalizeClaudeTypelessDescribedLeafSchema(schema, report) || changed
 	changed = normalizeClaudeObjectLikeType(schema, report) || changed
 	if typ, exists := schema["type"]; exists {
 		typeString, ok := typ.(string)
@@ -351,6 +354,23 @@ func normalizeClaudeNestedSchemaMap(schema map[string]any, report *toolSchemaCom
 	return changed
 }
 
+func normalizeClaudeTypelessDescribedLeafSchema(schema map[string]any, report *toolSchemaCompatReport) bool {
+	if _, exists := schema["type"]; exists {
+		return false
+	}
+	if _, ok := schema["description"].(string); !ok {
+		return false
+	}
+	for key := range schema {
+		if key != "description" && key != "title" {
+			return false
+		}
+	}
+	schema["type"] = "string"
+	report.Fixes = append(report.Fixes, "nested_leaf_type_defaulted")
+	return true
+}
+
 func normalizeClaudeItemsSchema(schema map[string]any, report *toolSchemaCompatReport) bool {
 	itemsValue, exists := schema["items"]
 	if !exists {
@@ -366,6 +386,42 @@ func normalizeClaudeItemsSchema(schema map[string]any, report *toolSchemaCompatR
 		return true
 	}
 	return false
+}
+
+func normalizeClaudeAnnotationTypes(schema map[string]any, report *toolSchemaCompatReport, fixName string) bool {
+	changed := false
+	for _, key := range []string{"description", "title"} {
+		value, exists := schema[key]
+		if !exists {
+			continue
+		}
+		if _, ok := value.(string); ok {
+			continue
+		}
+		delete(schema, key)
+		report.Fixes = append(report.Fixes, fixName)
+		changed = true
+	}
+	for _, key := range []string{"deprecated", "readOnly", "writeOnly"} {
+		value, exists := schema[key]
+		if !exists {
+			continue
+		}
+		if _, ok := value.(bool); ok {
+			continue
+		}
+		delete(schema, key)
+		report.Fixes = append(report.Fixes, fixName)
+		changed = true
+	}
+	if examples, exists := schema["examples"]; exists {
+		if _, ok := examples.([]any); !ok {
+			delete(schema, "examples")
+			report.Fixes = append(report.Fixes, fixName)
+			changed = true
+		}
+	}
+	return changed
 }
 
 func normalizeClaudeObjectLikeType(schema map[string]any, report *toolSchemaCompatReport) bool {

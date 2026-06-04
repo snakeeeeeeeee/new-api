@@ -177,6 +177,42 @@ func TestBuildAwsRequestBodyToolSchemaCompatFixesArrayItems(t *testing.T) {
 	require.NotContains(t, items, "required")
 }
 
+func TestBuildAwsRequestBodyToolSchemaCompatFixesTypelessDescriptionOnlyLeaf(t *testing.T) {
+	oldPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	model_setting.GetGlobalSettings().PassThroughRequestEnabled = false
+	t.Cleanup(func() {
+		model_setting.GetGlobalSettings().PassThroughRequestEnabled = oldPassThrough
+	})
+
+	req := &AwsClaudeRequest{
+		Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}},
+		Tools: []any{
+			map[string]any{
+				"name": "algo_exec",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"sql": map[string]any{
+							"description": "sql text",
+						},
+					},
+				},
+			},
+		},
+	}
+	body, err := buildAwsRequestBody(nil, awsRelayInfoWithToolSchemaCompat(true, false), req)
+	require.NoError(t, err)
+	sql := decodeFirstToolPropertySchema(t, body, "sql")
+	require.Equal(t, "string", sql["type"])
+
+	rawBody := `{"model":"claude-opus-4-7","stream":true,"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"algo_exec","input_schema":{"type":"object","properties":{"sql":{"description":"sql text"}}}}]}`
+	ctx := awsTestContext(rawBody)
+	body, err = buildAwsRequestBody(ctx, awsRelayInfoWithToolSchemaCompat(true, true), &AwsClaudeRequest{})
+	require.NoError(t, err)
+	sql = decodeFirstToolPropertySchema(t, body, "sql")
+	require.Equal(t, "string", sql["type"])
+}
+
 func awsRelayInfoWithToolSchemaCompat(enabled bool, passThrough bool) *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{
@@ -218,12 +254,19 @@ func decodeFirstToolSchema(t *testing.T, body []byte) map[string]any {
 func decodeFirstToolArrayItemsSchema(t *testing.T, body []byte, propertyName string) map[string]any {
 	t.Helper()
 
+	property := decodeFirstToolPropertySchema(t, body, propertyName)
+	items, ok := property["items"].(map[string]any)
+	require.True(t, ok)
+	return items
+}
+
+func decodeFirstToolPropertySchema(t *testing.T, body []byte, propertyName string) map[string]any {
+	t.Helper()
+
 	schema := decodeFirstToolSchema(t, body)
 	properties, ok := schema["properties"].(map[string]any)
 	require.True(t, ok)
 	property, ok := properties[propertyName].(map[string]any)
 	require.True(t, ok)
-	items, ok := property["items"].(map[string]any)
-	require.True(t, ok)
-	return items
+	return property
 }

@@ -211,6 +211,75 @@ func TestNormalizeClaudeRequestToolSchemasFixesArrayItemsObjectSchemaIssues(t *t
 	require.Equal(t, []any{"value"}, name["required"])
 }
 
+func TestNormalizeClaudeRequestToolSchemasFixesTypelessDescriptionOnlyLeaf(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "algo_exec",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"sql": map[string]any{
+							"description": "sql text",
+						},
+						"title_only": map[string]any{
+							"title": "title is not enough",
+						},
+						"bad_description": map[string]any{
+							"description": []any{"not", "string"},
+							"type":        "string",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	NormalizeClaudeRequestToolSchemas(req, compatRelayInfo(true))
+
+	tool := req.Tools.([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	sql := properties["sql"].(map[string]any)
+	require.Equal(t, "string", sql["type"])
+	titleOnly := properties["title_only"].(map[string]any)
+	require.NotContains(t, titleOnly, "type")
+	badDescription := properties["bad_description"].(map[string]any)
+	require.NotContains(t, badDescription, "description")
+	require.Equal(t, "string", badDescription["type"])
+}
+
+func TestNormalizeClaudeRequestToolSchemasDisabledKeepsTypelessDescriptionOnlyLeaf(t *testing.T) {
+	t.Parallel()
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "algo_exec",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"sql": map[string]any{
+							"description": "sql text",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	NormalizeClaudeRequestToolSchemas(req, compatRelayInfo(false))
+
+	tool := req.Tools.([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	sql := properties["sql"].(map[string]any)
+	require.NotContains(t, sql, "type")
+	require.Equal(t, "sql text", sql["description"])
+}
+
 func TestNormalizeClaudeRequestToolSchemasLeavesComplexArrayItemsUntouched(t *testing.T) {
 	t.Parallel()
 
@@ -443,4 +512,44 @@ func TestNormalizeClaudeRequestToolSchemasLogsArrayItemsShape(t *testing.T) {
 	require.Contains(t, logText, `tool="read_pdf_pages"`)
 	require.Contains(t, logText, "nested_items_schema_fixed")
 	require.Contains(t, logText, "pages:{keys=[items,type] type=array items={keys=[properties,type] type=object properties={}}}")
+}
+
+func TestNormalizeClaudeRequestToolSchemasLogsTypelessLeafFix(t *testing.T) {
+	var buf bytes.Buffer
+	commonpkg.LogWriterMu.Lock()
+	originalWriter := gin.DefaultWriter
+	gin.DefaultWriter = &buf
+	commonpkg.LogWriterMu.Unlock()
+	t.Cleanup(func() {
+		commonpkg.LogWriterMu.Lock()
+		gin.DefaultWriter = originalWriter
+		commonpkg.LogWriterMu.Unlock()
+	})
+
+	req := &dto.ClaudeRequest{
+		Tools: []any{
+			map[string]any{
+				"name": "algo_exec",
+				"input_schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"sql": map[string]any{
+							"description": "sql text",
+						},
+					},
+				},
+			},
+		},
+	}
+	info := compatRelayInfo(true)
+	info.UserId = 256
+	info.RequestURLPath = "/v1/chat/completions"
+
+	NormalizeClaudeRequestToolSchemas(req, info)
+
+	logText := buf.String()
+	require.Contains(t, logText, "tool_schema_compat_applied")
+	require.Contains(t, logText, `tool="algo_exec"`)
+	require.Contains(t, logText, "nested_leaf_type_defaulted")
+	require.Contains(t, logText, "sql:{keys=[description,type] type=string}")
 }
