@@ -1,3 +1,25 @@
+# Session: 2026-06-05 聚合子分组亲和按模型隔离
+
+## Scope
+- 为聚合分组新增亲和范围配置，支持默认跨模型共享和按模型隔离两种 Cluster 亲和缓存维度。
+
+## Progress
+- 已接手现有草稿实现并修复新增 service 测试中直接读取亲和缓存时缺少策略/scope 上下文的问题。
+- 已新增 `route_affinity_scope` 后端字段、API 请求/响应、保存校验、默认归一化和 context key。
+- 已调整聚合亲和 key 生成：`shared` 保持旧格式，`model` 在 aggregate group / route pool 维度后加入模型维度。
+- 已在聚合路由入口写入 scope，并在 admin info 的 `aggregate_route_affinity` 中输出 `scope`。
+- 已在编辑聚合分组弹窗增加“亲和范围”选择，关闭亲和时禁用，并补齐新增 i18n key。
+- 已补单测覆盖旧数据默认 shared、非法 scope、shared 跨模型命中、model 跨模型隔离、同模型命中、模型不支持跳过、request_first fallback、Claude CLI 专用池按模型和池隔离。
+
+## Verification
+- Focused service affinity regression: passed.
+- `go test ./model ./service ./controller -count=1`: passed.
+- `go test ./model ./service ./controller ./middleware -count=1`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `git diff --check`: passed.
+
+---
+
 # Session: 2026-06-04 聚合子分组软 RPM 总量限制
 
 ## Scope

@@ -55,7 +55,7 @@ func getAggregateRouteAffinityCache() *cachex.HybridCache[string] {
 }
 
 func buildAggregateRouteAffinityKey(c *gin.Context, aggregateGroup string) string {
-	return buildAggregateRouteAffinityKeyForPool(c, aggregateGroup, "")
+	return buildAggregateRouteAffinityKeyForPool(c, "", aggregateGroup, "")
 }
 
 func defaultAggregateRouteAffinityKeySources() []model.AggregateGroupRouteAffinityKeySource {
@@ -76,6 +76,14 @@ func getAggregateRouteAffinityStrategyFromContext(c *gin.Context) string {
 		strategy = common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityStrategy)
 	}
 	return model.NormalizeAggregateGroupRouteAffinityStrategy(strategy)
+}
+
+func getAggregateRouteAffinityScopeFromContext(c *gin.Context) string {
+	scope := model.AggregateGroupRouteAffinityScopeShared
+	if c != nil {
+		scope = common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityScope)
+	}
+	return model.NormalizeAggregateGroupRouteAffinityScope(scope)
 }
 
 func getAggregateRouteAffinitySourcesFromContext(c *gin.Context) []model.AggregateGroupRouteAffinityKeySource {
@@ -123,7 +131,18 @@ func clearAggregateRouteAffinitySourceContext(c *gin.Context, strategy string) {
 	common.SetContextKey(c, constant.ContextKeyAggregateRouteAffinityKeyFP, "")
 }
 
-func buildAggregateRouteAffinityRequestKey(c *gin.Context, aggregateGroup string, routePool string, strategy string) string {
+func formatAggregateRouteAffinityKeyPrefix(aggregateGroup string, routePool string, modelName string, scope string) string {
+	parts := []string{aggregateGroup}
+	if routePool != "" && routePool != aggregateClusterDefaultRoutePool {
+		parts = append(parts, "pool:"+routePool)
+	}
+	if model.NormalizeAggregateGroupRouteAffinityScope(scope) == model.AggregateGroupRouteAffinityScopeModel && strings.TrimSpace(modelName) != "" {
+		parts = append(parts, "model:"+strings.TrimSpace(modelName))
+	}
+	return strings.Join(parts, "\n")
+}
+
+func buildAggregateRouteAffinityRequestKey(c *gin.Context, aggregateGroup string, routePool string, modelName string, strategy string, scope string) string {
 	for _, source := range getAggregateRouteAffinitySourcesFromContext(c) {
 		value := extractChannelAffinityValue(c, operation_setting.ChannelAffinityKeySource{
 			Type: source.Type,
@@ -136,15 +155,12 @@ func buildAggregateRouteAffinityRequestKey(c *gin.Context, aggregateGroup string
 		setAggregateRouteAffinitySourceContext(c, strategy, source, value)
 		sourceID := routeAffinitySourceIdentity(source)
 		fp := affinityFingerprint(value)
-		if routePool != "" && routePool != aggregateClusterDefaultRoutePool {
-			return fmt.Sprintf("%s\npool:%s\nrequest:%s\nfp:%s", aggregateGroup, routePool, sourceID, fp)
-		}
-		return fmt.Sprintf("%s\nrequest:%s\nfp:%s", aggregateGroup, sourceID, fp)
+		return fmt.Sprintf("%s\nrequest:%s\nfp:%s", formatAggregateRouteAffinityKeyPrefix(aggregateGroup, routePool, modelName, scope), sourceID, fp)
 	}
 	return ""
 }
 
-func buildAggregateRouteAffinityPlatformUserKey(c *gin.Context, aggregateGroup string, routePool string, strategy string) string {
+func buildAggregateRouteAffinityPlatformUserKey(c *gin.Context, aggregateGroup string, routePool string, modelName string, strategy string, scope string) string {
 	userID := common.GetContextKeyInt(c, constant.ContextKeyUserId)
 	if userID <= 0 {
 		return ""
@@ -153,35 +169,33 @@ func buildAggregateRouteAffinityPlatformUserKey(c *gin.Context, aggregateGroup s
 		Type: "platform_user",
 		Key:  string(constant.ContextKeyUserId),
 	}, fmt.Sprintf("%d", userID))
-	if routePool != "" && routePool != aggregateClusterDefaultRoutePool {
-		return fmt.Sprintf("%s\npool:%s\nuser:%d", aggregateGroup, routePool, userID)
-	}
-	return fmt.Sprintf("%s\nuser:%d", aggregateGroup, userID)
+	return fmt.Sprintf("%s\nuser:%d", formatAggregateRouteAffinityKeyPrefix(aggregateGroup, routePool, modelName, scope), userID)
 }
 
-func buildAggregateRouteAffinityKeyForPool(c *gin.Context, aggregateGroup string, routePool string) string {
+func buildAggregateRouteAffinityKeyForPool(c *gin.Context, modelName string, aggregateGroup string, routePool string) string {
 	if c == nil || strings.TrimSpace(aggregateGroup) == "" {
 		return ""
 	}
 	routePool = strings.TrimSpace(routePool)
 	strategy := getAggregateRouteAffinityStrategyFromContext(c)
+	scope := getAggregateRouteAffinityScopeFromContext(c)
 	switch strategy {
 	case model.AggregateGroupRouteAffinityStrategyOff:
 		clearAggregateRouteAffinitySourceContext(c, strategy)
 		return ""
 	case model.AggregateGroupRouteAffinityStrategyRequestOnly:
-		key := buildAggregateRouteAffinityRequestKey(c, aggregateGroup, routePool, strategy)
+		key := buildAggregateRouteAffinityRequestKey(c, aggregateGroup, routePool, modelName, strategy, scope)
 		if key == "" {
 			clearAggregateRouteAffinitySourceContext(c, strategy)
 		}
 		return key
 	case model.AggregateGroupRouteAffinityStrategyRequestFirst:
-		if key := buildAggregateRouteAffinityRequestKey(c, aggregateGroup, routePool, strategy); key != "" {
+		if key := buildAggregateRouteAffinityRequestKey(c, aggregateGroup, routePool, modelName, strategy, scope); key != "" {
 			return key
 		}
-		return buildAggregateRouteAffinityPlatformUserKey(c, aggregateGroup, routePool, strategy)
+		return buildAggregateRouteAffinityPlatformUserKey(c, aggregateGroup, routePool, modelName, strategy, scope)
 	default:
-		return buildAggregateRouteAffinityPlatformUserKey(c, aggregateGroup, routePool, strategy)
+		return buildAggregateRouteAffinityPlatformUserKey(c, aggregateGroup, routePool, modelName, strategy, scope)
 	}
 }
 
@@ -190,7 +204,7 @@ func GetAggregateRouteAffinity(c *gin.Context, modelName string, aggregateGroup 
 }
 
 func GetAggregateRouteAffinityForPool(c *gin.Context, modelName string, aggregateGroup string, routePool string) (string, bool) {
-	key := buildAggregateRouteAffinityKeyForPool(c, aggregateGroup, routePool)
+	key := buildAggregateRouteAffinityKeyForPool(c, modelName, aggregateGroup, routePool)
 	if key == "" {
 		return "", false
 	}
@@ -222,7 +236,7 @@ func RecordAggregateRouteAffinityForPool(c *gin.Context, modelName string, aggre
 	if routeGroup == "" {
 		return
 	}
-	key := buildAggregateRouteAffinityKeyForPool(c, aggregateGroup, routePool)
+	key := buildAggregateRouteAffinityKeyForPool(c, modelName, aggregateGroup, routePool)
 	if key == "" {
 		return
 	}

@@ -44,6 +44,7 @@ func TestAggregateGroupVisibleUserGroupsRoundTrip(t *testing.T) {
 	require.Equal(t, AggregateGroupRoutingModeFailover, loaded.GetRoutingMode())
 	require.Equal(t, AggregateGroupClusterAffinityTTLDefaultSeconds, loaded.GetClusterAffinityTTLSeconds())
 	require.Equal(t, AggregateGroupRouteAffinityStrategyPlatformUser, loaded.GetRouteAffinityStrategy())
+	require.Equal(t, AggregateGroupRouteAffinityScopeShared, loaded.GetRouteAffinityScope())
 	require.Len(t, loaded.Targets, 2)
 	require.Equal(t, "default", loaded.Targets[0].RealGroup)
 	require.Equal(t, AggregateGroupTargetDefaultWeight, loaded.Targets[0].GetWeight())
@@ -63,6 +64,7 @@ func TestAggregateGroupRouteAffinityKeySourcesRoundTrip(t *testing.T) {
 		GroupRatio:            1,
 		RoutingMode:           AggregateGroupRoutingModeCluster,
 		RouteAffinityStrategy: AggregateGroupRouteAffinityStrategyRequestOnly,
+		RouteAffinityScope:    AggregateGroupRouteAffinityScopeModel,
 		RecoveryEnabled:       true,
 	}
 	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
@@ -77,6 +79,7 @@ func TestAggregateGroupRouteAffinityKeySourcesRoundTrip(t *testing.T) {
 	loaded, err := GetAggregateGroupByName("enterprise-request-affinity", true)
 	require.NoError(t, err)
 	require.Equal(t, AggregateGroupRouteAffinityStrategyRequestOnly, loaded.GetRouteAffinityStrategy())
+	require.Equal(t, AggregateGroupRouteAffinityScopeModel, loaded.GetRouteAffinityScope())
 	sources := loaded.GetRouteAffinityKeySources()
 	require.Len(t, sources, 2)
 	require.Equal(t, "header", sources[0].Type)

@@ -475,6 +475,10 @@ func ValidateAggregateGroupConfig(group *model.AggregateGroup, visibleUserGroups
 		return errors.New("聚合分组亲和策略无效")
 	}
 	group.RouteAffinityStrategy = model.NormalizeAggregateGroupRouteAffinityStrategy(group.RouteAffinityStrategy)
+	if !model.IsValidAggregateGroupRouteAffinityScope(group.RouteAffinityScope) {
+		return errors.New("聚合分组亲和范围无效")
+	}
+	group.RouteAffinityScope = model.NormalizeAggregateGroupRouteAffinityScope(group.RouteAffinityScope)
 	if group.RecoveryEnabled && group.RecoveryIntervalSeconds <= 0 {
 		return errors.New("恢复间隔必须大于 0")
 	}

@@ -58,6 +58,7 @@ const (
 	ContextKeyAggregateRecoveryInterval        ContextKey = "aggregate_recovery_interval_seconds"
 	ContextKeyAggregateClusterAffinityTTL      ContextKey = "aggregate_cluster_affinity_ttl_seconds"
 	ContextKeyAggregateRouteAffinityStrategy   ContextKey = "aggregate_route_affinity_strategy"
+	ContextKeyAggregateRouteAffinityScope      ContextKey = "aggregate_route_affinity_scope"
 	ContextKeyAggregateRouteAffinitySources    ContextKey = "aggregate_route_affinity_sources"
 	ContextKeyAggregateRouteAffinityHit        ContextKey = "aggregate_route_affinity_hit"
 	ContextKeyAggregateRouteAffinitySourceType ContextKey = "aggregate_route_affinity_source_type"

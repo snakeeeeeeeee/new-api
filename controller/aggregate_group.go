@@ -31,6 +31,7 @@ type aggregateGroupUpsertRequest struct {
 	RecoveryIntervalSeconds   int                                          `json:"recovery_interval_seconds"`
 	ClusterAffinityTTLSeconds int                                          `json:"cluster_affinity_ttl_seconds"`
 	RouteAffinityStrategy     string                                       `json:"route_affinity_strategy"`
+	RouteAffinityScope        string                                       `json:"route_affinity_scope"`
 	RouteAffinityKeySources   []model.AggregateGroupRouteAffinityKeySource `json:"route_affinity_key_sources"`
 	RetryStatusCodes          string                                       `json:"retry_status_codes"`
 	VisibleUserGroups         []string                                     `json:"visible_user_groups"`
@@ -52,6 +53,7 @@ type aggregateGroupResponse struct {
 	RecoveryIntervalSeconds   int                                          `json:"recovery_interval_seconds"`
 	ClusterAffinityTTLSeconds int                                          `json:"cluster_affinity_ttl_seconds"`
 	RouteAffinityStrategy     string                                       `json:"route_affinity_strategy"`
+	RouteAffinityScope        string                                       `json:"route_affinity_scope"`
 	RouteAffinityKeySources   []model.AggregateGroupRouteAffinityKeySource `json:"route_affinity_key_sources"`
 	RetryStatusCodes          string                                       `json:"retry_status_codes"`
 	VisibleUserGroups         []string                                     `json:"visible_user_groups"`
@@ -98,6 +100,7 @@ func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupRes
 		RecoveryIntervalSeconds:   group.RecoveryIntervalSeconds,
 		ClusterAffinityTTLSeconds: group.GetClusterAffinityTTLSeconds(),
 		RouteAffinityStrategy:     group.GetRouteAffinityStrategy(),
+		RouteAffinityScope:        group.GetRouteAffinityScope(),
 		RouteAffinityKeySources:   group.GetRouteAffinityKeySources(),
 		RetryStatusCodes:          group.RetryStatusCodes,
 		VisibleUserGroups:         group.GetVisibleUserGroups(),
@@ -236,6 +239,7 @@ func CreateAggregateGroup(c *gin.Context) {
 		RecoveryIntervalSeconds:   req.RecoveryIntervalSeconds,
 		ClusterAffinityTTLSeconds: req.ClusterAffinityTTLSeconds,
 		RouteAffinityStrategy:     req.RouteAffinityStrategy,
+		RouteAffinityScope:        req.RouteAffinityScope,
 		RetryStatusCodes:          req.RetryStatusCodes,
 	}
 	targetGroupNames := buildAggregateTargetNames(req.Targets)
@@ -329,6 +333,7 @@ func UpdateAggregateGroup(c *gin.Context) {
 		RecoveryIntervalSeconds:   req.RecoveryIntervalSeconds,
 		ClusterAffinityTTLSeconds: req.ClusterAffinityTTLSeconds,
 		RouteAffinityStrategy:     req.RouteAffinityStrategy,
+		RouteAffinityScope:        req.RouteAffinityScope,
 		RetryStatusCodes:          req.RetryStatusCodes,
 	}
 	targetGroupNames := buildAggregateTargetNames(req.Targets)

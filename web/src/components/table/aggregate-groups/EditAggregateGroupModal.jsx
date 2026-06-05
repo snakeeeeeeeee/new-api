@@ -77,6 +77,17 @@ const routeAffinityStrategyOptions = [
   },
 ];
 
+const routeAffinityScopeOptions = [
+  {
+    label: '跨模型共享（兼容旧逻辑）',
+    value: 'shared',
+  },
+  {
+    label: '按模型隔离（多人共享 Key 推荐）',
+    value: 'model',
+  },
+];
+
 const routeAffinitySourceTypes = [
   { label: 'Header', value: 'header' },
   { label: 'Query', value: 'query' },
@@ -180,6 +191,7 @@ const defaultInputs = {
   recovery_interval_seconds: 300,
   cluster_affinity_ttl_seconds: 300,
   route_affinity_strategy: 'platform_user',
+  route_affinity_scope: 'shared',
   route_affinity_key_sources: defaultRouteAffinityKeySources(),
   retry_status_codes: '',
   visible_user_groups: [],
@@ -248,6 +260,7 @@ const EditAggregateGroupModal = ({
               : data.cluster_affinity_ttl_seconds,
           route_affinity_strategy:
             data.route_affinity_strategy || 'platform_user',
+          route_affinity_scope: data.route_affinity_scope || 'shared',
           route_affinity_key_sources: normalizeRouteAffinityKeySources(
             data.route_affinity_key_sources,
           ),
@@ -619,6 +632,28 @@ const EditAggregateGroupModal = ({
             style={{ width: isMobile ? '100%' : 260 }}
           />
         </div>
+        <div className='mt-3 flex items-start justify-between gap-3 flex-wrap'>
+          <div>
+            <Text strong>{t('亲和范围')}</Text>
+            <div className='mt-1 text-xs text-gray-500'>
+              {t(
+                '控制同一用户或请求标识在不同模型之间是否共享同一个子分组亲和结果。',
+              )}
+            </div>
+          </div>
+          <Select
+            value={inputs.route_affinity_scope || 'shared'}
+            optionList={routeAffinityScopeOptions.map((option) => ({
+              ...option,
+              label: t(option.label),
+            }))}
+            onChange={(value) =>
+              updateField('route_affinity_scope', value || 'shared')
+            }
+            disabled={strategy === 'off'}
+            style={{ width: isMobile ? '100%' : 260 }}
+          />
+        </div>
         <div className='mt-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600'>
           {strategy === 'platform_user' &&
             t('按平台账号 ID 亲和，完全兼容旧逻辑；一个 token 被多人共用时会被视为同一个账号。')}
@@ -628,6 +663,11 @@ const EditAggregateGroupModal = ({
             t('只使用请求里的用户/会话标识；识别不到时不会强行粘住，继续按权重选择。')}
           {strategy === 'off' &&
             t('关闭子分组亲和，每次都按当前候选和权重选择。')}
+          {strategy !== 'off' && inputs.route_affinity_scope === 'model' && (
+            <div className='mt-1'>
+              {t('当前按模型隔离：同一标识请求不同模型时会分别选择并固定子分组。')}
+            </div>
+          )}
         </div>
 
         {requestMode && (
@@ -1187,6 +1227,7 @@ const EditAggregateGroupModal = ({
         ),
         route_affinity_strategy:
           inputs.route_affinity_strategy || 'platform_user',
+        route_affinity_scope: inputs.route_affinity_scope || 'shared',
         route_affinity_key_sources: normalizeRouteAffinityKeySources(
           inputs.route_affinity_key_sources,
         ),

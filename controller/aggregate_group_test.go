@@ -132,6 +132,7 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 		"recovery_interval_seconds":300,
 		"cluster_affinity_ttl_seconds":120,
 		"route_affinity_strategy":"request_only",
+		"route_affinity_scope":"model",
 		"route_affinity_key_sources":[
 			{"type":"header","key":"X-Aggregate-Affinity-Key"},
 			{"type":"gjson","path":"metadata.user_id"}
@@ -186,6 +187,7 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"routing_mode":"cluster"`)
 	require.Contains(t, string(listResp.Data), `"cluster_affinity_ttl_seconds":120`)
 	require.Contains(t, string(listResp.Data), `"route_affinity_strategy":"request_only"`)
+	require.Contains(t, string(listResp.Data), `"route_affinity_scope":"model"`)
 	require.Contains(t, string(listResp.Data), `"route_affinity_key_sources"`)
 	require.Contains(t, string(listResp.Data), `"X-Aggregate-Affinity-Key"`)
 	require.Contains(t, string(listResp.Data), `"weight":150`)
@@ -196,6 +198,34 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"smart_strategy_config"`)
 	require.Contains(t, string(listResp.Data), `"failure_rate_threshold_percent":8`)
 	require.Contains(t, string(listResp.Data), `"cluster_degraded_weight_percent":35`)
+}
+
+func TestCreateAggregateGroupRejectsInvalidRouteAffinityScope(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+
+	payload := []byte(`{
+		"name":"enterprise-stable",
+		"display_name":"企业稳定组",
+		"status":1,
+		"group_ratio":1.5,
+		"routing_mode":"cluster",
+		"route_affinity_scope":"invalid",
+		"recovery_enabled":true,
+		"recovery_interval_seconds":300,
+		"visible_user_groups":["vip"],
+		"targets":[{"real_group":"default","weight":100}]
+	}`)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/aggregate_group", bytes.NewReader(payload))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	CreateAggregateGroup(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "亲和范围")
 }
 
 func TestUpdateUserAggregateGroupRatioOverridesPreservesUserSetting(t *testing.T) {

@@ -20,6 +20,9 @@ const (
 	AggregateGroupRouteAffinityStrategyRequestOnly  = "request_only"
 	AggregateGroupRouteAffinityStrategyOff          = "off"
 
+	AggregateGroupRouteAffinityScopeShared = "shared"
+	AggregateGroupRouteAffinityScopeModel  = "model"
+
 	AggregateGroupTargetDefaultWeight              = 100
 	AggregateGroupClusterAffinityTTLDefaultSeconds = 300
 
@@ -40,6 +43,7 @@ type AggregateGroup struct {
 	RecoveryIntervalSeconds   int                    `json:"recovery_interval_seconds" gorm:"default:300"`
 	ClusterAffinityTTLSeconds int                    `json:"cluster_affinity_ttl_seconds" gorm:"default:300"`
 	RouteAffinityStrategy     string                 `json:"route_affinity_strategy" gorm:"size:32;default:platform_user"`
+	RouteAffinityScope        string                 `json:"route_affinity_scope" gorm:"size:32;default:shared"`
 	RouteAffinityKeySources   string                 `json:"-" gorm:"type:text"`
 	RetryStatusCodes          string                 `json:"retry_status_codes" gorm:"type:text"`
 	VisibleUserGroups         string                 `json:"-" gorm:"type:text"`
@@ -148,6 +152,29 @@ func (g *AggregateGroup) GetRouteAffinityStrategy() string {
 		return AggregateGroupRouteAffinityStrategyPlatformUser
 	}
 	return NormalizeAggregateGroupRouteAffinityStrategy(g.RouteAffinityStrategy)
+}
+
+func NormalizeAggregateGroupRouteAffinityScope(scope string) string {
+	switch strings.TrimSpace(scope) {
+	case AggregateGroupRouteAffinityScopeModel:
+		return AggregateGroupRouteAffinityScopeModel
+	default:
+		return AggregateGroupRouteAffinityScopeShared
+	}
+}
+
+func IsValidAggregateGroupRouteAffinityScope(scope string) bool {
+	scope = strings.TrimSpace(scope)
+	return scope == "" ||
+		scope == AggregateGroupRouteAffinityScopeShared ||
+		scope == AggregateGroupRouteAffinityScopeModel
+}
+
+func (g *AggregateGroup) GetRouteAffinityScope() string {
+	if g == nil {
+		return AggregateGroupRouteAffinityScopeShared
+	}
+	return NormalizeAggregateGroupRouteAffinityScope(g.RouteAffinityScope)
 }
 
 func (t *AggregateGroupTarget) GetWeight() int {
@@ -366,6 +393,7 @@ func (g *AggregateGroup) UpdateWithTargets(targets []AggregateGroupTarget) error
 			"recovery_interval_seconds":    g.RecoveryIntervalSeconds,
 			"cluster_affinity_ttl_seconds": g.ClusterAffinityTTLSeconds,
 			"route_affinity_strategy":      g.RouteAffinityStrategy,
+			"route_affinity_scope":         g.RouteAffinityScope,
 			"route_affinity_key_sources":   g.RouteAffinityKeySources,
 			"retry_status_codes":           g.RetryStatusCodes,
 			"visible_user_groups":          g.VisibleUserGroups,

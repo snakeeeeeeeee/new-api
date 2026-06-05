@@ -219,6 +219,7 @@ func selectAggregateGroupChannel(param *RetryParam, aggregateGroup *model.Aggreg
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRecoveryInterval, aggregateGroup.RecoveryIntervalSeconds)
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateClusterAffinityTTL, aggregateGroup.GetClusterAffinityTTLSeconds())
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRouteAffinityStrategy, aggregateGroup.GetRouteAffinityStrategy())
+	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRouteAffinityScope, aggregateGroup.GetRouteAffinityScope())
 	common.SetContextKey(param.Ctx, constant.ContextKeyAggregateRouteAffinitySources, aggregateGroup.GetRouteAffinityKeySources())
 
 	if routingMode == model.AggregateGroupRoutingModeCluster {
@@ -476,6 +477,9 @@ func AppendAggregateGroupAdminInfo(c *gin.Context, adminInfo map[string]interfac
 	if strategy := common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityStrategy); strategy != "" {
 		affinityInfo := map[string]interface{}{
 			"strategy": strategy,
+		}
+		if scope := common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityScope); scope != "" {
+			affinityInfo["scope"] = scope
 		}
 		if sourceType := common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinitySourceType); sourceType != "" {
 			affinityInfo["source_type"] = sourceType

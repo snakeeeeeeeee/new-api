@@ -1,3 +1,34 @@
+# Task Plan: 聚合子分组亲和按模型隔离
+
+## Goal
+为聚合分组新增 `route_affinity_scope`，控制 Cluster 亲和缓存是否跨模型共享；默认 `shared` 保持旧逻辑，新增 `model` 用于同一用户/请求标识在不同模型下分别选择和固定子分组。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+- [x] Phase 1: 后端字段、API、保存校验和 admin info
+- [x] Phase 2: 亲和缓存 key 按 scope 生成，默认保持旧 key 格式
+- [x] Phase 3: 前端编辑表单增加亲和范围选择并补 i18n key
+- [x] Phase 4: 后端单测、前端构建和 diff 检查
+
+## Verification
+- Focused service affinity regression passed:
+  - `go test ./service -run 'AggregateCluster(ModelAffinityScope|RequestFirstModelScope|ClaudeCLIPoolModelAffinityScope|RouteAffinityFollowsUserAcrossSupportedModels|RouteAffinitySkipsUserRouteWhenModelUnsupported)|AggregateRouteAffinityTTL|AggregateClusterRequestOnlyAffinity|AggregateClusterRequestFirstFallsBack|AggregateClusterCustomHeaderRouteAffinity' -count=1`
+- `go test ./model ./service ./controller -count=1`: passed.
+- `go test ./model ./service ./controller ./middleware -count=1`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `git diff --check`: passed.
+
+## Key Constraints
+- 空值或旧数据归一化为 `shared`，不改变老聚合组路由行为。
+- `shared` scope 保持旧亲和 key 格式，不包含模型。
+- `model` scope 在亲和 key 中加入当前请求模型；route pool 维度仍保持原有隔离。
+- `off` 亲和策略下不使用亲和，scope 不参与路由。
+- 子分组 RPM 软限制仍按 `aggregate_group + real_group` 总量计算，不随模型拆分。
+
+---
+
 # Task Plan: 聚合子分组软 RPM 总量限制
 
 ## Goal

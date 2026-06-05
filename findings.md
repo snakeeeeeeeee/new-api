@@ -1,3 +1,22 @@
+# 聚合子分组亲和按模型隔离
+
+## Requirements
+- 聚合分组支持 `route_affinity_scope`，可选 `shared` / `model`。
+- 默认 `shared` 兼容旧行为：同一用户或请求标识跨模型共享亲和子分组。
+- `model` 下同一用户或请求标识按请求模型分别记录亲和。
+- 只影响 Cluster 亲和；Failover 顺序逻辑不变。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| `shared` 保持旧 key 格式 | 老聚合组和老缓存语义不变，避免上线后跨模型粘性改变。 |
+| `model` 仅在非空模型名时追加 `model:<model>` key 段 | 符合请求模型隔离需求，同时避免空模型生成异常维度。 |
+| scope 从聚合组写入 Gin context | 亲和缓存读取和记录都复用现有上下文驱动策略，不扩散 AggregateGroup 参数。 |
+| admin info 输出 `aggregate_route_affinity.scope` | 便于从运行日志确认是否进入模型隔离范围。 |
+| 前端关闭亲和时禁用“亲和范围”选择 | 避免用户误解 scope 在 `off` 下仍会生效。 |
+
+---
+
 # 聚合子分组软 RPM 总量限制
 
 ## Requirements
