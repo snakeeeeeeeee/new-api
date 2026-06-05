@@ -131,6 +131,13 @@ func NormalizeClaudeRequestCompatJSON(jsonData []byte, info *RelayInfo) ([]byte,
 	if apiErr != nil {
 		return nil, apiErr
 	}
+	if normalizeOpenAIStyleClaudeRawMessages(payload, info) {
+		normalizedJSON, err := common.Marshal(payload)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
+		}
+		jsonData = normalizedJSON
+	}
 	if err := applyRawClaudeCompatValidations(payload, info); err != nil {
 		return nil, newClaudeCompatAPIErrorWithStatus(err.param, err.code, err.message, err.status)
 	}
@@ -1126,18 +1133,14 @@ func normalizeClaudeOpusSampling(request *dto.ClaudeRequest, modelName string) *
 		}
 	}
 	if request.TopP != nil {
-		if isFloatDefault(*request.TopP, 1.0) || isFloatDefault(*request.TopP, 0) {
+		if isClaudeOpusCompatibleTopP(*request.TopP) {
 			request.TopP = nil
 		} else {
 			return unsupportedSamplingViolation("top_p", *request.TopP)
 		}
 	}
 	if request.TopK != nil {
-		if *request.TopK == 0 || *request.TopK == 250 {
-			request.TopK = nil
-		} else {
-			return unsupportedSamplingViolation("top_k", *request.TopK)
-		}
+		return unsupportedSamplingViolation("top_k", *request.TopK)
 	}
 	return nil
 }
@@ -1157,6 +1160,10 @@ func unsupportedSamplingViolation(param string, value any) *claudeCompatViolatio
 
 func isFloatDefault(value float64, expected float64) bool {
 	return math.Abs(value-expected) < 0.0000001
+}
+
+func isClaudeOpusCompatibleTopP(value float64) bool {
+	return value >= 0.99 && value <= 1.0
 }
 
 func isClaudeOpus47OrLater(model string) bool {
@@ -1490,6 +1497,238 @@ func anyToType(data any, target any) error {
 		return err
 	}
 	return common.Unmarshal(body, target)
+}
+
+func normalizeOpenAIStyleClaudeRawMessages(payload map[string]any, info *RelayInfo) bool {
+	if !shouldNormalizeOpenAIStyleClaudeRawMessages(info) {
+		return false
+	}
+	settings := model_setting.GetClaudeSettings()
+	if !settings.PromoteLeadingSystemRoleEnabled && !settings.MergeAdjacentSameRoleEnabled {
+		return false
+	}
+	if payload == nil {
+		return false
+	}
+	messages, ok := payload["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		return false
+	}
+	hasOpenAIOnlyRole := false
+	for _, value := range messages {
+		message, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		role := strings.TrimSpace(common.Interface2String(message["role"]))
+		if role == "developer" || role == "system" {
+			hasOpenAIOnlyRole = true
+			break
+		}
+	}
+	if !hasOpenAIOnlyRole {
+		return false
+	}
+
+	normalized := make([]any, 0, len(messages))
+	mergeBarriers := make([]bool, 0, len(messages))
+	systemBlocks := make([]any, 0)
+	leadingSystemDone := !settings.PromoteLeadingSystemRoleEnabled
+	changed := false
+	for _, value := range messages {
+		message, ok := value.(map[string]any)
+		if !ok {
+			normalized = append(normalized, value)
+			mergeBarriers = append(mergeBarriers, true)
+			leadingSystemDone = true
+			continue
+		}
+		role := strings.TrimSpace(common.Interface2String(message["role"]))
+		if role == "developer" {
+			message = cloneClaudeRawMessageMap(message)
+			message["role"] = "system"
+			role = "system"
+			changed = true
+		}
+		if !leadingSystemDone && role == "system" {
+			systemBlocks = append(systemBlocks, claudeRawSystemBlocksFromMessage(message)...)
+			changed = true
+			continue
+		}
+		leadingSystemDone = true
+		mergeBarrier := false
+		if role == "system" {
+			message = cloneClaudeRawMessageMap(message)
+			message["role"] = "user"
+			message["content"] = prefixClaudeRawSystemContent(message["content"])
+			mergeBarrier = true
+			changed = true
+		}
+		normalized = append(normalized, message)
+		mergeBarriers = append(mergeBarriers, mergeBarrier)
+	}
+	if len(systemBlocks) > 0 {
+		payload["system"] = appendClaudeRawSystemBlocks(payload["system"], systemBlocks)
+	}
+	if settings.MergeAdjacentSameRoleEnabled {
+		merged, mergedChanged := mergeClaudeRawAdjacentMessages(normalized, mergeBarriers)
+		if mergedChanged {
+			normalized = merged
+			changed = true
+		}
+	}
+	if changed {
+		payload["messages"] = normalized
+	}
+	return changed
+}
+
+func shouldNormalizeOpenAIStyleClaudeRawMessages(info *RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	if info.RelayFormat != types.RelayFormatOpenAI {
+		return false
+	}
+	for _, format := range info.RequestConversionChain {
+		if format == types.RelayFormatClaude {
+			return true
+		}
+	}
+	return info.FinalRequestRelayFormat == types.RelayFormatClaude
+}
+
+func cloneClaudeRawMessageMap(message map[string]any) map[string]any {
+	cloned := make(map[string]any, len(message))
+	for key, value := range message {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func claudeRawSystemBlocksFromMessage(message map[string]any) []any {
+	content := message["content"]
+	if text, ok := content.(string); ok {
+		return []any{map[string]any{"type": "text", "text": text}}
+	}
+	blocks, ok := content.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]any, 0, len(blocks))
+	for _, value := range blocks {
+		block, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(common.Interface2String(block["type"])) != "text" {
+			continue
+		}
+		result = append(result, block)
+	}
+	return result
+}
+
+func appendClaudeRawSystemBlocks(existing any, blocks []any) any {
+	if len(blocks) == 0 {
+		return existing
+	}
+	if existing == nil {
+		return blocks
+	}
+	if text, ok := existing.(string); ok {
+		result := []any{map[string]any{"type": "text", "text": text}}
+		return append(result, blocks...)
+	}
+	if existingBlocks, ok := existing.([]any); ok {
+		result := make([]any, 0, len(existingBlocks)+len(blocks))
+		result = append(result, existingBlocks...)
+		result = append(result, blocks...)
+		return result
+	}
+	return existing
+}
+
+func prefixClaudeRawSystemContent(content any) any {
+	if text, ok := content.(string); ok {
+		return "system: " + text
+	}
+	blocks, ok := content.([]any)
+	if !ok {
+		return content
+	}
+	result := make([]any, 0, len(blocks)+1)
+	for _, value := range blocks {
+		block, ok := value.(map[string]any)
+		if !ok || strings.TrimSpace(common.Interface2String(block["type"])) != "text" {
+			result = append(result, value)
+			continue
+		}
+		cloned := make(map[string]any, len(block))
+		for key, blockValue := range block {
+			cloned[key] = blockValue
+		}
+		cloned["text"] = "system: " + common.Interface2String(block["text"])
+		result = append(result, cloned)
+	}
+	return result
+}
+
+func mergeClaudeRawAdjacentMessages(messages []any, barriers []bool) ([]any, bool) {
+	if len(messages) < 2 {
+		return messages, false
+	}
+	merged := make([]any, 0, len(messages))
+	mergedBarriers := make([]bool, 0, len(messages))
+	changed := false
+	for index, value := range messages {
+		barrier := index < len(barriers) && barriers[index]
+		message, ok := value.(map[string]any)
+		if !ok || len(merged) == 0 {
+			merged = append(merged, value)
+			mergedBarriers = append(mergedBarriers, barrier)
+			continue
+		}
+		last, ok := merged[len(merged)-1].(map[string]any)
+		if !ok {
+			merged = append(merged, value)
+			mergedBarriers = append(mergedBarriers, barrier)
+			continue
+		}
+		role := strings.TrimSpace(common.Interface2String(message["role"]))
+		if barrier || mergedBarriers[len(mergedBarriers)-1] || !canMergeClaudeAdjacentRole(strings.TrimSpace(common.Interface2String(last["role"])), role) {
+			merged = append(merged, value)
+			mergedBarriers = append(mergedBarriers, barrier)
+			continue
+		}
+		last["content"] = mergeClaudeRawMessageContent(last["content"], message["content"])
+		changed = true
+	}
+	return merged, changed
+}
+
+func mergeClaudeRawMessageContent(left any, right any) any {
+	leftText, leftIsText := left.(string)
+	rightText, rightIsText := right.(string)
+	if leftIsText && rightIsText {
+		return strings.TrimSpace(leftText + "\n" + rightText)
+	}
+	leftBlocks := claudeRawContentBlocks(left)
+	rightBlocks := claudeRawContentBlocks(right)
+	return append(leftBlocks, rightBlocks...)
+}
+
+func claudeRawContentBlocks(content any) []any {
+	if content == nil {
+		return nil
+	}
+	if text, ok := content.(string); ok {
+		return []any{map[string]any{"type": "text", "text": text}}
+	}
+	if blocks, ok := content.([]any); ok {
+		return blocks
+	}
+	return []any{map[string]any{"type": "text", "text": common.Interface2String(content)}}
 }
 
 func MergeClaudeAdjacentMessages(messages []dto.ClaudeMessage) []dto.ClaudeMessage {

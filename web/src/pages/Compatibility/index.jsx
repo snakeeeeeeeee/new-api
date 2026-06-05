@@ -236,7 +236,7 @@ export default function CompatibilityPage() {
       {
         key: 'claude.drop_default_sampling_for_opus_enabled',
         label: 'Opus 默认采样参数清理',
-        extra: '默认 temperature/top_p/top_k 删除，非默认值返回 400。',
+        extra: 'Opus 4.7+ 删除官方兼容的 temperature=1、top_p>=0.99；top_k 和非默认采样值返回 400。',
       },
       {
         key: 'claude.validate_output_effort_enabled',

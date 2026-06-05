@@ -9,6 +9,7 @@ import (
 	commonpkg "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -209,17 +210,27 @@ func TestNormalizeClaudeRequestCompatOpusSampling(t *testing.T) {
 	defaultReq := baseClaudeCompatRequest("claude-opus-4-7")
 	defaultReq.Temperature = commonpkg.GetPointer(1.0)
 	defaultReq.TopP = commonpkg.GetPointer(1.0)
-	defaultReq.TopK = commonpkg.GetPointer(250)
 	require.Nil(t, NormalizeClaudeRequestCompat(defaultReq, nil))
 	require.Nil(t, defaultReq.Temperature)
 	require.Nil(t, defaultReq.TopP)
-	require.Nil(t, defaultReq.TopK)
+
+	compatibleTopPReq := baseClaudeCompatRequest("claude-opus-4-7")
+	compatibleTopPReq.TopP = commonpkg.GetPointer(0.99)
+	require.Nil(t, NormalizeClaudeRequestCompat(compatibleTopPReq, nil))
+	require.Nil(t, compatibleTopPReq.TopP)
 
 	badReq := baseClaudeCompatRequest("claude-opus-4-7")
 	badReq.Temperature = commonpkg.GetPointer(0.2)
 	err := NormalizeClaudeRequestCompat(badReq, nil)
 	require.NotNil(t, err)
 	require.Equal(t, "temperature", err.ToOpenAIError().Param)
+	require.Equal(t, ClaudeCompatCodeUnsupportedSamplingParameter, err.ToOpenAIError().Code)
+
+	topKReq := baseClaudeCompatRequest("claude-opus-4-7")
+	topKReq.TopK = commonpkg.GetPointer(250)
+	err = NormalizeClaudeRequestCompat(topKReq, nil)
+	require.NotNil(t, err)
+	require.Equal(t, "top_k", err.ToOpenAIError().Param)
 	require.Equal(t, ClaudeCompatCodeUnsupportedSamplingParameter, err.ToOpenAIError().Code)
 
 	sonnetReq := baseClaudeCompatRequest("claude-sonnet-4-6")
@@ -336,6 +347,55 @@ func TestNormalizeClaudeRequestCompatJSONUsesRelayInfoModelWhenBodyOmitsModel(t 
 	_, err = NormalizeClaudeRequestCompatJSON(body, sonnetInfo)
 	require.NotNil(t, err)
 	require.Equal(t, ClaudeCompatCodeInvalidOutputEffort, err.ToOpenAIError().Code)
+}
+
+func TestNormalizeClaudeRequestCompatJSONPromotesOpenAIStyleLeadingSystemAndDeveloper(t *testing.T) {
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.PromoteLeadingSystemRoleEnabled = true
+		settings.MergeAdjacentSameRoleEnabled = true
+	})
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"system","content":"leading system"},{"role":"developer","content":"leading developer"},{"role":"user","content":"a"},{"role":"user","content":"b"},{"role":"assistant","content":"c"},{"role":"assistant","content":"d"},{"role":"user","content":"finish"}]}`)
+	info := &RelayInfo{
+		RelayFormat:            types.RelayFormatOpenAI,
+		RequestConversionChain: []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatClaude},
+	}
+
+	out, err := NormalizeClaudeRequestCompatJSON(body, info)
+	require.Nil(t, err)
+	var payload map[string]any
+	require.NoError(t, commonpkg.Unmarshal(out, &payload))
+	system, ok := payload["system"].([]any)
+	require.True(t, ok)
+	require.Len(t, system, 2)
+	require.Equal(t, "leading system", system[0].(map[string]any)["text"])
+	require.Equal(t, "leading developer", system[1].(map[string]any)["text"])
+	messages := payload["messages"].([]any)
+	require.Len(t, messages, 3)
+	require.Equal(t, "a\nb", messages[0].(map[string]any)["content"])
+	require.Equal(t, "c\nd", messages[1].(map[string]any)["content"])
+	require.Equal(t, "finish", messages[2].(map[string]any)["content"])
+}
+
+func TestNormalizeClaudeRequestCompatJSONKeepsMiddleSystemInHistory(t *testing.T) {
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.PromoteLeadingSystemRoleEnabled = true
+	})
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"user","content":"first"},{"role":"system","content":"middle system"},{"role":"user","content":"finish"}]}`)
+	info := &RelayInfo{
+		RelayFormat:            types.RelayFormatOpenAI,
+		RequestConversionChain: []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatClaude},
+	}
+
+	out, err := NormalizeClaudeRequestCompatJSON(body, info)
+	require.Nil(t, err)
+	var payload map[string]any
+	require.NoError(t, commonpkg.Unmarshal(out, &payload))
+	require.NotContains(t, payload, "system")
+	messages := payload["messages"].([]any)
+	require.Len(t, messages, 3)
+	middle := messages[1].(map[string]any)
+	require.Equal(t, "user", middle["role"])
+	require.Equal(t, "system: middle system", middle["content"])
 }
 
 func TestMergeClaudeAdjacentMessagesSkipsToolResults(t *testing.T) {
