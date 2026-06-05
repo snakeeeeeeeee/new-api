@@ -123,6 +123,28 @@ func ValidateClaudeRequestSchemaJSON(jsonData []byte, info *RelayInfo) *types.Ne
 	return nil
 }
 
+func NormalizeClaudeOpenAIStyleMessagesJSON(jsonData []byte) ([]byte, *types.NewAPIError) {
+	if len(jsonData) == 0 {
+		return jsonData, nil
+	}
+	payload, apiErr := parseClaudeRawPayload(jsonData)
+	if apiErr != nil {
+		return nil, apiErr
+	}
+	info := &RelayInfo{
+		RelayFormat:             types.RelayFormatOpenAI,
+		FinalRequestRelayFormat: types.RelayFormatClaude,
+	}
+	if !normalizeOpenAIStyleClaudeRawMessages(payload, info) {
+		return jsonData, nil
+	}
+	normalizedJSON, err := common.Marshal(payload)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
+	}
+	return normalizedJSON, nil
+}
+
 func NormalizeClaudeRequestCompatJSON(jsonData []byte, info *RelayInfo) ([]byte, *types.NewAPIError) {
 	if len(jsonData) == 0 {
 		return jsonData, nil

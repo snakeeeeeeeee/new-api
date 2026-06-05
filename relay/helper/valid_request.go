@@ -1,8 +1,10 @@
 package helper
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"strings"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/samber/lo"
 
@@ -237,6 +240,10 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	if err != nil {
 		return nil, err
 	}
+	requestBody, err = normalizeClaudeRequestBodyBeforeValidation(c, requestBody)
+	if err != nil {
+		return nil, err
+	}
 	if apiErr := relaycommon.ValidateClaudeRequestSchemaJSON(requestBody, nil); apiErr != nil {
 		return nil, apiErr
 	}
@@ -256,6 +263,32 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	//}
 
 	return textRequest, nil
+}
+
+func normalizeClaudeRequestBodyBeforeValidation(c *gin.Context, requestBody []byte) ([]byte, error) {
+	if !model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled {
+		return requestBody, nil
+	}
+	normalizedBody, apiErr := relaycommon.NormalizeClaudeOpenAIStyleMessagesJSON(requestBody)
+	if apiErr != nil {
+		return nil, apiErr
+	}
+	if bytes.Equal(normalizedBody, requestBody) {
+		return requestBody, nil
+	}
+	storage, err := common.CreateBodyStorage(normalizedBody)
+	if err != nil {
+		return nil, err
+	}
+	if oldStorage, exists := c.Get(common.KeyBodyStorage); exists && oldStorage != nil {
+		if bodyStorage, ok := oldStorage.(common.BodyStorage); ok {
+			_ = bodyStorage.Close()
+		}
+	}
+	c.Set(common.KeyBodyStorage, storage)
+	c.Request.Body = io.NopCloser(storage)
+	c.Request.ContentLength = int64(len(normalizedBody))
+	return normalizedBody, nil
 }
 
 func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenAIRequest, error) {
