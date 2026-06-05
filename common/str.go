@@ -176,6 +176,36 @@ func maskHostForPlainDomain(domain string) string {
 	return stars + "." + strings.Join(tail, ".")
 }
 
+func shouldMaskPlainDomain(domain string) bool {
+	jsonPathSegments := map[string]struct{}{
+		"cache_control": {},
+		"content":       {},
+		"input_schema":  {},
+		"metadata":      {},
+		"message":       {},
+		"messages":      {},
+		"output_config": {},
+		"properties":    {},
+		"source":        {},
+		"system":        {},
+		"thinking":      {},
+		"tool":          {},
+		"tools":         {},
+	}
+	if strings.Contains(domain, ".") {
+		parts := strings.Split(domain, ".")
+		for _, part := range parts {
+			if _, err := strconv.Atoi(part); err == nil {
+				return false
+			}
+			if _, ok := jsonPathSegments[part]; ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // MaskSensitiveInfo masks sensitive information like URLs, IPs, and domain names in a string
 // Example:
 // http://example.com -> http://***.com
@@ -241,6 +271,9 @@ func MaskSensitiveInfo(str string) string {
 
 	// Mask domain names without protocol (like openai.com, www.openai.com)
 	str = maskDomainPattern.ReplaceAllStringFunc(str, func(domain string) string {
+		if !shouldMaskPlainDomain(domain) {
+			return domain
+		}
 		return maskHostForPlainDomain(domain)
 	})
 
