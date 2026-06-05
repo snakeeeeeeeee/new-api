@@ -18,6 +18,25 @@
 
 ---
 
+# Session: 2026-06-05 兼容管理 v1
+
+## Scope
+- 实现 Claude P0 兼容预检/规范化、上游错误详情记录、管理员兼容管理 UI 与测试闭环。
+
+## Progress
+- 已确认历史未跟踪脚本/tmp/output 文件与历史计划文件，本轮不触碰无关文件，计划文件只追加记录。
+- 已新增 Claude 兼容开关默认值和 `relay_error_setting.log_upstream_error_detail_enabled` 默认开启。
+- 已新增 `relay/common/claude_compat.go`，覆盖 Claude base64 image MIME sniff、`max_tokens=0` 冲突校验、Opus 4.7+ 采样参数、effort、tool/name pattern、tool_result 顺序/配对校验和可选重排。
+- 已接入 Claude native、OpenAI→Claude、AWS Claude 和透传可选兼容路径；显式 `max_tokens=0` 不再被默认值覆盖。
+- 已调整 OpenAI→Claude system/developer 只提升开头连续段，相邻 user/assistant 合并由开关控制，tool role 不参与普通合并。
+- 已增强上游错误详情日志，只记录 `status_code/request_id/type/message/code/param` 安全字段。
+- 已新增兼容管理 UI `/console/compatibility`，管理员菜单接入，按通用/Claude/OpenAI/渠道分区聚合配置入口；原有设置入口保留。
+- 已补 Claude compat、OpenAI→Claude role、options 单测；补充 JSON 透传无 `model` 时回退上游模型、`RelayInfo.IsStream` 与 `max_tokens=0` 冲突、非标准图片 MIME 声明修正测试。
+- 验证通过：`go test ./relay/common ./relay/channel/claude ./service ./controller -count=1`、`go test ./...`、`cd web && bun run build`、`cd web && bun run i18n:extract`、`git diff --check`。
+- `cd web && bun run i18n:lint` 仍失败于 401 个既有硬编码字符串；新增 `src/pages/Compatibility/index.jsx` 不在失败列表。
+
+---
+
 # Session: 2026-06-02 邀请统计 v1.1
 
 ## Scope
@@ -968,3 +987,35 @@
   - `git diff --check`
 - Docker dev 验证：`new-api-dev` 已重建并健康；使用 mock Anthropic upstream 与临时 channel/token 验证关闭时上游仍收到 `properties:null,required:null` 并失败，开启时上游收到 `properties:{}` 且无 `required` 并成功，再关闭后恢复旧行为；测试后已删除临时 channel/token/user 和 mock 容器。
 - 注意：按原命令执行 `docker build -t new-api-local:dev .` 时 Docker 卡在基础镜像 metadata 解析；为完成 dev 验证，改用本地编译当前 Linux 二进制并覆盖现有 dev 运行时镜像后执行 compose 重建。
+
+---
+
+# Session: 兼容管理 v1
+
+## Scope
+- 实现管理员“兼容管理”入口、Claude P0 兼容修复、上游错误详情记录/透出与测试闭环。
+
+## Progress
+- 已完成后端配置扩展：新增 Claude 兼容开关与 `relay_error_setting.log_upstream_error_detail_enabled`。
+- 已完成 `relay/common` Claude compat 模块，并接入 Claude 原生、OpenAI->Claude、AWS/Bedrock 和透传可选路径。
+- 已完成本地 400 错误契约：OpenAI envelope 返回 `type/message/param/code`；Claude envelope 对本地 Claude 兼容错误返回 `type/message/param/code/status`。
+- 已完成上游错误详情解析和安全字段日志记录，400/422 对外透出仍由 relay error setting 控制。
+- 已完成前端 `/console/compatibility` 管理员页面和菜单，按“通用兼容 / Claude 兼容 / OpenAI 兼容 / 渠道兼容”分区展示。
+- Docker dev 验证：
+  - `docker compose -f docker-compose-dev.yml up -d --build new-api-dev` 成功，`new-api-dev` healthy。
+  - `/api/status` 通过。
+  - `/api/option/` 能读到新增 `claude.*` 与 `relay_error_setting.log_upstream_error_detail_enabled`。
+  - 使用临时 token/channel 指定 Anthropic 渠道验证 `max_tokens=0 + stream` 返回 HTTP 400，Claude error body 包含 `param=max_tokens`、`code=claude_zero_max_tokens_incompatible`、`status=400`。
+  - 使用 mock Anthropic upstream 验证 `image/jpg` + JPEG magic bytes 发往上游时被修正为 `image/jpeg`，`data` 未改写。
+  - 使用 mock upstream 400 验证透出开启时客户端能看到上游具体错误原因，日志记录 `status_code/request_id/type/message/code/param`。
+  - 测试后已删除临时 token/channel，恢复 root `access_token` 为 `NULL`。
+- 验证通过：
+  - `go test ./relay/common ./relay/channel/claude ./service ./controller -count=1`
+  - `go test ./...`
+  - `cd web && bun run build`
+  - `cd web && bun run i18n:extract`
+  - `git diff --check`
+  - Docker `/console/compatibility` 返回前端 HTML 入口，未登录浏览器访问重定向 `/login?expired=true`。
+
+## Known Existing Issue
+- `cd web && bun run i18n:lint` 仍失败于既有 401 个 hardcoded-string 问题；新增 `web/src/pages/Compatibility/index.jsx` 不在失败列表中。

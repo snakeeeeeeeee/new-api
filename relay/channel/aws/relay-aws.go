@@ -2,7 +2,6 @@ package aws
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -187,9 +186,37 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 		}
 		delete(data, "model")
 		delete(data, "stream")
-		relaycommon.NormalizeClaudeToolsValue(data["tools"], info)
+		bodyWithoutModel, err := common.Marshal(data)
+		if err != nil {
+			return nil, errors.Wrap(err, "pass-through marshal request body fail")
+		}
+		if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
+			normalizedBody, err := relaycommon.NormalizeClaudeRequestToolSchemasInJSON(bodyWithoutModel, info)
+			if err != nil {
+				return nil, errors.Wrap(err, "pass-through normalize tool schema fail")
+			}
+			bodyWithoutModel = normalizedBody
+			if err := common.Unmarshal(bodyWithoutModel, &data); err != nil {
+				return nil, errors.Wrap(err, "pass-through unmarshal tool schema normalized request body fail")
+			}
+		}
+		if model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled {
+			normalizedBody, compatErr := relaycommon.NormalizeClaudeRequestCompatJSON(bodyWithoutModel, info)
+			if compatErr != nil {
+				return nil, compatErr
+			}
+			bodyWithoutModel = normalizedBody
+			if err := common.Unmarshal(bodyWithoutModel, &data); err != nil {
+				return nil, errors.Wrap(err, "pass-through unmarshal normalized request body fail")
+			}
+		}
 		relaycommon.CaptureClaudeToolSchemaCompatFinalSchemas(data["tools"], info)
 		return common.Marshal(data)
+	}
+	if req, ok := awsClaudeReq.(*dto.ClaudeRequest); ok {
+		if compatErr := relaycommon.NormalizeClaudeRequestCompat(req, info); compatErr != nil {
+			return nil, compatErr
+		}
 	}
 	if req, ok := awsClaudeReq.(*AwsClaudeRequest); ok {
 		relaycommon.NormalizeClaudeToolsValue(req.Tools, info)
@@ -329,7 +356,7 @@ func handleNovaRequest(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) 
 		} `json:"usage"`
 	}
 
-	if err := json.Unmarshal(awsResp.Body, &novaResp); err != nil {
+	if err := common.Unmarshal(awsResp.Body, &novaResp); err != nil {
 		return types.NewError(errors.Wrap(err, "unmarshal nova response"), types.ErrorCodeBadResponseBody), nil
 	}
 

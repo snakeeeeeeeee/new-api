@@ -18,7 +18,7 @@ type AwsClaudeRequest struct {
 	AnthropicBeta    json.RawMessage     `json:"anthropic_beta,omitempty"`
 	System           any                 `json:"system,omitempty"`
 	Messages         []dto.ClaudeMessage `json:"messages"`
-	MaxTokens        uint                `json:"max_tokens,omitempty"`
+	MaxTokens        *uint               `json:"max_tokens,omitempty"`
 	Temperature      *float64            `json:"temperature,omitempty"`
 	TopP             float64             `json:"top_p,omitempty"`
 	TopK             int                 `json:"top_k,omitempty"`
@@ -44,7 +44,7 @@ func formatRequest(requestBody io.Reader, requestHeader http.Header) (*AwsClaude
 		var tempArray []string
 		tempArray = strings.Split(anthropicBetaValues, ",")
 		if len(tempArray) > 0 {
-			betaJson, err := json.Marshal(tempArray)
+			betaJson, err := common.Marshal(tempArray)
 			if err != nil {
 				return nil, err
 			}

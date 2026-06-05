@@ -139,6 +139,32 @@ func TestBuildAwsRequestBodyToolSchemaCompatPassThrough(t *testing.T) {
 	require.NotContains(t, schema, "required")
 }
 
+func TestBuildAwsRequestBodyPassThroughFixesToolSchemaBeforeCompatReject(t *testing.T) {
+	oldPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	oldClaudeSettings := *model_setting.GetClaudeSettings()
+	model_setting.GetGlobalSettings().PassThroughRequestEnabled = false
+	model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled = true
+	model_setting.GetClaudeSettings().ToolSchemaValidationMode = model_setting.ClaudeValidationModeReject
+	t.Cleanup(func() {
+		model_setting.GetGlobalSettings().PassThroughRequestEnabled = oldPassThrough
+		*model_setting.GetClaudeSettings() = oldClaudeSettings
+	})
+
+	rawBody := `{"model":"claude-opus-4-7","stream":true,"messages":[{"role":"user","content":"hello"}],"tools":[{"name":"custom","input_schema":null}]}`
+	ctx := awsTestContext(rawBody)
+	info := awsRelayInfoWithToolSchemaCompat(true, true)
+	info.UpstreamModelName = "claude-opus-4-7"
+	body, err := buildAwsRequestBody(ctx, info, &AwsClaudeRequest{})
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.NotContains(t, payload, "model")
+	schema := decodeFirstToolSchema(t, body)
+	require.Equal(t, "object", schema["type"])
+	require.Equal(t, map[string]any{}, schema["properties"])
+}
+
 func TestBuildAwsRequestBodyToolSchemaCompatWhitelistMissKeepsSchema(t *testing.T) {
 	oldPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
 	model_setting.GetGlobalSettings().PassThroughRequestEnabled = false

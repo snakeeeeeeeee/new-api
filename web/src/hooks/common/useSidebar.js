@@ -53,6 +53,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     log_dashboard: true,
     request_dump: true,
     violation: true,
+    compatibility: true,
     models: true,
     deployment: true,
     redemption: true,

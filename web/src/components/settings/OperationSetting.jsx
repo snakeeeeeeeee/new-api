@@ -71,6 +71,7 @@ const OperationSetting = () => {
     'relay_error_setting.passthrough_status_codes': '400,422',
     'relay_error_setting.passthrough_block_keywords': '',
     'relay_error_setting.mask_sensitive': true,
+    'relay_error_setting.log_upstream_error_detail_enabled': true,
 
     /* 监控设置 */
     ChannelDisableThreshold: 0,

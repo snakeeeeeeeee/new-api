@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 )
 
@@ -107,6 +108,7 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, body: %s", resp.StatusCode, string(responseBody)))
 			newApiErr.Err = fmt.Errorf("bad response status code %d", resp.StatusCode)
 		}
+		logUpstreamRelayErrorDetail(ctx, resp, responseBody, nil)
 		return
 	}
 
@@ -118,6 +120,7 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 			if showBodyWhenFail {
 				newApiErr.Err = buildErrWithBody(newApiErr.Error())
 			}
+			logUpstreamRelayErrorDetail(ctx, resp, responseBody, oaiError)
 			return
 		}
 	}
@@ -125,7 +128,111 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 	if showBodyWhenFail {
 		newApiErr.Err = buildErrWithBody(newApiErr.Error())
 	}
+	logUpstreamRelayErrorDetail(ctx, resp, responseBody, nil)
 	return
+}
+
+type upstreamRelayErrorDetail struct {
+	StatusCode int    `json:"status_code"`
+	RequestID  string `json:"request_id,omitempty"`
+	Type       string `json:"type,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Code       string `json:"code,omitempty"`
+	Param      string `json:"param,omitempty"`
+}
+
+func logUpstreamRelayErrorDetail(ctx context.Context, resp *http.Response, responseBody []byte, openAIError *types.OpenAIError) {
+	if resp == nil || !operation_setting.GetRelayErrorSetting().LogUpstreamErrorDetailEnabled {
+		return
+	}
+	detail := upstreamRelayErrorDetail{
+		StatusCode: resp.StatusCode,
+		RequestID:  upstreamErrorRequestID(resp),
+	}
+	if openAIError != nil {
+		detail.Type = openAIError.Type
+		detail.Message = openAIError.Message
+		detail.Param = openAIError.Param
+		detail.Code = common.Interface2String(openAIError.Code)
+	} else {
+		detail = extractUpstreamRelayErrorDetail(resp, responseBody)
+	}
+	if detail.Message != "" {
+		detail.Message = common.MaskSensitiveInfo(limitUpstreamRelayErrorMessage(detail.Message))
+	}
+	if detail.Type == "" && detail.Message == "" && detail.Code == "" && detail.Param == "" && detail.RequestID == "" {
+		return
+	}
+	body, err := common.Marshal(detail)
+	if err != nil {
+		return
+	}
+	logger.LogError(ctx, "upstream relay error detail: "+string(body))
+}
+
+func extractUpstreamRelayErrorDetail(resp *http.Response, responseBody []byte) upstreamRelayErrorDetail {
+	detail := upstreamRelayErrorDetail{
+		StatusCode: resp.StatusCode,
+		RequestID:  upstreamErrorRequestID(resp),
+	}
+	var payload map[string]any
+	if err := common.Unmarshal(responseBody, &payload); err != nil {
+		detail.Message = fmt.Sprintf("unparseable upstream error body, bytes=%d", len(responseBody))
+		return detail
+	}
+	errorValue, ok := payload["error"]
+	if ok {
+		switch typed := errorValue.(type) {
+		case map[string]any:
+			detail.Type = common.Interface2String(typed["type"])
+			detail.Message = common.Interface2String(typed["message"])
+			detail.Code = common.Interface2String(typed["code"])
+			detail.Param = common.Interface2String(typed["param"])
+		case string:
+			detail.Message = typed
+		}
+	}
+	if detail.Message == "" {
+		for _, key := range []string{"message", "msg", "err", "error_msg", "detail"} {
+			if value := common.Interface2String(payload[key]); value != "" {
+				detail.Message = value
+				break
+			}
+		}
+	}
+	if detail.Code == "" {
+		detail.Code = common.Interface2String(payload["code"])
+	}
+	if detail.Param == "" {
+		detail.Param = common.Interface2String(payload["param"])
+	}
+	if detail.Type == "" {
+		detail.Type = common.Interface2String(payload["type"])
+	}
+	if detail.RequestID == "" {
+		detail.RequestID = common.Interface2String(payload["request_id"])
+	}
+	return detail
+}
+
+func upstreamErrorRequestID(resp *http.Response) string {
+	if resp == nil {
+		return ""
+	}
+	for _, headerKey := range []string{"request-id", "x-request-id", "anthropic-request-id", "openai-request-id"} {
+		if value := resp.Header.Get(headerKey); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func limitUpstreamRelayErrorMessage(message string) string {
+	const maxLen = 512
+	if len(message) <= maxLen {
+		return message
+	}
+	return message[:maxLen] + "..."
 }
 
 func ResetStatusCode(newApiErr *types.NewAPIError, statusCodeMappingStr string) {

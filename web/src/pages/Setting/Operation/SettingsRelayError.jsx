@@ -38,6 +38,7 @@ export default function SettingsRelayError(props) {
     'relay_error_setting.passthrough_status_codes': '400,422',
     'relay_error_setting.passthrough_block_keywords': '',
     'relay_error_setting.mask_sensitive': true,
+    'relay_error_setting.log_upstream_error_detail_enabled': true,
   });
   const [inputsRow, setInputsRow] = useState(inputs);
   const refForm = useRef();
@@ -149,6 +150,22 @@ export default function SettingsRelayError(props) {
                     setInputs({
                       ...inputs,
                       'relay_error_setting.mask_sensitive': value,
+                    })
+                  }
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.Switch
+                  field={'relay_error_setting.log_upstream_error_detail_enabled'}
+                  label={t('记录上游错误详情')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'relay_error_setting.log_upstream_error_detail_enabled':
+                        value,
                     })
                   }
                 />

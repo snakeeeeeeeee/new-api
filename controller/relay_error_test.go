@@ -50,6 +50,25 @@ func TestShouldWrapClientFacingRelayError_FalseForLocalErrors(t *testing.T) {
 	require.False(t, shouldWrapClientFacingRelayError(apiErr))
 }
 
+func TestShouldWrapClientFacingRelayError_FalseForLocalClaudeCompatErrors(t *testing.T) {
+	withRelayErrorSetting(t, false, "400,422", "", true)
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "Invalid request for Claude: max_tokens=0 is only supported for cache pre-warming and cannot be combined with stream.",
+		Type:    "invalid_request_error",
+		Param:   "max_tokens",
+		Code:    "claude_zero_max_tokens_incompatible",
+	}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+
+	require.False(t, shouldWrapClientFacingRelayError(apiErr))
+	require.False(t, isUpstreamClientFacingRelayError(apiErr))
+	got := buildClientFacingRelayClaudeError(apiErr)
+	require.Equal(t, "invalid_request_error", got.Type)
+	require.Contains(t, got.Message, "max_tokens=0")
+	require.Equal(t, "max_tokens", got.Param)
+	require.Equal(t, "claude_zero_max_tokens_incompatible", got.Code)
+	require.Equal(t, http.StatusBadRequest, got.Status)
+}
+
 func TestShouldWrapClientFacingRelayError_DefaultDisabledWraps400(t *testing.T) {
 	setting := operation_setting.GetRelayErrorSetting()
 	original := *setting

@@ -30,6 +30,22 @@ func abortWithOpenAiMessage(c *gin.Context, statusCode int, message string, code
 	logger.LogError(c.Request.Context(), fmt.Sprintf("user %d | %s", userId, message))
 }
 
+func abortWithClaudeCompatError(c *gin.Context, err *types.NewAPIError) {
+	if err == nil {
+		return
+	}
+	service.DumpRelayErrorIfNeeded(c, err)
+	userId := c.GetInt("id")
+	requestId := c.GetString(common.RequestIdKey)
+	err.SetMessage(common.MessageWithRequestId(err.Error(), requestId))
+	c.JSON(err.StatusCode, gin.H{
+		"type":  "error",
+		"error": err.ToClaudeError(),
+	})
+	c.Abort()
+	logger.LogError(c.Request.Context(), fmt.Sprintf("user %d | %s", userId, err.Error()))
+}
+
 func abortWithMidjourneyMessage(c *gin.Context, statusCode int, code int, description string) {
 	c.JSON(statusCode, gin.H{
 		"description": description,

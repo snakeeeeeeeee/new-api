@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -33,6 +34,10 @@ func Distribute() func(c *gin.Context) {
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
+			if apiErr := claudeCompatErrorFromInvalidDistributorRequest(c); apiErr != nil {
+				abortWithClaudeCompatError(c, apiErr)
+				return
+			}
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
@@ -170,6 +175,24 @@ func Distribute() func(c *gin.Context) {
 			service.RecordAggregateRouteSuccess(c, modelRequest.Model)
 		}
 	}
+}
+
+func claudeCompatErrorFromInvalidDistributorRequest(c *gin.Context) *types.NewAPIError {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return nil
+	}
+	if c.Request.Method != http.MethodPost || c.Request.URL.Path != "/v1/messages" {
+		return nil
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		return nil
+	}
+	return relaycommon.ValidateClaudeRequestSchemaJSON(body, nil)
 }
 
 // getModelFromRequest 从请求中读取模型信息

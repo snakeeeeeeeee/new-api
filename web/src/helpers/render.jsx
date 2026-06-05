@@ -77,6 +77,7 @@ import {
   CalendarClock,
   Bug,
   ShieldAlert,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -133,6 +134,8 @@ export function getLucideIcon(key, selected = false) {
       return <Bug {...commonProps} color={iconColor} />;
     case 'violation':
       return <ShieldAlert {...commonProps} color={iconColor} />;
+    case 'compatibility':
+      return <SlidersHorizontal {...commonProps} color={iconColor} />;
     case 'midjourney':
       return <ImageIcon {...commonProps} color={iconColor} />;
     case 'task':

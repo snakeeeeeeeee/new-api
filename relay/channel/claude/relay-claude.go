@@ -94,7 +94,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 
 			// 解析 UserLocation JSON
 			var userLocationMap map[string]interface{}
-			if err := json.Unmarshal(textRequest.WebSearchOptions.UserLocation, &userLocationMap); err == nil {
+			if err := common.Unmarshal(textRequest.WebSearchOptions.UserLocation, &userLocationMap); err == nil {
 				// 检查是否有 approximate 字段
 				if approximateData, ok := userLocationMap["approximate"].(map[string]interface{}); ok {
 					if timezone, ok := approximateData["timezone"].(string); ok && timezone != "" {
@@ -136,8 +136,10 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 		Temperature:   textRequest.Temperature,
 		Tools:         claudeTools,
 	}
-	if maxTokens := textRequest.GetMaxTokens(); maxTokens > 0 {
-		claudeRequest.MaxTokens = common.GetPointer(maxTokens)
+	if textRequest.MaxCompletionTokens != nil {
+		claudeRequest.MaxTokens = common.GetPointer(*textRequest.MaxCompletionTokens)
+	} else if textRequest.MaxTokens != nil {
+		claudeRequest.MaxTokens = common.GetPointer(*textRequest.MaxTokens)
 	}
 	if textRequest.TopP != nil {
 		claudeRequest.TopP = common.GetPointer(*textRequest.TopP)
@@ -157,7 +159,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 		}
 	}
 
-	if claudeRequest.MaxTokens == nil || *claudeRequest.MaxTokens == 0 {
+	if claudeRequest.MaxTokens == nil {
 		defaultMaxTokens := uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(textRequest.Model))
 		claudeRequest.MaxTokens = &defaultMaxTokens
 	}
@@ -175,7 +177,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 		strings.HasSuffix(textRequest.Model, "-thinking") {
 
 		// 因为BudgetTokens 必须大于1024
-		if claudeRequest.MaxTokens == nil || *claudeRequest.MaxTokens < 1280 {
+		if claudeRequest.MaxTokens == nil || (*claudeRequest.MaxTokens > 0 && *claudeRequest.MaxTokens < 1280) {
 			claudeRequest.MaxTokens = common.GetPointer[uint](1280)
 		}
 
@@ -246,9 +248,14 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 	lastMessage := dto.Message{
 		Role: "tool",
 	}
+	mergeAdjacentSameRole := model_setting.GetClaudeSettings().MergeAdjacentSameRoleEnabled
 	for i, message := range textRequest.Messages {
 		if message.Role == "" {
 			textRequest.Messages[i].Role = "user"
+		}
+		if message.Role == "developer" {
+			message.Role = "system"
+			textRequest.Messages[i].Role = "system"
 		}
 		fmtMessage := dto.Message{
 			Role:    message.Role,
@@ -260,7 +267,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 		if message.Role == "assistant" && message.ToolCalls != nil {
 			fmtMessage.ToolCalls = message.ToolCalls
 		}
-		if lastMessage.Role == message.Role && lastMessage.Role != "tool" {
+		if mergeAdjacentSameRole && lastMessage.Role == message.Role && (lastMessage.Role == "user" || lastMessage.Role == "assistant") {
 			if lastMessage.IsStringContent() && message.IsStringContent() {
 				fmtMessage.SetStringContent(strings.Trim(fmt.Sprintf("%s %s", lastMessage.StringContent(), message.StringContent()), "\""))
 				// delete last message
@@ -276,11 +283,12 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 
 	claudeMessages := make([]dto.ClaudeMessage, 0)
 	isFirstMessage := true
-	// 初始化system消息数组，用于累积多个system消息
+	// 初始化system消息数组，用于累积开头的system/developer消息
 	var systemMessages []dto.ClaudeMediaMessage
+	leadingSystemPromoted := !model_setting.GetClaudeSettings().PromoteLeadingSystemRoleEnabled
 
 	for _, message := range formatMessages {
-		if message.Role == "system" {
+		if !leadingSystemPromoted && message.Role == "system" {
 			// 根据Claude API规范，system字段使用数组格式更有通用性
 			if message.IsStringContent() {
 				systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
@@ -299,7 +307,16 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 					// 未来可以在这里扩展对图片等其他类型的支持
 				}
 			}
-		} else {
+			continue
+		}
+		leadingSystemPromoted = true
+		if message.Role == "system" {
+			message.Role = "user"
+			if message.IsStringContent() {
+				message.SetStringContent("system: " + message.StringContent())
+			}
+		}
+		{
 			if isFirstMessage {
 				isFirstMessage = false
 				if message.Role != "user" {
@@ -320,32 +337,13 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 				Role: message.Role,
 			}
 			if message.Role == "tool" {
-				if len(claudeMessages) > 0 && claudeMessages[len(claudeMessages)-1].Role == "user" {
-					lastMessage := claudeMessages[len(claudeMessages)-1]
-					if content, ok := lastMessage.Content.(string); ok {
-						lastMessage.Content = []dto.ClaudeMediaMessage{
-							{
-								Type: "text",
-								Text: common.GetPointer[string](content),
-							},
-						}
-					}
-					lastMessage.Content = append(lastMessage.Content.([]dto.ClaudeMediaMessage), dto.ClaudeMediaMessage{
+				claudeMessage.Role = "user"
+				claudeMessage.Content = []dto.ClaudeMediaMessage{
+					{
 						Type:      "tool_result",
 						ToolUseId: message.ToolCallId,
 						Content:   message.Content,
-					})
-					claudeMessages[len(claudeMessages)-1] = lastMessage
-					continue
-				} else {
-					claudeMessage.Role = "user"
-					claudeMessage.Content = []dto.ClaudeMediaMessage{
-						{
-							Type:      "tool_result",
-							ToolUseId: message.ToolCallId,
-							Content:   message.Content,
-						},
-					}
+					},
 				}
 			} else if message.IsStringContent() && message.ToolCalls == nil {
 				claudeMessage.Content = message.StringContent()
@@ -382,7 +380,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 				if message.ToolCalls != nil {
 					for _, toolCall := range message.ParseToolCalls() {
 						inputObj := make(map[string]any)
-						if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &inputObj); err != nil {
+						if err := common.Unmarshal([]byte(toolCall.Function.Arguments), &inputObj); err != nil {
 							common.SysLog("tool call function arguments is not a map[string]any: " + fmt.Sprintf("%v", toolCall.Function.Arguments))
 							continue
 						}
@@ -516,7 +514,7 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 	for _, message := range claudeResponse.Content {
 		switch message.Type {
 		case "tool_use":
-			args, _ := json.Marshal(message.Input)
+			args, _ := common.Marshal(message.Input)
 			tools = append(tools, dto.ToolCallResponse{
 				ID:   message.Id,
 				Type: "function", // compatible with other OpenAI derivative applications
@@ -865,7 +863,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	case types.RelayFormatOpenAI:
 		openaiResponse := ResponseClaude2OpenAI(&claudeResponse)
 		openaiResponse.Usage = buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
-		responseData, err = json.Marshal(openaiResponse)
+		responseData, err = common.Marshal(openaiResponse)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}

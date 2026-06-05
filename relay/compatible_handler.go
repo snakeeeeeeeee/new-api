@@ -174,6 +174,13 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			}
 		}
 
+		if info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
+			jsonData, newAPIError = relaycommon.NormalizeClaudeRequestCompatJSON(jsonData, info)
+			if newAPIError != nil {
+				return newAPIError
+			}
+		}
+
 		logger.LogDebug(c, fmt.Sprintf("text request body: %s", string(jsonData)))
 
 		relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)

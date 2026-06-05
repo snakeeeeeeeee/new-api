@@ -21,6 +21,9 @@ type OpenAIError struct {
 type ClaudeError struct {
 	Type    string `json:"type,omitempty"`
 	Message string `json:"message,omitempty"`
+	Param   string `json:"param,omitempty"`
+	Code    any    `json:"code,omitempty"`
+	Status  int    `json:"status,omitempty"`
 }
 
 type ErrorType string
@@ -201,7 +204,7 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 			Code:    e.errorCode,
 		}
 	}
-	if e.errorCode != ErrorCodeCountTokenFailed {
+	if shouldMaskNewAPIErrorMessage(e) {
 		result.Message = common.MaskSensitiveInfo(result.Message)
 	}
 	if result.Message == "" {
@@ -217,7 +220,15 @@ func (e *NewAPIError) ToClaudeError() ClaudeError {
 		if openAIError, ok := e.RelayError.(OpenAIError); ok {
 			result = ClaudeError{
 				Message: e.Error(),
-				Type:    fmt.Sprintf("%v", openAIError.Code),
+				Type:    openAIError.Type,
+			}
+			if strings.HasPrefix(string(e.errorCode), "claude_") {
+				result.Param = openAIError.Param
+				result.Code = openAIError.Code
+				result.Status = e.StatusCode
+			}
+			if result.Type == "" {
+				result.Type = fmt.Sprintf("%v", openAIError.Code)
 			}
 		}
 	case ErrorTypeClaudeError:
@@ -230,13 +241,23 @@ func (e *NewAPIError) ToClaudeError() ClaudeError {
 			Type:    string(e.errorType),
 		}
 	}
-	if e.errorCode != ErrorCodeCountTokenFailed {
+	if shouldMaskNewAPIErrorMessage(e) {
 		result.Message = common.MaskSensitiveInfo(result.Message)
 	}
 	if result.Message == "" {
 		result.Message = string(e.errorType)
 	}
 	return result
+}
+
+func shouldMaskNewAPIErrorMessage(e *NewAPIError) bool {
+	if e == nil {
+		return true
+	}
+	if e.errorCode == ErrorCodeCountTokenFailed {
+		return false
+	}
+	return !strings.HasPrefix(string(e.errorCode), "claude_")
 }
 
 type NewAPIErrorOptions func(*NewAPIError)

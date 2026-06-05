@@ -36,6 +36,7 @@ const routerMap = {
   aggregate_group: '/console/aggregate-group',
   request_dump: '/console/request-dump',
   violation: '/console/violation',
+  compatibility: '/console/compatibility',
   invite_code: '/console/invite-code',
   invite_stats: '/console/invite-stats',
   log_dashboard: '/console/log-dashboard',
@@ -193,6 +194,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('风险检测'),
         itemKey: 'violation',
         to: '/violation',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('兼容管理'),
+        itemKey: 'compatibility',
+        to: '/compatibility',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

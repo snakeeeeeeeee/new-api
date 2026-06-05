@@ -7,17 +7,19 @@ import (
 )
 
 type RelayErrorSetting struct {
-	PassthroughEnabled       bool   `json:"passthrough_enabled"`
-	PassthroughStatusCodes   string `json:"passthrough_status_codes"`
-	PassthroughBlockKeywords string `json:"passthrough_block_keywords"`
-	MaskSensitive            bool   `json:"mask_sensitive"`
+	PassthroughEnabled            bool   `json:"passthrough_enabled"`
+	PassthroughStatusCodes        string `json:"passthrough_status_codes"`
+	PassthroughBlockKeywords      string `json:"passthrough_block_keywords"`
+	MaskSensitive                 bool   `json:"mask_sensitive"`
+	LogUpstreamErrorDetailEnabled bool   `json:"log_upstream_error_detail_enabled"`
 }
 
 var relayErrorSetting = RelayErrorSetting{
-	PassthroughEnabled:       false,
-	PassthroughStatusCodes:   "400,422",
-	PassthroughBlockKeywords: "",
-	MaskSensitive:            true,
+	PassthroughEnabled:            false,
+	PassthroughStatusCodes:        "400,422",
+	PassthroughBlockKeywords:      "",
+	MaskSensitive:                 true,
+	LogUpstreamErrorDetailEnabled: true,
 }
 
 func init() {

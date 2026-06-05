@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -609,6 +610,32 @@ func UpdateOption(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": err.Error(),
+			})
+			return
+		}
+	case "claude.request_schema_validation_mode",
+		"claude.tool_protocol_validation_mode",
+		"claude.tool_schema_validation_mode",
+		"claude.tool_choice_validation_mode",
+		"claude.thinking_validation_mode",
+		"claude.image_limits_validation_mode",
+		"claude.prompt_cache_validation_mode",
+		"claude.stop_sequences_validation_mode",
+		"claude.service_tier_validation_mode",
+		"claude.metadata_user_id_validation_mode":
+		if err = model_setting.ValidateClaudeValidationMode(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	case "claude.request_size_limit_bytes":
+		intValue, parseErr := strconv.ParseInt(option.Value.(string), 10, 64)
+		if parseErr != nil || intValue <= 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "Claude 请求体限制必须大于 0",
 			})
 			return
 		}

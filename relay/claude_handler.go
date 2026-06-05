@@ -47,7 +47,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	}
 	adaptor.Init(info)
 
-	if request.MaxTokens == nil || *request.MaxTokens == 0 {
+	if request.MaxTokens == nil {
 		defaultMaxTokens := uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
 		request.MaxTokens = &defaultMaxTokens
 	}
@@ -65,7 +65,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		strings.HasSuffix(request.Model, "-thinking") {
 		if request.Thinking == nil {
 			// 因为BudgetTokens 必须大于1024
-			if request.MaxTokens == nil || *request.MaxTokens < 1280 {
+			if request.MaxTokens == nil || (*request.MaxTokens > 0 && *request.MaxTokens < 1280) {
 				request.MaxTokens = common.GetPointer[uint](1280)
 			}
 
@@ -132,16 +132,29 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
+		if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) || model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled {
 			body, err := storage.Bytes()
 			if err != nil {
 				return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
-			jsonData, err := relaycommon.NormalizeClaudeRequestToolSchemasInJSON(body, info)
-			if err != nil {
-				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+			jsonData := body
+			if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
+				normalizedData, err := relaycommon.NormalizeClaudeRequestToolSchemasInJSON(jsonData, info)
+				if err != nil {
+					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+				}
+				jsonData = normalizedData
 			}
-			relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)
+			if model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled {
+				normalizedData, compatErr := relaycommon.NormalizeClaudeRequestCompatJSON(jsonData, info)
+				if compatErr != nil {
+					return compatErr
+				}
+				jsonData = normalizedData
+			}
+			if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
+				relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)
+			}
 			service.DumpUpstreamRequestIfNeeded(c, jsonData)
 			requestBody = bytes.NewBuffer(jsonData)
 		} else {
@@ -154,6 +167,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 		if convertedClaudeRequest, ok := convertedRequest.(*dto.ClaudeRequest); ok {
 			relaycommon.NormalizeClaudeRequestToolSchemas(convertedClaudeRequest, info)
+			if compatErr := relaycommon.NormalizeClaudeRequestCompat(convertedClaudeRequest, info); compatErr != nil {
+				return compatErr
+			}
 		}
 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 		jsonData, err := common.Marshal(convertedRequest)
@@ -177,6 +193,10 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		jsonData, err = relaycommon.NormalizeClaudeRequestToolSchemasInJSON(jsonData, info)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+		jsonData, compatErr := relaycommon.NormalizeClaudeRequestCompatJSON(jsonData, info)
+		if compatErr != nil {
+			return compatErr
 		}
 
 		relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)

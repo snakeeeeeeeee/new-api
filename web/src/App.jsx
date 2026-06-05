@@ -51,6 +51,7 @@ import AggregateGroupPage from './pages/AggregateGroup';
 import LogDashboardPage from './pages/LogDashboard';
 import RequestDumpPage from './pages/RequestDump';
 import ViolationPage from './pages/Violation';
+import CompatibilityPage from './pages/Compatibility';
 import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Setup from './pages/Setup';
@@ -206,6 +207,14 @@ function App() {
           element={
             <AdminRoute>
               <ViolationPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/compatibility'
+          element={
+            <AdminRoute>
+              <CompatibilityPage />
             </AdminRoute>
           }
         />

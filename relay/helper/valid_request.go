@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -10,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/samber/lo"
@@ -156,7 +156,7 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
 			if imageValue := formData.Get("image"); imageValue != "" {
-				imageRequest.Image, _ = json.Marshal(imageValue)
+				imageRequest.Image, _ = common.Marshal(imageValue)
 			}
 
 			if imageRequest.Model == "gpt-image-1" {
@@ -229,6 +229,17 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 
 func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest, err error) {
 	textRequest = &dto.ClaudeRequest{}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil, err
+	}
+	requestBody, err := storage.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	if apiErr := relaycommon.ValidateClaudeRequestSchemaJSON(requestBody, nil); apiErr != nil {
+		return nil, apiErr
+	}
 	err = common.UnmarshalBodyReusable(c, textRequest)
 	if err != nil {
 		return nil, err

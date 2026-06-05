@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -252,7 +253,9 @@ func TestRelayErrorSettingOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.passthrough_status_codes"`)
 	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.passthrough_block_keywords"`)
 	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.mask_sensitive"`)
+	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.log_upstream_error_detail_enabled"`)
 	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.passthrough_enabled","value":"false"`)
+	require.Contains(t, string(listResp.Data), `"key":"relay_error_setting.log_upstream_error_detail_enabled","value":"true"`)
 
 	updatePayload := []byte(`{"key":"relay_error_setting.passthrough_status_codes","value":"422,400,400"}`)
 	updateRecorder := httptest.NewRecorder()
@@ -322,4 +325,77 @@ func TestRelayErrorSettingOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.False(t, invalidResp.Success)
 	require.Contains(t, invalidResp.Message, "invalid http status code rules")
 	require.Equal(t, "422,400,400", operation_setting.GetRelayErrorSetting().PassthroughStatusCodes)
+}
+
+func TestClaudeCompatibilityOptionsCanBeReadAndUpdated(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+	model.InitOptionMap()
+	original := *model_setting.GetClaudeSettings()
+	t.Cleanup(func() {
+		*model_setting.GetClaudeSettings() = original
+	})
+
+	listRecorder := httptest.NewRecorder()
+	listCtx, _ := gin.CreateTestContext(listRecorder)
+	listCtx.Request = httptest.NewRequest(http.MethodGet, "/api/option", nil)
+	GetOptions(listCtx)
+
+	var listResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(listRecorder.Body.Bytes(), &listResp))
+	require.True(t, listResp.Success, listResp.Message)
+	data := string(listResp.Data)
+	require.Contains(t, data, `"key":"claude.auto_fix_image_media_type_enabled","value":"true"`)
+	require.Contains(t, data, `"key":"claude.preserve_zero_max_tokens_enabled","value":"true"`)
+	require.Contains(t, data, `"key":"claude.drop_default_sampling_for_opus_enabled","value":"true"`)
+	require.Contains(t, data, `"key":"claude.validate_output_effort_enabled","value":"true"`)
+	require.Contains(t, data, `"key":"claude.promote_leading_system_role_enabled","value":"true"`)
+	require.Contains(t, data, `"key":"claude.merge_adjacent_same_role_enabled","value":"true"`)
+	require.Contains(t, data, `"key":"claude.reorder_tool_result_blocks_enabled","value":"false"`)
+	require.Contains(t, data, `"key":"claude.apply_compat_in_passthrough_enabled","value":"false"`)
+	require.Contains(t, data, `"key":"claude.request_schema_validation_mode","value":"reject"`)
+	require.Contains(t, data, `"key":"claude.tool_protocol_validation_mode","value":"reject"`)
+	require.Contains(t, data, `"key":"claude.tool_schema_validation_mode","value":"log"`)
+	require.Contains(t, data, `"key":"claude.tool_choice_validation_mode","value":"log"`)
+	require.Contains(t, data, `"key":"claude.thinking_validation_mode","value":"log"`)
+	require.Contains(t, data, `"key":"claude.image_limits_validation_mode","value":"log"`)
+	require.Contains(t, data, `"key":"claude.prompt_cache_validation_mode","value":"log"`)
+	require.Contains(t, data, `"key":"claude.stop_sequences_validation_mode","value":"reject"`)
+	require.Contains(t, data, `"key":"claude.service_tier_validation_mode","value":"reject"`)
+	require.Contains(t, data, `"key":"claude.metadata_user_id_validation_mode","value":"log"`)
+	require.Contains(t, data, `"key":"claude.request_size_limit_bytes","value":"33554432"`)
+
+	updatePayload := []byte(`{"key":"claude.reorder_tool_result_blocks_enabled","value":true}`)
+	updateRecorder := httptest.NewRecorder()
+	updateCtx, _ := gin.CreateTestContext(updateRecorder)
+	updateCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(updatePayload))
+	updateCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(updateCtx)
+
+	var updateResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(updateRecorder.Body.Bytes(), &updateResp))
+	require.True(t, updateResp.Success, updateResp.Message)
+	require.True(t, model_setting.GetClaudeSettings().ReorderToolResultBlocksEnabled)
+
+	modePayload := []byte(`{"key":"claude.thinking_validation_mode","value":"reject"}`)
+	modeRecorder := httptest.NewRecorder()
+	modeCtx, _ := gin.CreateTestContext(modeRecorder)
+	modeCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(modePayload))
+	modeCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(modeCtx)
+
+	var modeResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(modeRecorder.Body.Bytes(), &modeResp))
+	require.True(t, modeResp.Success, modeResp.Message)
+	require.Equal(t, "reject", model_setting.GetClaudeSettings().ThinkingValidationMode)
+
+	invalidPayload := []byte(`{"key":"claude.thinking_validation_mode","value":"strict"}`)
+	invalidRecorder := httptest.NewRecorder()
+	invalidCtx, _ := gin.CreateTestContext(invalidRecorder)
+	invalidCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(invalidPayload))
+	invalidCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(invalidCtx)
+
+	var invalidResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(invalidRecorder.Body.Bytes(), &invalidResp))
+	require.False(t, invalidResp.Success)
 }
