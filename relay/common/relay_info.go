@@ -629,6 +629,14 @@ func (info *RelayInfo) GetFinalRequestRelayFormat() types.RelayFormat {
 	return info.RelayFormat
 }
 
+func (info *RelayInfo) MarkFinalRequestRelayFormat(format types.RelayFormat) {
+	if info == nil || format == "" {
+		return
+	}
+	info.FinalRequestRelayFormat = format
+	info.AppendRequestConversion(format)
+}
+
 func GenRelayInfoResponsesCompaction(c *gin.Context, request *dto.OpenAIResponsesCompactionRequest) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	if info.RelayMode == relayconstant.RelayModeUnknown {

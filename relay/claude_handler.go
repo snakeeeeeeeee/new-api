@@ -24,6 +24,7 @@ import (
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 
 	info.InitChannelMeta(c)
+	info.MarkFinalRequestRelayFormat(types.RelayFormatClaude)
 
 	claudeReq, ok := info.Request.(*dto.ClaudeRequest)
 

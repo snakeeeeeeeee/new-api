@@ -402,6 +402,28 @@ func TestNormalizeClaudeRequestCompatJSONPromotesOpenAIStyleWhenFinalFormatIsCla
 	require.Equal(t, "user", messages[0].(map[string]any)["role"])
 }
 
+func TestNormalizeClaudeRequestCompatJSONPromotesOpenAIStyleAfterFinalFormatMarked(t *testing.T) {
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.PromoteLeadingSystemRoleEnabled = true
+		settings.MergeAdjacentSameRoleEnabled = true
+	})
+	body := []byte(`{"model":"claude-sonnet-4-6","max_tokens":16,"messages":[{"role":"system","content":"leading system"},{"role":"developer","content":"leading developer"},{"role":"user","content":"finish"}]}`)
+	info := &RelayInfo{
+		RelayFormat:            types.RelayFormatOpenAI,
+		RequestConversionChain: []types.RelayFormat{types.RelayFormatOpenAI},
+	}
+	info.MarkFinalRequestRelayFormat(types.RelayFormatClaude)
+
+	out, err := NormalizeClaudeRequestCompatJSON(body, info)
+	require.Nil(t, err)
+	var payload map[string]any
+	require.NoError(t, commonpkg.Unmarshal(out, &payload))
+	require.NotContains(t, string(out), `"developer"`)
+	system, ok := payload["system"].([]any)
+	require.True(t, ok)
+	require.Len(t, system, 2)
+}
+
 func TestNormalizeClaudeRequestCompatJSONKeepsMiddleSystemInHistory(t *testing.T) {
 	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
 		settings.PromoteLeadingSystemRoleEnabled = true
