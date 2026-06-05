@@ -15,6 +15,8 @@ import (
 
 const aggregateClusterDefaultRoutePool = "default"
 
+const aggregateRouteAffinityFallbackReasonRPMLimit = "rpm_limit"
+
 type aggregateClusterRouteCandidate struct {
 	Target          model.AggregateGroupTarget
 	Index           int
@@ -146,6 +148,67 @@ func isAggregateRouteCandidateAttempted(ctx *gin.Context, routePool string, inde
 	return false
 }
 
+func isAggregateAffinityRouteFilteredByRPMLimit(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, routePool string, targets []model.AggregateGroupTarget, skipDegraded bool, excludeAttempted bool, affinityRouteGroup string) (bool, error) {
+	affinityRouteGroup = strings.TrimSpace(affinityRouteGroup)
+	if aggregateGroup == nil || affinityRouteGroup == "" {
+		return false, nil
+	}
+	routePool = normalizeAggregateClusterRoutePool(routePool)
+	for index, target := range targets {
+		if strings.TrimSpace(target.RealGroup) != affinityRouteGroup {
+			continue
+		}
+		if excludeAttempted && isAggregateRouteCandidateAttempted(ctx, routePool, index, target.RealGroup) {
+			return false, nil
+		}
+		if !IsAggregateTargetRPMLimited(aggregateGroup, target) {
+			return false, nil
+		}
+		weight := target.GetWeight()
+		if weight <= 0 {
+			return false, nil
+		}
+		priorityCount, err := model.GetSatisfiedChannelPriorityCount(target.RealGroup, modelName)
+		if err != nil {
+			return false, err
+		}
+		if priorityCount <= 0 {
+			return false, nil
+		}
+		degradeLevel := 0
+		if skipDegraded {
+			degraded, state, _, err := IsAggregateGroupRouteTemporarilyDegraded(aggregateGroup.Name, modelName, target.RealGroup)
+			if err != nil {
+				return false, err
+			}
+			if degraded {
+				return false, nil
+			}
+			if state != nil {
+				degradeLevel = state.DegradeLevel
+			}
+		}
+		strategy := GetAggregateGroupEffectiveSmartStrategy(aggregateGroup)
+		return calculateAggregateClusterEffectiveWeightWithPercent(weight, degradeLevel, strategy.ClusterDegradedWeightPercent) > 0, nil
+	}
+	return false, nil
+}
+
+func markAggregateRouteAffinityRPMFallback(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, routePool string, affinityRouteGroup string, fallbackCandidate aggregateClusterRouteCandidate) {
+	if ctx == nil || aggregateGroup == nil || strings.TrimSpace(affinityRouteGroup) == "" || fallbackCandidate.Target.RealGroup == "" {
+		return
+	}
+	if fallbackCandidate.Target.RealGroup == affinityRouteGroup {
+		return
+	}
+	routePool = normalizeAggregateClusterRoutePool(routePool)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRouteAffinityHit, affinityRouteGroup)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRouteAffinityFallbackReason, aggregateRouteAffinityFallbackReasonRPMLimit)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRouteAffinityFallbackRouteGroup, fallbackCandidate.Target.RealGroup)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRouteAffinityRebind, false)
+	logger.LogWarn(ctx, fmt.Sprintf("aggregate route affinity fallback by rpm limit without rebind: aggregate_group=%s, model=%s, route_pool=%s, affinity_route_group=%s, fallback_route_group=%s", aggregateGroup.Name, modelName, routePool, affinityRouteGroup, fallbackCandidate.Target.RealGroup))
+}
+
 func buildAggregateClusterRouteCandidatesFromTargets(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, routePool string, targets []model.AggregateGroupTarget, skipDegraded bool, excludeAttempted bool) ([]aggregateClusterRouteCandidate, []aggregateClusterRouteCandidate, error) {
 	routePool = normalizeAggregateClusterRoutePool(routePool)
 	strategy := GetAggregateGroupEffectiveSmartStrategy(aggregateGroup)
@@ -244,6 +307,10 @@ func pickAggregateClusterCandidateByWeight(candidates []aggregateClusterRouteCan
 }
 
 func chooseAggregateClusterRouteCandidateFromTargets(ctx *gin.Context, aggregateGroup *model.AggregateGroup, modelName string, routePool string, targets []model.AggregateGroupTarget, skipDegraded bool, excludeAttempted bool, affinityRouteGroup string) (aggregateClusterRouteCandidate, bool, bool, error) {
+	affinityFilteredByRPM, err := isAggregateAffinityRouteFilteredByRPMLimit(ctx, aggregateGroup, modelName, routePool, targets, skipDegraded, excludeAttempted, affinityRouteGroup)
+	if err != nil {
+		return aggregateClusterRouteCandidate{}, false, false, err
+	}
 	healthyCandidates, supportedCandidates, err := buildAggregateClusterRouteCandidatesFromTargets(ctx, aggregateGroup, modelName, routePool, targets, skipDegraded, excludeAttempted)
 	if err != nil {
 		return aggregateClusterRouteCandidate{}, false, false, err
@@ -266,6 +333,9 @@ func chooseAggregateClusterRouteCandidateFromTargets(ctx *gin.Context, aggregate
 		}
 	}
 	candidate, ok := pickAggregateClusterCandidateByWeight(candidates)
+	if ok && affinityFilteredByRPM {
+		markAggregateRouteAffinityRPMFallback(ctx, aggregateGroup, modelName, routePool, affinityRouteGroup, candidate)
+	}
 	return candidate, ok, false, nil
 }
 

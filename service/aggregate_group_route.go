@@ -481,6 +481,18 @@ func AppendAggregateGroupAdminInfo(c *gin.Context, adminInfo map[string]interfac
 		if scope := common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityScope); scope != "" {
 			affinityInfo["scope"] = scope
 		}
+		if hit := common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityHit); hit != "" {
+			affinityInfo["hit"] = hit
+		}
+		if fallbackReason := common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityFallbackReason); fallbackReason != "" {
+			affinityInfo["fallback_reason"] = fallbackReason
+		}
+		if fallbackRouteGroup := common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityFallbackRouteGroup); fallbackRouteGroup != "" {
+			affinityInfo["fallback_route_group"] = fallbackRouteGroup
+		}
+		if _, ok := common.GetContextKey(c, constant.ContextKeyAggregateRouteAffinityRebind); ok {
+			affinityInfo["rebind"] = common.GetContextKeyBool(c, constant.ContextKeyAggregateRouteAffinityRebind)
+		}
 		if sourceType := common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinitySourceType); sourceType != "" {
 			affinityInfo["source_type"] = sourceType
 		}

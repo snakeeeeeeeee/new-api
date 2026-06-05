@@ -1,3 +1,36 @@
+# Task Plan: 聚合分组 RPM 亲和 fallback 不改绑
+
+## Goal
+修正聚合分组 Cluster 亲和在子分组 RPM 软限制下的行为：亲和命中的子分组因 RPM 满而临时 fallback 时，不覆盖原亲和缓存；默认不新增配置、不做并发限制。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+- [x] Phase 1: 后端路由上下文标记、亲和记录跳过和 admin info
+- [x] Phase 2: 后端单元测试覆盖默认池、模型 scope 和 Claude CLI 专用池
+- [x] Phase 3: 前端拓扑 RPM 超限色改为琥珀色
+- [x] Phase 4: Go/frontend/Docker dev 验证
+
+## Verification
+- Focused service no-rebind regression passed:
+  - `go test ./service -run 'AggregateCluster(RouteAffinityRPMFallback|RouteAffinityUnsupportedTargetCanRebindEvenWhenRPMLimited|RouteAffinitySkipsUserRouteWhenModelUnsupported|ClaudeCLIPoolAffinityRPMFallback)' -count=1`
+- `go test ./model ./service ./controller ./middleware`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `git diff --check`: passed.
+- Docker dev smoke passed against `test-kiro-scheam`:
+  - temporary primary `rpm_limit=1` and secondary `rpm_limit=0` real subgroups.
+  - same sticky key routed `primary -> secondary -> primary` after clearing only RPM counters, proving RPM fallback did not rebind affinity.
+  - runtime showed primary `total_rpm=1`, `rpm_limit=1`, `rpm_limited=true`; secondary unlimited.
+  - temporary users/tokens/channels/RPM keys cleaned up and `test-kiro-scheam` restored to original `claude-re-kiro` target.
+
+## Key Constraints
+- 不新增 DB 字段和配置项。
+- `rpm_limit=0` 老行为不变。
+- 只处理 RPM 导致的临时 fallback，不改变非 RPM 原因下的亲和改绑策略。
+
+---
+
 # Task Plan: 聚合子分组亲和按模型隔离
 
 ## Goal

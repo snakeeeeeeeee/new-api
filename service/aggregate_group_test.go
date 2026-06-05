@@ -1557,6 +1557,161 @@ func TestAggregateClusterSkipsRouteAtSharedRPMLimit(t *testing.T) {
 	require.Equal(t, "vip", selectedGroup)
 }
 
+func TestAggregateClusterRouteAffinityRPMFallbackDoesNotRebind(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	now := time.Unix(1_700_000_000, 0)
+	aggregateRouteRPMNow = func() time.Time {
+		return now
+	}
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-affinity-rpm-no-rebind", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(0), RPMLimit: 0},
+	})
+	seedAggregateAbilityChannel(t, 1413, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1414, "vip", "gpt-4.1", 10)
+
+	buildCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+		setAggregateRouteAffinityContext(ctx, group)
+		return ctx
+	}
+
+	firstCtx := buildCtx()
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1413, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(100), RPMLimit: 0},
+	})))
+
+	secondCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1414, channel.Id)
+	require.Equal(t, "vip", selectedGroup)
+	require.Equal(t, "default", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
+	require.Equal(t, aggregateRouteAffinityFallbackReasonRPMLimit, common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityFallbackReason))
+	require.Equal(t, "vip", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityFallbackRouteGroup))
+	require.False(t, common.GetContextKeyBool(secondCtx, constant.ContextKeyAggregateRouteAffinityRebind))
+	RecordAggregateRouteSuccess(secondCtx, "gpt-4.1")
+	adminInfo := map[string]interface{}{}
+	AppendAggregateGroupAdminInfo(secondCtx, adminInfo)
+	affinityInfo, ok := adminInfo["aggregate_route_affinity"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "default", affinityInfo["hit"])
+	require.Equal(t, aggregateRouteAffinityFallbackReasonRPMLimit, affinityInfo["fallback_reason"])
+	require.Equal(t, "vip", affinityInfo["fallback_route_group"])
+	require.Equal(t, false, affinityInfo["rebind"])
+
+	checkCtx := buildCtx()
+	routeGroup, found := GetAggregateRouteAffinity(checkCtx, "gpt-4.1", group.Name)
+	require.True(t, found)
+	require.Equal(t, "default", routeGroup)
+
+	now = now.Add(time.Duration(aggregateRouteRPMWindowSeconds+1) * time.Second)
+	thirdCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        thirdCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1413, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+	require.Equal(t, "default", common.GetContextKeyString(thirdCtx, constant.ContextKeyAggregateRouteAffinityHit))
+}
+
+func TestAggregateClusterRouteAffinityRPMFallbackKeepsModelScopeKey(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	now := time.Unix(1_700_000_000, 0)
+	aggregateRouteRPMNow = func() time.Time {
+		return now
+	}
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-model-affinity-rpm-no-rebind", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(0), RPMLimit: 0},
+	})
+	group = configureAggregateRouteAffinityWithScope(t, group, model.AggregateGroupRouteAffinityStrategyPlatformUser, model.AggregateGroupRouteAffinityScopeModel, nil)
+	seedAggregateAbilityChannel(t, 1415, "default", "gpt-4.1,gpt-5", 10)
+	seedAggregateAbilityChannel(t, 1416, "vip", "gpt-4.1,gpt-5", 10)
+
+	buildCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+		setAggregateRouteAffinityContext(ctx, group)
+		return ctx
+	}
+
+	firstCtx := buildCtx()
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(100), RPMLimit: 0},
+	})))
+
+	secondCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+	require.Equal(t, "default", common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
+	RecordAggregateRouteSuccess(secondCtx, "gpt-4.1")
+
+	modelOneCtx := buildCtx()
+	routeGroup, found := GetAggregateRouteAffinity(modelOneCtx, "gpt-4.1", group.Name)
+	require.True(t, found)
+	require.Equal(t, "default", routeGroup)
+
+	modelTwoCtx := buildCtx()
+	routeGroup, found = GetAggregateRouteAffinity(modelTwoCtx, "gpt-5", group.Name)
+	require.False(t, found)
+	require.Empty(t, routeGroup)
+}
+
 func TestAggregateClientRoutePoolSharesRPMLimitWithDefaultPool(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
 	common.MemoryCacheEnabled = false
@@ -1994,6 +2149,63 @@ func TestAggregateClusterRouteAffinitySkipsUserRouteWhenModelUnsupported(t *test
 	require.NotNil(t, channel)
 	require.Equal(t, "vip", selectedGroup)
 	require.Empty(t, common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
+}
+
+func TestAggregateClusterRouteAffinityUnsupportedTargetCanRebindEvenWhenRPMLimited(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-affinity-rpm-unsupported-rebind", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(0), RPMLimit: 0},
+	})
+	seedAggregateAbilityChannel(t, 1253, "default", "gpt-4.1", 10)
+	seedAggregateAbilityChannel(t, 1254, "vip", "gpt-5", 10)
+
+	buildCtx := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(rec)
+		common.SetContextKey(ctx, constant.ContextKeyUserId, 42)
+		return ctx
+	}
+
+	firstCtx := buildCtx()
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-4.1",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "default", selectedGroup)
+	RecordAggregateRouteSuccess(firstCtx, "gpt-4.1")
+
+	loadedGroup, err := model.GetAggregateGroupByID(group.Id)
+	require.NoError(t, err)
+	require.NoError(t, loadedGroup.UpdateWithTargets(NormalizeAggregateTargetsWithWeights([]model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(100), RPMLimit: 0},
+	})))
+
+	secondCtx := buildCtx()
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCtx,
+		TokenGroup: group.Name,
+		ModelName:  "gpt-5",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+	require.Empty(t, common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityHit))
+	require.Empty(t, common.GetContextKeyString(secondCtx, constant.ContextKeyAggregateRouteAffinityFallbackReason))
+	RecordAggregateRouteSuccess(secondCtx, "gpt-5")
+
+	checkCtx := buildCtx()
+	routeGroup, found := GetAggregateRouteAffinity(checkCtx, "gpt-4.1", group.Name)
+	require.True(t, found)
+	require.Equal(t, "vip", routeGroup)
 }
 
 func TestAggregateClusterRequestOnlyAffinityUsesRequestIdentifierAndSkipsWhenMissing(t *testing.T) {
@@ -2878,6 +3090,80 @@ func TestAggregateClusterClaudeCLIPoolModelAffinityScopeIsIndependentByModelAndP
 	routeGroup, found = GetAggregateRouteAffinity(normalCtx, "claude-sonnet-4-6", group.Name)
 	require.False(t, found)
 	require.Empty(t, routeGroup)
+}
+
+func TestAggregateClusterClaudeCLIPoolAffinityRPMFallbackDoesNotRebind(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	now := time.Unix(1_700_000_000, 0)
+	aggregateRouteRPMNow = func() time.Time {
+		return now
+	}
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-client-pool-rpm-no-rebind", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+	})
+	group = configureAggregateRouteAffinityWithScope(t, group, model.AggregateGroupRouteAffinityStrategyRequestFirst, model.AggregateGroupRouteAffinityScopeModel, nil)
+	seedAggregateAbilityChannel(t, 1364, "default", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1365, "svip", "claude-sonnet-4-6", 10)
+	seedAggregateAbilityChannel(t, 1366, "vip", "claude-sonnet-4-6", 10)
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(0), RPMLimit: 0},
+	})
+
+	firstCLI := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        firstCLI,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "svip", selectedGroup)
+	require.Equal(t, model.AggregateGroupClientRoutePoolClaudeCodeCLI, common.GetContextKeyString(firstCLI, constant.ContextKeyAggregateRoutePool))
+	RecordAggregateRouteSuccess(firstCLI, "claude-sonnet-4-6")
+
+	group = configureAggregateClaudeCLIPool(t, group, true, true, []model.AggregateGroupClientRoutePoolTarget{
+		{RealGroup: "svip", Weight: common.GetPointer(100), RPMLimit: 1},
+		{RealGroup: "vip", Weight: common.GetPointer(100), RPMLimit: 0},
+	})
+
+	secondCLI := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        secondCLI,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "vip", selectedGroup)
+	require.Equal(t, "svip", common.GetContextKeyString(secondCLI, constant.ContextKeyAggregateRouteAffinityHit))
+	require.Equal(t, aggregateRouteAffinityFallbackReasonRPMLimit, common.GetContextKeyString(secondCLI, constant.ContextKeyAggregateRouteAffinityFallbackReason))
+	require.Equal(t, "vip", common.GetContextKeyString(secondCLI, constant.ContextKeyAggregateRouteAffinityFallbackRouteGroup))
+	require.False(t, common.GetContextKeyBool(secondCLI, constant.ContextKeyAggregateRouteAffinityRebind))
+	RecordAggregateRouteSuccess(secondCLI, "claude-sonnet-4-6")
+
+	checkCLI := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	setAggregateRouteAffinityContext(checkCLI, group)
+	routeGroup, found := GetAggregateRouteAffinityForPool(checkCLI, "claude-sonnet-4-6", group.Name, model.AggregateGroupClientRoutePoolClaudeCodeCLI)
+	require.True(t, found)
+	require.Equal(t, "svip", routeGroup)
+
+	now = now.Add(time.Duration(aggregateRouteRPMWindowSeconds+1) * time.Second)
+	thirdCLI := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        thirdCLI,
+		TokenGroup: group.Name,
+		ModelName:  "claude-sonnet-4-6",
+		Retry:      common.GetPointer(0),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, "svip", selectedGroup)
+	require.Equal(t, "svip", common.GetContextKeyString(thirdCLI, constant.ContextKeyAggregateRouteAffinityHit))
 }
 
 func TestAggregateClusterClaudeCLIPoolRetriesWithinPoolBeforeFallback(t *testing.T) {

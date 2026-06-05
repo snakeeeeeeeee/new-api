@@ -37,6 +37,9 @@ import { useIsMobile } from '../../../hooks/common/useIsMobile';
 
 const { Text, Title } = Typography;
 
+const RPM_LIMIT_WARNING_COLOR = '#d97706';
+const RPM_LIMIT_WARNING_TEXT_COLOR = '#92400e';
+
 const formatTime = (timestamp) => {
   if (!timestamp) {
     return '-';
@@ -117,7 +120,7 @@ const getRouteStatusConfig = (route, t, routingMode = 'failover') => {
     return { color: 'grey', text: 'Unavailable' };
   }
   if (route?.rpm_limited) {
-    return { color: 'red', text: 'RPM Limit' };
+    return { color: 'yellow', text: 'RPM Limit' };
   }
   if (routingMode === 'cluster') {
     if (route?.is_soft_fallback) {
@@ -185,8 +188,18 @@ const getRouteVisualStyle = (route, t, routingMode = 'failover') => {
         badgeText: '#166534',
         badgeStroke: 'rgba(34, 197, 94, 0.18)',
       };
-    case 'Skipped':
     case 'RPM Limit':
+      return {
+        ...statusConfig,
+        fillStart: '#fffbeb',
+        fillEnd: '#fffdf5',
+        border: 'rgba(245, 158, 11, 0.38)',
+        accent: RPM_LIMIT_WARNING_COLOR,
+        badgeFill: '#fef3c7',
+        badgeText: RPM_LIMIT_WARNING_TEXT_COLOR,
+        badgeStroke: 'rgba(245, 158, 11, 0.22)',
+      };
+    case 'Skipped':
       return {
         ...statusConfig,
         fillStart: '#fff1f2',
@@ -529,8 +542,12 @@ const AggregateClusterTopologyCanvas = ({
             {
               label: t('总 RPM'),
               value: formatRouteRPMLimit(node.route, t),
-              labelColor: node.route.rpm_limited ? '#b91c1c' : undefined,
-              valueColor: node.route.rpm_limited ? '#dc2626' : undefined,
+              labelColor: node.route.rpm_limited
+                ? RPM_LIMIT_WARNING_TEXT_COLOR
+                : undefined,
+              valueColor: node.route.rpm_limited
+                ? RPM_LIMIT_WARNING_COLOR
+                : undefined,
             },
             { label: t('成功'), value: node.route.success_rpm ?? 0 },
             {
@@ -1157,7 +1174,11 @@ const AggregateTopologyCanvas = ({
               <text
                 x={node.x + metricInset + 14}
                 y={metricY + 33}
-                fill='#0f172a'
+                fill={
+                  node.route.rpm_limited
+                    ? RPM_LIMIT_WARNING_COLOR
+                    : '#0f172a'
+                }
                 fontSize='16'
                 fontWeight='700'
               >
@@ -1754,8 +1775,13 @@ const AggregateGroupRuntimeDrawer = ({
                                 strong={selectedRoute?.rpm_limited}
                                 type={
                                   selectedRoute?.rpm_limited
-                                    ? 'danger'
+                                    ? undefined
                                     : 'tertiary'
+                                }
+                                style={
+                                  selectedRoute?.rpm_limited
+                                    ? { color: RPM_LIMIT_WARNING_COLOR }
+                                    : undefined
                                 }
                               >
                                 {selectedRoute.total_rpm ??
@@ -1774,7 +1800,7 @@ const AggregateGroupRuntimeDrawer = ({
                           {
                             key: t('RPM 限制'),
                             value: selectedRoute?.rpm_limited ? (
-                              <Tag color='red'>{t('已限制')}</Tag>
+                              <Tag color='yellow'>{t('已限制')}</Tag>
                             ) : (
                               <Tag color='green'>{t('未限制')}</Tag>
                             ),

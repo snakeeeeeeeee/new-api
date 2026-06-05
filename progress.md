@@ -1,3 +1,32 @@
+# Session: 2026-06-05 聚合分组 RPM 亲和 fallback 不改绑
+
+## Scope
+- 实现低风险版 RPM fallback no-rebind，补充观测信息和拓扑琥珀色限制状态。
+
+## Progress
+- 已确认工作区 tracked 文件当前干净，仅有历史未跟踪脚本/tmp/output 文件，本轮不触碰。
+- 已确认后端亲和写入集中在 `RecordAggregateRouteAffinity*`，RPM 过滤集中在 cluster 候选构建。
+- 已确认前端 runtime drawer 当前把 `rpm_limited` 显示为红色，需要改为琥珀色。
+- 已实现 cluster 默认池和 Claude CLI 专用池的 RPM fallback no-rebind：亲和目标只因 RPM 满被过滤时，本次可临时 fallback，但成功后不覆盖原亲和缓存。
+- 已补充 admin info：`hit`、`fallback_reason`、`fallback_route_group`、`rebind=false`。
+- 已将拓扑 RPM 限制状态从红色改为黄色/琥珀色，红色继续留给 skipped/错误类状态。
+- 已收紧后端判断：如果亲和目标不支持当前模型、无可用渠道、权重为 0、已被重试排除或被智能降权过滤，不触发 RPM no-rebind 保护。
+
+## Verification
+- Focused service regression passed:
+  - `go test ./service -run 'AggregateCluster(RouteAffinityRPMFallback|RouteAffinityUnsupportedTargetCanRebindEvenWhenRPMLimited|RouteAffinitySkipsUserRouteWhenModelUnsupported|ClaudeCLIPoolAffinityRPMFallback)' -count=1`
+- `go test ./model ./service ./controller ./middleware`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `git diff --check`: passed.
+- Docker dev smoke passed:
+  - `new-api-dev` healthy on `localhost:3001`.
+  - Temporarily configured `test-kiro-scheam` with primary `rpm_limit=1` and secondary unlimited.
+  - Same sticky key produced route sequence `primary -> secondary -> primary` after clearing only RPM counters, confirming fallback did not rebind affinity.
+  - Runtime API showed primary `total_rpm=1/rpm_limit=1/rpm_limited=true`, secondary `total_rpm=1/rpm_limit=0/rpm_limited=false`.
+  - Restored `test-kiro-scheam` to original `claude-re-kiro` target and cleaned temporary users/tokens/channels/RPM keys.
+
+---
+
 # Session: 2026-06-05 聚合子分组亲和按模型隔离
 
 ## Scope

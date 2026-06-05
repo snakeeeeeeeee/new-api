@@ -1,3 +1,21 @@
+# 聚合分组 RPM 亲和 fallback 不改绑
+
+## Requirements
+- sticky 命中目标因 `rpm_limit` 达到总量上限被过滤时，本次可以 fallback，但成功后不得覆盖原 sticky。
+- 非 sticky 请求、非 RPM 原因 fallback、`rpm_limit=0` 行为保持不变。
+- runtime 拓扑 RPM 超限用黄色/琥珀色，不用红色。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 在 cluster 候选选择阶段识别亲和目标 RPM 受限 | 只有这里能区分“亲和目标存在但被 RPM 过滤”和普通未命中。 |
+| 用 Gin context 标记 fallback reason/rebind=false | 亲和写入发生在成功记录阶段，跨函数传递需复用现有 context 模式。 |
+| 仅当本次最终 route group 不等于原 hit 时跳过写入 | 命中原路由时仍保持现有 TTL/写入行为，避免扩大改动面。 |
+| no-rebind 只在亲和目标“仅因 RPM”被过滤时生效 | 如果亲和目标不支持当前模型、权重为 0、无可用渠道、已重试过或被智能降权过滤，仍保持旧逻辑允许改绑。 |
+| Docker 验证用真实 `/v1/chat/completions` + fake OpenAI upstream | 响应内容直接回显 primary/secondary，能确认真实 relay 路由和亲和缓存行为。 |
+
+---
+
 # 聚合子分组亲和按模型隔离
 
 ## Requirements

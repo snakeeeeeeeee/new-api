@@ -236,6 +236,9 @@ func RecordAggregateRouteAffinityForPool(c *gin.Context, modelName string, aggre
 	if routeGroup == "" {
 		return
 	}
+	if shouldSkipAggregateRouteAffinityRebind(c, routeGroup) {
+		return
+	}
 	key := buildAggregateRouteAffinityKeyForPool(c, modelName, aggregateGroup, routePool)
 	if key == "" {
 		return
@@ -253,6 +256,22 @@ func RecordAggregateRouteAffinityForPool(c *gin.Context, modelName string, aggre
 	if err := getAggregateRouteAffinityCache().SetWithTTL(key, routeGroup, affinityTTL); err != nil {
 		common.SysError(fmt.Sprintf("aggregate route affinity cache set failed: aggregate_group=%s, model=%s, route_group=%s, err=%v", aggregateGroup, modelName, routeGroup, err))
 	}
+}
+
+func shouldSkipAggregateRouteAffinityRebind(c *gin.Context, routeGroup string) bool {
+	if c == nil || strings.TrimSpace(routeGroup) == "" {
+		return false
+	}
+	if common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityFallbackReason) != aggregateRouteAffinityFallbackReasonRPMLimit {
+		return false
+	}
+	affinityRouteGroup := strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyAggregateRouteAffinityHit))
+	if affinityRouteGroup == "" || affinityRouteGroup == routeGroup {
+		return false
+	}
+	common.SetContextKey(c, constant.ContextKeyAggregateRouteAffinityFallbackRouteGroup, routeGroup)
+	common.SetContextKey(c, constant.ContextKeyAggregateRouteAffinityRebind, false)
+	return true
 }
 
 func ClearAggregateRouteAffinityCacheAll() int {
