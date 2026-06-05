@@ -1590,6 +1590,9 @@ func shouldNormalizeOpenAIStyleClaudeRawMessages(info *RelayInfo) bool {
 	if info.RelayFormat != types.RelayFormatOpenAI {
 		return false
 	}
+	if info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
+		return true
+	}
 	for _, format := range info.RequestConversionChain {
 		if format == types.RelayFormatClaude {
 			return true
