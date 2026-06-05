@@ -69,6 +69,27 @@ func TestShouldWrapClientFacingRelayError_FalseForLocalClaudeCompatErrors(t *tes
 	require.Equal(t, http.StatusBadRequest, got.Status)
 }
 
+func TestBuildClientFacingRelayClaudeErrorPreservesWrappedClaudeCompatFields(t *testing.T) {
+	withRelayErrorSetting(t, false, "400,422", "", true)
+	apiErr := types.WithClaudeError(types.ClaudeError{
+		Message: "Invalid request for Claude: messages.0.content.0.source.data is not valid base64 image data.",
+		Type:    "invalid_request_error",
+		Param:   "messages.0.content.0.source.data",
+		Code:    "claude_invalid_image_base64",
+		Status:  http.StatusBadRequest,
+	}, http.StatusBadRequest)
+
+	require.False(t, shouldWrapClientFacingRelayError(apiErr))
+	require.True(t, isLocalClaudeCompatError(apiErr))
+	got := buildClientFacingRelayClaudeError(apiErr)
+	require.Equal(t, "invalid_request_error", got.Type)
+	require.Contains(t, got.Message, "messages.0.content.0.source.data")
+	require.NotContains(t, got.Message, "***.***.***.***.***.data")
+	require.Equal(t, "messages.0.content.0.source.data", got.Param)
+	require.Equal(t, "claude_invalid_image_base64", got.Code)
+	require.Equal(t, http.StatusBadRequest, got.Status)
+}
+
 func TestShouldWrapClientFacingRelayError_DefaultDisabledWraps400(t *testing.T) {
 	setting := operation_setting.GetRelayErrorSetting()
 	original := *setting

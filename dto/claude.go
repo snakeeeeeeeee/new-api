@@ -535,6 +535,15 @@ func (c *ClaudeResponse) GetClaudeError() *types.ClaudeError {
 		if errMsg, ok := err["message"].(string); ok {
 			claudeErr.Message = errMsg
 		}
+		if errParam, ok := err["param"].(string); ok {
+			claudeErr.Param = errParam
+		}
+		if errCode, ok := err["code"]; ok {
+			claudeErr.Code = errCode
+		}
+		if errStatus, ok := err["status"].(float64); ok {
+			claudeErr.Status = int(errStatus)
+		}
 		return claudeErr
 	case string:
 		// 处理简单字符串错误

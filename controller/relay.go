@@ -399,7 +399,15 @@ func isLocalClaudeCompatError(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
-	return strings.HasPrefix(string(err.GetErrorCode()), "claude_")
+	if strings.HasPrefix(string(err.GetErrorCode()), "claude_") {
+		return true
+	}
+	if claudeErr, ok := err.RelayError.(types.ClaudeError); ok {
+		if code, ok := claudeErr.Code.(string); ok {
+			return strings.HasPrefix(code, "claude_")
+		}
+	}
+	return false
 }
 
 func isUpstreamClientFacingRelayError(err *types.NewAPIError) bool {

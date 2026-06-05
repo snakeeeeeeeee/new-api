@@ -371,12 +371,16 @@ func WithClaudeError(claudeError ClaudeError, statusCode int, ops ...NewAPIError
 	if claudeError.Type == "" {
 		claudeError.Type = "upstream_error"
 	}
+	errorCode := ErrorCode(claudeError.Type)
+	if code, ok := claudeError.Code.(string); ok && code != "" {
+		errorCode = ErrorCode(code)
+	}
 	e := &NewAPIError{
 		RelayError: claudeError,
 		errorType:  ErrorTypeClaudeError,
 		StatusCode: statusCode,
 		Err:        errors.New(claudeError.Message),
-		errorCode:  ErrorCode(claudeError.Type),
+		errorCode:  errorCode,
 	}
 	for _, op := range ops {
 		op(e)
