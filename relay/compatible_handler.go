@@ -105,7 +105,34 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 				println("requestBody: ", string(debugBytes))
 			}
 		}
-		requestBody = common.ReaderOnly(storage)
+		if shouldApplyClaudeCompatToOpenAIPassthrough(info) &&
+			(relaycommon.ShouldApplyClaudeToolSchemaCompat(info) || model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled) {
+			jsonData, err := storage.Bytes()
+			if err != nil {
+				return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			info.MarkFinalRequestRelayFormat(types.RelayFormatClaude)
+			if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
+				normalizedData, err := relaycommon.NormalizeClaudeRequestToolSchemasInJSON(jsonData, info)
+				if err != nil {
+					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+				}
+				jsonData = normalizedData
+			}
+			if model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled {
+				normalizedData, compatErr := relaycommon.NormalizeClaudeRequestCompatJSON(jsonData, info)
+				if compatErr != nil {
+					return compatErr
+				}
+				jsonData = normalizedData
+			}
+			if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
+				relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)
+			}
+			requestBody = bytes.NewBuffer(jsonData)
+		} else {
+			requestBody = common.ReaderOnly(storage)
+		}
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
 		if err != nil {
@@ -226,4 +253,11 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	}
 	return nil
+}
+
+func shouldApplyClaudeCompatToOpenAIPassthrough(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.RelayFormat != types.RelayFormatOpenAI {
+		return false
+	}
+	return info.ApiType == constant.APITypeAnthropic
 }
