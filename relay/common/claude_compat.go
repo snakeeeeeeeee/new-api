@@ -25,27 +25,26 @@ import (
 )
 
 const (
-	ClaudeCompatCodeImageMediaTypeMismatch       = "claude_image_media_type_mismatch"
-	ClaudeCompatCodeInvalidImageBase64           = "claude_invalid_image_base64"
-	ClaudeCompatCodeUnknownImageMediaType        = "claude_unknown_image_media_type"
-	ClaudeCompatCodeZeroMaxTokensIncompatible    = "claude_zero_max_tokens_incompatible"
-	ClaudeCompatCodeUnsupportedSamplingParameter = "claude_unsupported_sampling_parameter"
-	ClaudeCompatCodeInvalidOutputEffort          = "claude_invalid_output_effort"
-	ClaudeCompatCodeInvalidToolResultOrder       = "claude_invalid_tool_result_order"
-	ClaudeCompatCodeToolResultMismatch           = "claude_tool_result_mismatch"
-	ClaudeCompatCodeInvalidNamePattern           = "claude_invalid_name_pattern"
-	ClaudeCompatCodeInvalidRequestSchema         = "claude_invalid_request_schema"
-	ClaudeCompatCodeRequestTooLarge              = "claude_request_too_large"
-	ClaudeCompatCodeDuplicateToolUseID           = "claude_duplicate_tool_use_id"
-	ClaudeCompatCodeMissingToolResult            = "claude_missing_tool_result"
-	ClaudeCompatCodeInvalidToolSchema            = "claude_invalid_tool_schema"
-	ClaudeCompatCodeInvalidToolChoice            = "claude_invalid_tool_choice"
-	ClaudeCompatCodeInvalidThinking              = "claude_invalid_thinking"
-	ClaudeCompatCodeImageLimitExceeded           = "claude_image_limit_exceeded"
-	ClaudeCompatCodeInvalidPromptCache           = "claude_invalid_prompt_cache"
-	ClaudeCompatCodeInvalidStopSequences         = "claude_invalid_stop_sequences"
-	ClaudeCompatCodeInvalidServiceTier           = "claude_invalid_service_tier"
-	ClaudeCompatCodeMetadataUserIDPII            = "claude_metadata_user_id_pii"
+	ClaudeCompatCodeImageMediaTypeMismatch    = "claude_image_media_type_mismatch"
+	ClaudeCompatCodeInvalidImageBase64        = "claude_invalid_image_base64"
+	ClaudeCompatCodeUnknownImageMediaType     = "claude_unknown_image_media_type"
+	ClaudeCompatCodeZeroMaxTokensIncompatible = "claude_zero_max_tokens_incompatible"
+	ClaudeCompatCodeInvalidOutputEffort       = "claude_invalid_output_effort"
+	ClaudeCompatCodeInvalidToolResultOrder    = "claude_invalid_tool_result_order"
+	ClaudeCompatCodeToolResultMismatch        = "claude_tool_result_mismatch"
+	ClaudeCompatCodeInvalidNamePattern        = "claude_invalid_name_pattern"
+	ClaudeCompatCodeInvalidRequestSchema      = "claude_invalid_request_schema"
+	ClaudeCompatCodeRequestTooLarge           = "claude_request_too_large"
+	ClaudeCompatCodeDuplicateToolUseID        = "claude_duplicate_tool_use_id"
+	ClaudeCompatCodeMissingToolResult         = "claude_missing_tool_result"
+	ClaudeCompatCodeInvalidToolSchema         = "claude_invalid_tool_schema"
+	ClaudeCompatCodeInvalidToolChoice         = "claude_invalid_tool_choice"
+	ClaudeCompatCodeInvalidThinking           = "claude_invalid_thinking"
+	ClaudeCompatCodeImageLimitExceeded        = "claude_image_limit_exceeded"
+	ClaudeCompatCodeInvalidPromptCache        = "claude_invalid_prompt_cache"
+	ClaudeCompatCodeInvalidStopSequences      = "claude_invalid_stop_sequences"
+	ClaudeCompatCodeInvalidServiceTier        = "claude_invalid_service_tier"
+	ClaudeCompatCodeMetadataUserIDPII         = "claude_metadata_user_id_pii"
 )
 
 var claudeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -1147,37 +1146,10 @@ func normalizeClaudeOpusSampling(request *dto.ClaudeRequest, modelName string) *
 	if !isClaudeOpus47OrLater(modelName) {
 		return nil
 	}
-	if request.Temperature != nil {
-		if isFloatDefault(*request.Temperature, 1.0) {
-			request.Temperature = nil
-		} else {
-			return unsupportedSamplingViolation("temperature", *request.Temperature)
-		}
-	}
-	if request.TopP != nil {
-		if isClaudeOpusCompatibleTopP(*request.TopP) {
-			request.TopP = nil
-		} else {
-			return unsupportedSamplingViolation("top_p", *request.TopP)
-		}
-	}
-	if request.TopK != nil {
-		return unsupportedSamplingViolation("top_k", *request.TopK)
-	}
+	request.Temperature = nil
+	request.TopP = nil
+	request.TopK = nil
 	return nil
-}
-
-func unsupportedSamplingViolation(param string, value any) *claudeCompatViolation {
-	return &claudeCompatViolation{
-		param: param,
-		code:  ClaudeCompatCodeUnsupportedSamplingParameter,
-		message: fmt.Sprintf(
-			"Invalid request for Claude: %s=%v is not supported for this Opus model; remove %s or use the provider default.",
-			param,
-			value,
-			param,
-		),
-	}
 }
 
 func isFloatDefault(value float64, expected float64) bool {
