@@ -19,7 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { Button, Progress, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
-import { IconExternalOpen } from '@douyinfe/semi-icons';
 import {
   Music,
   FileText,
@@ -34,6 +33,9 @@ import {
   Hash,
   Video,
   Sparkles,
+  Chrome,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   TASK_ACTION_FIRST_TAIL_GENERATE,
@@ -169,10 +171,10 @@ const buildVideoResultUrl = (record) => {
   if (!record || record.status !== 'SUCCESS' || !isVideoAction(record.action)) {
     return '';
   }
-  if (record.task_id) {
-    return `/v1/videos/${record.task_id}/content`;
+  if (typeof record.result_url === 'string' && record.result_url.trim()) {
+    return record.result_url.trim();
   }
-  return typeof record.result_url === 'string' ? record.result_url : '';
+  return record.task_id ? `/v1/videos/${record.task_id}/content` : '';
 };
 
 const renderPlatform = (platform, t) => {
@@ -273,6 +275,7 @@ export const getTaskLogsColumns = ({
   isAdminUser,
   openVideoModal,
   openAudioModal,
+  updateTaskBlockStatus,
 }) => {
   return [
     {
@@ -422,22 +425,22 @@ export const getTaskLogsColumns = ({
         if (videoResultUrl) {
           return (
             <Space>
-              <Button
-                theme='borderless'
-                size='small'
-                icon={<Video size={14} />}
-                onClick={() => openVideoModal(videoResultUrl)}
-                aria-label={t('预览视频')}
-              >
-                {t('预览视频')}
-              </Button>
-              <Tooltip content={t('打开视频')}>
+              <Tooltip content={t('预览视频')}>
                 <Button
                   theme='borderless'
                   size='small'
-                  icon={<IconExternalOpen />}
+                  icon={<Video size={18} />}
+                  onClick={() => openVideoModal(videoResultUrl)}
+                  aria-label={t('预览视频')}
+                />
+              </Tooltip>
+              <Tooltip content={t('用浏览器打开')}>
+                <Button
+                  theme='borderless'
+                  size='small'
+                  icon={<Chrome size={18} />}
                   onClick={() => window.open(videoResultUrl, '_blank')}
-                  aria-label={t('打开视频')}
+                  aria-label={t('用浏览器打开')}
                 />
               </Tooltip>
             </Space>
@@ -485,6 +488,37 @@ export const getTaskLogsColumns = ({
           >
             {text}
           </Typography.Text>
+        );
+      },
+    },
+    {
+      key: COLUMN_KEYS.ACTIONS,
+      title: t('操作'),
+      dataIndex: 'actions',
+      fixed: 'right',
+      render: (text, record) => {
+        if (!isAdminUser) {
+          return <></>;
+        }
+        const blocked = !!record.is_blocked;
+        return (
+          <Space>
+            {blocked && (
+              <Tag color='red' shape='circle'>
+                {t('已屏蔽')}
+              </Tag>
+            )}
+            <Tooltip content={blocked ? t('解除屏蔽') : t('屏蔽记录')}>
+              <Button
+                theme='borderless'
+                size='small'
+                type={blocked ? 'tertiary' : 'danger'}
+                icon={blocked ? <Eye size={18} /> : <EyeOff size={18} />}
+                onClick={() => updateTaskBlockStatus?.(record, !blocked)}
+                aria-label={blocked ? t('解除屏蔽') : t('屏蔽记录')}
+              />
+            </Tooltip>
+          </Space>
         );
       },
     },

@@ -32,6 +32,7 @@ const ColumnSelectorModal = ({
   isAdminUser,
   copyText,
   openContentModal,
+  updateTaskBlockStatus,
   t,
 }) => {
   // Get all columns for display in selector
@@ -40,6 +41,7 @@ const ColumnSelectorModal = ({
     COLUMN_KEYS,
     copyText,
     openContentModal,
+    updateTaskBlockStatus,
     isAdminUser,
   });
 
@@ -78,7 +80,12 @@ const ColumnSelectorModal = ({
       >
         {allColumns.map((column) => {
           // Skip admin-only columns for non-admin users
-          if (!isAdminUser && column.key === COLUMN_KEYS.CHANNEL) {
+          if (
+            !isAdminUser &&
+            (column.key === COLUMN_KEYS.CHANNEL ||
+              column.key === COLUMN_KEYS.USERNAME ||
+              column.key === COLUMN_KEYS.ACTIONS)
+          ) {
             return null;
           }
 

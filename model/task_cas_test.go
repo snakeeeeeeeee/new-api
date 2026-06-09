@@ -78,6 +78,29 @@ func TestInitTaskStartsAsSubmitted(t *testing.T) {
 	assert.Equal(t, "0%", task.Progress)
 }
 
+func TestToOpenAIVideoOnlySetsURLForSuccessfulTask(t *testing.T) {
+	success := &Task{
+		TaskID:   "task_success",
+		Status:   TaskStatusSuccess,
+		Progress: "100%",
+		PrivateData: TaskPrivateData{
+			ResultURL: "https://vidgen.x.ai/video.mp4",
+		},
+	}
+	successVideo := success.ToOpenAIVideo()
+	require.NotNil(t, successVideo.Metadata)
+	assert.Equal(t, "https://vidgen.x.ai/video.mp4", successVideo.Metadata["url"])
+
+	failure := &Task{
+		TaskID:     "task_failure",
+		Status:     TaskStatusFailure,
+		Progress:   "100%",
+		FailReason: "Generated video rejected by content moderation.",
+	}
+	failureVideo := failure.ToOpenAIVideo()
+	assert.Nil(t, failureVideo.Metadata)
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot / Equal — pure logic tests (no DB)
 // ---------------------------------------------------------------------------
@@ -234,4 +257,46 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, winCount, "exactly one goroutine should win the CAS")
+}
+
+func TestUserTaskQueriesExcludeBlockedTasks(t *testing.T) {
+	truncateTables(t)
+
+	insertTask(t, &Task{TaskID: "task_visible", UserId: 7, Status: TaskStatusSuccess, Progress: "100%"})
+	insertTask(t, &Task{TaskID: "task_blocked", UserId: 7, Status: TaskStatusSuccess, Progress: "100%", IsBlocked: true})
+
+	userTasks := TaskGetAllUserTask(7, 0, 10, SyncTaskQueryParams{})
+	require.Len(t, userTasks, 1)
+	assert.Equal(t, "task_visible", userTasks[0].TaskID)
+	assert.Equal(t, int64(1), TaskCountAllUserTask(7, SyncTaskQueryParams{}))
+
+	_, exists, err := GetByTaskId(7, "task_blocked")
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	tasks, err := GetByTaskIds(7, []any{"task_visible", "task_blocked"})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, "task_visible", tasks[0].TaskID)
+}
+
+func TestAdminTaskQueriesIncludeBlockedAndToggleBlocked(t *testing.T) {
+	truncateTables(t)
+
+	insertTask(t, &Task{TaskID: "task_block_toggle", UserId: 7, Status: TaskStatusSuccess, Progress: "100%", IsBlocked: true})
+
+	adminTasks := TaskGetAllTasks(0, 10, SyncTaskQueryParams{})
+	require.Len(t, adminTasks, 1)
+	assert.True(t, adminTasks[0].IsBlocked)
+	assert.Equal(t, int64(1), TaskCountAllTasks(SyncTaskQueryParams{}))
+
+	task, exists, err := UpdateTaskBlocked("task_block_toggle", false)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.False(t, task.IsBlocked)
+
+	visible, exists, err := GetByTaskId(7, "task_block_toggle")
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.False(t, visible.IsBlocked)
 }

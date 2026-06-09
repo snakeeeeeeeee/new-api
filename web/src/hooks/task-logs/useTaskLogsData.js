@@ -48,6 +48,7 @@ export const useTaskLogsData = () => {
     PROGRESS: 'progress',
     FAIL_REASON: 'fail_reason',
     RESULT_URL: 'result_url',
+    ACTIONS: 'actions',
   };
 
   // Basic state
@@ -114,6 +115,7 @@ export const useTaskLogsData = () => {
         if (!isAdminUser) {
           merged[COLUMN_KEYS.CHANNEL] = false;
           merged[COLUMN_KEYS.USERNAME] = false;
+          merged[COLUMN_KEYS.ACTIONS] = false;
         }
         setVisibleColumns(merged);
       } catch (e) {
@@ -140,6 +142,7 @@ export const useTaskLogsData = () => {
       [COLUMN_KEYS.PROGRESS]: true,
       [COLUMN_KEYS.FAIL_REASON]: true,
       [COLUMN_KEYS.RESULT_URL]: true,
+      [COLUMN_KEYS.ACTIONS]: isAdminUser,
     };
   };
 
@@ -166,6 +169,8 @@ export const useTaskLogsData = () => {
         (key === COLUMN_KEYS.CHANNEL || key === COLUMN_KEYS.USERNAME) &&
         !isAdminUser
       ) {
+        updatedColumns[key] = false;
+      } else if (key === COLUMN_KEYS.ACTIONS && !isAdminUser) {
         updatedColumns[key] = false;
       } else {
         updatedColumns[key] = checked;
@@ -258,6 +263,22 @@ export const useTaskLogsData = () => {
   // Refresh function
   const refresh = async () => {
     await loadLogs(1, pageSize);
+  };
+
+  const updateTaskBlockStatus = async (record, isBlocked) => {
+    if (!isAdminUser || !record?.task_id) {
+      return;
+    }
+    const res = await API.put(`/api/task/${record.task_id}/block`, {
+      is_blocked: isBlocked,
+    });
+    const { success, message } = res.data;
+    if (success) {
+      showSuccess(isBlocked ? t('已屏蔽记录') : t('已解除屏蔽'));
+      await refresh();
+    } else {
+      showError(message);
+    }
   };
 
   // Copy text function
@@ -367,6 +388,7 @@ export const useTaskLogsData = () => {
     openContentModal,
     openVideoModal,
     openAudioModal,
+    updateTaskBlockStatus,
     enrichLogs,
     syncPageData,
 

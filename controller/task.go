@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -64,6 +65,41 @@ func GetUserTask(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(tasksToDto(items, false))
 	common.ApiSuccess(c, pageInfo)
+}
+
+type UpdateTaskBlockRequest struct {
+	IsBlocked bool `json:"is_blocked"`
+}
+
+func UpdateTaskBlockStatus(c *gin.Context) {
+	taskId := c.Param("task_id")
+	if taskId == "" {
+		common.ApiError(c, errors.New("task_id is required"))
+		return
+	}
+
+	req := UpdateTaskBlockRequest{}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	task, exists, err := model.UpdateTaskBlocked(taskId, req.IsBlocked)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !exists {
+		common.ApiError(c, errors.New("task_not_exist"))
+		return
+	}
+
+	action := "解除屏蔽"
+	if req.IsBlocked {
+		action = "屏蔽"
+	}
+	model.RecordLog(task.UserId, model.LogTypeManage, "管理员"+action+"任务记录，管理员ID："+strconv.Itoa(c.GetInt("id"))+"，任务ID："+task.TaskID)
+	common.ApiSuccess(c, relay.TaskModel2Dto(task))
 }
 
 func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {

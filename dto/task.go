@@ -47,6 +47,7 @@ type TaskDto struct {
 	StartTime  int64           `json:"start_time"`
 	FinishTime int64           `json:"finish_time"`
 	Progress   string          `json:"progress"`
+	IsBlocked  bool            `json:"is_blocked"`
 	Properties any             `json:"properties"`
 	Username   string          `json:"username,omitempty"`
 	Data       json.RawMessage `json:"data"`

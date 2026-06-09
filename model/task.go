@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -58,6 +59,7 @@ type Task struct {
 	StartTime  int64                 `json:"start_time" gorm:"index"`
 	FinishTime int64                 `json:"finish_time" gorm:"index"`
 	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
+	IsBlocked  bool                  `json:"is_blocked" gorm:"default:false;index"`
 	Properties Properties            `json:"properties" gorm:"type:json"`
 	Username   string                `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
@@ -172,6 +174,10 @@ type SyncTaskQueryParams struct {
 	UserIDs        []int
 }
 
+func visibleTaskQuery(query *gorm.DB) *gorm.DB {
+	return query.Where("(is_blocked = ? OR is_blocked IS NULL)", false)
+}
+
 func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) *Task {
 	properties := Properties{}
 	privateData := TaskPrivateData{}
@@ -216,7 +222,7 @@ func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQ
 	var err error
 
 	// 初始化查询构建器
-	query := DB.Where("user_id = ?", userId)
+	query := visibleTaskQuery(DB.Where("user_id = ?", userId))
 
 	if queryParams.TaskID != "" {
 		query = query.Where("task_id = ?", queryParams.TaskID)
@@ -337,7 +343,7 @@ func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 	}
 	var task *Task
 	var err error
-	err = DB.Where("user_id = ? and task_id = ?", userId, taskId).
+	err = visibleTaskQuery(DB.Where("user_id = ? and task_id = ?", userId, taskId)).
 		First(&task).Error
 	exist, err := RecordExist(err)
 	if err != nil {
@@ -352,7 +358,7 @@ func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
 	}
 	var task []*Task
 	var err error
-	err = DB.Where("user_id = ? and task_id in (?)", userId, taskIds).
+	err = visibleTaskQuery(DB.Where("user_id = ? and task_id in (?)", userId, taskIds)).
 		Find(&task).Error
 	if err != nil {
 		return nil, err
@@ -433,6 +439,21 @@ func TaskBulkUpdateByID(ids []int64, params map[string]any) error {
 		Updates(params).Error
 }
 
+func UpdateTaskBlocked(taskID string, blocked bool) (*Task, bool, error) {
+	task, exists, err := GetByOnlyTaskId(taskID)
+	if err != nil || !exists {
+		return task, exists, err
+	}
+	if err := DB.Model(task).Updates(map[string]any{
+		"is_blocked": blocked,
+		"updated_at": time.Now().Unix(),
+	}).Error; err != nil {
+		return nil, true, err
+	}
+	task.IsBlocked = blocked
+	return task, true, nil
+}
+
 type TaskQuotaUsage struct {
 	Mode  string  `json:"mode"`
 	Count float64 `json:"count"`
@@ -476,7 +497,7 @@ func TaskCountAllTasks(queryParams SyncTaskQueryParams) int64 {
 // TaskCountAllUserTask returns total tasks for given user
 func TaskCountAllUserTask(userId int, queryParams SyncTaskQueryParams) int64 {
 	var total int64
-	query := DB.Model(&Task{}).Where("user_id = ?", userId)
+	query := visibleTaskQuery(DB.Model(&Task{}).Where("user_id = ?", userId))
 	if queryParams.TaskID != "" {
 		query = query.Where("task_id = ?", queryParams.TaskID)
 	}
@@ -506,6 +527,8 @@ func (t *Task) ToOpenAIVideo() *dto.OpenAIVideo {
 	openAIVideo.SetProgressStr(t.Progress)
 	openAIVideo.CreatedAt = t.CreatedAt
 	openAIVideo.CompletedAt = t.UpdatedAt
-	openAIVideo.SetMetadata("url", t.GetResultURL())
+	if t.Status == TaskStatusSuccess {
+		openAIVideo.SetMetadata("url", t.GetResultURL())
+	}
 	return openAIVideo
 }
