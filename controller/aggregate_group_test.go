@@ -52,7 +52,7 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.Channel{}, &model.Ability{}, &model.Option{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.Channel{}, &model.Ability{}, &model.Option{}, &model.Model{}, &model.Vendor{}))
 
 	t.Cleanup(func() {
 		setting.AggregateGroupSmartStrategyEnabled = originalSmartStrategyEnabled
@@ -675,6 +675,57 @@ func TestGetUserModelsIncludesExtraUsableGroups(t *testing.T) {
 	require.NoError(t, common.Unmarshal(resp.Data, &models))
 	require.Contains(t, models, "vip-model")
 	require.Contains(t, models, "svip-model")
+}
+
+func TestGetPricingMapsExtraAuthorizedAggregateGroupModels(t *testing.T) {
+	db := setupAggregateGroupControllerTestDB(t)
+	originalGroups := setting.UserUsableGroups2JSONString()
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"video-real":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+		model.RefreshPricing()
+	})
+
+	seedAggregateGroupControllerAbilityChannel(t, 2003, "video-real", "grok-video-model", 0)
+	group := &model.AggregateGroup{
+		Name:                    "extra-video-aggregate",
+		DisplayName:             "Extra Video Aggregate",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.5,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"svip"}))
+	require.NoError(t, group.InsertWithTargets(service.NormalizeAggregateTargets([]string{"video-real"})))
+	seedAggregateGroupControllerUser(t, db, 45, "extra_pricing_user", "vip", common.RoleCommonUser, dto.UserSetting{
+		ExtraUsableGroups: []string{"extra-video-aggregate"},
+	})
+	model.RefreshPricing()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/pricing", nil)
+	ctx.Set("id", 45)
+	GetPricing(ctx)
+
+	resp := decodeAggregateGroupAPIResponse(t, recorder)
+	require.True(t, resp.Success, resp.Message)
+	var data struct {
+		UsableGroup map[string]string `json:"usable_group"`
+		Data        []model.Pricing   `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &data))
+	require.Contains(t, data.UsableGroup, "extra-video-aggregate")
+	for _, pricing := range data.Data {
+		if pricing.ModelName == "grok-video-model" {
+			require.Contains(t, pricing.EnableGroup, "extra-video-aggregate")
+			return
+		}
+	}
+	require.Fail(t, "pricing model not found")
 }
 
 func TestCreateAggregateGroupRejectsInvalidSmartStrategyConfig(t *testing.T) {

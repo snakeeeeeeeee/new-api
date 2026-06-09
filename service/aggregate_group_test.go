@@ -333,6 +333,11 @@ func TestUserUsableGroupsWithExtraUsableGroups(t *testing.T) {
 	}
 	require.Contains(t, aggregateNames, "enterprise-extra")
 	require.NotContains(t, aggregateNames, "enterprise-disabled")
+
+	mappedGroups := MapVisibleModelGroupsWithSetting("vip", []string{"default"}, userSetting)
+	require.Contains(t, mappedGroups, "default")
+	require.Contains(t, mappedGroups, "enterprise-extra")
+	require.NotContains(t, mappedGroups, "enterprise-disabled")
 }
 
 func TestAggregateGroupUserRatioOverrides(t *testing.T) {

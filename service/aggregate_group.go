@@ -227,7 +227,7 @@ func MapVisibleModelGroupsWithSetting(userGroup string, realGroups []string, use
 			}
 		}
 	}
-	for _, aggregateGroup := range GetVisibleAggregateGroups(userGroup) {
+	for _, aggregateGroup := range GetVisibleAggregateGroupsWithSetting(userGroup, userSetting) {
 		for _, targetGroup := range aggregateGroup.GetTargetGroups() {
 			if !slices.Contains(realGroups, targetGroup) {
 				continue
