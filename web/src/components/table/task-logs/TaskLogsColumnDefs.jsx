@@ -18,7 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Progress, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
+import { Button, Progress, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
+import { IconExternalOpen } from '@douyinfe/semi-icons';
 import {
   Music,
   FileText,
@@ -40,6 +41,9 @@ import {
   TASK_ACTION_REFERENCE_GENERATE,
   TASK_ACTION_TEXT_GENERATE,
   TASK_ACTION_REMIX_GENERATE,
+  TASK_ACTION_VIDEO_EDIT,
+  TASK_ACTION_VIDEO_EXTENSION,
+  TASK_ACTION_VIDEO_GENERATION,
 } from '../../../constants/common.constant';
 import { CHANNEL_OPTIONS } from '../../../constants/channel.constants';
 import { stringToColor } from '../../../helpers/render';
@@ -134,6 +138,14 @@ const renderType = (type, t) => {
           {t('视频Remix')}
         </Tag>
       );
+    case TASK_ACTION_VIDEO_GENERATION:
+    case TASK_ACTION_VIDEO_EDIT:
+    case TASK_ACTION_VIDEO_EXTENSION:
+      return (
+        <Tag color='blue' shape='circle' prefixIcon={<Video size={14} />}>
+          {t('视频')}
+        </Tag>
+      );
     default:
       return (
         <Tag color='white' shape='circle' prefixIcon={<HelpCircle size={14} />}>
@@ -141,6 +153,26 @@ const renderType = (type, t) => {
         </Tag>
       );
   }
+};
+
+const isVideoAction = (action) =>
+  action === TASK_ACTION_GENERATE ||
+  action === TASK_ACTION_TEXT_GENERATE ||
+  action === TASK_ACTION_FIRST_TAIL_GENERATE ||
+  action === TASK_ACTION_REFERENCE_GENERATE ||
+  action === TASK_ACTION_REMIX_GENERATE ||
+  action === TASK_ACTION_VIDEO_GENERATION ||
+  action === TASK_ACTION_VIDEO_EDIT ||
+  action === TASK_ACTION_VIDEO_EXTENSION;
+
+const buildVideoResultUrl = (record) => {
+  if (!record || record.status !== 'SUCCESS' || !isVideoAction(record.action)) {
+    return '';
+  }
+  if (record.task_id) {
+    return `/v1/videos/${record.task_id}/content`;
+  }
+  return typeof record.result_url === 'string' ? record.result_url : '';
 };
 
 const renderPlatform = (platform, t) => {
@@ -382,6 +414,39 @@ export const getTaskLogsColumns = ({
       },
     },
     {
+      key: COLUMN_KEYS.RESULT_URL,
+      title: t('结果'),
+      dataIndex: 'result_url',
+      render: (text, record) => {
+        const videoResultUrl = buildVideoResultUrl(record);
+        if (videoResultUrl) {
+          return (
+            <Space>
+              <Button
+                theme='borderless'
+                size='small'
+                icon={<Video size={14} />}
+                onClick={() => openVideoModal(videoResultUrl)}
+                aria-label={t('预览视频')}
+              >
+                {t('预览视频')}
+              </Button>
+              <Tooltip content={t('打开视频')}>
+                <Button
+                  theme='borderless'
+                  size='small'
+                  icon={<IconExternalOpen />}
+                  onClick={() => window.open(videoResultUrl, '_blank')}
+                  aria-label={t('打开视频')}
+                />
+              </Tooltip>
+            </Space>
+          );
+        }
+        return '-';
+      },
+    },
+    {
       key: COLUMN_KEYS.FAIL_REASON,
       title: t('详情'),
       dataIndex: 'fail_reason',
@@ -407,29 +472,6 @@ export const getTaskLogsColumns = ({
           );
         }
 
-        // 视频预览：优先使用 result_url，兼容旧数据 fail_reason 中的 URL
-        const isVideoTask =
-          record.action === TASK_ACTION_GENERATE ||
-          record.action === TASK_ACTION_TEXT_GENERATE ||
-          record.action === TASK_ACTION_FIRST_TAIL_GENERATE ||
-          record.action === TASK_ACTION_REFERENCE_GENERATE ||
-          record.action === TASK_ACTION_REMIX_GENERATE;
-        const isSuccess = record.status === 'SUCCESS';
-        const resultUrl = record.result_url;
-        const hasResultUrl = typeof resultUrl === 'string' && /^https?:\/\//.test(resultUrl);
-        if (isSuccess && isVideoTask && hasResultUrl) {
-          return (
-            <a
-              href='#'
-              onClick={(e) => {
-                e.preventDefault();
-                openVideoModal(resultUrl);
-              }}
-            >
-              {t('点击预览视频')}
-            </a>
-          );
-        }
         if (!text) {
           return t('无');
         }

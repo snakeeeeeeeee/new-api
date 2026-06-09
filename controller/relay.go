@@ -898,6 +898,8 @@ func RelayTask(c *gin.Context) {
 		service.LogTaskConsumption(c, relayInfo)
 
 		task := model.InitTask(result.Platform, relayInfo)
+		perCallBilling := common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) ||
+			relayInfo.ChannelType == constant.ChannelTypeXai
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		task.PrivateData.BillingSource = relayInfo.BillingSource
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
@@ -911,7 +913,7 @@ func RelayTask(c *gin.Context) {
 			ModelRatio:         relayInfo.PriceData.ModelRatio,
 			OtherRatios:        relayInfo.PriceData.OtherRatios,
 			OriginModelName:    relayInfo.OriginModelName,
-			PerCallBilling:     common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName),
+			PerCallBilling:     perCallBilling,
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData

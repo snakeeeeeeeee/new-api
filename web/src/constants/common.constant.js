@@ -44,3 +44,6 @@ export const TASK_ACTION_TEXT_GENERATE = 'textGenerate';
 export const TASK_ACTION_FIRST_TAIL_GENERATE = 'firstTailGenerate';
 export const TASK_ACTION_REFERENCE_GENERATE = 'referenceGenerate';
 export const TASK_ACTION_REMIX_GENERATE = 'remixGenerate';
+export const TASK_ACTION_VIDEO_GENERATION = 'videoGeneration';
+export const TASK_ACTION_VIDEO_EDIT = 'videoEdit';
+export const TASK_ACTION_VIDEO_EXTENSION = 'videoExtension';

@@ -15,6 +15,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -36,7 +38,7 @@ func VideoProxy(c *gin.Context) {
 	}
 
 	userID := c.GetInt("id")
-	task, exists, err := model.GetByTaskId(userID, taskID)
+	task, exists, err := getVideoProxyTask(c, userID, taskID)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to query task %s: %s", taskID, err.Error()))
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to query task")
@@ -160,6 +162,26 @@ func VideoProxy(c *gin.Context) {
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
+}
+
+func getVideoProxyTask(c *gin.Context, userID int, taskID string) (*model.Task, bool, error) {
+	if isVideoProxyAdmin(c) {
+		return model.GetByOnlyTaskId(taskID)
+	}
+	return model.GetByTaskId(userID, taskID)
+}
+
+func isVideoProxyAdmin(c *gin.Context) bool {
+	if role, ok := c.Get("role"); ok {
+		if roleInt, ok := role.(int); ok && roleInt >= common.RoleAdminUser {
+			return true
+		}
+	}
+	if _, ok := c.Get(sessions.DefaultKey); !ok {
+		return false
+	}
+	role, ok := sessions.Default(c).Get("role").(int)
+	return ok && role >= common.RoleAdminUser
 }
 
 func writeVideoDataURL(c *gin.Context, dataURL string) error {

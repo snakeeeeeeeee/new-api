@@ -426,6 +426,54 @@ func TestRefundTaskQuota_NoToken(t *testing.T) {
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 }
 
+func TestXaiVideoFailedAggregateTaskRefundKeepsDeductedQuotaInLog(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 41, 41, 41
+	const initQuota = 20000
+	const tokenRemain = 10000
+	preConsumed := int(0.5 * common.QuotaPerUnit)
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-xai-aggregate-refund", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Group = "enterprise-stable"
+	task.Properties.OriginModelName = "grok-imagine-video-test"
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelPrice:         1,
+		GroupRatio:         0.5,
+		OriginalGroupRatio: 2,
+		RatioOverride:      0.5,
+		HasRatioOverride:   true,
+		OriginModelName:    "grok-imagine-video-test",
+		PerCallBilling:     true,
+	}
+
+	RefundTaskQuota(ctx, task, "upstream failed")
+
+	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeRefund, log.Type)
+	assert.Equal(t, preConsumed, log.Quota)
+	assert.Equal(t, "enterprise-stable", log.Group)
+	assert.Equal(t, "grok-imagine-video-test", log.ModelName)
+	var other map[string]interface{}
+	require.NoError(t, common.Unmarshal([]byte(log.Other), &other))
+	assert.Equal(t, float64(1), other["model_price"])
+	assert.Equal(t, float64(0.5), other["group_ratio"])
+	assert.Equal(t, float64(2), other["original_group_ratio"])
+	assert.Equal(t, float64(2), other["original_ratio"])
+	assert.Equal(t, float64(0.5), other["ratio_override"])
+	assert.Equal(t, true, other["has_ratio_override"])
+	assert.Equal(t, "upstream failed", other["reason"])
+}
+
 // ===========================================================================
 // RecalculateTaskQuota tests
 // ===========================================================================
