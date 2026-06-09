@@ -56,6 +56,7 @@ const DEFAULT_OPTIONS = {
   'claude.default_max_tokens': '{"default":8192}',
   'claude.drop_default_sampling_for_opus_enabled': true,
   'claude.validate_output_effort_enabled': true,
+  'claude.normalize_simple_message_content_enabled': true,
   'claude.promote_leading_system_role_enabled': true,
   'claude.merge_adjacent_same_role_enabled': true,
   'claude.reorder_tool_result_blocks_enabled': false,
@@ -242,6 +243,11 @@ export default function CompatibilityPage() {
         key: 'claude.validate_output_effort_enabled',
         label: 'output_config.effort 等级校验',
         extra: '校验 low/medium/high/xhigh/max 与模型支持范围。',
+      },
+      {
+        key: 'claude.normalize_simple_message_content_enabled',
+        label: '简单 content 自动兼容',
+        extra: '将 messages[].content 的 null、缺失、空数组、数字、布尔值转换为 Claude 可接受的文本内容；对象类型仍返回 400。',
       },
       {
         key: 'claude.promote_leading_system_role_enabled',

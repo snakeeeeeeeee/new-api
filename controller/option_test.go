@@ -348,6 +348,7 @@ func TestClaudeCompatibilityOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.Contains(t, data, `"key":"claude.preserve_zero_max_tokens_enabled","value":"true"`)
 	require.Contains(t, data, `"key":"claude.drop_default_sampling_for_opus_enabled","value":"true"`)
 	require.Contains(t, data, `"key":"claude.validate_output_effort_enabled","value":"true"`)
+	require.Contains(t, data, `"key":"claude.normalize_simple_message_content_enabled","value":"true"`)
 	require.Contains(t, data, `"key":"claude.promote_leading_system_role_enabled","value":"true"`)
 	require.Contains(t, data, `"key":"claude.merge_adjacent_same_role_enabled","value":"true"`)
 	require.Contains(t, data, `"key":"claude.reorder_tool_result_blocks_enabled","value":"false"`)
@@ -375,6 +376,18 @@ func TestClaudeCompatibilityOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.NoError(t, common.Unmarshal(updateRecorder.Body.Bytes(), &updateResp))
 	require.True(t, updateResp.Success, updateResp.Message)
 	require.True(t, model_setting.GetClaudeSettings().ReorderToolResultBlocksEnabled)
+
+	contentPayload := []byte(`{"key":"claude.normalize_simple_message_content_enabled","value":false}`)
+	contentRecorder := httptest.NewRecorder()
+	contentCtx, _ := gin.CreateTestContext(contentRecorder)
+	contentCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(contentPayload))
+	contentCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(contentCtx)
+
+	var contentResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(contentRecorder.Body.Bytes(), &contentResp))
+	require.True(t, contentResp.Success, contentResp.Message)
+	require.False(t, model_setting.GetClaudeSettings().NormalizeSimpleMessageContentEnabled)
 
 	modePayload := []byte(`{"key":"claude.thinking_validation_mode","value":"reject"}`)
 	modeRecorder := httptest.NewRecorder()

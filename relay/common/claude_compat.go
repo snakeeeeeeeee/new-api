@@ -55,6 +55,7 @@ const (
 	claudeCompatRiskMedium = "medium"
 	claudeCompatRiskHigh   = "high"
 
+	claudeCompatEmptyContentText       = " "
 	claudeCompatMaxMessages            = 100000
 	claudeCompatClaudeImageMaxBytes    = 10 * 1024 * 1024
 	claudeCompatBedrockImageMaxBytes   = 5 * 1024 * 1024
@@ -115,11 +116,33 @@ func ValidateClaudeRequestSchemaJSON(jsonData []byte, info *RelayInfo) *types.Ne
 	if apiErr != nil {
 		return apiErr
 	}
+	if model_setting.GetClaudeSettings().NormalizeSimpleMessageContentEnabled {
+		normalizeClaudeRawMessageContents(payload)
+	}
 	settings := model_setting.GetClaudeSettings()
 	if err := applyClaudeCompatValidation(settings.RequestSchemaValidationMode, "request_schema", info, validateClaudeRawRequestSchema(payload, info)); err != nil {
 		return newClaudeCompatAPIErrorWithStatus(err.param, err.code, err.message, err.status)
 	}
 	return nil
+}
+
+func NormalizeClaudeRequestContentJSON(jsonData []byte) ([]byte, *types.NewAPIError) {
+	if !model_setting.GetClaudeSettings().NormalizeSimpleMessageContentEnabled {
+		return jsonData, nil
+	}
+	payload, apiErr := parseClaudeRawPayload(jsonData)
+	if apiErr != nil {
+		return nil, apiErr
+	}
+	changed := normalizeClaudeRawMessageContents(payload)
+	if changed {
+		normalizedJSON, err := common.Marshal(payload)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
+		}
+		jsonData = normalizedJSON
+	}
+	return jsonData, nil
 }
 
 func NormalizeClaudeOpenAIStyleMessagesJSON(jsonData []byte) ([]byte, *types.NewAPIError) {
@@ -151,6 +174,14 @@ func NormalizeClaudeRequestCompatJSON(jsonData []byte, info *RelayInfo) ([]byte,
 	payload, apiErr := parseClaudeRawPayload(jsonData)
 	if apiErr != nil {
 		return nil, apiErr
+	}
+	settings := model_setting.GetClaudeSettings()
+	if settings.NormalizeSimpleMessageContentEnabled && normalizeClaudeRawMessageContents(payload) {
+		normalizedJSON, err := common.Marshal(payload)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
+		}
+		jsonData = normalizedJSON
 	}
 	if normalizeOpenAIStyleClaudeRawMessages(payload, info) {
 		normalizedJSON, err := common.Marshal(payload)
@@ -213,6 +244,37 @@ func copyClaudeCompatJSONField(payload map[string]any, normalizedPayload map[str
 		return
 	}
 	delete(payload, field)
+}
+
+func normalizeClaudeRawMessageContents(payload map[string]any) bool {
+	messages, ok := payload["messages"].([]any)
+	if !ok {
+		return false
+	}
+	changed := false
+	for _, messageValue := range messages {
+		message, ok := messageValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, exists := message["content"]
+		if !exists || content == nil {
+			message["content"] = claudeCompatEmptyContentText
+			changed = true
+			continue
+		}
+		switch typed := content.(type) {
+		case []any:
+			if len(typed) == 0 {
+				message["content"] = claudeCompatEmptyContentText
+				changed = true
+			}
+		case float64, bool:
+			message["content"] = common.Interface2String(typed)
+			changed = true
+		}
+	}
+	return changed
 }
 
 func applyRawClaudeCompatValidations(payload map[string]any, info *RelayInfo) *claudeCompatViolation {
@@ -795,6 +857,9 @@ func validateClaudeRequestSchema(request *dto.ClaudeRequest, info *RelayInfo) *c
 			param := fmt.Sprintf("messages.%d.role", i)
 			return newClaudeCompatViolation(param, ClaudeCompatCodeInvalidRequestSchema, fmt.Sprintf("Invalid request for Claude: %s must be \"user\" or \"assistant\".", param))
 		}
+		if model_setting.GetClaudeSettings().NormalizeSimpleMessageContentEnabled && normalizeClaudeMessageContent(&request.Messages[i]) {
+			message = request.Messages[i]
+		}
 		if message.Content == nil {
 			param := fmt.Sprintf("messages.%d.content", i)
 			return newClaudeCompatViolation(param, ClaudeCompatCodeInvalidRequestSchema, fmt.Sprintf("Invalid request for Claude: %s must be a string or an array of content blocks.", param))
@@ -821,6 +886,32 @@ func validateClaudeRequestSchema(request *dto.ClaudeRequest, info *RelayInfo) *c
 		}
 	}
 	return nil
+}
+
+func normalizeClaudeMessageContent(message *dto.ClaudeMessage) bool {
+	if message == nil {
+		return false
+	}
+	if message.Content == nil {
+		message.Content = claudeCompatEmptyContentText
+		return true
+	}
+	switch typed := message.Content.(type) {
+	case []dto.ClaudeMediaMessage:
+		if len(typed) == 0 {
+			message.Content = claudeCompatEmptyContentText
+			return true
+		}
+	case []any:
+		if len(typed) == 0 {
+			message.Content = claudeCompatEmptyContentText
+			return true
+		}
+	case float64, float32, int, int64, int32, uint, uint64, uint32, bool:
+		message.Content = common.Interface2String(typed)
+		return true
+	}
+	return false
 }
 
 func effectiveClaudeModelName(request *dto.ClaudeRequest, info *RelayInfo) string {

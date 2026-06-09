@@ -345,6 +345,52 @@ func TestNormalizeClaudeRequestCompatJSONUsesRelayInfoModelWhenBodyOmitsModel(t 
 	require.Equal(t, ClaudeCompatCodeInvalidOutputEffort, err.ToOpenAIError().Code)
 }
 
+func TestNormalizeClaudeRequestCompatJSONNormalizesSimpleInvalidContent(t *testing.T) {
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.RequestSchemaValidationMode = model_setting.ClaudeValidationModeReject
+		settings.NormalizeSimpleMessageContentEnabled = true
+	})
+	body := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":null},{"role":"assistant","content":[]},{"role":"user","content":123},{"role":"assistant","content":true}]}`)
+
+	out, err := NormalizeClaudeRequestCompatJSON(body, nil)
+
+	require.Nil(t, err)
+	var payload map[string]any
+	require.NoError(t, commonpkg.Unmarshal(out, &payload))
+	messages := payload["messages"].([]any)
+	require.Equal(t, claudeCompatEmptyContentText, messages[0].(map[string]any)["content"])
+	require.Equal(t, claudeCompatEmptyContentText, messages[1].(map[string]any)["content"])
+	require.Equal(t, "123", messages[2].(map[string]any)["content"])
+	require.Equal(t, "true", messages[3].(map[string]any)["content"])
+}
+
+func TestNormalizeClaudeRequestCompatJSONSimpleContentDisabledRejects(t *testing.T) {
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.RequestSchemaValidationMode = model_setting.ClaudeValidationModeReject
+		settings.NormalizeSimpleMessageContentEnabled = false
+	})
+	body := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":null}]}`)
+
+	_, err := NormalizeClaudeRequestCompatJSON(body, nil)
+
+	require.NotNil(t, err)
+	require.Equal(t, "messages.0.content", err.ToOpenAIError().Param)
+	require.Equal(t, ClaudeCompatCodeInvalidRequestSchema, err.ToOpenAIError().Code)
+}
+
+func TestNormalizeClaudeRequestCompatJSONRejectsObjectContent(t *testing.T) {
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.RequestSchemaValidationMode = model_setting.ClaudeValidationModeReject
+	})
+	body := []byte(`{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":{}}]}`)
+
+	_, err := NormalizeClaudeRequestCompatJSON(body, nil)
+
+	require.NotNil(t, err)
+	require.Equal(t, "messages.0.content", err.ToOpenAIError().Param)
+	require.Equal(t, ClaudeCompatCodeInvalidRequestSchema, err.ToOpenAIError().Code)
+}
+
 func TestNormalizeClaudeRequestCompatJSONPromotesOpenAIStyleLeadingSystemAndDeveloper(t *testing.T) {
 	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
 		settings.PromoteLeadingSystemRoleEnabled = true
@@ -503,7 +549,7 @@ func TestNormalizeClaudeRequestCompatJSONSchemaRejectsHardErrors(t *testing.T) {
 		{name: "messages not array", body: `{"model":"claude-sonnet-4-6","messages":"hello"}`, wantParam: "messages"},
 		{name: "message not object", body: `{"model":"claude-sonnet-4-6","messages":["bad"]}`, wantParam: "messages.0"},
 		{name: "bad role", body: `{"model":"claude-sonnet-4-6","messages":[{"role":"system","content":"hello"}]}`, wantParam: "messages.0.role"},
-		{name: "bad content", body: `{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":123}]}`, wantParam: "messages.0.content"},
+		{name: "bad content", body: `{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":{}}]}`, wantParam: "messages.0.content"},
 		{name: "negative max tokens", body: `{"model":"claude-sonnet-4-6","max_tokens":-1,"messages":[{"role":"user","content":"hello"}]}`, wantParam: "max_tokens"},
 	}
 	for _, tc := range cases {

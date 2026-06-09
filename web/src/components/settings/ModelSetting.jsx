@@ -43,6 +43,7 @@ const ModelSetting = () => {
     'claude.preserve_zero_max_tokens_enabled': true,
     'claude.drop_default_sampling_for_opus_enabled': true,
     'claude.validate_output_effort_enabled': true,
+    'claude.normalize_simple_message_content_enabled': true,
     'claude.promote_leading_system_role_enabled': true,
     'claude.merge_adjacent_same_role_enabled': true,
     'claude.reorder_tool_result_blocks_enabled': false,

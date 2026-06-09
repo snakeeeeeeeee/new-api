@@ -266,13 +266,25 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 }
 
 func normalizeClaudeRequestBodyBeforeValidation(c *gin.Context, requestBody []byte) ([]byte, error) {
-	if !model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled {
-		return requestBody, nil
-	}
-	normalizedBody, apiErr := relaycommon.NormalizeClaudeOpenAIStyleMessagesJSON(requestBody)
+	normalizedBody, apiErr := relaycommon.NormalizeClaudeRequestContentJSON(requestBody)
 	if apiErr != nil {
 		return nil, apiErr
 	}
+	requestBody, err := replaceClaudeRequestBodyStorageIfChanged(c, requestBody, normalizedBody)
+	if err != nil {
+		return nil, err
+	}
+	if !model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled {
+		return requestBody, nil
+	}
+	normalizedBody, apiErr = relaycommon.NormalizeClaudeOpenAIStyleMessagesJSON(requestBody)
+	if apiErr != nil {
+		return nil, apiErr
+	}
+	return replaceClaudeRequestBodyStorageIfChanged(c, requestBody, normalizedBody)
+}
+
+func replaceClaudeRequestBodyStorageIfChanged(c *gin.Context, requestBody, normalizedBody []byte) ([]byte, error) {
 	if bytes.Equal(normalizedBody, requestBody) {
 		return requestBody, nil
 	}

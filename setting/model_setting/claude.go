@@ -24,6 +24,7 @@ type ClaudeSettings struct {
 	PreserveZeroMaxTokensEnabled          bool                           `json:"preserve_zero_max_tokens_enabled"`
 	DropDefaultSamplingForOpusEnabled     bool                           `json:"drop_default_sampling_for_opus_enabled"`
 	ValidateOutputEffortEnabled           bool                           `json:"validate_output_effort_enabled"`
+	NormalizeSimpleMessageContentEnabled  bool                           `json:"normalize_simple_message_content_enabled"`
 	PromoteLeadingSystemRoleEnabled       bool                           `json:"promote_leading_system_role_enabled"`
 	MergeAdjacentSameRoleEnabled          bool                           `json:"merge_adjacent_same_role_enabled"`
 	ReorderToolResultBlocksEnabled        bool                           `json:"reorder_tool_result_blocks_enabled"`
@@ -43,27 +44,28 @@ type ClaudeSettings struct {
 
 // 默认配置
 var defaultClaudeSettings = ClaudeSettings{
-	HeadersSettings:                   map[string]map[string][]string{},
-	ThinkingAdapterEnabled:            true,
-	AutoFixImageMediaTypeEnabled:      true,
-	PreserveZeroMaxTokensEnabled:      true,
-	DropDefaultSamplingForOpusEnabled: true,
-	ValidateOutputEffortEnabled:       true,
-	PromoteLeadingSystemRoleEnabled:   true,
-	MergeAdjacentSameRoleEnabled:      true,
-	ReorderToolResultBlocksEnabled:    false,
-	ApplyCompatInPassthroughEnabled:   false,
-	RequestSchemaValidationMode:       "reject",
-	ToolProtocolValidationMode:        "reject",
-	ToolSchemaValidationMode:          "log",
-	ToolChoiceValidationMode:          "log",
-	ThinkingValidationMode:            "log",
-	ImageLimitsValidationMode:         "log",
-	PromptCacheValidationMode:         "log",
-	StopSequencesValidationMode:       "reject",
-	ServiceTierValidationMode:         "reject",
-	MetadataUserIDValidationMode:      "log",
-	RequestSizeLimitBytes:             32 << 20,
+	HeadersSettings:                      map[string]map[string][]string{},
+	ThinkingAdapterEnabled:               true,
+	AutoFixImageMediaTypeEnabled:         true,
+	PreserveZeroMaxTokensEnabled:         true,
+	DropDefaultSamplingForOpusEnabled:    true,
+	ValidateOutputEffortEnabled:          true,
+	NormalizeSimpleMessageContentEnabled: true,
+	PromoteLeadingSystemRoleEnabled:      true,
+	MergeAdjacentSameRoleEnabled:         true,
+	ReorderToolResultBlocksEnabled:       false,
+	ApplyCompatInPassthroughEnabled:      false,
+	RequestSchemaValidationMode:          "reject",
+	ToolProtocolValidationMode:           "reject",
+	ToolSchemaValidationMode:             "log",
+	ToolChoiceValidationMode:             "log",
+	ThinkingValidationMode:               "log",
+	ImageLimitsValidationMode:            "log",
+	PromptCacheValidationMode:            "log",
+	StopSequencesValidationMode:          "reject",
+	ServiceTierValidationMode:            "reject",
+	MetadataUserIDValidationMode:         "log",
+	RequestSizeLimitBytes:                32 << 20,
 	DefaultMaxTokens: map[string]int{
 		"default": 8192,
 	},
