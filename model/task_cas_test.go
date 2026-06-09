@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,6 +63,19 @@ func insertTask(t *testing.T, task *Task) {
 	task.CreatedAt = time.Now().Unix()
 	task.UpdatedAt = time.Now().Unix()
 	require.NoError(t, DB.Create(task).Error)
+}
+
+func TestInitTaskStartsAsSubmitted(t *testing.T) {
+	task := InitTask(constant.TaskPlatform("48"), &relaycommon.RelayInfo{
+		UserId:        1,
+		UsingGroup:    "default",
+		ChannelMeta:   &relaycommon.ChannelMeta{ChannelId: 2},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+	})
+
+	assert.Equal(t, "task_public", task.TaskID)
+	assert.EqualValues(t, TaskStatusSubmitted, task.Status)
+	assert.Equal(t, "0%", task.Progress)
 }
 
 // ---------------------------------------------------------------------------

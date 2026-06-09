@@ -201,7 +201,7 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 		UserId:      relayInfo.UserId,
 		Group:       relayInfo.UsingGroup,
 		SubmitTime:  time.Now().Unix(),
-		Status:      TaskStatusNotStart,
+		Status:      TaskStatusSubmitted,
 		Progress:    "0%",
 		ChannelId:   relayInfo.ChannelId,
 		Platform:    platform,

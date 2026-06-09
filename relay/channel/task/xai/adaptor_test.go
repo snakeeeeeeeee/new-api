@@ -178,6 +178,11 @@ func TestParseTaskResult(t *testing.T) {
 	assert.Equal(t, string(model.TaskStatusFailure), failed.Status)
 	assert.Equal(t, "bad input", failed.Reason)
 
+	moderationError, err := adaptor.ParseTaskResult([]byte(`{"code":"Client specified an invalid argument","error":"Generated video rejected by content moderation.","usage":{"cost_in_usd_ticks":12100000000}}`))
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusFailure), moderationError.Status)
+	assert.Equal(t, "Generated video rejected by content moderation.", moderationError.Reason)
+
 	expired, err := adaptor.ParseTaskResult([]byte(`{"status":"expired"}`))
 	require.NoError(t, err)
 	assert.Equal(t, string(model.TaskStatusFailure), expired.Status)

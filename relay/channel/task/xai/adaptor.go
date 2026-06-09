@@ -35,6 +35,7 @@ type submitResponse struct {
 
 type taskResponse struct {
 	Status string `json:"status"`
+	Code   string `json:"code,omitempty"`
 	Video  *struct {
 		URL               string `json:"url"`
 		Duration          int    `json:"duration"`
@@ -44,11 +45,9 @@ type taskResponse struct {
 	Usage *struct {
 		CostInUSDTicks int64 `json:"cost_in_usd_ticks"`
 	} `json:"usage,omitempty"`
-	Progress *int `json:"progress,omitempty"`
-	Error    *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
+	Progress *int   `json:"progress,omitempty"`
+	Error    any    `json:"error,omitempty"`
+	Msg      string `json:"message,omitempty"`
 }
 
 type TaskAdaptor struct {
@@ -254,6 +253,16 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	taskResult := relaycommon.TaskInfo{Code: 0}
+	if res.Status == "" {
+		if reason := xaiTaskErrorMessage(res); reason != "" {
+			taskResult.Status = model.TaskStatusFailure
+			taskResult.Reason = reason
+			if res.Progress != nil {
+				taskResult.Progress = fmt.Sprintf("%d%%", *res.Progress)
+			}
+			return &taskResult, nil
+		}
+	}
 	switch strings.ToLower(res.Status) {
 	case "pending":
 		taskResult.Status = model.TaskStatusInProgress
@@ -274,8 +283,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		if strings.ToLower(res.Status) == "expired" {
 			taskResult.Reason = "task expired"
 		}
-		if res.Error != nil && strings.TrimSpace(res.Error.Message) != "" {
-			taskResult.Reason = res.Error.Message
+		if reason := xaiTaskErrorMessage(res); reason != "" {
+			taskResult.Reason = reason
 		}
 	default:
 		return &taskResult, nil
@@ -284,6 +293,26 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Progress = fmt.Sprintf("%d%%", *res.Progress)
 	}
 	return &taskResult, nil
+}
+
+func xaiTaskErrorMessage(res taskResponse) string {
+	if strings.TrimSpace(res.Msg) != "" {
+		return strings.TrimSpace(res.Msg)
+	}
+	switch err := res.Error.(type) {
+	case string:
+		return strings.TrimSpace(err)
+	case map[string]any:
+		for _, key := range []string{"message", "error", "detail", "msg"} {
+			if value, ok := err[key].(string); ok && strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+	if strings.TrimSpace(res.Code) != "" && res.Error != nil {
+		return strings.TrimSpace(res.Code)
+	}
+	return ""
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
