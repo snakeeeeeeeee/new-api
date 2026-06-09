@@ -45,6 +45,10 @@ func canUserGroupSeeAggregate(userGroup string, aggregateGroup *model.AggregateG
 }
 
 func GetVisibleAggregateGroups(userGroup string) []*model.AggregateGroup {
+	return GetVisibleAggregateGroupsWithSetting(userGroup, dto.UserSetting{})
+}
+
+func GetVisibleAggregateGroupsWithSetting(userGroup string, userSetting dto.UserSetting) []*model.AggregateGroup {
 	if strings.TrimSpace(userGroup) == "" {
 		return []*model.AggregateGroup{}
 	}
@@ -53,9 +57,24 @@ func GetVisibleAggregateGroups(userGroup string) []*model.AggregateGroup {
 		return []*model.AggregateGroup{}
 	}
 	visibleGroups := make([]*model.AggregateGroup, 0, len(groups))
+	seen := make(map[string]struct{}, len(groups))
 	for _, group := range groups {
 		if canUserGroupSeeAggregate(userGroup, group) {
+			seen[group.Name] = struct{}{}
 			visibleGroups = append(visibleGroups, group)
+		}
+	}
+	for _, groupName := range userSetting.ExtraUsableGroups {
+		groupName = strings.TrimSpace(groupName)
+		if groupName == "" {
+			continue
+		}
+		if _, exists := seen[groupName]; exists {
+			continue
+		}
+		if aggregateGroup, ok := GetAggregateGroup(groupName, true); ok {
+			seen[groupName] = struct{}{}
+			visibleGroups = append(visibleGroups, aggregateGroup)
 		}
 	}
 	return visibleGroups

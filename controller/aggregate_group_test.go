@@ -17,6 +17,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -261,6 +262,7 @@ func TestUpdateUserAggregateGroupRatioOverridesPreservesUserSetting(t *testing.T
 		SidebarModules:        `{"dashboard":true}`,
 		BillingPreference:     "wallet_first",
 		Language:              "en",
+		ExtraUsableGroups:     []string{"enterprise-extra"},
 	})
 
 	recorder := httptest.NewRecorder()
@@ -287,6 +289,7 @@ func TestUpdateUserAggregateGroupRatioOverridesPreservesUserSetting(t *testing.T
 	require.Equal(t, `{"dashboard":true}`, setting.SidebarModules)
 	require.Equal(t, "wallet_first", setting.BillingPreference)
 	require.Equal(t, "en", setting.Language)
+	require.Equal(t, []string{"enterprise-extra"}, setting.ExtraUsableGroups)
 	require.Equal(t, map[string]float64{
 		"enterprise-stable": 0.1,
 		"enterprise-fast":   0,
@@ -313,6 +316,147 @@ func TestUpdateUserAggregateGroupRatioOverridesPreservesUserSetting(t *testing.T
 		groupNames = append(groupNames, group.Name)
 	}
 	require.ElementsMatch(t, []string{"enterprise-stable", "enterprise-fast"}, groupNames)
+}
+
+func TestUserAggregateGroupRatioOverridesIncludesExtraAuthorizedAggregateGroups(t *testing.T) {
+	db := setupAggregateGroupControllerTestDB(t)
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"business-real":1}`))
+
+	visible := &model.AggregateGroup{
+		Name:                    "visible-aggregate",
+		DisplayName:             "Visible Aggregate",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.25,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, visible.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, visible.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+
+	extra := &model.AggregateGroup{
+		Name:                    "extra-aggregate",
+		DisplayName:             "Extra Aggregate",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              2,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, extra.SetVisibleUserGroups([]string{"svip"}))
+	require.NoError(t, extra.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+
+	disabled := &model.AggregateGroup{
+		Name:                    "disabled-extra-aggregate",
+		DisplayName:             "Disabled Extra Aggregate",
+		Status:                  model.AggregateGroupStatusDisabled,
+		GroupRatio:              3,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, disabled.SetVisibleUserGroups([]string{"svip"}))
+	require.NoError(t, disabled.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+
+	seedAggregateGroupControllerUser(t, db, 44, "extra_ratio_user", "vip", common.RoleCommonUser, dto.UserSetting{
+		NotifyType:            dto.NotifyTypeWebhook,
+		QuotaWarningThreshold: 0.5,
+		WebhookUrl:            "https://example.com/extra",
+		SidebarModules:        `{"setting":true}`,
+		BillingPreference:     "subscription_first",
+		ExtraUsableGroups: []string{
+			"extra-aggregate",
+			"business-real",
+			"disabled-extra-aggregate",
+			"missing-group",
+			"default",
+			"UserGroup-demo",
+			"auto",
+		},
+	})
+
+	getRecorder := httptest.NewRecorder()
+	getCtx, _ := gin.CreateTestContext(getRecorder)
+	getCtx.Request = httptest.NewRequest(http.MethodGet, "/api/user/44/extra_usable_groups", nil)
+	getCtx.Params = gin.Params{{Key: "id", Value: "44"}}
+	getCtx.Set("role", common.RoleRootUser)
+	GetUserExtraUsableGroups(getCtx)
+
+	getResp := decodeAggregateGroupAPIResponse(t, getRecorder)
+	require.True(t, getResp.Success, getResp.Message)
+	var data struct {
+		ExtraUsableGroups    []string                  `json:"extra_usable_groups"`
+		BusinessGroupOptions []userBusinessGroupOption `json:"business_group_options"`
+	}
+	require.NoError(t, common.Unmarshal(getResp.Data, &data))
+	require.Contains(t, data.ExtraUsableGroups, "extra-aggregate")
+	require.Contains(t, data.ExtraUsableGroups, "business-real")
+	optionTypes := make(map[string]string)
+	for _, option := range data.BusinessGroupOptions {
+		optionTypes[option.Value] = option.GroupType
+	}
+	require.Equal(t, "real", optionTypes["business-real"])
+	require.Equal(t, "aggregate", optionTypes["extra-aggregate"])
+	require.NotContains(t, optionTypes, "default")
+	require.NotContains(t, optionTypes, "UserGroup-demo")
+
+	putRecorder := httptest.NewRecorder()
+	putCtx, _ := gin.CreateTestContext(putRecorder)
+	putCtx.Request = httptest.NewRequest(http.MethodPut, "/api/user/44/extra_usable_groups", bytes.NewReader([]byte(`{
+		"extra_usable_groups":["business-real","extra-aggregate","extra-aggregate","default","UserGroup-demo","disabled-extra-aggregate","missing-group"]
+	}`)))
+	putCtx.Request.Header.Set("Content-Type", "application/json")
+	putCtx.Params = gin.Params{{Key: "id", Value: "44"}}
+	putCtx.Set("role", common.RoleRootUser)
+	UpdateUserExtraUsableGroups(putCtx)
+
+	putResp := decodeAggregateGroupAPIResponse(t, putRecorder)
+	require.True(t, putResp.Success, putResp.Message)
+	updated, err := model.GetUserById(44, true)
+	require.NoError(t, err)
+	setting := updated.GetSetting()
+	require.Equal(t, dto.NotifyTypeWebhook, setting.NotifyType)
+	require.Equal(t, 0.5, setting.QuotaWarningThreshold)
+	require.Equal(t, "https://example.com/extra", setting.WebhookUrl)
+	require.Equal(t, `{"setting":true}`, setting.SidebarModules)
+	require.Equal(t, "subscription_first", setting.BillingPreference)
+	require.ElementsMatch(t, []string{"business-real", "extra-aggregate"}, setting.ExtraUsableGroups)
+
+	ratioGetRecorder := httptest.NewRecorder()
+	ratioGetCtx, _ := gin.CreateTestContext(ratioGetRecorder)
+	ratioGetCtx.Request = httptest.NewRequest(http.MethodGet, "/api/user/44/aggregate_group_ratio_overrides", nil)
+	ratioGetCtx.Params = gin.Params{{Key: "id", Value: "44"}}
+	ratioGetCtx.Set("role", common.RoleRootUser)
+	GetUserAggregateGroupRatioOverrides(ratioGetCtx)
+
+	ratioGetResp := decodeAggregateGroupAPIResponse(t, ratioGetRecorder)
+	require.True(t, ratioGetResp.Success, ratioGetResp.Message)
+	var ratioData struct {
+		AggregateGroups []aggregateGroupResponse `json:"aggregate_groups"`
+	}
+	require.NoError(t, common.Unmarshal(ratioGetResp.Data, &ratioData))
+	groupNames := make([]string, 0, len(ratioData.AggregateGroups))
+	for _, group := range ratioData.AggregateGroups {
+		groupNames = append(groupNames, group.Name)
+	}
+	require.ElementsMatch(t, []string{"visible-aggregate", "extra-aggregate"}, groupNames)
+
+	ratioPutRecorder := httptest.NewRecorder()
+	ratioPutCtx, _ := gin.CreateTestContext(ratioPutRecorder)
+	ratioPutCtx.Request = httptest.NewRequest(http.MethodPut, "/api/user/44/aggregate_group_ratio_overrides", bytes.NewReader([]byte(`{
+		"overrides":{"extra-aggregate":0.75}
+	}`)))
+	ratioPutCtx.Request.Header.Set("Content-Type", "application/json")
+	ratioPutCtx.Params = gin.Params{{Key: "id", Value: "44"}}
+	ratioPutCtx.Set("role", common.RoleRootUser)
+	UpdateUserAggregateGroupRatioOverrides(ratioPutCtx)
+
+	ratioPutResp := decodeAggregateGroupAPIResponse(t, ratioPutRecorder)
+	require.True(t, ratioPutResp.Success, ratioPutResp.Message)
+	updated, err = model.GetUserById(44, true)
+	require.NoError(t, err)
+	require.Equal(t, 0.75, updated.GetSetting().AggregateGroupRatioOverrides["extra-aggregate"])
 }
 
 func TestUserAggregateGroupRatioOverridesOnlyExposeVisibleGroups(t *testing.T) {

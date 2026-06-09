@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/QuantumNous/new-api/constant"
 
@@ -978,17 +979,7 @@ func UpdateUser(c *gin.Context) {
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
 	}
-	if strings.TrimSpace(updatedUser.Setting) != "" {
-		var requestedSetting dto.UserSetting
-		if err := common.UnmarshalJsonStr(updatedUser.Setting, &requestedSetting); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
-			return
-		}
-		mergedSetting := originUser.GetSetting()
-		mergedSetting.ExtraUsableGroups = requestedSetting.ExtraUsableGroups
-		originUser.SetSetting(mergedSetting)
-		updatedUser.Setting = originUser.Setting
-	}
+	updatedUser.Setting = originUser.Setting
 	updatePassword := updatedUser.Password != ""
 	if err := updatedUser.Edit(updatePassword); err != nil {
 		common.ApiError(c, err)
@@ -1366,8 +1357,28 @@ type aggregateGroupRatioOverridesRequest struct {
 	Overrides map[string]float64 `json:"overrides"`
 }
 
-func buildVisibleAggregateGroupResponses(userGroup string) []*aggregateGroupResponse {
-	groups := service.GetVisibleAggregateGroups(userGroup)
+type extraUsableGroupsRequest struct {
+	ExtraUsableGroups []string `json:"extra_usable_groups"`
+}
+
+type userBusinessGroupOption struct {
+	Label     string `json:"label"`
+	Value     string `json:"value"`
+	GroupType string `json:"group_type"`
+}
+
+func isUserIdentityGroupName(groupName string) bool {
+	groupName = strings.TrimSpace(groupName)
+	return groupName == "default" || strings.HasPrefix(groupName, "UserGroup-")
+}
+
+func isBusinessGroupName(groupName string) bool {
+	groupName = strings.TrimSpace(groupName)
+	return groupName != "" && groupName != "auto" && !isUserIdentityGroupName(groupName)
+}
+
+func buildVisibleAggregateGroupResponses(userGroup string, userSetting dto.UserSetting) []*aggregateGroupResponse {
+	groups := service.GetVisibleAggregateGroupsWithSetting(userGroup, userSetting)
 	resp := make([]*aggregateGroupResponse, 0, len(groups))
 	for _, group := range groups {
 		resp = append(resp, buildAggregateGroupResponse(group))
@@ -1375,8 +1386,75 @@ func buildVisibleAggregateGroupResponses(userGroup string) []*aggregateGroupResp
 	return resp
 }
 
-func normalizeAggregateGroupRatioOverrides(input map[string]float64, userGroup string) (map[string]float64, error) {
-	visibleGroups := service.GetVisibleAggregateGroups(userGroup)
+func buildBusinessGroupOptions() []userBusinessGroupOption {
+	options := make([]userBusinessGroupOption, 0)
+	seen := make(map[string]struct{})
+	for groupName := range ratio_setting.GetGroupRatioCopy() {
+		if !isBusinessGroupName(groupName) {
+			continue
+		}
+		seen[groupName] = struct{}{}
+		options = append(options, userBusinessGroupOption{
+			Label:     groupName,
+			Value:     groupName,
+			GroupType: "real",
+		})
+	}
+	aggregateGroups, err := model.GetAllAggregateGroups(true)
+	if err != nil {
+		return options
+	}
+	for _, group := range aggregateGroups {
+		if group == nil || !isBusinessGroupName(group.Name) {
+			continue
+		}
+		if _, exists := seen[group.Name]; exists {
+			continue
+		}
+		seen[group.Name] = struct{}{}
+		label := group.Name
+		if group.DisplayName != "" && group.DisplayName != group.Name {
+			label = fmt.Sprintf("%s (%s)", group.DisplayName, group.Name)
+		}
+		options = append(options, userBusinessGroupOption{
+			Label:     label,
+			Value:     group.Name,
+			GroupType: "aggregate",
+		})
+	}
+	return options
+}
+
+func normalizeExtraUsableGroups(input []string) []string {
+	if len(input) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(input))
+	seen := make(map[string]struct{}, len(input))
+	for _, groupName := range input {
+		groupName = strings.TrimSpace(groupName)
+		if !isBusinessGroupName(groupName) {
+			continue
+		}
+		if _, exists := seen[groupName]; exists {
+			continue
+		}
+		if !ratio_setting.ContainsGroupRatio(groupName) && !service.IsAggregateGroup(groupName) {
+			continue
+		}
+		if service.IsAggregateGroup(groupName) {
+			if _, ok := service.GetAggregateGroup(groupName, true); !ok {
+				continue
+			}
+		}
+		seen[groupName] = struct{}{}
+		normalized = append(normalized, groupName)
+	}
+	return normalized
+}
+
+func normalizeAggregateGroupRatioOverrides(input map[string]float64, userGroup string, userSetting dto.UserSetting) (map[string]float64, error) {
+	visibleGroups := service.GetVisibleAggregateGroupsWithSetting(userGroup, userSetting)
 	visibleGroupMap := make(map[string]struct{}, len(visibleGroups))
 	for _, group := range visibleGroups {
 		if group == nil {
@@ -1417,13 +1495,14 @@ func GetUserAggregateGroupRatioOverrides(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
 		return
 	}
-	overrides := user.GetSetting().AggregateGroupRatioOverrides
+	userSetting := user.GetSetting()
+	overrides := userSetting.AggregateGroupRatioOverrides
 	if overrides == nil {
 		overrides = map[string]float64{}
 	}
 	common.ApiSuccess(c, gin.H{
 		"overrides":        overrides,
-		"aggregate_groups": buildVisibleAggregateGroupResponses(user.Group),
+		"aggregate_groups": buildVisibleAggregateGroupResponses(user.Group, userSetting),
 	})
 }
 
@@ -1447,12 +1526,12 @@ func UpdateUserAggregateGroupRatioOverrides(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
 		return
 	}
-	normalized, err := normalizeAggregateGroupRatioOverrides(req.Overrides, user.Group)
+	userSetting := user.GetSetting()
+	normalized, err := normalizeAggregateGroupRatioOverrides(req.Overrides, user.Group, userSetting)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	userSetting := user.GetSetting()
 	if len(normalized) == 0 {
 		userSetting.AggregateGroupRatioOverrides = nil
 	} else {
@@ -1465,7 +1544,61 @@ func UpdateUserAggregateGroupRatioOverrides(c *gin.Context) {
 	}
 	common.ApiSuccess(c, gin.H{
 		"overrides":        normalized,
-		"aggregate_groups": buildVisibleAggregateGroupResponses(user.Group),
+		"aggregate_groups": buildVisibleAggregateGroupResponses(user.Group, userSetting),
+	})
+}
+
+func GetUserExtraUsableGroups(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	user, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !canAdminManageUser(c, user) {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"extra_usable_groups":    user.GetSetting().ExtraUsableGroups,
+		"business_group_options": buildBusinessGroupOptions(),
+	})
+}
+
+func UpdateUserExtraUsableGroups(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	var req extraUsableGroupsRequest
+	if err = common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	user, err := model.GetUserById(id, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !canAdminManageUser(c, user) {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		return
+	}
+	userSetting := user.GetSetting()
+	userSetting.ExtraUsableGroups = normalizeExtraUsableGroups(req.ExtraUsableGroups)
+	user.SetSetting(userSetting)
+	if err = user.Update(false); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"extra_usable_groups":    userSetting.ExtraUsableGroups,
+		"business_group_options": buildBusinessGroupOptions(),
 	})
 }
 

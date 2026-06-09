@@ -325,6 +325,14 @@ func TestUserUsableGroupsWithExtraUsableGroups(t *testing.T) {
 	require.True(t, CanUserSelectGroupWithSetting("vip", "svip", userSetting))
 	require.True(t, CanUserSelectGroupWithSetting("vip", "enterprise-extra", userSetting))
 	require.False(t, CanUserSelectGroupWithSetting("vip", "missing-group", userSetting))
+
+	aggregateGroups := GetVisibleAggregateGroupsWithSetting("vip", userSetting)
+	aggregateNames := make([]string, 0, len(aggregateGroups))
+	for _, group := range aggregateGroups {
+		aggregateNames = append(aggregateNames, group.Name)
+	}
+	require.Contains(t, aggregateNames, "enterprise-extra")
+	require.NotContains(t, aggregateNames, "enterprise-disabled")
 }
 
 func TestAggregateGroupUserRatioOverrides(t *testing.T) {

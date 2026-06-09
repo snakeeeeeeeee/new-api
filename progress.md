@@ -1081,7 +1081,7 @@
 ## Progress
 - 已完成后端 DTO、服务层 `WithSetting` 可用分组入口，并保持旧入口默认行为。
 - 已切换用户分组、模型、价格、token 写入校验、relay token auth、playground、auto 分组选择相关用户上下文路径。
-- 已更新用户编辑弹窗，新增“额外可用分组”多选，保存时只合并 `extra_usable_groups`。
+- 已更新用户编辑弹窗，主分组只保留用户身份分组选项；额外业务分组授权已移出编辑弹窗，改由独立入口保存。
 - 已按用户分组/业务分组语义收窄用户编辑弹窗选项：主分组只显示 `default` 与 `UserGroup-*`，额外可用业务分组过滤掉用户分组并对聚合分组复用令牌分组选择的渐变标记。
 - 已修复用户更新后 Redis 用户缓存可能保留旧 setting 的问题。
 - 验证通过：
@@ -1094,3 +1094,14 @@
   - 使用临时 mock upstream、用户、真实分组、渠道、能力和两枚 token 验证 `/api/user/self/groups`、`/api/user/models`、`/v1/models`、`/v1/chat/completions` 正向通过。
   - 移除 `setting.extra_usable_groups` 并清 Redis/重启后，额外分组 token 返回 403，主分组 token 仍能访问 `/v1/models`。
   - 临时用户、token、channel、ability、option 项和本机 mock 服务已清理；`new-api-dev` 清理后重启仍为 healthy。
+
+## Follow-up
+- 已修复聚合分组特殊倍率候选不识别单用户额外授权聚合分组的问题，新增 setting-aware 聚合分组可见计算并接入 GET/PUT 校验。
+- 已把“额外可用业务分组”从用户编辑弹窗移到用户列表三点菜单的独立“业务分组额外授权”入口；原“分组特殊倍率”入口保持独立，只复用 setting-aware 候选计算。
+- 验证通过：
+  - `go test -count=1 ./service ./controller`
+  - `go test -count=1 ./service ./controller ./model ./middleware`
+  - `go test -count=1 ./...`
+  - `cd web && bun run build`
+  - `git diff --check`
+  - `docker compose -f docker-compose-dev.yml up -d --build` 成功，`new-api-dev` healthy，`/api/status` 返回成功。

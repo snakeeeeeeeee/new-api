@@ -360,6 +360,7 @@ const renderOperations = (
     showResetTwoFAModal,
     showUserSubscriptionsModal,
     showInviteBindingModal,
+    showExtraUsableGroupsModal,
     showAggregateGroupRatioOverridesModal,
     t,
   },
@@ -378,6 +379,11 @@ const renderOperations = (
       node: 'item',
       name: t('绑定邀请人'),
       onClick: () => showInviteBindingModal(record),
+    },
+    {
+      node: 'item',
+      name: t('业务分组额外授权'),
+      onClick: () => showExtraUsableGroupsModal(record),
     },
     {
       node: 'item',
@@ -472,6 +478,7 @@ export const getUsersColumns = ({
   showResetTwoFAModal,
   showUserSubscriptionsModal,
   showInviteBindingModal,
+  showExtraUsableGroupsModal,
   showAggregateGroupRatioOverridesModal,
 }) => {
   return [
@@ -536,6 +543,7 @@ export const getUsersColumns = ({
           showResetTwoFAModal,
           showUserSubscriptionsModal,
           showInviteBindingModal,
+          showExtraUsableGroupsModal,
           showAggregateGroupRatioOverridesModal,
           t,
         }),

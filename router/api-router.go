@@ -130,6 +130,8 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)
 				adminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
 				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
+				adminRoute.GET("/:id/extra_usable_groups", controller.GetUserExtraUsableGroups)
+				adminRoute.PUT("/:id/extra_usable_groups", controller.UpdateUserExtraUsableGroups)
 				adminRoute.GET("/:id/aggregate_group_ratio_overrides", controller.GetUserAggregateGroupRatioOverrides)
 				adminRoute.PUT("/:id/aggregate_group_ratio_overrides", controller.UpdateUserAggregateGroupRatioOverrides)
 				adminRoute.GET("/:id/invite_codes", controller.GetUserInviteCodesByAdmin)

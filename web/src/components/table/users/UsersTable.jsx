@@ -34,6 +34,7 @@ import ResetTwoFAModal from './modals/ResetTwoFAModal';
 import UserSubscriptionsModal from './modals/UserSubscriptionsModal';
 import InviteBindingModal from './modals/InviteBindingModal';
 import AggregateGroupRatioOverridesModal from './modals/AggregateGroupRatioOverridesModal';
+import ExtraUsableGroupsModal from './modals/ExtraUsableGroupsModal';
 
 const UsersTable = (usersData) => {
   const {
@@ -67,6 +68,8 @@ const UsersTable = (usersData) => {
   const [showUserSubscriptionsModal, setShowUserSubscriptionsModal] =
     useState(false);
   const [showInviteBindingModal, setShowInviteBindingModal] = useState(false);
+  const [showExtraUsableGroupsModal, setShowExtraUsableGroupsModal] =
+    useState(false);
   const [
     showAggregateGroupRatioOverridesModal,
     setShowAggregateGroupRatioOverridesModal,
@@ -114,6 +117,11 @@ const UsersTable = (usersData) => {
     setShowInviteBindingModal(true);
   };
 
+  const showExtraUsableGroupsUserModal = (user) => {
+    setModalUser(user);
+    setShowExtraUsableGroupsModal(true);
+  };
+
   const showAggregateGroupRatioOverridesUserModal = (user) => {
     setModalUser(user);
     setShowAggregateGroupRatioOverridesModal(true);
@@ -159,6 +167,7 @@ const UsersTable = (usersData) => {
       showResetTwoFAModal: showResetTwoFAUserModal,
       showUserSubscriptionsModal: showUserSubscriptionsUserModal,
       showInviteBindingModal: showInviteBindingUserModal,
+      showExtraUsableGroupsModal: showExtraUsableGroupsUserModal,
       showAggregateGroupRatioOverridesModal:
         showAggregateGroupRatioOverridesUserModal,
     });
@@ -174,6 +183,7 @@ const UsersTable = (usersData) => {
     showResetTwoFAUserModal,
     showUserSubscriptionsUserModal,
     showInviteBindingUserModal,
+    showExtraUsableGroupsUserModal,
     showAggregateGroupRatioOverridesUserModal,
   ]);
 
@@ -289,6 +299,14 @@ const UsersTable = (usersData) => {
         user={modalUser}
         refresh={refresh}
         t={t}
+      />
+
+      <ExtraUsableGroupsModal
+        visible={showExtraUsableGroupsModal}
+        onCancel={() => setShowExtraUsableGroupsModal(false)}
+        user={modalUser}
+        t={t}
+        onSuccess={() => refresh?.()}
       />
 
       <AggregateGroupRatioOverridesModal
