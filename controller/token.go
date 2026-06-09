@@ -27,7 +27,11 @@ func validateTokenGroupForWrite(userId int, group string, keepExistingGroup stri
 	if err != nil {
 		return err
 	}
-	if !service.CanUserSelectGroup(userGroup, group) {
+	userSetting, err := model.GetUserSetting(userId, false)
+	if err != nil {
+		return err
+	}
+	if !service.CanUserSelectGroupWithSetting(userGroup, group, userSetting) {
 		return fmt.Errorf("无权选择 %s 分组", group)
 	}
 	return nil

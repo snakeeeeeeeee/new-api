@@ -465,6 +465,74 @@ func TestGetUserGroupsReturnsAggregateRatioOverrideDetails(t *testing.T) {
 	require.Nil(t, groups["default"].RatioOverride)
 }
 
+func TestGetUserGroupsReturnsExtraUsableGroups(t *testing.T) {
+	db := setupAggregateGroupControllerTestDB(t)
+	originalGroups := setting.UserUsableGroups2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组","svip":"SVIP分组"}`))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalGroups))
+	})
+
+	group := &model.AggregateGroup{
+		Name:                    "extra-aggregate",
+		DisplayName:             "Extra Aggregate",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.5,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"svip"}))
+	require.NoError(t, group.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+
+	seedAggregateGroupControllerUser(t, db, 43, "extra_group_user", "vip", common.RoleCommonUser, dto.UserSetting{
+		ExtraUsableGroups: []string{"svip", "extra-aggregate", "missing-group"},
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/self/groups", nil)
+	ctx.Set("id", 43)
+	GetUserGroups(ctx)
+
+	resp := decodeAggregateGroupAPIResponse(t, recorder)
+	require.True(t, resp.Success, resp.Message)
+	var groups map[string]struct {
+		Type string `json:"type"`
+		Desc string `json:"desc"`
+	}
+	require.NoError(t, common.Unmarshal(resp.Data, &groups))
+	require.Equal(t, "real", groups["svip"].Type)
+	require.Equal(t, "aggregate", groups["extra-aggregate"].Type)
+	require.NotContains(t, groups, "missing-group")
+}
+
+func TestGetUserModelsIncludesExtraUsableGroups(t *testing.T) {
+	db := setupAggregateGroupControllerTestDB(t)
+	originalGroups := setting.UserUsableGroups2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组","svip":"SVIP分组"}`))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalGroups))
+	})
+	seedAggregateGroupControllerAbilityChannel(t, 2001, "vip", "vip-model", 0)
+	seedAggregateGroupControllerAbilityChannel(t, 2002, "svip", "svip-model", 0)
+	seedAggregateGroupControllerUser(t, db, 44, "extra_model_user", "vip", common.RoleCommonUser, dto.UserSetting{
+		ExtraUsableGroups: []string{"svip"},
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/user/44/models", nil)
+	ctx.Set("id", 44)
+	GetUserModels(ctx)
+
+	resp := decodeAggregateGroupAPIResponse(t, recorder)
+	require.True(t, resp.Success, resp.Message)
+	var models []string
+	require.NoError(t, common.Unmarshal(resp.Data, &models))
+	require.Contains(t, models, "vip-model")
+	require.Contains(t, models, "svip-model")
+}
+
 func TestCreateAggregateGroupRejectsInvalidSmartStrategyConfig(t *testing.T) {
 	setupAggregateGroupControllerTestDB(t)
 

@@ -11,8 +11,11 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -75,6 +78,11 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 
 func seedTokenTestUser(t *testing.T, db *gorm.DB, userID int, group string) {
 	t.Helper()
+	seedTokenTestUserWithSetting(t, db, userID, group, dto.UserSetting{})
+}
+
+func seedTokenTestUserWithSetting(t *testing.T, db *gorm.DB, userID int, group string, setting dto.UserSetting) {
+	t.Helper()
 	user := &model.User{
 		Id:       userID,
 		Username: fmt.Sprintf("user_%d", userID),
@@ -83,6 +91,7 @@ func seedTokenTestUser(t *testing.T, db *gorm.DB, userID int, group string) {
 		Role:     common.RoleCommonUser,
 		Group:    group,
 	}
+	user.SetSetting(setting)
 	if err := db.Create(user).Error; err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
@@ -354,6 +363,126 @@ func TestAddTokenAllowsRealGroupWhenAggregateVisible(t *testing.T) {
 	response := decodeAPIResponse(t, recorder)
 	if !response.Success {
 		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+}
+
+func TestAddTokenAllowsExtraUsableRealGroup(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	seedTokenTestUserWithSetting(t, db, 1, "vip", dto.UserSetting{
+		ExtraUsableGroups: []string{"svip"},
+	})
+	originalGroups := setting.UserUsableGroups2JSONString()
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	defer func() {
+		_ = setting.UpdateUserUsableGroupsByJSONString(originalGroups)
+		_ = ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios)
+	}()
+	if err := setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组"}`); err != nil {
+		t.Fatalf("failed to update usable groups: %v", err)
+	}
+	if err := ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"svip":1}`); err != nil {
+		t.Fatalf("failed to update group ratios: %v", err)
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token", map[string]any{
+		"name":                 "extra-real-token",
+		"expired_time":         -1,
+		"remain_quota":         100,
+		"unlimited_quota":      true,
+		"model_limits_enabled": false,
+		"model_limits":         "",
+		"group":                "svip",
+		"cross_group_retry":    false,
+	}, 1)
+	AddToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+	var created model.Token
+	if err := db.First(&created, "name = ?", "extra-real-token").Error; err != nil {
+		t.Fatalf("failed to load created token: %v", err)
+	}
+	if created.Group != "svip" {
+		t.Fatalf("expected svip group, got %s", created.Group)
+	}
+}
+
+func TestAddTokenAllowsExtraUsableAggregateGroup(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	seedTokenTestUserWithSetting(t, db, 1, "vip", dto.UserSetting{
+		ExtraUsableGroups: []string{"extra-aggregate"},
+	})
+	originalGroups := setting.UserUsableGroups2JSONString()
+	defer func() {
+		_ = setting.UpdateUserUsableGroupsByJSONString(originalGroups)
+	}()
+	if err := setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组"}`); err != nil {
+		t.Fatalf("failed to update usable groups: %v", err)
+	}
+	aggregateGroup := &model.AggregateGroup{
+		Name:                    "extra-aggregate",
+		DisplayName:             "额外聚合组",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.2,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	if err := aggregateGroup.SetVisibleUserGroups([]string{"svip"}); err != nil {
+		t.Fatalf("failed to set visible groups: %v", err)
+	}
+	if err := aggregateGroup.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})); err != nil {
+		t.Fatalf("failed to create aggregate group: %v", err)
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token", map[string]any{
+		"name":                 "extra-aggregate-token",
+		"expired_time":         -1,
+		"remain_quota":         100,
+		"unlimited_quota":      true,
+		"model_limits_enabled": false,
+		"model_limits":         "",
+		"group":                "extra-aggregate",
+		"cross_group_retry":    false,
+	}, 1)
+	AddToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+}
+
+func TestAddTokenRejectsUnassignedExtraGroup(t *testing.T) {
+	setupTokenControllerTestDB(t)
+	seedTokenTestUser(t, model.DB, 1, "vip")
+	originalGroups := setting.UserUsableGroups2JSONString()
+	defer func() {
+		_ = setting.UpdateUserUsableGroupsByJSONString(originalGroups)
+	}()
+	if err := setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组"}`); err != nil {
+		t.Fatalf("failed to update usable groups: %v", err)
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPost, "/api/token", map[string]any{
+		"name":                 "rejected-token",
+		"expired_time":         -1,
+		"remain_quota":         100,
+		"unlimited_quota":      true,
+		"model_limits_enabled": false,
+		"model_limits":         "",
+		"group":                "svip",
+		"cross_group_retry":    false,
+	}, 1)
+	AddToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if response.Success {
+		t.Fatalf("expected failure response")
+	}
+	if !strings.Contains(response.Message, "无权选择 svip 分组") {
+		t.Fatalf("unexpected failure message: %s", response.Message)
 	}
 }
 

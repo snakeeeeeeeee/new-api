@@ -29,7 +29,7 @@ func GetUserGroups(c *gin.Context) {
 	userId := c.GetInt("id")
 	userSetting, _ := model.GetUserSetting(userId, false)
 	userGroup, _ = model.GetUserGroup(userId, false)
-	userVisibleGroups := service.GetUserVisibleGroups(userGroup)
+	userVisibleGroups := service.GetUserVisibleGroupsWithSetting(userGroup, userSetting)
 	for groupName, desc := range userVisibleGroups {
 		ratioView := service.GetUserGroupRatioView(userGroup, groupName, userSetting)
 		usableGroups[groupName] = map[string]interface{}{
@@ -48,7 +48,7 @@ func GetUserGroups(c *gin.Context) {
 			usableGroups[groupName]["ratio_override"] = *ratioView.RatioOverride
 		}
 	}
-	if _, ok := service.GetUserUsableGroups(userGroup)["auto"]; ok {
+	if _, ok := service.GetUserUsableGroupsWithSetting(userGroup, userSetting)["auto"]; ok {
 		usableGroups["auto"] = map[string]interface{}{
 			"ratio": "自动",
 			"desc":  setting.GetUsableGroupDescription("auto"),

@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -278,6 +279,52 @@ func TestVisibleAggregateGroupsAndRatios(t *testing.T) {
 	ratioInfo := ResolveContextGroupRatioInfo(ctx, "vip", "enterprise-stable")
 	require.Equal(t, 1.5, ratioInfo.GroupRatio)
 	require.False(t, ratioInfo.HasSpecialRatio)
+}
+
+func TestUserUsableGroupsWithExtraUsableGroups(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+	})
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"svip":1}`))
+	seedAggregateGroup(t, "enterprise-extra", 1.5, 300, []string{"svip"}, []string{"default"})
+	disabled := seedAggregateGroup(t, "enterprise-disabled", 1.5, 300, []string{"vip"}, []string{"default"})
+	require.NoError(t, model.DB.Model(disabled).Update("status", model.AggregateGroupStatusDisabled).Error)
+
+	baseGroups := GetUserUsableGroups("vip")
+	require.Contains(t, baseGroups, "default")
+	require.Contains(t, baseGroups, "vip")
+	require.NotContains(t, baseGroups, "svip")
+	require.NotContains(t, baseGroups, "enterprise-extra")
+
+	userSetting := dto.UserSetting{
+		ExtraUsableGroups: []string{
+			"svip",
+			"enterprise-extra",
+			"enterprise-disabled",
+			"missing-group",
+			"auto",
+			" svip ",
+			"",
+		},
+	}
+	usableGroups := GetUserUsableGroupsWithSetting("vip", userSetting)
+	require.Contains(t, usableGroups, "default")
+	require.Contains(t, usableGroups, "vip")
+	require.Equal(t, "svip", usableGroups["svip"])
+	require.Equal(t, "enterprise-extra-display", usableGroups["enterprise-extra"])
+	require.NotContains(t, usableGroups, "enterprise-disabled")
+	require.NotContains(t, usableGroups, "missing-group")
+	require.NotContains(t, usableGroups, "auto")
+
+	visibleGroups := GetUserVisibleGroupsWithSetting("vip", userSetting)
+	require.Contains(t, visibleGroups, "svip")
+	require.Contains(t, visibleGroups, "enterprise-extra")
+	require.True(t, CanUserSelectGroupWithSetting("vip", "svip", userSetting))
+	require.True(t, CanUserSelectGroupWithSetting("vip", "enterprise-extra", userSetting))
+	require.False(t, CanUserSelectGroupWithSetting("vip", "missing-group", userSetting))
 }
 
 func TestAggregateGroupUserRatioOverrides(t *testing.T) {

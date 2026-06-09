@@ -1070,3 +1070,27 @@
 
 ## Known Existing Issue
 - `cd web && bun run i18n:lint` 仍失败于既有 401 个 hardcoded-string 问题；新增 `web/src/pages/Compatibility/index.jsx` 不在失败列表中。
+
+---
+
+# Session: 单用户额外可用分组授权
+
+## Scope
+- 实现单用户 `setting.extra_usable_groups`，让管理员可给用户额外授权真实分组或启用聚合分组。
+
+## Progress
+- 已完成后端 DTO、服务层 `WithSetting` 可用分组入口，并保持旧入口默认行为。
+- 已切换用户分组、模型、价格、token 写入校验、relay token auth、playground、auto 分组选择相关用户上下文路径。
+- 已更新用户编辑弹窗，新增“额外可用分组”多选，保存时只合并 `extra_usable_groups`。
+- 已按用户分组/业务分组语义收窄用户编辑弹窗选项：主分组只显示 `default` 与 `UserGroup-*`，额外可用业务分组过滤掉用户分组并对聚合分组复用令牌分组选择的渐变标记。
+- 已修复用户更新后 Redis 用户缓存可能保留旧 setting 的问题。
+- 验证通过：
+  - `go test -count=1 ./service ./controller ./model ./middleware`
+  - `go test -count=1 ./...`
+  - `cd web && bun run build`
+  - `git diff --check`
+- Docker dev 验证通过：
+  - `docker compose -f docker-compose-dev.yml up -d --build` 成功，`new-api-dev` healthy。
+  - 使用临时 mock upstream、用户、真实分组、渠道、能力和两枚 token 验证 `/api/user/self/groups`、`/api/user/models`、`/v1/models`、`/v1/chat/completions` 正向通过。
+  - 移除 `setting.extra_usable_groups` 并清 Redis/重启后，额外分组 token 返回 403，主分组 token 仍能访问 `/v1/models`。
+  - 临时用户、token、channel、ability、option 项和本机 mock 服务已清理；`new-api-dev` 清理后重启仍为 healthy。

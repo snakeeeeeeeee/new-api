@@ -724,3 +724,13 @@
 - 检测接入点建议复用 `controller/relay.go` 已经生成的 `meta.CombineText`，在敏感词拦截前记录命中；这样不重复读取 body，也不会破坏 relay retry/body storage。
 - 如果要“仅记录不拦截”，需要和现有 `CheckSensitiveEnabled` 拆开：新增一个 risk detector setting，不直接依赖现有屏蔽词拦截开关。
 - 页面可以复用 CardPro/Table/Form 模式，筛选字段建议：时间、用户、token、模型、分组、关键词、request_id、处置状态。
+
+---
+
+# 单用户额外可用分组授权 Findings
+
+- 用户主分组仍是 `model.User.Group string`，登录/session/cache/request context 都把它作为单身份分组使用。
+- 用户 setting 已进入 `UserBase.Setting` 和 `ContextKeyUserSetting`，适合承载单用户额外授权，无需迁移。
+- 现有可用分组核心入口是 `service.GetUserUsableGroups(userGroup)`；应保留旧函数行为并新增 `WithSetting` 入口，降低回归风险。
+- 需要切换的实际用户上下文路径包括：`controller/group.go`、`controller/user.go:GetUserModels`、`controller/pricing.go`、`controller/token.go`、`middleware/auth.go`、`middleware/distributor.go`、`controller/model.go` auto 分组列表。
+- 聚合分组列表已有 `/api/aggregate_group/` 管理接口，可作为用户编辑页额外分组候选来源。

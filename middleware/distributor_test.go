@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -47,7 +48,7 @@ func setupDistributorTestDB(t *testing.T) {
 		}
 	})
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"vip":"VIP分组"}`))
-	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"svip":1}`))
 }
 
 func TestDistributePlaygroundSelectedAggregateGroupSetsAggregateContext(t *testing.T) {
@@ -99,6 +100,44 @@ func TestDistributePlaygroundSelectedAggregateGroupSetsAggregateContext(t *testi
 	require.Equal(t, "agg-playground", common.GetContextKeyString(c, constant.ContextKeyUsingGroup))
 	require.Equal(t, "agg-playground", common.GetContextKeyString(c, constant.ContextKeyAggregateGroup))
 	require.Equal(t, "default", common.GetContextKeyString(c, constant.ContextKeyRouteGroup))
+}
+
+func TestDistributePlaygroundAllowsExtraUsableGroup(t *testing.T) {
+	setupDistributorTestDB(t)
+
+	weight := uint(10)
+	priority := int64(0)
+	channel := &model.Channel{
+		Id:       1002,
+		Name:     "svip-channel",
+		Key:      "sk-test",
+		Status:   common.ChannelStatusEnabled,
+		Group:    "svip",
+		Models:   "gpt-extra",
+		Priority: &priority,
+		Weight:   &weight,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/pg/chat/completions", strings.NewReader(`{"model":"gpt-extra","group":"svip"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(c, constant.ContextKeyUserGroup, "vip")
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, "vip")
+	common.SetContextKey(c, constant.ContextKeyUserSetting, dto.UserSetting{
+		ExtraUsableGroups: []string{"svip"},
+	})
+
+	called := false
+	Distribute()(c)
+	if !c.IsAborted() {
+		called = true
+	}
+
+	require.True(t, called)
+	require.Equal(t, "svip", common.GetContextKeyString(c, constant.ContextKeyUsingGroup))
 }
 
 func TestDistributeClaudeInvalidRequestUsesCompatError(t *testing.T) {

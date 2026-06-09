@@ -866,6 +866,40 @@ Phase 4
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
+
+---
+
+# Task Plan: 单用户额外可用分组授权
+
+## Goal
+在不改变 `users.group` 单身份分组语义的前提下，为单个用户增加额外可用分组授权，使后台可指定用户额外看到/使用真实分组或启用的聚合分组。
+
+## Current Phase
+Phase 4 complete
+
+## Phases
+### Phase 1: Backend Service/API
+- [x] 新增 `dto.UserSetting.ExtraUsableGroups`。
+- [x] 新增带用户 setting 的可用分组计算入口，保留旧入口行为。
+- [x] 将用户上下文路径切到新入口：用户分组、模型、价格、token 校验、relay auth、playground。
+
+### Phase 2: Frontend
+- [x] 用户编辑弹窗展示额外可用分组多选。
+- [x] 保存时合并并保留既有用户 setting。
+
+### Phase 3: Tests
+- [x] 补 service/controller/middleware/token 单测。
+- [x] 跑 Go 回归与前端 build。
+
+### Phase 4: Docker Dev
+- [x] `docker compose -f docker-compose-dev.yml up -d --build`。
+- [x] 验证 status、额外授权可见/可路由、移除授权后拒绝。
+
+## Constraints
+- 不新增 DB migration。
+- 不修改 `users.group`、订阅、邀请码、日志 `user_group` 语义。
+- JSON marshal/unmarshal 使用 `common.*`。
+- 不修改受保护项目标识。
 |-------|---------|------------|
 
 ---

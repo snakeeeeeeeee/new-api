@@ -162,6 +162,7 @@ func ListModels(c *gin.Context, modelType int) {
 			})
 			return
 		}
+		userSettings, _ := model.GetUserSetting(userId, false)
 		group := userGroup
 		tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 		if tokenGroup != "" {
@@ -169,7 +170,7 @@ func ListModels(c *gin.Context, modelType int) {
 		}
 		var models []string
 		if tokenGroup == "auto" {
-			for _, autoGroup := range service.GetUserAutoGroup(userGroup) {
+			for _, autoGroup := range service.GetUserAutoGroupWithSetting(userGroup, userSettings) {
 				groupModels := model.GetGroupEnabledModels(autoGroup)
 				for _, g := range groupModels {
 					if !common.StringsContains(models, g) {

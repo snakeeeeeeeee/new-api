@@ -41,16 +41,16 @@ func GetPricing(c *gin.Context) {
 		}
 	}
 
-	usableGroup = service.GetUserVisibleGroups(group)
+	usableGroup = service.GetUserVisibleGroupsWithSetting(group, userSetting)
 	for groupName := range usableGroup {
 		ratioView := service.GetUserGroupRatioView(group, groupName, userSetting)
 		groupRatio[groupName] = ratioView.Ratio
 		groupRatioDetails[groupName] = ratioView
 	}
 	for i := range pricing {
-		pricing[i].EnableGroup = service.MapVisibleModelGroups(group, pricing[i].EnableGroup)
+		pricing[i].EnableGroup = service.MapVisibleModelGroupsWithSetting(group, pricing[i].EnableGroup, userSetting)
 	}
-	autoGroups := service.MapVisibleModelGroups(group, service.GetUserAutoGroup(group))
+	autoGroups := service.MapVisibleModelGroupsWithSetting(group, service.GetUserAutoGroupWithSetting(group, userSetting), userSetting)
 
 	c.JSON(200, gin.H{
 		"success":             true,

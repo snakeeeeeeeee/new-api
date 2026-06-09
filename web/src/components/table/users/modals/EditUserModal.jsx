@@ -26,6 +26,8 @@ import {
   renderQuota,
   renderQuotaWithPrompt,
   getCurrencyConfig,
+  selectFilter,
+  renderGroupOption,
 } from '../../../../helpers';
 import {
   quotaToDisplayAmount,
@@ -58,6 +60,31 @@ import {
 import UserBindingManagementModal from './UserBindingManagementModal';
 
 const { Text, Title } = Typography;
+const USER_GROUP_PREFIX = 'UserGroup-';
+
+const normalizeGroupName = (groupName) => String(groupName || '').trim();
+
+const isUserGroupName = (groupName) => {
+  const name = normalizeGroupName(groupName);
+  return name === 'default' || name.startsWith(USER_GROUP_PREFIX);
+};
+
+const isBusinessGroupName = (groupName) => {
+  const name = normalizeGroupName(groupName);
+  return Boolean(name) && name !== 'auto' && !isUserGroupName(name);
+};
+
+const uniqueOptions = (options) => {
+  const seen = new Set();
+  return options.filter((option) => {
+    const value = normalizeGroupName(option?.value);
+    if (!value || seen.has(value)) {
+      return false;
+    }
+    seen.add(value);
+    return true;
+  });
+};
 
 const EditUserModal = (props) => {
   const { t } = useTranslation();
@@ -68,6 +95,7 @@ const EditUserModal = (props) => {
   const [addAmountLocal, setAddAmountLocal] = useState('');
   const isMobile = useIsMobile();
   const [groupOptions, setGroupOptions] = useState([]);
+  const [extraGroupOptions, setExtraGroupOptions] = useState([]);
   const [bindingModalVisible, setBindingModalVisible] = useState(false);
   const formApiRef = useRef(null);
 
@@ -86,13 +114,53 @@ const EditUserModal = (props) => {
     email: '',
     quota: 0,
     group: 'default',
+    extra_usable_groups: [],
+    setting: '',
     remark: '',
   });
 
   const fetchGroups = async () => {
     try {
-      let res = await API.get(`/api/group/`);
-      setGroupOptions(res.data.data.map((g) => ({ label: g, value: g })));
+      const [groupsRes, aggregateGroupsRes] = await Promise.all([
+        API.get(`/api/group/`),
+        API.get(`/api/aggregate_group/`),
+      ]);
+      const realGroups = groupsRes.data?.success ? groupsRes.data.data || [] : [];
+      const aggregateGroups = aggregateGroupsRes.data?.success
+        ? aggregateGroupsRes.data.data || []
+        : [];
+      setGroupOptions(
+        uniqueOptions([
+          { label: 'default', value: 'default' },
+          ...realGroups
+            .filter(isUserGroupName)
+            .map((group) => ({ label: group, value: group })),
+        ]),
+      );
+      setExtraGroupOptions(
+        uniqueOptions([
+          ...realGroups
+            .filter(isBusinessGroupName)
+            .map((group) => ({
+              label: group,
+              value: group,
+              groupType: 'real',
+            })),
+          ...aggregateGroups
+            .filter(
+              (group) =>
+                Number(group?.status) === 1 && isBusinessGroupName(group?.name),
+            )
+            .map((group) => ({
+              label:
+                group.display_name && group.display_name !== group.name
+                  ? `${group.display_name} (${group.name})`
+                  : group.name,
+              value: group.name,
+              groupType: 'aggregate',
+            })),
+        ]),
+      );
     } catch (e) {
       showError(e.message);
     }
@@ -107,6 +175,17 @@ const EditUserModal = (props) => {
     const { success, message, data } = res.data;
     if (success) {
       data.password = '';
+      let setting = {};
+      if (data.setting) {
+        try {
+          setting = JSON.parse(data.setting);
+        } catch (e) {
+          setting = {};
+        }
+      }
+      data.extra_usable_groups = Array.isArray(setting.extra_usable_groups)
+        ? setting.extra_usable_groups
+        : [];
       formApiRef.current?.setValues({ ...getInitValues(), ...data });
     } else {
       showError(message);
@@ -134,6 +213,19 @@ const EditUserModal = (props) => {
     let payload = { ...values };
     if (typeof payload.quota === 'string')
       payload.quota = parseInt(payload.quota) || 0;
+    let setting = {};
+    if (typeof payload.setting === 'string' && payload.setting.trim() !== '') {
+      try {
+        setting = JSON.parse(payload.setting);
+      } catch (e) {
+        setting = {};
+      }
+    }
+    setting.extra_usable_groups = Array.isArray(payload.extra_usable_groups)
+      ? payload.extra_usable_groups
+      : [];
+    payload.setting = JSON.stringify(setting);
+    delete payload.extra_usable_groups;
     if (userId) {
       payload.id = parseInt(userId);
     }
@@ -297,9 +389,30 @@ const EditUserModal = (props) => {
                           label={t('分组')}
                           placeholder={t('请选择分组')}
                           optionList={groupOptions}
-                          allowAdditions
                           search
+                          searchPosition='dropdown'
+                          filter={selectFilter}
+                          extraText={t(
+                            '这里只能选择 default 或 UserGroup-* 用户分组。',
+                          )}
                           rules={[{ required: true, message: t('请选择分组') }]}
+                        />
+                      </Col>
+                      <Col span={24}>
+                        <Form.Select
+                          field='extra_usable_groups'
+                          label={t('额外可用业务分组')}
+                          placeholder={t('请选择额外可用业务分组')}
+                          optionList={extraGroupOptions}
+                          multiple
+                          search
+                          searchPosition='dropdown'
+                          filter={selectFilter}
+                          renderOptionItem={renderGroupOption}
+                          showClear
+                          extraText={t(
+                            '仅授权该用户额外可见和使用业务分组，不改变用户主分组',
+                          )}
                         />
                       </Col>
 

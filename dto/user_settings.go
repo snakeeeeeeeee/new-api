@@ -17,6 +17,7 @@ type UserSetting struct {
 	BillingPreference                string             `json:"billing_preference,omitempty"`                   // BillingPreference 扣费策略（订阅/钱包）
 	Language                         string             `json:"language,omitempty"`                             // Language 用户语言偏好 (zh, en)
 	AggregateGroupRatioOverrides     map[string]float64 `json:"aggregate_group_ratio_overrides,omitempty"`      // 聚合分组用户特殊倍率
+	ExtraUsableGroups                []string           `json:"extra_usable_groups,omitempty"`                  // 单用户额外可用分组
 }
 
 var (

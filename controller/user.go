@@ -930,7 +930,7 @@ func GetUserModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	groups := service.GetUserUsableGroups(user.Group)
+	groups := service.GetUserUsableGroupsWithSetting(user.Group, user.GetSetting())
 	var models []string
 	for group := range groups {
 		for _, g := range service.GetModelsForGroup(group) {
@@ -977,6 +977,17 @@ func UpdateUser(c *gin.Context) {
 	}
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
+	}
+	if strings.TrimSpace(updatedUser.Setting) != "" {
+		var requestedSetting dto.UserSetting
+		if err := common.UnmarshalJsonStr(updatedUser.Setting, &requestedSetting); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		mergedSetting := originUser.GetSetting()
+		mergedSetting.ExtraUsableGroups = requestedSetting.ExtraUsableGroups
+		originUser.SetSetting(mergedSetting)
+		updatedUser.Setting = originUser.Setting
 	}
 	updatePassword := updatedUser.Password != ""
 	if err := updatedUser.Edit(updatePassword); err != nil {
@@ -1765,6 +1776,7 @@ func UpdateUserSetting(c *gin.Context) {
 		BillingPreference:                existingSettings.BillingPreference,
 		Language:                         existingSettings.Language,
 		AggregateGroupRatioOverrides:     existingSettings.AggregateGroupRatioOverrides,
+		ExtraUsableGroups:                existingSettings.ExtraUsableGroups,
 	}
 
 	// 如果是webhook类型,添加webhook相关设置

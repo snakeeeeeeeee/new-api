@@ -573,6 +573,9 @@ func (user *User) Update(updatePassword bool) error {
 	if err = DB.Model(user).Updates(newUser).Error; err != nil {
 		return err
 	}
+	if err = DB.First(user, user.Id).Error; err != nil {
+		return err
+	}
 
 	// Update cache
 	return updateUserCache(*user)
@@ -595,12 +598,18 @@ func (user *User) Edit(updatePassword bool) error {
 		"quota":        newUser.Quota,
 		"remark":       newUser.Remark,
 	}
+	if strings.TrimSpace(newUser.Setting) != "" {
+		updates["setting"] = newUser.Setting
+	}
 	if updatePassword {
 		updates["password"] = newUser.Password
 	}
 
 	DB.First(&user, user.Id)
 	if err = DB.Model(user).Updates(updates).Error; err != nil {
+		return err
+	}
+	if err = DB.First(user, user.Id).Error; err != nil {
 		return err
 	}
 

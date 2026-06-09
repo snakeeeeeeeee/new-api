@@ -108,8 +108,17 @@ func GetUserVisibleGroups(userGroup string) map[string]string {
 	return GetUserUsableGroups(userGroup)
 }
 
+func GetUserVisibleGroupsWithSetting(userGroup string, userSetting dto.UserSetting) map[string]string {
+	return GetUserUsableGroupsWithSetting(userGroup, userSetting)
+}
+
 func CanUserSelectGroup(userGroup, group string) bool {
 	_, ok := GetUserVisibleGroups(userGroup)[group]
+	return ok
+}
+
+func CanUserSelectGroupWithSetting(userGroup, group string, userSetting dto.UserSetting) bool {
+	_, ok := GetUserVisibleGroupsWithSetting(userGroup, userSetting)[group]
 	return ok
 }
 
@@ -181,7 +190,11 @@ func getAggregateGroupModelSourceGroups(aggregateGroup *model.AggregateGroup) []
 }
 
 func MapVisibleModelGroups(userGroup string, realGroups []string) []string {
-	visibleGroups := GetUserVisibleGroups(userGroup)
+	return MapVisibleModelGroupsWithSetting(userGroup, realGroups, dto.UserSetting{})
+}
+
+func MapVisibleModelGroupsWithSetting(userGroup string, realGroups []string, userSetting dto.UserSetting) []string {
+	visibleGroups := GetUserVisibleGroupsWithSetting(userGroup, userSetting)
 	if len(visibleGroups) == 0 {
 		return []string{}
 	}
@@ -571,6 +584,10 @@ func ResolveContextGroupRatioInfo(ctx *gin.Context, userGroup string, logicalGro
 }
 
 func GetUserUsableGroups(userGroup string) map[string]string {
+	return GetUserUsableGroupsWithSetting(userGroup, dto.UserSetting{})
+}
+
+func GetUserUsableGroupsWithSetting(userGroup string, userSetting dto.UserSetting) map[string]string {
 	groupsCopy := setting.GetUserUsableGroupsCopy()
 	if userGroup != "" {
 		specialSettings, b := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(userGroup)
@@ -594,7 +611,30 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 			groupsCopy[aggregateGroup.Name] = BuildAggregateGroupVisibilityLabel(aggregateGroup)
 		}
 	}
+	addExtraUsableGroups(groupsCopy, userSetting)
 	return groupsCopy
+}
+
+func addExtraUsableGroups(groups map[string]string, userSetting dto.UserSetting) {
+	if len(userSetting.ExtraUsableGroups) == 0 {
+		return
+	}
+	for _, groupName := range userSetting.ExtraUsableGroups {
+		groupName = strings.TrimSpace(groupName)
+		if groupName == "" || groupName == "auto" {
+			continue
+		}
+		if _, exists := groups[groupName]; exists {
+			continue
+		}
+		if ratio_setting.ContainsGroupRatio(groupName) {
+			groups[groupName] = setting.GetUsableGroupDescription(groupName)
+			continue
+		}
+		if aggregateGroup, ok := GetAggregateGroup(groupName, true); ok {
+			groups[groupName] = BuildAggregateGroupVisibilityLabel(aggregateGroup)
+		}
+	}
 }
 
 func ShouldRetryStatusCodeByAggregateGroup(group string, code int) (bool, bool) {
