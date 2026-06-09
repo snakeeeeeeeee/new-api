@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +14,29 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAggregateErrorLogsIncludeUserID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("id", 321)
+	ctx.Set("original_model", "gpt-5.5")
+	ctx.Set("channel_name", "official")
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "svip_gpt-official")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "self-sub2api_gpt")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("预扣费额度失败"), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden)
+
+	relayLog := buildAggregateRelayErrorLog(ctx, apiErr)
+	require.Contains(t, relayLog, "aggregate relay error:")
+	require.Contains(t, relayLog, "user_id=321")
+	require.Contains(t, relayLog, "status_code=403")
+
+	channelLog := buildAggregateChannelErrorLog(ctx, types.ChannelError{ChannelId: 12}, apiErr)
+	require.Contains(t, channelLog, "aggregate channel error:")
+	require.Contains(t, channelLog, "user_id=321")
+	require.Contains(t, channelLog, "channel#12(official)")
+}
 
 func TestBuildClientFacingOpenAIError(t *testing.T) {
 	withRelayErrorSetting(t, false, "400,422", "", true)

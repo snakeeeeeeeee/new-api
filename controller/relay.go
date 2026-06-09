@@ -580,12 +580,14 @@ func buildAggregateChannelErrorLog(c *gin.Context, channelError types.ChannelErr
 	routeGroup := common.GetContextKeyString(c, constant.ContextKeyRouteGroup)
 	routeGroupIndex := common.GetContextKeyInt(c, constant.ContextKeyRouteGroupIndex)
 	channelName := c.GetString("channel_name")
+	userId := c.GetInt("id")
 	return fmt.Sprintf(
-		"aggregate channel error: aggregate_group=%s, model=%s, route_group=%s(index=%d), channel#%d(%s), status_code=%d, error=%s",
+		"aggregate channel error: aggregate_group=%s, model=%s, route_group=%s(index=%d), user_id=%d, channel#%d(%s), status_code=%d, error=%s",
 		aggregateGroup,
 		modelName,
 		routeGroup,
 		routeGroupIndex,
+		userId,
 		channelError.ChannelId,
 		channelName,
 		err.StatusCode,
@@ -598,12 +600,14 @@ func buildAggregateRelayErrorLog(c *gin.Context, err *types.NewAPIError) string 
 	modelName := c.GetString("original_model")
 	routeGroup := common.GetContextKeyString(c, constant.ContextKeyRouteGroup)
 	routeGroupIndex := common.GetContextKeyInt(c, constant.ContextKeyRouteGroupIndex)
+	userId := c.GetInt("id")
 	return fmt.Sprintf(
-		"aggregate relay error: aggregate_group=%s, model=%s, route_group=%s(index=%d), status_code=%d, error=%s",
+		"aggregate relay error: aggregate_group=%s, model=%s, route_group=%s(index=%d), user_id=%d, status_code=%d, error=%s",
 		aggregateGroup,
 		modelName,
 		routeGroup,
 		routeGroupIndex,
+		userId,
 		err.StatusCode,
 		err.Error(),
 	)
