@@ -1,5 +1,24 @@
 # 聚合分组 RPM 亲和 fallback 不改绑
 
+---
+
+# Claude 1h Prompt Cache Local Verification
+
+## Requirements
+- 在本地 Docker dev 环境，用 admin 下已创建的三个聚合分组令牌真实请求 `/v1/messages`。
+- 覆盖聚合分组：`test-ccmax缓存问题-渠道-ccfork`、`test-ccmax缓存问题-渠道-yimo`、`test-ccmax缓存问题-渠道-rivoapi`。
+- 覆盖模型：`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-haiku-4-5-20251001`。
+
+## Findings
+| Finding | Evidence |
+|---------|----------|
+| new-api 支持解析和计费 1h cache creation | `claude-haiku-4-5-20251001` 在三个聚合分组均返回 `ephemeral_1h_input_tokens > 0`，`ephemeral_5m_input_tokens = 0`。 |
+| `claude-opus-4-7` 在三个渠道均只返回 5m cache creation | 即使请求显式带 `anthropic-beta: extended-cache-ttl-2025-04-11`，上游 usage 仍为 `ephemeral_5m_input_tokens > 0`、`ephemeral_1h_input_tokens = 0`。 |
+| `claude-opus-4-6` 未完成真实上游缓存验证 | `rivoapi` 聚合组没有可用渠道；`yimo`/`ccfork` 因本地价格/倍率未配置在 new-api 侧 500。 |
+| `claude-opus-4-8` 未完成真实上游缓存验证 | 三个聚合组均因本地价格/倍率未配置在 new-api 侧 500。 |
+| 三个测试聚合组每组只有一个真实子分组 | `rivoapi -> ccmax-rivoapi`、`yimo -> ccmax-yimo`、`ccfork -> ccmax-ccfork`。 |
+| 测试渠道没有全局模型 header 注入 | 本地 `claude.model_headers_settings` 为空，三个渠道 `header_override` 为空。 |
+
 ## Requirements
 - sticky 命中目标因 `rpm_limit` 达到总量上限被过滤时，本次可以 fallback，但成功后不得覆盖原 sticky。
 - 非 sticky 请求、非 RPM 原因 fallback、`rpm_limit=0` 行为保持不变。

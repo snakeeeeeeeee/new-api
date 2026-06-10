@@ -1306,6 +1306,7 @@ func supportsClaudeMaxEffort(model string) bool {
 	return strings.Contains(model, "claude-opus-4-6") ||
 		strings.Contains(model, "claude-opus-4-7") ||
 		strings.Contains(model, "claude-opus-4-8") ||
+		strings.Contains(model, "claude-sonnet-4-6") ||
 		strings.Contains(model, "claude-sonnet-4-7")
 }
 

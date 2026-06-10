@@ -230,6 +230,13 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 			}
 		}
 	}
+	if len(textRequest.THINKING) > 0 {
+		var thinking dto.Thinking
+		if err := common.Unmarshal(textRequest.THINKING, &thinking); err != nil {
+			return nil, err
+		}
+		claudeRequest.Thinking = &thinking
+	}
 
 	if textRequest.Stop != nil {
 		// stop maybe string/array string, convert to array string

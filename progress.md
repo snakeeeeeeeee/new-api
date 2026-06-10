@@ -1105,3 +1105,16 @@
   - `cd web && bun run build`
   - `git diff --check`
   - `docker compose -f docker-compose-dev.yml up -d --build` 成功，`new-api-dev` healthy，`/api/status` 返回成功。
+# 2026-06-10 Claude 1h Cache Local Test
+
+- Confirmed Docker dev is running at `http://localhost:3001`.
+- Found admin test tokens:
+  - `test-ccmax缓存问题-渠道-rivoapi` -> group `test-ccmax缓存问题-渠道-rivoapi`
+  - `test-ccmax缓存问题-渠道-yimo` -> group `test-ccmax缓存问题-渠道-yimo`
+  - `test-ccmax缓存问题-渠道-ccfork` -> group `test-ccmax缓存问题-渠道-ccfork`
+- Ran `/v1/messages` real requests for all requested model/group pairs with `cache_control.ttl = "1h"`, both with and without `anthropic-beta: extended-cache-ttl-2025-04-11`.
+- Result summary:
+  - `claude-haiku-4-5-20251001`: all three groups returned 1h cache creation.
+  - `claude-opus-4-7`: successful requests returned 5m cache creation, not 1h, even when beta header was sent.
+  - `claude-opus-4-6`: not fully testable in current local config; unavailable or price missing.
+  - `claude-opus-4-8`: not testable in current local config; price missing.

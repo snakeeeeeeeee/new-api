@@ -3,6 +3,7 @@ package claude
 import (
 	"testing"
 
+	commonpkg "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/stretchr/testify/require"
@@ -89,4 +90,69 @@ func TestRequestOpenAI2ClaudeMessageMergesAdjacentUserAndAssistantOnly(t *testin
 	require.Equal(t, "c d", claudeReq.Messages[1].Content)
 	require.Equal(t, "user", claudeReq.Messages[2].Role)
 	require.Equal(t, "user", claudeReq.Messages[3].Role)
+}
+
+func TestRequestOpenAI2ClaudeMessagePassesTopLevelThinking(t *testing.T) {
+	maxTokens := uint(4000)
+	req := dto.GeneralOpenAIRequest{
+		Model:     "claude-haiku-4-5-20251001",
+		MaxTokens: &maxTokens,
+		THINKING:  []byte(`{"type":"enabled","budget_tokens":2000}`),
+		Messages:  []dto.Message{{Role: "user", Content: "hello"}},
+	}
+
+	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+	require.NoError(t, err)
+	require.NotNil(t, claudeReq.Thinking)
+	require.Equal(t, "enabled", claudeReq.Thinking.Type)
+	require.NotNil(t, claudeReq.Thinking.BudgetTokens)
+	require.Equal(t, 2000, *claudeReq.Thinking.BudgetTokens)
+}
+
+func TestRequestOpenAI2ClaudeMessagePassesAdaptiveThinking(t *testing.T) {
+	req := dto.GeneralOpenAIRequest{
+		Model:    "claude-sonnet-4-6",
+		THINKING: []byte(`{"type":"adaptive"}`),
+		Messages: []dto.Message{{Role: "user", Content: "hello"}},
+	}
+
+	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+	require.NoError(t, err)
+	require.NotNil(t, claudeReq.Thinking)
+	require.Equal(t, "adaptive", claudeReq.Thinking.Type)
+	require.Nil(t, claudeReq.Thinking.BudgetTokens)
+}
+
+func TestRequestOpenAI2ClaudeMessageTopLevelThinkingOverridesReasoning(t *testing.T) {
+	req := dto.GeneralOpenAIRequest{
+		Model:     "claude-sonnet-4-6",
+		Reasoning: []byte(`{"max_tokens":2048}`),
+		THINKING:  []byte(`{"type":"enabled","budget_tokens":1024}`),
+		Messages:  []dto.Message{{Role: "user", Content: "hello"}},
+	}
+
+	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+	require.NoError(t, err)
+	require.NotNil(t, claudeReq.Thinking)
+	require.Equal(t, "enabled", claudeReq.Thinking.Type)
+	require.NotNil(t, claudeReq.Thinking.BudgetTokens)
+	require.Equal(t, 1024, *claudeReq.Thinking.BudgetTokens)
+}
+
+func TestResponseClaude2OpenAIIncludesReasoningContent(t *testing.T) {
+	thinking := "careful reasoning"
+	resp := ResponseClaude2OpenAI(&dto.ClaudeResponse{
+		Id:         "msg_test",
+		Model:      "claude-sonnet-4-6",
+		StopReason: "end_turn",
+		Content: []dto.ClaudeMediaMessage{
+			{Type: "thinking", Thinking: commonpkg.GetPointer(thinking)},
+			{Type: "text", Text: commonpkg.GetPointer("final answer")},
+		},
+	})
+
+	require.NotNil(t, resp)
+	require.Len(t, resp.Choices, 1)
+	require.Equal(t, "final answer", resp.Choices[0].Message.StringContent())
+	require.Equal(t, thinking, resp.Choices[0].Message.ReasoningContent)
 }

@@ -249,9 +249,23 @@ func TestNormalizeClaudeRequestCompatEffortValidation(t *testing.T) {
 	require.NotNil(t, err)
 	require.Equal(t, "output_config.effort", err.ToOpenAIError().Param)
 
+	sonnetMaxReq := baseClaudeCompatRequest("claude-sonnet-4-6")
+	sonnetMaxReq.OutputConfig = []byte(`{"effort":"max"}`)
+	require.Nil(t, NormalizeClaudeRequestCompat(sonnetMaxReq, nil))
+
 	maxReq := baseClaudeCompatRequest("claude-opus-4-6")
 	maxReq.OutputConfig = []byte(`{"effort":"max"}`)
 	require.Nil(t, NormalizeClaudeRequestCompat(maxReq, nil))
+
+	opus46XHighReq := baseClaudeCompatRequest("claude-opus-4-6")
+	opus46XHighReq.OutputConfig = []byte(`{"effort":"xhigh"}`)
+	err = NormalizeClaudeRequestCompat(opus46XHighReq, nil)
+	require.NotNil(t, err)
+	require.Equal(t, "output_config.effort", err.ToOpenAIError().Param)
+
+	opus48MaxReq := baseClaudeCompatRequest("claude-opus-4-8")
+	opus48MaxReq.OutputConfig = []byte(`{"effort":"max"}`)
+	require.Nil(t, NormalizeClaudeRequestCompat(opus48MaxReq, nil))
 
 	unknownReq := baseClaudeCompatRequest("claude-opus-4-7")
 	unknownReq.OutputConfig = []byte(`{"effort":"extreme"}`)
