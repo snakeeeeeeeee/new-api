@@ -43,6 +43,7 @@ import Chat2Link from './pages/Chat2Link';
 import Midjourney from './pages/Midjourney';
 import Pricing from './pages/Pricing';
 import Task from './pages/Task';
+import AsyncTask from './pages/AsyncTask';
 import ModelPage from './pages/Model';
 import ModelDeploymentPage from './pages/ModelDeployment';
 import Playground from './pages/Playground';
@@ -376,6 +377,16 @@ function App() {
                 <Task />
               </Suspense>
             </PrivateRoute>
+          }
+        />
+        <Route
+          path='/console/async-task'
+          element={
+            <AdminRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <AsyncTask />
+              </Suspense>
+            </AdminRoute>
           }
         />
         <Route

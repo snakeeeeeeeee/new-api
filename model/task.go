@@ -312,6 +312,19 @@ func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	return tasks
 }
 
+func GetOldestUnfinishedTasks(limit int) []*Task {
+	var tasks []*Task
+	err := DB.Where("progress != ?", "100%").
+		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
+		Order("submit_time").
+		Limit(limit).
+		Find(&tasks).Error
+	if err != nil {
+		return nil
+	}
+	return tasks
+}
+
 func GetAllUnFinishSyncTasks(limit int) []*Task {
 	var tasks []*Task
 	var err error
@@ -321,6 +334,87 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 		return nil
 	}
 	return tasks
+}
+
+type AsyncTaskStatusStat struct {
+	Status string `json:"status"`
+	Count  int64  `json:"count"`
+}
+
+type AsyncTaskPlatformStat struct {
+	Platform string `json:"platform"`
+	Count    int64  `json:"count"`
+}
+
+type AsyncTaskActionStat struct {
+	Action string `json:"action"`
+	Count  int64  `json:"count"`
+}
+
+type AsyncTaskChannelStat struct {
+	ChannelID int   `json:"channel_id"`
+	Count     int64 `json:"count"`
+}
+
+type AsyncTaskStats struct {
+	TotalUnfinished int64                   `json:"total_unfinished"`
+	TimeoutPending  int64                   `json:"timeout_pending"`
+	Over10Minutes   int64                   `json:"over_10_minutes"`
+	Over30Minutes   int64                   `json:"over_30_minutes"`
+	Over60Minutes   int64                   `json:"over_60_minutes"`
+	ByStatus        []AsyncTaskStatusStat   `json:"by_status"`
+	ByPlatform      []AsyncTaskPlatformStat `json:"by_platform"`
+	ByAction        []AsyncTaskActionStat   `json:"by_action"`
+	ByChannel       []AsyncTaskChannelStat  `json:"by_channel"`
+}
+
+func unfinishedTaskQuery() *gorm.DB {
+	return DB.Model(&Task{}).
+		Where("progress != ?", "100%").
+		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess})
+}
+
+func CountUnfinishedTasksOlderThan(cutoffUnix int64) int64 {
+	var count int64
+	err := unfinishedTaskQuery().
+		Where("submit_time < ?", cutoffUnix).
+		Count(&count).Error
+	if err != nil {
+		return 0
+	}
+	return count
+}
+
+func GetAsyncTaskStats(nowUnix int64, timeoutPending int64) AsyncTaskStats {
+	stats := AsyncTaskStats{}
+	base := unfinishedTaskQuery()
+	_ = base.Count(&stats.TotalUnfinished).Error
+	stats.TimeoutPending = timeoutPending
+	stats.Over10Minutes = CountUnfinishedTasksOlderThan(nowUnix - 10*60)
+	stats.Over30Minutes = CountUnfinishedTasksOlderThan(nowUnix - 30*60)
+	stats.Over60Minutes = CountUnfinishedTasksOlderThan(nowUnix - 60*60)
+
+	_ = unfinishedTaskQuery().
+		Select("status, count(*) as count").
+		Group("status").
+		Order("status").
+		Scan(&stats.ByStatus).Error
+	_ = unfinishedTaskQuery().
+		Select("platform, count(*) as count").
+		Group("platform").
+		Order("count desc").
+		Scan(&stats.ByPlatform).Error
+	_ = unfinishedTaskQuery().
+		Select("action, count(*) as count").
+		Group("action").
+		Order("count desc").
+		Scan(&stats.ByAction).Error
+	_ = unfinishedTaskQuery().
+		Select("channel_id, count(*) as count").
+		Group("channel_id").
+		Order("count desc").
+		Scan(&stats.ByChannel).Error
+	return stats
 }
 
 func GetByOnlyTaskId(taskId string) (*Task, bool, error) {

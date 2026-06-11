@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -466,6 +467,17 @@ func UpdateOption(c *gin.Context) {
 			return
 		}
 	}
+	if strings.HasPrefix(option.Key, "async_task_setting.") {
+		normalized, err := validateAndNormalizeAsyncTaskOptionUpdate(option.Key, option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		option.Value = normalized
+	}
 	switch option.Key {
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {
@@ -824,4 +836,42 @@ func validateViolationOptionUpdate(key string, value string) error {
 		return fmt.Errorf("unknown violation setting key")
 	}
 	return operation_setting.ValidateViolationSetting(next)
+}
+
+func validateAndNormalizeAsyncTaskOptionUpdate(key string, value string) (string, error) {
+	configKey := strings.TrimPrefix(key, "async_task_setting.")
+	switch configKey {
+	case "default_timeout_minutes":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeDefaultTimeoutMinutes(intValue)), nil
+	case "query_limit":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeQueryLimit(intValue)), nil
+	case "timeout_overrides":
+		var overrides []async_task_setting.TimeoutOverride
+		if strings.TrimSpace(value) == "" {
+			value = "[]"
+		}
+		if err := common.UnmarshalJsonStr(value, &overrides); err != nil {
+			return "", err
+		}
+		normalized := async_task_setting.NormalizeSetting(async_task_setting.AsyncTaskSetting{
+			DefaultTimeoutMinutes: async_task_setting.GetAsyncTaskSetting().DefaultTimeoutMinutes,
+			QueryLimit:            async_task_setting.GetAsyncTaskSetting().QueryLimit,
+			TimeoutOverrides:      overrides,
+		}).TimeoutOverrides
+		data, err := common.Marshal(normalized)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	default:
+		return value, nil
+	}
 }

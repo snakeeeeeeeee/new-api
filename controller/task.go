@@ -67,6 +67,10 @@ func GetUserTask(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+func GetAsyncTaskStats(c *gin.Context) {
+	common.ApiSuccess(c, service.GetAsyncTaskStats())
+}
+
 type UpdateTaskBlockRequest struct {
 	IsBlocked bool `json:"is_blocked"`
 }

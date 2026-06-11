@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/async_task_setting"
 
 	"github.com/samber/lo"
 )
@@ -39,22 +40,34 @@ var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 // 每次最多处理 100 条，剩余的下个周期继续处理。
 // 使用 per-task CAS (UpdateWithStatus) 防止覆盖被正常轮询已推进的任务。
 func sweepTimedOutTasks(ctx context.Context) {
-	if constant.TaskTimeoutMinutes <= 0 {
+	setting := async_task_setting.GetAsyncTaskSetting()
+	async_task_setting.ApplyNormalization()
+	if setting.DefaultTimeoutMinutes <= 0 {
 		return
 	}
-	cutoff := time.Now().Unix() - int64(constant.TaskTimeoutMinutes)*60
-	tasks := model.GetTimedOutUnfinishedTasks(cutoff, 100)
+	scanLimit := setting.QueryLimit
+	if scanLimit <= 0 {
+		scanLimit = async_task_setting.DefaultQueryLimit
+	}
+	tasks := model.GetOldestUnfinishedTasks(scanLimit)
 	if len(tasks) == 0 {
 		return
 	}
 
 	const legacyTaskCutoff int64 = 1740182400 // 2026-02-22 00:00:00 UTC
-	reason := fmt.Sprintf("任务超时（%d分钟）", constant.TaskTimeoutMinutes)
 	legacyReason := "任务超时（旧系统遗留任务，不进行退款，请联系管理员）"
 	now := time.Now().Unix()
 	timedOutCount := 0
 
 	for _, task := range tasks {
+		if timedOutCount >= 100 {
+			break
+		}
+		timeoutMinutes := async_task_setting.ResolveTimeoutMinutes(task.Platform, task.Action)
+		if timeoutMinutes <= 0 || task.SubmitTime >= now-int64(timeoutMinutes)*60 {
+			continue
+		}
+		reason := fmt.Sprintf("任务超时（%d分钟）", timeoutMinutes)
 		isLegacy := task.SubmitTime > 0 && task.SubmitTime < legacyTaskCutoff
 
 		oldStatus := task.Status
@@ -87,6 +100,29 @@ func sweepTimedOutTasks(ctx context.Context) {
 	}
 }
 
+func CountTimeoutPendingTasks(now int64) int64 {
+	async_task_setting.ApplyNormalization()
+	setting := async_task_setting.GetAsyncTaskSetting()
+	scanLimit := setting.QueryLimit
+	if scanLimit <= 0 {
+		scanLimit = async_task_setting.DefaultQueryLimit
+	}
+	tasks := model.GetOldestUnfinishedTasks(scanLimit)
+	var count int64
+	for _, task := range tasks {
+		timeoutMinutes := async_task_setting.ResolveTimeoutMinutes(task.Platform, task.Action)
+		if timeoutMinutes > 0 && task.SubmitTime < now-int64(timeoutMinutes)*60 {
+			count++
+		}
+	}
+	return count
+}
+
+func GetAsyncTaskStats() model.AsyncTaskStats {
+	now := time.Now().Unix()
+	return model.GetAsyncTaskStats(now, CountTimeoutPendingTasks(now))
+}
+
 // TaskPollingLoop 主轮询循环，每 15 秒检查一次未完成的任务
 func TaskPollingLoop() {
 	for {
@@ -94,7 +130,8 @@ func TaskPollingLoop() {
 		common.SysLog("任务进度轮询开始")
 		ctx := context.TODO()
 		sweepTimedOutTasks(ctx)
-		allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
+		async_task_setting.ApplyNormalization()
+		allTasks := model.GetAllUnFinishSyncTasks(async_task_setting.GetAsyncTaskSetting().QueryLimit)
 		platformTask := make(map[constant.TaskPlatform][]*model.Task)
 		for _, t := range allTasks {
 			platformTask[t.Platform] = append(platformTask[t.Platform], t)

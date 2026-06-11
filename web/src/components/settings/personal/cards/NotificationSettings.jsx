@@ -85,6 +85,7 @@ const NotificationSettings = ({
     admin: {
       enabled: true,
       channel: true,
+      async_task: true,
       request_dump: true,
       models: true,
       deployment: true,
@@ -170,6 +171,7 @@ const NotificationSettings = ({
       admin: {
         enabled: true,
         channel: true,
+        async_task: true,
         request_dump: true,
         models: true,
         deployment: true,
@@ -295,6 +297,11 @@ const NotificationSettings = ({
       description: t('系统管理功能'),
       modules: [
         { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
+        {
+          key: 'async_task',
+          title: t('异步任务管理'),
+          description: t('异步任务调度与超时监控'),
+        },
         {
           key: 'request_dump',
           title: t('Dump 分析'),

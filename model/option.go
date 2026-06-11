@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
@@ -28,6 +29,8 @@ func AllOption() ([]*Option, error) {
 }
 
 func InitOptionMap() {
+	async_task_setting.ApplyEnvFallback()
+
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap = make(map[string]string)
 
@@ -226,6 +229,13 @@ func UpdateOption(key string, value string) error {
 	if strings.HasPrefix(key, "violation_setting.") {
 		if err := validateViolationConfigUpdate(strings.TrimPrefix(key, "violation_setting."), value); err != nil {
 			return err
+		}
+	}
+	if strings.HasPrefix(key, "async_task_setting.") {
+		if normalized, err := normalizeAsyncTaskOptionValue(strings.TrimPrefix(key, "async_task_setting."), value); err != nil {
+			return err
+		} else {
+			value = normalized
 		}
 	}
 	// Save to database first
@@ -657,6 +667,14 @@ func handleConfigUpdate(key, value string) (bool, error) {
 			return true, err
 		}
 	}
+	if configName == "async_task_setting" {
+		normalized, err := normalizeAsyncTaskOptionValue(configKey, value)
+		if err != nil {
+			return true, err
+		}
+		value = normalized
+		common.OptionMap[key] = value
+	}
 
 	// 获取配置对象
 	cfg := config.GlobalConfig.Get(configName)
@@ -677,8 +695,48 @@ func handleConfigUpdate(key, value string) (bool, error) {
 		// 同步磁盘缓存配置到 common 包
 		performance_setting.UpdateAndSync()
 	}
+	if configName == "async_task_setting" {
+		async_task_setting.ApplyNormalization()
+	}
 
 	return true, nil // 已处理
+}
+
+func normalizeAsyncTaskOptionValue(configKey, value string) (string, error) {
+	switch configKey {
+	case "default_timeout_minutes":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeDefaultTimeoutMinutes(intValue)), nil
+	case "query_limit":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeQueryLimit(intValue)), nil
+	case "timeout_overrides":
+		var overrides []async_task_setting.TimeoutOverride
+		if strings.TrimSpace(value) == "" {
+			value = "[]"
+		}
+		if err := common.UnmarshalJsonStr(value, &overrides); err != nil {
+			return "", err
+		}
+		normalized := async_task_setting.NormalizeSetting(async_task_setting.AsyncTaskSetting{
+			DefaultTimeoutMinutes: async_task_setting.GetAsyncTaskSetting().DefaultTimeoutMinutes,
+			QueryLimit:            async_task_setting.GetAsyncTaskSetting().QueryLimit,
+			TimeoutOverrides:      overrides,
+		}).TimeoutOverrides
+		data, err := common.Marshal(normalized)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	default:
+		return value, nil
+	}
 }
 
 func validateViolationConfigUpdate(configKey, value string) error {

@@ -78,6 +78,7 @@ import {
   Bug,
   ShieldAlert,
   SlidersHorizontal,
+  ListChecks,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -140,6 +141,8 @@ export function getLucideIcon(key, selected = false) {
       return <ImageIcon {...commonProps} color={iconColor} />;
     case 'task':
       return <CheckSquare {...commonProps} color={iconColor} />;
+    case 'async_task':
+      return <ListChecks {...commonProps} color={iconColor} />;
     case 'topup':
       return <CreditCard {...commonProps} color={iconColor} />;
     case 'channel':
