@@ -120,6 +120,29 @@ func GetLogsStat(c *gin.Context) {
 	return
 }
 
+func GetUsageStats(c *gin.Context) {
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	channel, _ := strconv.Atoi(c.Query("channel"))
+	limit, _ := strconv.Atoi(c.Query("limit"))
+
+	stats, err := model.GetUsageStats(model.UsageStatsQuery{
+		StartTimestamp:   startTimestamp,
+		EndTimestamp:     endTimestamp,
+		ModelName:        c.Query("model_name"),
+		Username:         c.Query("username"),
+		Group:            c.Query("group"),
+		Channel:          channel,
+		Limit:            limit,
+		TrendGranularity: c.Query("trend_granularity"),
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, stats)
+}
+
 func GetLogsSelfStat(c *gin.Context) {
 	username := c.GetString("username")
 	logType, _ := strconv.Atoi(c.Query("type"))

@@ -79,6 +79,7 @@ import {
   ShieldAlert,
   SlidersHorizontal,
   ListChecks,
+  TrendingUp,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -131,6 +132,8 @@ export function getLucideIcon(key, selected = false) {
     case 'log':
     case 'log_dashboard':
       return <BarChart3 {...commonProps} color={iconColor} />;
+    case 'usage_stats':
+      return <TrendingUp {...commonProps} color={iconColor} />;
     case 'request_dump':
       return <Bug {...commonProps} color={iconColor} />;
     case 'violation':

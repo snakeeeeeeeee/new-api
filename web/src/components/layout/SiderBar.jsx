@@ -40,6 +40,7 @@ const routerMap = {
   invite_code: '/console/invite-code',
   invite_stats: '/console/invite-stats',
   log_dashboard: '/console/log-dashboard',
+  usage_stats: '/console/usage-stats',
   async_task: '/console/async-task',
   token: '/console/token',
   redemption: '/console/redemption',
@@ -183,6 +184,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('日志看板'),
         itemKey: 'log_dashboard',
         to: '/log-dashboard',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('用量统计'),
+        itemKey: 'usage_stats',
+        to: '/usage-stats',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

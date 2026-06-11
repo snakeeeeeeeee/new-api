@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
@@ -210,4 +211,194 @@ func TestGetUserLogsHidesInternalRetryErrors(t *testing.T) {
 	require.NotContains(t, other, "status_code")
 	require.NotContains(t, other, "internal_retry")
 	require.NotContains(t, logs[0].Content, "upstream")
+}
+
+func seedUsageStatsLog(t *testing.T, logItem *Log) {
+	t.Helper()
+	require.NoError(t, LOG_DB.Create(logItem).Error)
+}
+
+func sumUsageStatsTrend(trend []UsageStatsTrendPoint) UsageStatsTrendPoint {
+	var total UsageStatsTrendPoint
+	for _, point := range trend {
+		total.Quota += point.Quota
+		total.RequestCount += point.RequestCount
+		total.PromptTokens += point.PromptTokens
+		total.CompletionTokens += point.CompletionTokens
+		total.TotalTokens += point.TotalTokens
+	}
+	return total
+}
+
+func TestGetUsageStatsAggregatesAndFiltersConsumeLogs(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+
+	base := time.Date(2026, 6, 12, 10, 0, 0, 0, time.Local).Unix()
+	seedUsageStatsLog(t, &Log{
+		UserId:           1,
+		Username:         "alice",
+		CreatedAt:        base,
+		Type:             LogTypeConsume,
+		ModelName:        "gpt-4o",
+		Quota:            100,
+		PromptTokens:     10,
+		CompletionTokens: 20,
+		UseTime:          2,
+		ChannelId:        7,
+		Group:            "vip",
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId:           1,
+		Username:         "alice",
+		CreatedAt:        base + 1800,
+		Type:             LogTypeConsume,
+		ModelName:        "gpt-4o",
+		Quota:            0,
+		PromptTokens:     5,
+		CompletionTokens: 6,
+		UseTime:          4,
+		ChannelId:        7,
+		Group:            "vip",
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId:           2,
+		Username:         "bob",
+		CreatedAt:        base + 3600,
+		Type:             LogTypeConsume,
+		ModelName:        "claude-sonnet",
+		Quota:            250,
+		PromptTokens:     30,
+		CompletionTokens: 40,
+		UseTime:          6,
+		ChannelId:        8,
+		Group:            "default",
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId:    3,
+		Username:  "carol",
+		CreatedAt: base + 60,
+		Type:      LogTypeError,
+		ModelName: "gpt-4o",
+		Quota:     999,
+		ChannelId: 7,
+		Group:     "vip",
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId:    4,
+		Username:  "dave",
+		CreatedAt: base - 60,
+		Type:      LogTypeConsume,
+		ModelName: "gpt-4o",
+		Quota:     500,
+		ChannelId: 7,
+		Group:     "vip",
+	})
+
+	stats, err := GetUsageStats(UsageStatsQuery{
+		StartTimestamp:   base - 1,
+		EndTimestamp:     base + 7200,
+		ModelName:        "gpt-4o",
+		Group:            "vip",
+		Channel:          7,
+		Limit:            10,
+		TrendGranularity: UsageStatsGranularityHour,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(100), stats.Summary.Quota)
+	require.Equal(t, int64(2), stats.Summary.RequestCount)
+	require.Equal(t, int64(1), stats.Summary.ActiveUserCount)
+	require.Equal(t, int64(15), stats.Summary.PromptTokens)
+	require.Equal(t, int64(26), stats.Summary.CompletionTokens)
+	require.Equal(t, int64(41), stats.Summary.TotalTokens)
+	require.Equal(t, UsageStatsGranularityHour, stats.TrendGranularity)
+
+	require.Len(t, stats.Ranking, 1)
+	require.Equal(t, 1, stats.Ranking[0].UserId)
+	require.Equal(t, "alice", stats.Ranking[0].Username)
+	require.Equal(t, int64(100), stats.Ranking[0].Quota)
+	require.Equal(t, int64(2), stats.Ranking[0].RequestCount)
+	require.Equal(t, float64(3), stats.Ranking[0].AverageUseTime)
+
+	require.Len(t, stats.Models, 1)
+	require.Equal(t, "gpt-4o", stats.Models[0].ModelName)
+	require.Equal(t, int64(100), stats.Models[0].Quota)
+	require.Equal(t, int64(2), stats.Models[0].RequestCount)
+
+	require.NotEmpty(t, stats.Trend)
+	trendTotal := sumUsageStatsTrend(stats.Trend)
+	require.Equal(t, int64(2), trendTotal.RequestCount)
+	require.Equal(t, int64(100), trendTotal.Quota)
+
+	require.Len(t, stats.UserModelDetails, 1)
+	require.Equal(t, "gpt-4o", stats.UserModelDetails[0].ModelName)
+	require.Equal(t, int64(100), stats.UserModelDetails[0].Quota)
+	require.Equal(t, int64(2), stats.UserModelDetails[0].RequestCount)
+}
+
+func TestGetUsageStatsRankingLimitAndDailyTrend(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+
+	dayOne := time.Date(2026, 6, 1, 12, 0, 0, 0, time.Local).Unix()
+	dayTwo := time.Date(2026, 6, 2, 12, 0, 0, 0, time.Local).Unix()
+	seedUsageStatsLog(t, &Log{
+		UserId:           1,
+		Username:         "alice",
+		CreatedAt:        dayOne,
+		Type:             LogTypeConsume,
+		ModelName:        "model-a",
+		Quota:            10,
+		PromptTokens:     1,
+		CompletionTokens: 2,
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId:           2,
+		Username:         "bob",
+		CreatedAt:        dayTwo,
+		Type:             LogTypeConsume,
+		ModelName:        "model-b",
+		Quota:            30,
+		PromptTokens:     3,
+		CompletionTokens: 4,
+	})
+
+	stats, err := GetUsageStats(UsageStatsQuery{
+		StartTimestamp:   time.Date(2026, 6, 1, 0, 0, 0, 0, time.Local).Unix(),
+		EndTimestamp:     time.Date(2026, 6, 2, 23, 59, 59, 0, time.Local).Unix(),
+		Limit:            1,
+		TrendGranularity: UsageStatsGranularityDay,
+	})
+
+	require.NoError(t, err)
+	require.Len(t, stats.Ranking, 1)
+	require.Equal(t, 2, stats.Ranking[0].UserId)
+	require.Equal(t, int64(30), stats.Ranking[0].Quota)
+	require.Len(t, stats.Trend, 2)
+	require.Equal(t, int64(10), stats.Trend[0].Quota)
+	require.Equal(t, int64(30), stats.Trend[1].Quota)
+	require.Len(t, stats.UserModelDetails, 1)
+	require.Equal(t, 2, stats.UserModelDetails[0].UserId)
+}
+
+func TestGetUsageStatsRejectsInvalidRangeAndGranularity(t *testing.T) {
+	_, err := GetUsageStats(UsageStatsQuery{
+		StartTimestamp: time.Date(2026, 6, 2, 0, 0, 0, 0, time.Local).Unix(),
+		EndTimestamp:   time.Date(2026, 6, 1, 0, 0, 0, 0, time.Local).Unix(),
+	})
+	require.ErrorContains(t, err, "开始时间不能晚于结束时间")
+
+	_, err = GetUsageStats(UsageStatsQuery{
+		StartTimestamp:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.Local).Unix(),
+		EndTimestamp:     time.Date(2026, 1, 2, 0, 0, 0, 0, time.Local).Unix(),
+		TrendGranularity: "minute",
+	})
+	require.ErrorContains(t, err, "trend_granularity")
+
+	_, err = GetUsageStats(UsageStatsQuery{
+		StartTimestamp: time.Date(2026, 1, 1, 0, 0, 0, 0, time.Local).Unix(),
+		EndTimestamp:   time.Date(2026, 5, 1, 0, 0, 0, 0, time.Local).Unix(),
+	})
+	require.ErrorContains(t, err, "90 天")
 }

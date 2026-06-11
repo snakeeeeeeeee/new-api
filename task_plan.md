@@ -1,3 +1,34 @@
+# Task Plan: 用量统计功能
+
+## Goal
+新增管理员“用量统计”页面和 `/api/log/usage_stats` 接口，按消费日志实时统计筛选范围内的额度趋势、用户排行、模型排行和单用户模型明细。
+
+## Current Phase
+Phase 3 complete
+
+## Phases
+- [x] Phase 1: 后端聚合模型、接口、路由和单测
+- [x] Phase 2: 前端页面、路由、侧栏入口和模块开关
+- [x] Phase 3: 构建、测试、diff 检查和交付
+
+## Verification
+- Focused backend tests passed:
+  - `go test ./model -run 'UsageStats|RecordConsumeLog|GetUserLogsHidesInternal' -count=1`
+  - `go test ./controller -run 'GetUsageStats|GetLogsDashboard' -count=1`
+- Package/build checks passed:
+  - `go test ./model ./controller -count=1`
+  - `cd web && bun run build`
+  - `git diff --check`
+  - Browser route smoke: `/console/usage-stats` loads the app and redirects unauthenticated users to login without white screen. Status API errors are expected with only the frontend dev server running.
+
+## Key Constraints
+- 统计源只用 `logs` 中 `LogTypeConsume`，不依赖 `quota_data`。
+- 不新增数据库表，不改消费日志写入和计费逻辑。
+- 聚合 SQL 必须兼容 SQLite、MySQL、PostgreSQL；`group` 字段使用 `logGroupCol`。
+- 前端使用现有 Semi UI、VChart、`renderQuota` 格式化和 i18n 模式。
+
+---
+
 # Task Plan: 聚合分组 RPM 亲和 fallback 不改绑
 
 ## Goal

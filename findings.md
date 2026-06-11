@@ -1,3 +1,27 @@
+# 用量统计功能 Findings
+
+## Requirements
+- 管理员页面名为“用量统计”，包含时间、模型、分组、渠道、用户筛选。
+- 统计源为消费日志 `logs`，仅统计 `LogTypeConsume`。
+- 第一版需要汇总卡片、额度趋势图、用户消耗排行、模型排行和单用户模型明细。
+- 默认时间范围近 7 天，最大跨度 90 天，排行默认 50、最大 200。
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| 后端一次返回 summary/ranking/trend/models/user_model_details | 页面首屏完整，避免前端拉大量日志自行聚合。 |
+| 趋势 bucket 在 Go 侧基于 Unix 时间取整 | 避免不同数据库时间函数差异。 |
+| LIKE 搜索复用 `sanitizeLikePattern` | 与现有日志查询一致，并避免特殊字符绕过。 |
+| 用户明细只为排行返回用户生成 | 控制响应大小，同时满足点击排行行查看明细。 |
+| UI 沿用 `InviteStats`/`LogDashboard` 结构 | 保持后台报表一致性，避免新设计系统。 |
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| `.codex` 版 ui-ux-pro-max 没有脚本目录 | 运行 `/Users/zhangyu/.codex/skills/ui-ux-pro-max/scripts/search.py` | 改用 `/Users/zhangyu/.agents/skills/ui-ux-pro-max/scripts/search.py` 成功获取 dashboard 指南。 |
+
+---
+
 # 聚合分组 RPM 亲和 fallback 不改绑
 
 ---

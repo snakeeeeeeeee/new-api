@@ -1,3 +1,29 @@
+# Session: 2026-06-12 用量统计功能
+
+## Scope
+- 实现管理员“用量统计”页面、后端实时聚合接口、侧栏入口和基础验证。
+
+## Progress
+- 已确认工作区存在历史未跟踪脚本/tmp/output 文件，本轮不触碰。
+- 已确认现有日志模型含 `user_id/username/model_name/quota/prompt_tokens/completion_tokens/use_time/channel_id/group/created_at`，满足统计源需求。
+- 已确认侧栏配置入口为 `useSidebar.DEFAULT_ADMIN_CONFIG`、`SettingsSidebarModulesAdmin`、`SiderBar` 和 `getLucideIcon`。
+- 已确认图表/UI 依赖为 VChart、Semi UI、dayjs，额度展示复用 `renderQuota`。
+- 已创建本轮 planning-with-files 记录；首次 UI 指南脚本路径错误已记录，已使用 `.agents` 路径恢复。
+- 已完成 `/api/log/usage_stats` 聚合接口、管理员路由、模型层/控制器测试。
+- 已完成 `/console/usage-stats` 页面、管理员侧栏入口、模块开关、图标和新增 i18n key。
+- 已将趋势和用户模型明细改为数据库聚合查询，避免 90 天范围读取原始日志行。
+
+## Verification
+- `go test ./model -run 'UsageStats|RecordConsumeLog|GetUserLogsHidesInternal' -count=1`: passed.
+- `go test ./controller -run 'GetUsageStats|GetLogsDashboard' -count=1`: passed.
+- `go test ./model ./controller -count=1`: passed.
+- `cd web && bun run build`: passed with existing Browserslist/lottie/chunk-size warnings.
+- `git diff --check`: passed.
+- Browser route smoke passed against `http://localhost:5173/console/usage-stats`: unauthenticated user redirects to login without white screen; frontend-only proxy status errors are expected because backend was not running on port 3000.
+- Temporary Vite dev server on port 5173 was stopped.
+
+---
+
 # Session: 2026-06-05 聚合分组 RPM 亲和 fallback 不改绑
 
 ## Scope

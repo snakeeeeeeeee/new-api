@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -98,6 +99,88 @@ func TestGetLogsDashboardRequiresAdmin(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/log/dashboard?window=1h", nil)
 	req.Header.Set("Authorization", "Bearer "+userToken)
 	req.Header.Set("New-Api-User", "9101")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "权限不足")
+}
+
+func TestGetUsageStatsReturnsStructuredData(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	base := time.Date(2026, 6, 12, 10, 0, 0, 0, time.Local).Unix()
+	require.NoError(t, db.Create(&model.Log{
+		UserId:           901,
+		Username:         "usage_admin_target",
+		CreatedAt:        base,
+		Type:             model.LogTypeConsume,
+		ModelName:        "gpt-4o",
+		Quota:            123,
+		PromptTokens:     11,
+		CompletionTokens: 22,
+		UseTime:          3,
+		Group:            "default",
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/log/usage_stats?start_timestamp="+strconv.FormatInt(base-60, 10)+"&end_timestamp="+strconv.FormatInt(base+3600, 10)+"&trend_granularity=hour", nil)
+	GetUsageStats(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+	require.Contains(t, string(resp.Data), `"quota":123`)
+	require.Contains(t, string(resp.Data), `"ranking"`)
+	require.Contains(t, string(resp.Data), `"trend"`)
+	require.Contains(t, string(resp.Data), `"models"`)
+	require.Contains(t, string(resp.Data), `"user_model_details"`)
+}
+
+func TestGetUsageStatsRejectsInvalidGranularity(t *testing.T) {
+	setupInviteCodeControllerTestDB(t)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/log/usage_stats?trend_granularity=minute", nil)
+	GetUsageStats(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.False(t, resp.Success)
+	require.Contains(t, resp.Message, "trend_granularity")
+}
+
+func TestGetUsageStatsRequiresAdmin(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	userToken := "common-usage-stats-token"
+	user := &model.User{
+		Id:          9102,
+		Username:    "common_usage_stats",
+		Password:    "password123",
+		DisplayName: "common_usage_stats",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AffCode:     "aff-common-usage-stats",
+		AccessToken: &userToken,
+	}
+	require.NoError(t, db.Create(user).Error)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	store := cookie.NewStore([]byte("usage-stats-test"))
+	router.Use(sessions.Sessions("test_session", store))
+	router.GET("/api/log/usage_stats", middleware.AdminAuth(), GetUsageStats)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/log/usage_stats", nil)
+	req.Header.Set("Authorization", "Bearer "+userToken)
+	req.Header.Set("New-Api-User", "9102")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
 

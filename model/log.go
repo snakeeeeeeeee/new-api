@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -489,6 +490,375 @@ type Stat struct {
 	Quota int `json:"quota"`
 	Rpm   int `json:"rpm"`
 	Tpm   int `json:"tpm"`
+}
+
+const (
+	UsageStatsGranularityHour = "hour"
+	UsageStatsGranularityDay  = "day"
+	usageStatsDefaultLimit    = 50
+	usageStatsMaxLimit        = 200
+	usageStatsMaxRangeSeconds = 90 * 24 * 60 * 60
+)
+
+type UsageStatsQuery struct {
+	StartTimestamp   int64
+	EndTimestamp     int64
+	ModelName        string
+	Username         string
+	Group            string
+	Channel          int
+	Limit            int
+	TrendGranularity string
+}
+
+type UsageStatsSummary struct {
+	Quota            int64 `json:"quota"`
+	RequestCount     int64 `json:"request_count"`
+	ActiveUserCount  int64 `json:"active_user_count"`
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+}
+
+type UsageStatsRankItem struct {
+	UserId           int     `json:"user_id"`
+	Username         string  `json:"username"`
+	Quota            int64   `json:"quota"`
+	RequestCount     int64   `json:"request_count"`
+	PromptTokens     int64   `json:"prompt_tokens"`
+	CompletionTokens int64   `json:"completion_tokens"`
+	TotalTokens      int64   `json:"total_tokens"`
+	AverageUseTime   float64 `json:"average_use_time"`
+	LastRequestAt    int64   `json:"last_request_at"`
+}
+
+type UsageStatsTrendPoint struct {
+	BucketStart      int64  `json:"bucket_start"`
+	Label            string `json:"label"`
+	Quota            int64  `json:"quota"`
+	RequestCount     int64  `json:"request_count"`
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+	TotalTokens      int64  `json:"total_tokens"`
+}
+
+type UsageStatsModelItem struct {
+	ModelName        string  `json:"model_name"`
+	Quota            int64   `json:"quota"`
+	RequestCount     int64   `json:"request_count"`
+	PromptTokens     int64   `json:"prompt_tokens"`
+	CompletionTokens int64   `json:"completion_tokens"`
+	TotalTokens      int64   `json:"total_tokens"`
+	AverageUseTime   float64 `json:"average_use_time"`
+}
+
+type UsageStatsUserModelDetail struct {
+	UserId           int     `json:"user_id"`
+	Username         string  `json:"username"`
+	ModelName        string  `json:"model_name"`
+	Quota            int64   `json:"quota"`
+	RequestCount     int64   `json:"request_count"`
+	PromptTokens     int64   `json:"prompt_tokens"`
+	CompletionTokens int64   `json:"completion_tokens"`
+	TotalTokens      int64   `json:"total_tokens"`
+	AverageUseTime   float64 `json:"average_use_time"`
+}
+
+type UsageStatsData struct {
+	StartTimestamp   int64                       `json:"start_timestamp"`
+	EndTimestamp     int64                       `json:"end_timestamp"`
+	TrendGranularity string                      `json:"trend_granularity"`
+	GeneratedAt      int64                       `json:"generated_at"`
+	Summary          UsageStatsSummary           `json:"summary"`
+	Ranking          []UsageStatsRankItem        `json:"ranking"`
+	Trend            []UsageStatsTrendPoint      `json:"trend"`
+	Models           []UsageStatsModelItem       `json:"models"`
+	UserModelDetails []UsageStatsUserModelDetail `json:"user_model_details"`
+}
+
+type usageStatsBaseRow struct {
+	UserId           int
+	Username         string
+	ModelName        string
+	Quota            int64
+	PromptTokens     int64
+	CompletionTokens int64
+	RequestCount     int64
+	AverageUseTime   float64
+}
+
+type usageStatsTrendRow struct {
+	BucketStart      int64
+	Quota            int64
+	RequestCount     int64
+	PromptTokens     int64
+	CompletionTokens int64
+}
+
+func normalizeUsageStatsQuery(query UsageStatsQuery) (UsageStatsQuery, error) {
+	now := time.Now().Unix()
+	if query.EndTimestamp == 0 {
+		query.EndTimestamp = now
+	}
+	if query.StartTimestamp == 0 {
+		query.StartTimestamp = query.EndTimestamp - 7*24*60*60 + 1
+	}
+	if query.StartTimestamp > query.EndTimestamp {
+		return query, errors.New("开始时间不能晚于结束时间")
+	}
+	if query.EndTimestamp-query.StartTimestamp > usageStatsMaxRangeSeconds {
+		return query, errors.New("时间跨度不能超过 90 天")
+	}
+	if query.Limit <= 0 {
+		query.Limit = usageStatsDefaultLimit
+	}
+	if query.Limit > usageStatsMaxLimit {
+		query.Limit = usageStatsMaxLimit
+	}
+	if query.TrendGranularity == "" {
+		if query.EndTimestamp-query.StartTimestamp > 3*24*60*60 {
+			query.TrendGranularity = UsageStatsGranularityDay
+		} else {
+			query.TrendGranularity = UsageStatsGranularityHour
+		}
+	}
+	if query.TrendGranularity != UsageStatsGranularityHour && query.TrendGranularity != UsageStatsGranularityDay {
+		return query, errors.New("trend_granularity 仅支持 hour 或 day")
+	}
+	return query, nil
+}
+
+func applyUsageStatsFilters(tx *gorm.DB, query UsageStatsQuery) (*gorm.DB, error) {
+	tx = tx.Where("logs.type = ?", LogTypeConsume)
+	tx = tx.Where("logs.created_at >= ? AND logs.created_at <= ?", query.StartTimestamp, query.EndTimestamp)
+	if query.ModelName != "" {
+		modelNamePattern, err := sanitizeLikePattern(query.ModelName)
+		if err != nil {
+			return tx, err
+		}
+		tx = tx.Where("logs.model_name LIKE ? ESCAPE '!'", modelNamePattern)
+	}
+	if query.Username != "" {
+		tx = tx.Where("logs.username = ?", query.Username)
+	}
+	if query.Group != "" {
+		ensureCommonColumnsInitialized()
+		tx = tx.Where("logs."+logGroupCol+" = ?", query.Group)
+	}
+	if query.Channel != 0 {
+		tx = tx.Where("logs.channel_id = ?", query.Channel)
+	}
+	return tx, nil
+}
+
+func usageStatsBucketStart(ts int64, granularity string) int64 {
+	if granularity == UsageStatsGranularityDay {
+		t := time.Unix(ts, 0).Local()
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location()).Unix()
+	}
+	t := time.Unix(ts, 0).Local()
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location()).Unix()
+}
+
+func usageStatsBucketStep(granularity string) int64 {
+	if granularity == UsageStatsGranularityDay {
+		return 24 * 60 * 60
+	}
+	return 3600
+}
+
+func usageStatsBucketLabel(bucketStart int64, granularity string) string {
+	layout := "01-02 15:04"
+	if granularity == UsageStatsGranularityDay {
+		layout = "01-02"
+	}
+	return time.Unix(bucketStart, 0).Local().Format(layout)
+}
+
+func buildUsageStatsTrend(rows []usageStatsTrendRow, query UsageStatsQuery) []UsageStatsTrendPoint {
+	step := usageStatsBucketStep(query.TrendGranularity)
+	startBucket := usageStatsBucketStart(query.StartTimestamp, query.TrendGranularity)
+	endBucket := usageStatsBucketStart(query.EndTimestamp, query.TrendGranularity)
+	trendMap := make(map[int64]*UsageStatsTrendPoint)
+	for bucket := startBucket; bucket <= endBucket; bucket += step {
+		trendMap[bucket] = &UsageStatsTrendPoint{
+			BucketStart: bucket,
+			Label:       usageStatsBucketLabel(bucket, query.TrendGranularity),
+		}
+	}
+	for _, row := range rows {
+		point, ok := trendMap[row.BucketStart]
+		if !ok {
+			point = &UsageStatsTrendPoint{
+				BucketStart: row.BucketStart,
+				Label:       usageStatsBucketLabel(row.BucketStart, query.TrendGranularity),
+			}
+			trendMap[row.BucketStart] = point
+		}
+		point.Quota += row.Quota
+		point.RequestCount += row.RequestCount
+		point.PromptTokens += row.PromptTokens
+		point.CompletionTokens += row.CompletionTokens
+		point.TotalTokens += row.PromptTokens + row.CompletionTokens
+	}
+	buckets := make([]int64, 0, len(trendMap))
+	for bucket := range trendMap {
+		buckets = append(buckets, bucket)
+	}
+	sort.Slice(buckets, func(i, j int) bool {
+		return buckets[i] < buckets[j]
+	})
+	trend := make([]UsageStatsTrendPoint, 0, len(buckets))
+	for _, bucket := range buckets {
+		trend = append(trend, *trendMap[bucket])
+	}
+	return trend
+}
+
+func buildUsageStatsUserModelDetails(rows []usageStatsBaseRow, rankedUsers []UsageStatsRankItem) []UsageStatsUserModelDetail {
+	if len(rankedUsers) == 0 {
+		return []UsageStatsUserModelDetail{}
+	}
+	details := make([]UsageStatsUserModelDetail, 0, len(rows))
+	for _, row := range rows {
+		details = append(details, UsageStatsUserModelDetail{
+			UserId:           row.UserId,
+			Username:         row.Username,
+			ModelName:        row.ModelName,
+			Quota:            row.Quota,
+			RequestCount:     row.RequestCount,
+			PromptTokens:     row.PromptTokens,
+			CompletionTokens: row.CompletionTokens,
+			TotalTokens:      row.PromptTokens + row.CompletionTokens,
+			AverageUseTime:   row.AverageUseTime,
+		})
+	}
+	sort.Slice(details, func(i, j int) bool {
+		if details[i].UserId != details[j].UserId {
+			return details[i].UserId < details[j].UserId
+		}
+		if details[i].Quota != details[j].Quota {
+			return details[i].Quota > details[j].Quota
+		}
+		return details[i].ModelName < details[j].ModelName
+	})
+	return details
+}
+
+func usageStatsBucketExpression(step int64, offset int) string {
+	return fmt.Sprintf("created_at - ((created_at + %d) %% %d)", offset, step)
+}
+
+func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
+	var err error
+	query, err = normalizeUsageStatsQuery(query)
+	if err != nil {
+		return UsageStatsData{}, err
+	}
+	ensureCommonColumnsInitialized()
+
+	data := UsageStatsData{
+		StartTimestamp:   query.StartTimestamp,
+		EndTimestamp:     query.EndTimestamp,
+		TrendGranularity: query.TrendGranularity,
+		GeneratedAt:      time.Now().Unix(),
+		Ranking:          []UsageStatsRankItem{},
+		Trend:            []UsageStatsTrendPoint{},
+		Models:           []UsageStatsModelItem{},
+		UserModelDetails: []UsageStatsUserModelDetail{},
+	}
+
+	baseQuery, err := applyUsageStatsFilters(LOG_DB.Table("logs"), query)
+	if err != nil {
+		return data, err
+	}
+
+	var summaryRow struct {
+		Quota            int64
+		RequestCount     int64
+		ActiveUserCount  int64
+		PromptTokens     int64
+		CompletionTokens int64
+	}
+	if err = baseQuery.Select("COALESCE(SUM(quota), 0) as quota, COUNT(*) as request_count, COUNT(DISTINCT user_id) as active_user_count, COALESCE(SUM(prompt_tokens), 0) as prompt_tokens, COALESCE(SUM(completion_tokens), 0) as completion_tokens").Scan(&summaryRow).Error; err != nil {
+		return data, err
+	}
+	data.Summary = UsageStatsSummary{
+		Quota:            summaryRow.Quota,
+		RequestCount:     summaryRow.RequestCount,
+		ActiveUserCount:  summaryRow.ActiveUserCount,
+		PromptTokens:     summaryRow.PromptTokens,
+		CompletionTokens: summaryRow.CompletionTokens,
+		TotalTokens:      summaryRow.PromptTokens + summaryRow.CompletionTokens,
+	}
+
+	rankingQuery, err := applyUsageStatsFilters(LOG_DB.Table("logs"), query)
+	if err != nil {
+		return data, err
+	}
+	if err = rankingQuery.Select("user_id, username, COALESCE(SUM(quota), 0) as quota, COUNT(*) as request_count, COALESCE(SUM(prompt_tokens), 0) as prompt_tokens, COALESCE(SUM(completion_tokens), 0) as completion_tokens, COALESCE(AVG(use_time), 0) as average_use_time, COALESCE(MAX(created_at), 0) as last_request_at").
+		Group("user_id, username").
+		Order("quota desc, request_count desc, user_id asc").
+		Limit(query.Limit).
+		Scan(&data.Ranking).Error; err != nil {
+		return data, err
+	}
+	for i := range data.Ranking {
+		data.Ranking[i].TotalTokens = data.Ranking[i].PromptTokens + data.Ranking[i].CompletionTokens
+	}
+
+	modelQuery, err := applyUsageStatsFilters(LOG_DB.Table("logs"), query)
+	if err != nil {
+		return data, err
+	}
+	if err = modelQuery.Select("model_name, COALESCE(SUM(quota), 0) as quota, COUNT(*) as request_count, COALESCE(SUM(prompt_tokens), 0) as prompt_tokens, COALESCE(SUM(completion_tokens), 0) as completion_tokens, COALESCE(AVG(use_time), 0) as average_use_time").
+		Group("model_name").
+		Order("quota desc, request_count desc, model_name asc").
+		Limit(query.Limit).
+		Scan(&data.Models).Error; err != nil {
+		return data, err
+	}
+	for i := range data.Models {
+		data.Models[i].TotalTokens = data.Models[i].PromptTokens + data.Models[i].CompletionTokens
+	}
+
+	step := usageStatsBucketStep(query.TrendGranularity)
+	_, offset := time.Unix(query.StartTimestamp, 0).Local().Zone()
+	bucketExpr := usageStatsBucketExpression(step, offset)
+	trendQuery, err := applyUsageStatsFilters(LOG_DB.Table("logs"), query)
+	if err != nil {
+		return data, err
+	}
+	var trendRows []usageStatsTrendRow
+	if err = trendQuery.Select(bucketExpr + " as bucket_start, COALESCE(SUM(quota), 0) as quota, COUNT(*) as request_count, COALESCE(SUM(prompt_tokens), 0) as prompt_tokens, COALESCE(SUM(completion_tokens), 0) as completion_tokens").
+		Group(bucketExpr).
+		Order("bucket_start asc").
+		Scan(&trendRows).Error; err != nil {
+		return data, err
+	}
+	data.Trend = buildUsageStatsTrend(trendRows, query)
+
+	rankedUserIDs := make([]int, 0, len(data.Ranking))
+	for _, item := range data.Ranking {
+		rankedUserIDs = append(rankedUserIDs, item.UserId)
+	}
+	if len(rankedUserIDs) > 0 {
+		detailQuery, err := applyUsageStatsFilters(LOG_DB.Table("logs"), query)
+		if err != nil {
+			return data, err
+		}
+		var detailRows []usageStatsBaseRow
+		if err = detailQuery.Where("logs.user_id IN ?", rankedUserIDs).
+			Select("user_id, username, model_name, COALESCE(SUM(quota), 0) as quota, COUNT(*) as request_count, COALESCE(SUM(prompt_tokens), 0) as prompt_tokens, COALESCE(SUM(completion_tokens), 0) as completion_tokens, COALESCE(AVG(use_time), 0) as average_use_time").
+			Group("user_id, username, model_name").
+			Order("user_id asc, quota desc, model_name asc").
+			Scan(&detailRows).Error; err != nil {
+			return data, err
+		}
+		data.UserModelDetails = buildUsageStatsUserModelDetails(detailRows, data.Ranking)
+	}
+
+	return data, nil
 }
 
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {

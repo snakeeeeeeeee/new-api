@@ -51,6 +51,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     invite_code: true,
     invite_stats: true,
     log_dashboard: true,
+    usage_stats: true,
     async_task: true,
     request_dump: true,
     violation: true,

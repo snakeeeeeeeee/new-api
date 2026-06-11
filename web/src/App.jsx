@@ -50,6 +50,7 @@ import Playground from './pages/Playground';
 import Subscription from './pages/Subscription';
 import AggregateGroupPage from './pages/AggregateGroup';
 import LogDashboardPage from './pages/LogDashboard';
+import UsageStatsPage from './pages/UsageStats';
 import RequestDumpPage from './pages/RequestDump';
 import ViolationPage from './pages/Violation';
 import CompatibilityPage from './pages/Compatibility';
@@ -192,6 +193,14 @@ function App() {
           element={
             <AdminRoute>
               <LogDashboardPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/usage-stats'
+          element={
+            <AdminRoute>
+              <UsageStatsPage />
             </AdminRoute>
           }
         />
