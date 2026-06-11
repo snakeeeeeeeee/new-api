@@ -475,9 +475,11 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 			case "signature_delta":
 				if claudeResponse.Delta.Signature != "" {
 					choice.Delta.ReasoningSignature = &claudeResponse.Delta.Signature
+					choice.Delta.Signature = &claudeResponse.Delta.Signature
 				}
 			case "thinking_delta":
 				choice.Delta.ReasoningContent = claudeResponse.Delta.Thinking
+				choice.Delta.Thinking = claudeResponse.Delta.Thinking
 			}
 		}
 	} else if claudeResponse.Type == "message_delta" {
@@ -560,6 +562,8 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 	}
 	choice.Message.ReasoningContent = thinkingContent
 	choice.Message.ReasoningSignature = thinkingSignature
+	choice.Message.Thinking = thinkingContent
+	choice.Message.Signature = thinkingSignature
 	fullTextResponse.Model = claudeResponse.Model
 	choices = append(choices, choice)
 	fullTextResponse.Choices = choices

@@ -169,6 +169,8 @@ func TestResponseClaude2OpenAIIncludesReasoningContent(t *testing.T) {
 	require.Equal(t, "final answer", resp.Choices[0].Message.StringContent())
 	require.Equal(t, thinking, resp.Choices[0].Message.ReasoningContent)
 	require.Equal(t, signature, resp.Choices[0].Message.ReasoningSignature)
+	require.Equal(t, thinking, resp.Choices[0].Message.Thinking)
+	require.Equal(t, signature, resp.Choices[0].Message.Signature)
 }
 
 func TestStreamResponseClaude2OpenAIIncludesReasoningSignature(t *testing.T) {
@@ -187,4 +189,26 @@ func TestStreamResponseClaude2OpenAIIncludesReasoningSignature(t *testing.T) {
 	require.Len(t, resp.Choices, 1)
 	require.NotNil(t, resp.Choices[0].Delta.ReasoningSignature)
 	require.Equal(t, signature, *resp.Choices[0].Delta.ReasoningSignature)
+	require.NotNil(t, resp.Choices[0].Delta.Signature)
+	require.Equal(t, signature, *resp.Choices[0].Delta.Signature)
+}
+
+func TestStreamResponseClaude2OpenAIIncludesThinkingAlias(t *testing.T) {
+	thinking := "stream-thinking"
+	resp := StreamResponseClaude2OpenAI(&dto.ClaudeResponse{
+		Id:    "msg_test",
+		Model: "claude-sonnet-4-6",
+		Type:  "content_block_delta",
+		Delta: &dto.ClaudeMediaMessage{
+			Type:     "thinking_delta",
+			Thinking: commonpkg.GetPointer(thinking),
+		},
+	})
+
+	require.NotNil(t, resp)
+	require.Len(t, resp.Choices, 1)
+	require.NotNil(t, resp.Choices[0].Delta.ReasoningContent)
+	require.Equal(t, thinking, *resp.Choices[0].Delta.ReasoningContent)
+	require.NotNil(t, resp.Choices[0].Delta.Thinking)
+	require.Equal(t, thinking, *resp.Choices[0].Delta.Thinking)
 }

@@ -88,6 +88,8 @@ type ChatCompletionsStreamResponseChoiceDelta struct {
 	Content            *string            `json:"content,omitempty"`
 	ReasoningContent   *string            `json:"reasoning_content,omitempty"`
 	ReasoningSignature *string            `json:"reasoning_signature,omitempty"`
+	Thinking           *string            `json:"thinking,omitempty"`
+	Signature          *string            `json:"signature,omitempty"`
 	Reasoning          *string            `json:"reasoning,omitempty"`
 	Role               string             `json:"role,omitempty"`
 	ToolCalls          []ToolCallResponse `json:"tool_calls,omitempty"`

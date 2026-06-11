@@ -308,8 +308,10 @@ type Message struct {
 	Content            any             `json:"content"`
 	Name               *string         `json:"name,omitempty"`
 	Prefix             *bool           `json:"prefix,omitempty"`
-	ReasoningContent   string          `json:"reasoning_content,omitempty"`
-	ReasoningSignature string          `json:"reasoning_signature,omitempty"`
+	ReasoningContent   string          `json:"reasoning_content"`
+	ReasoningSignature string          `json:"reasoning_signature"`
+	Thinking           string          `json:"thinking"`
+	Signature          string          `json:"signature"`
 	Reasoning          string          `json:"reasoning,omitempty"`
 	ToolCalls          json.RawMessage `json:"tool_calls,omitempty"`
 	ToolCallId         string          `json:"tool_call_id,omitempty"`
