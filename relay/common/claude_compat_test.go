@@ -267,6 +267,14 @@ func TestNormalizeClaudeRequestCompatEffortValidation(t *testing.T) {
 	opus48MaxReq.OutputConfig = []byte(`{"effort":"max"}`)
 	require.Nil(t, NormalizeClaudeRequestCompat(opus48MaxReq, nil))
 
+	fableMaxReq := baseClaudeCompatRequest("claude-fable-5")
+	fableMaxReq.OutputConfig = []byte(`{"effort":"max"}`)
+	require.Nil(t, NormalizeClaudeRequestCompat(fableMaxReq, nil))
+
+	fableXHighReq := baseClaudeCompatRequest("claude-fable-5")
+	fableXHighReq.OutputConfig = []byte(`{"effort":"xhigh"}`)
+	require.Nil(t, NormalizeClaudeRequestCompat(fableXHighReq, nil))
+
 	unknownReq := baseClaudeCompatRequest("claude-opus-4-7")
 	unknownReq.OutputConfig = []byte(`{"effort":"extreme"}`)
 	err = NormalizeClaudeRequestCompat(unknownReq, nil)
@@ -686,6 +694,14 @@ func TestNormalizeClaudeRequestCompatRejectModesCanRejectP1P2(t *testing.T) {
 	_, err = NormalizeClaudeRequestCompatJSON(body, nil)
 	require.NotNil(t, err)
 	require.Equal(t, ClaudeCompatCodeInvalidToolChoice, err.ToOpenAIError().Code)
+
+	fableReq := baseClaudeCompatRequest("claude-fable-5")
+	fableReq.MaxTokens = commonpkg.GetPointer(uint(4096))
+	fableReq.Thinking = &dto.Thinking{Type: "enabled", BudgetTokens: commonpkg.GetPointer(2048)}
+	err = NormalizeClaudeRequestCompat(fableReq, nil)
+	require.NotNil(t, err)
+	require.Equal(t, ClaudeCompatCodeInvalidThinking, err.ToOpenAIError().Code)
+	require.Equal(t, "thinking.type", err.ToOpenAIError().Param)
 }
 
 func TestNormalizeClaudeRequestCompatRejectsStopSequencesAndServiceTierByDefault(t *testing.T) {

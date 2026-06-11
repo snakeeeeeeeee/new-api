@@ -84,6 +84,7 @@ type GeneralOpenAIRequest struct {
 	SearchParameters json.RawMessage `json:"search_parameters,omitempty"`
 	// claude
 	WebSearchOptions *WebSearchOptions `json:"web_search_options,omitempty"`
+	OutputConfig     json.RawMessage   `json:"output_config,omitempty"`
 	// OpenRouter Params
 	Usage     json.RawMessage `json:"usage,omitempty"`
 	Reasoning json.RawMessage `json:"reasoning,omitempty"`
@@ -303,15 +304,16 @@ func (r *GeneralOpenAIRequest) ParseInput() []string {
 }
 
 type Message struct {
-	Role             string          `json:"role"`
-	Content          any             `json:"content"`
-	Name             *string         `json:"name,omitempty"`
-	Prefix           *bool           `json:"prefix,omitempty"`
-	ReasoningContent string          `json:"reasoning_content,omitempty"`
-	Reasoning        string          `json:"reasoning,omitempty"`
-	ToolCalls        json.RawMessage `json:"tool_calls,omitempty"`
-	ToolCallId       string          `json:"tool_call_id,omitempty"`
-	parsedContent    []MediaContent
+	Role               string          `json:"role"`
+	Content            any             `json:"content"`
+	Name               *string         `json:"name,omitempty"`
+	Prefix             *bool           `json:"prefix,omitempty"`
+	ReasoningContent   string          `json:"reasoning_content,omitempty"`
+	ReasoningSignature string          `json:"reasoning_signature,omitempty"`
+	Reasoning          string          `json:"reasoning,omitempty"`
+	ToolCalls          json.RawMessage `json:"tool_calls,omitempty"`
+	ToolCallId         string          `json:"tool_call_id,omitempty"`
+	parsedContent      []MediaContent
 	//parsedStringContent *string
 }
 

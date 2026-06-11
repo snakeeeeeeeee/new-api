@@ -979,7 +979,7 @@ func validateClaudeThinking(request *dto.ClaudeRequest, modelName string) *claud
 		if request.MaxTokens != nil && budgetTokens >= int(*request.MaxTokens) {
 			return mediumRiskClaudeViolation("thinking.budget_tokens", ClaudeCompatCodeInvalidThinking, "Invalid request for Claude: thinking.budget_tokens must be less than max_tokens.")
 		}
-		if isClaudeOpus47Or48(modelName) {
+		if requiresClaudeAdaptiveThinking(modelName) {
 			return mediumRiskClaudeViolation("thinking.type", ClaudeCompatCodeInvalidThinking, "Invalid request for Claude: manual extended thinking is not supported for this model; use adaptive thinking.")
 		}
 	}
@@ -1268,7 +1268,7 @@ func validateClaudeOutputEffort(request *dto.ClaudeRequest, modelName string) *c
 	case "low", "medium", "high":
 		return nil
 	case "xhigh":
-		if isClaudeOpus47Or48(modelName) {
+		if supportsClaudeXHighEffort(modelName) {
 			return nil
 		}
 	case "max":
@@ -1296,9 +1296,15 @@ func validateClaudeOutputEffort(request *dto.ClaudeRequest, modelName string) *c
 	}
 }
 
-func isClaudeOpus47Or48(model string) bool {
+func supportsClaudeXHighEffort(model string) bool {
 	model = strings.ToLower(model)
-	return strings.Contains(model, "claude-opus-4-7") || strings.Contains(model, "claude-opus-4-8")
+	return strings.Contains(model, "claude-opus-4-7") ||
+		strings.Contains(model, "claude-opus-4-8") ||
+		strings.Contains(model, "claude-fable-5")
+}
+
+func requiresClaudeAdaptiveThinking(model string) bool {
+	return supportsClaudeXHighEffort(model)
 }
 
 func supportsClaudeMaxEffort(model string) bool {
@@ -1307,7 +1313,8 @@ func supportsClaudeMaxEffort(model string) bool {
 		strings.Contains(model, "claude-opus-4-7") ||
 		strings.Contains(model, "claude-opus-4-8") ||
 		strings.Contains(model, "claude-sonnet-4-6") ||
-		strings.Contains(model, "claude-sonnet-4-7")
+		strings.Contains(model, "claude-sonnet-4-7") ||
+		strings.Contains(model, "claude-fable-5")
 }
 
 func validateClaudeNames(request *dto.ClaudeRequest) *claudeCompatViolation {

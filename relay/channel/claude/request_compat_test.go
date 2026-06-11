@@ -139,14 +139,27 @@ func TestRequestOpenAI2ClaudeMessageTopLevelThinkingOverridesReasoning(t *testin
 	require.Equal(t, 1024, *claudeReq.Thinking.BudgetTokens)
 }
 
+func TestRequestOpenAI2ClaudeMessagePassesOutputConfig(t *testing.T) {
+	req := dto.GeneralOpenAIRequest{
+		Model:        "claude-fable-5",
+		OutputConfig: []byte(`{"effort":"max"}`),
+		Messages:     []dto.Message{{Role: "user", Content: "hello"}},
+	}
+
+	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"effort":"max"}`, string(claudeReq.OutputConfig))
+}
+
 func TestResponseClaude2OpenAIIncludesReasoningContent(t *testing.T) {
 	thinking := "careful reasoning"
+	signature := "signed-thinking"
 	resp := ResponseClaude2OpenAI(&dto.ClaudeResponse{
 		Id:         "msg_test",
 		Model:      "claude-sonnet-4-6",
 		StopReason: "end_turn",
 		Content: []dto.ClaudeMediaMessage{
-			{Type: "thinking", Thinking: commonpkg.GetPointer(thinking)},
+			{Type: "thinking", Thinking: commonpkg.GetPointer(thinking), Signature: signature},
 			{Type: "text", Text: commonpkg.GetPointer("final answer")},
 		},
 	})
@@ -155,4 +168,23 @@ func TestResponseClaude2OpenAIIncludesReasoningContent(t *testing.T) {
 	require.Len(t, resp.Choices, 1)
 	require.Equal(t, "final answer", resp.Choices[0].Message.StringContent())
 	require.Equal(t, thinking, resp.Choices[0].Message.ReasoningContent)
+	require.Equal(t, signature, resp.Choices[0].Message.ReasoningSignature)
+}
+
+func TestStreamResponseClaude2OpenAIIncludesReasoningSignature(t *testing.T) {
+	signature := "stream-signature"
+	resp := StreamResponseClaude2OpenAI(&dto.ClaudeResponse{
+		Id:    "msg_test",
+		Model: "claude-sonnet-4-6",
+		Type:  "content_block_delta",
+		Delta: &dto.ClaudeMediaMessage{
+			Type:      "signature_delta",
+			Signature: signature,
+		},
+	})
+
+	require.NotNil(t, resp)
+	require.Len(t, resp.Choices, 1)
+	require.NotNil(t, resp.Choices[0].Delta.ReasoningSignature)
+	require.Equal(t, signature, *resp.Choices[0].Delta.ReasoningSignature)
 }
