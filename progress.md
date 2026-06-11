@@ -22,6 +22,14 @@
 - Browser route smoke passed against `http://localhost:5173/console/usage-stats`: unauthenticated user redirects to login without white screen; frontend-only proxy status errors are expected because backend was not running on port 3000.
 - Temporary Vite dev server on port 5173 was stopped.
 
+## Follow-up: 2026-06-12 Token 统计口径修正
+- 已确认现有用量统计直接聚合 `prompt_tokens + completion_tokens`，对 Claude/Anthropic cache write/read 语义不准确。
+- 目标口径调整为输入(含缓存写)、缓存读取、输出；总 Token 为三者之和。
+- 前端所有 token 图表/表格/tooltip 展示统一使用 M 单位，金额保持 `$` 或额度格式。
+- 已完成后端归一化聚合、前端 M/$ 展示调整、i18n key 和回归测试。
+- 验证通过：`go test ./model -run UsageStats -count=1`、`go test ./controller -run GetUsageStats -count=1`、`go test ./model ./controller -count=1`、`cd web && bun run build`、`git diff --check`。
+- Docker dev 重建通过：`docker compose -f docker-compose-dev.yml up -d --build new-api-dev`；`http://localhost:3001/api/status` success，`new-api-dev` healthy。
+
 ---
 
 # Session: 2026-06-05 聚合分组 RPM 亲和 fallback 不改绑

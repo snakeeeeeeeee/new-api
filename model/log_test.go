@@ -223,6 +223,8 @@ func sumUsageStatsTrend(trend []UsageStatsTrendPoint) UsageStatsTrendPoint {
 	for _, point := range trend {
 		total.Quota += point.Quota
 		total.RequestCount += point.RequestCount
+		total.InputTokens += point.InputTokens
+		total.CacheTokens += point.CacheTokens
 		total.PromptTokens += point.PromptTokens
 		total.CompletionTokens += point.CompletionTokens
 		total.TotalTokens += point.TotalTokens
@@ -309,6 +311,8 @@ func TestGetUsageStatsAggregatesAndFiltersConsumeLogs(t *testing.T) {
 	require.Equal(t, int64(100), stats.Summary.Quota)
 	require.Equal(t, int64(2), stats.Summary.RequestCount)
 	require.Equal(t, int64(1), stats.Summary.ActiveUserCount)
+	require.Equal(t, int64(15), stats.Summary.InputTokens)
+	require.Equal(t, int64(0), stats.Summary.CacheTokens)
 	require.Equal(t, int64(15), stats.Summary.PromptTokens)
 	require.Equal(t, int64(26), stats.Summary.CompletionTokens)
 	require.Equal(t, int64(41), stats.Summary.TotalTokens)
@@ -319,12 +323,18 @@ func TestGetUsageStatsAggregatesAndFiltersConsumeLogs(t *testing.T) {
 	require.Equal(t, "alice", stats.Ranking[0].Username)
 	require.Equal(t, int64(100), stats.Ranking[0].Quota)
 	require.Equal(t, int64(2), stats.Ranking[0].RequestCount)
+	require.Equal(t, int64(15), stats.Ranking[0].InputTokens)
+	require.Equal(t, int64(0), stats.Ranking[0].CacheTokens)
+	require.Equal(t, int64(41), stats.Ranking[0].TotalTokens)
 	require.Equal(t, float64(3), stats.Ranking[0].AverageUseTime)
 
 	require.Len(t, stats.Models, 1)
 	require.Equal(t, "gpt-4o", stats.Models[0].ModelName)
 	require.Equal(t, int64(100), stats.Models[0].Quota)
 	require.Equal(t, int64(2), stats.Models[0].RequestCount)
+	require.Equal(t, int64(15), stats.Models[0].InputTokens)
+	require.Equal(t, int64(0), stats.Models[0].CacheTokens)
+	require.Equal(t, int64(41), stats.Models[0].TotalTokens)
 
 	require.NotEmpty(t, stats.Trend)
 	trendTotal := sumUsageStatsTrend(stats.Trend)
@@ -335,6 +345,87 @@ func TestGetUsageStatsAggregatesAndFiltersConsumeLogs(t *testing.T) {
 	require.Equal(t, "gpt-4o", stats.UserModelDetails[0].ModelName)
 	require.Equal(t, int64(100), stats.UserModelDetails[0].Quota)
 	require.Equal(t, int64(2), stats.UserModelDetails[0].RequestCount)
+	require.Equal(t, int64(15), stats.UserModelDetails[0].InputTokens)
+	require.Equal(t, int64(0), stats.UserModelDetails[0].CacheTokens)
+	require.Equal(t, int64(41), stats.UserModelDetails[0].TotalTokens)
+}
+
+func TestGetUsageStatsNormalizesCacheTokenBreakdown(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+
+	base := time.Date(2026, 6, 12, 19, 48, 0, 0, time.Local).Unix()
+	seedUsageStatsLog(t, &Log{
+		UserId:           1,
+		Username:         "gpt_user",
+		CreatedAt:        base,
+		Type:             LogTypeConsume,
+		ModelName:        "gpt-4.1",
+		Quota:            93830,
+		PromptTokens:     29820,
+		CompletionTokens: 1246,
+		Other:            `{"cache_tokens":24064}`,
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId:           2,
+		Username:         "claude_write_user",
+		CreatedAt:        base + 60,
+		Type:             LogTypeConsume,
+		ModelName:        "claude-sonnet-4",
+		Quota:            2582,
+		PromptTokens:     39,
+		CompletionTokens: 32,
+		Other:            `{"claude":true,"usage_semantic":"anthropic","cache_write_tokens":81}`,
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId:           3,
+		Username:         "claude_read_user",
+		CreatedAt:        base + 120,
+		Type:             LogTypeConsume,
+		ModelName:        "claude-opus-4",
+		Quota:            3000,
+		PromptTokens:     39,
+		CompletionTokens: 32,
+		Other:            `{"claude":true,"cache_tokens":100,"cache_creation_tokens_5m":50,"cache_creation_tokens_1h":31}`,
+	})
+
+	stats, err := GetUsageStats(UsageStatsQuery{
+		StartTimestamp:   base - 1,
+		EndTimestamp:     base + 3600,
+		Limit:            10,
+		TrendGranularity: UsageStatsGranularityHour,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(5996), stats.Summary.InputTokens)
+	require.Equal(t, int64(24164), stats.Summary.CacheTokens)
+	require.Equal(t, int64(1310), stats.Summary.CompletionTokens)
+	require.Equal(t, int64(31470), stats.Summary.TotalTokens)
+
+	byUser := make(map[string]UsageStatsRankItem)
+	for _, item := range stats.Ranking {
+		byUser[item.Username] = item
+	}
+	require.Equal(t, int64(5756), byUser["gpt_user"].InputTokens)
+	require.Equal(t, int64(24064), byUser["gpt_user"].CacheTokens)
+	require.Equal(t, int64(1246), byUser["gpt_user"].CompletionTokens)
+	require.Equal(t, int64(31066), byUser["gpt_user"].TotalTokens)
+
+	require.Equal(t, int64(120), byUser["claude_write_user"].InputTokens)
+	require.Equal(t, int64(0), byUser["claude_write_user"].CacheTokens)
+	require.Equal(t, int64(32), byUser["claude_write_user"].CompletionTokens)
+	require.Equal(t, int64(152), byUser["claude_write_user"].TotalTokens)
+
+	require.Equal(t, int64(120), byUser["claude_read_user"].InputTokens)
+	require.Equal(t, int64(100), byUser["claude_read_user"].CacheTokens)
+	require.Equal(t, int64(32), byUser["claude_read_user"].CompletionTokens)
+	require.Equal(t, int64(252), byUser["claude_read_user"].TotalTokens)
+
+	trendTotal := sumUsageStatsTrend(stats.Trend)
+	require.Equal(t, stats.Summary.InputTokens, trendTotal.InputTokens)
+	require.Equal(t, stats.Summary.CacheTokens, trendTotal.CacheTokens)
+	require.Equal(t, stats.Summary.CompletionTokens, trendTotal.CompletionTokens)
+	require.Equal(t, stats.Summary.TotalTokens, trendTotal.TotalTokens)
 }
 
 func TestGetUsageStatsRankingLimitAndDailyTrend(t *testing.T) {

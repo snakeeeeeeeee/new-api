@@ -50,7 +50,7 @@ import {
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { DATE_RANGE_PRESETS } from '../../constants/console.constants';
-import { API, renderNumber, renderQuota, showError } from '../../helpers';
+import { API, renderNumber, showError } from '../../helpers';
 
 const { Text, Title } = Typography;
 
@@ -241,14 +241,18 @@ const UsageStatsPage = () => {
           id: 'usage-stats-trend',
           values: trend.map((item) => ({
             label: item.label,
+            amount_usd: quotaToUSD(item.quota),
             quota: item.quota || 0,
             request_count: item.request_count || 0,
+            input_tokens: item.input_tokens ?? item.prompt_tokens ?? 0,
+            cache_tokens: item.cache_tokens || 0,
+            completion_tokens: item.completion_tokens || 0,
             total_tokens: item.total_tokens || 0,
           })),
         },
       ],
       xField: 'label',
-      yField: 'quota',
+      yField: 'amount_usd',
       point: { visible: true },
       title: {
         visible: true,
@@ -260,23 +264,39 @@ const UsageStatsPage = () => {
         {
           orient: 'left',
           type: 'linear',
-          title: { visible: true, text: t('额度') },
+          title: { visible: true, text: '$' },
+          label: {
+            formatMethod: (value) => formatUSDValue(value),
+          },
         },
       ],
       tooltip: {
         mark: {
           content: [
             {
-              key: t('消耗额度'),
-              value: (datum) => renderQuota(datum.quota || 0),
+              key: t('消耗额度 ($)'),
+              value: (datum) => formatUSDValue(datum.amount_usd || 0),
             },
             {
               key: t('请求数'),
               value: (datum) => renderNumber(datum.request_count || 0),
             },
             {
-              key: t('Tokens'),
-              value: (datum) => renderNumber(datum.total_tokens || 0),
+              key: t('Token 消耗 (M)'),
+              value: (datum) => formatTokensMillion(datum.total_tokens || 0),
+            },
+            {
+              key: t('输入(含缓存写) (M)'),
+              value: (datum) => formatTokensMillion(datum.input_tokens || 0),
+            },
+            {
+              key: t('缓存读取 (M)'),
+              value: (datum) => formatTokensMillion(datum.cache_tokens || 0),
+            },
+            {
+              key: t('输出 (M)'),
+              value: (datum) =>
+                formatTokensMillion(datum.completion_tokens || 0),
             },
           ],
         },
@@ -293,14 +313,18 @@ const UsageStatsPage = () => {
           id: 'usage-stats-model-rank',
           values: models.slice(0, 20).map((item) => ({
             model_name: item.model_name || t('未知模型'),
+            amount_usd: quotaToUSD(item.quota),
             quota: item.quota || 0,
             request_count: item.request_count || 0,
+            input_tokens: item.input_tokens ?? item.prompt_tokens ?? 0,
+            cache_tokens: item.cache_tokens || 0,
+            completion_tokens: item.completion_tokens || 0,
             total_tokens: item.total_tokens || 0,
           })),
         },
       ],
       direction: 'horizontal',
-      xField: 'quota',
+      xField: 'amount_usd',
       yField: 'model_name',
       title: {
         visible: true,
@@ -311,7 +335,10 @@ const UsageStatsPage = () => {
         {
           orient: 'bottom',
           type: 'linear',
-          title: { visible: true, text: t('额度') },
+          title: { visible: true, text: '$' },
+          label: {
+            formatMethod: (value) => formatUSDValue(value),
+          },
         },
         { orient: 'left', type: 'band', label: { visible: true } },
       ],
@@ -319,16 +346,29 @@ const UsageStatsPage = () => {
         mark: {
           content: [
             {
-              key: t('消耗额度'),
-              value: (datum) => renderQuota(datum.quota || 0),
+              key: t('消耗额度 ($)'),
+              value: (datum) => formatUSDValue(datum.amount_usd || 0),
             },
             {
               key: t('请求数'),
               value: (datum) => renderNumber(datum.request_count || 0),
             },
             {
-              key: t('Tokens'),
-              value: (datum) => renderNumber(datum.total_tokens || 0),
+              key: t('Token 消耗 (M)'),
+              value: (datum) => formatTokensMillion(datum.total_tokens || 0),
+            },
+            {
+              key: t('输入(含缓存写) (M)'),
+              value: (datum) => formatTokensMillion(datum.input_tokens || 0),
+            },
+            {
+              key: t('缓存读取 (M)'),
+              value: (datum) => formatTokensMillion(datum.cache_tokens || 0),
+            },
+            {
+              key: t('输出 (M)'),
+              value: (datum) =>
+                formatTokensMillion(datum.completion_tokens || 0),
             },
           ],
         },
@@ -352,6 +392,9 @@ const UsageStatsPage = () => {
               amount_usd: quotaToUSD(item.quota),
               quota: item.quota || 0,
               request_count: item.request_count || 0,
+              input_tokens: item.input_tokens ?? item.prompt_tokens ?? 0,
+              cache_tokens: item.cache_tokens || 0,
+              completion_tokens: item.completion_tokens || 0,
               total_tokens: item.total_tokens || 0,
             })),
         },
@@ -387,6 +430,19 @@ const UsageStatsPage = () => {
               value: (datum) => formatTokensMillion(datum.total_tokens || 0),
             },
             {
+              key: t('输入(含缓存写) (M)'),
+              value: (datum) => formatTokensMillion(datum.input_tokens || 0),
+            },
+            {
+              key: t('缓存读取 (M)'),
+              value: (datum) => formatTokensMillion(datum.cache_tokens || 0),
+            },
+            {
+              key: t('输出 (M)'),
+              value: (datum) =>
+                formatTokensMillion(datum.completion_tokens || 0),
+            },
+            {
               key: t('请求数'),
               value: (datum) => renderNumber(datum.request_count || 0),
             },
@@ -412,6 +468,9 @@ const UsageStatsPage = () => {
               token_millions: tokensToMillion(item.total_tokens),
               quota: item.quota || 0,
               request_count: item.request_count || 0,
+              input_tokens: item.input_tokens ?? item.prompt_tokens ?? 0,
+              cache_tokens: item.cache_tokens || 0,
+              completion_tokens: item.completion_tokens || 0,
               total_tokens: item.total_tokens || 0,
             })),
         },
@@ -444,8 +503,17 @@ const UsageStatsPage = () => {
                 formatTokenMillionsValue(datum.token_millions || 0),
             },
             {
-              key: t('Tokens'),
-              value: (datum) => renderNumber(datum.total_tokens || 0),
+              key: t('输入(含缓存写) (M)'),
+              value: (datum) => formatTokensMillion(datum.input_tokens || 0),
+            },
+            {
+              key: t('缓存读取 (M)'),
+              value: (datum) => formatTokensMillion(datum.cache_tokens || 0),
+            },
+            {
+              key: t('输出 (M)'),
+              value: (datum) =>
+                formatTokensMillion(datum.completion_tokens || 0),
             },
             {
               key: t('消耗额度 ($)'),
@@ -483,10 +551,10 @@ const UsageStatsPage = () => {
         ),
       },
       {
-        title: t('消耗额度'),
+        title: t('消耗额度 ($)'),
         dataIndex: 'quota',
         sorter: (a, b) => (a.quota || 0) - (b.quota || 0),
-        render: (value) => renderQuota(value || 0),
+        render: (value) => formatQuotaUSD(value || 0),
       },
       {
         title: t('请求数'),
@@ -495,10 +563,10 @@ const UsageStatsPage = () => {
         render: (value) => renderNumber(value || 0),
       },
       {
-        title: t('Tokens'),
+        title: t('Token 消耗 (M)'),
         dataIndex: 'total_tokens',
         sorter: (a, b) => (a.total_tokens || 0) - (b.total_tokens || 0),
-        render: (value) => renderNumber(value || 0),
+        render: (value) => formatTokensMillion(value || 0),
       },
       {
         title: t('平均耗时'),
@@ -540,14 +608,26 @@ const UsageStatsPage = () => {
         render: (value) => formatTokensMillion(value || 0),
       },
       {
-        title: t('Prompt Tokens'),
-        dataIndex: 'prompt_tokens',
-        render: (value) => renderNumber(value || 0),
+        title: t('输入(含缓存写) (M)'),
+        dataIndex: 'input_tokens',
+        sorter: (a, b) =>
+          (a.input_tokens ?? a.prompt_tokens ?? 0) -
+          (b.input_tokens ?? b.prompt_tokens ?? 0),
+        render: (value, record) =>
+          formatTokensMillion(value ?? record.prompt_tokens ?? 0),
       },
       {
-        title: t('Completion Tokens'),
+        title: t('缓存读取 (M)'),
+        dataIndex: 'cache_tokens',
+        sorter: (a, b) => (a.cache_tokens || 0) - (b.cache_tokens || 0),
+        render: (value) => formatTokensMillion(value || 0),
+      },
+      {
+        title: t('输出 (M)'),
         dataIndex: 'completion_tokens',
-        render: (value) => renderNumber(value || 0),
+        sorter: (a, b) =>
+          (a.completion_tokens || 0) - (b.completion_tokens || 0),
+        render: (value) => formatTokensMillion(value || 0),
       },
       {
         title: t('平均耗时'),
@@ -656,7 +736,7 @@ const UsageStatsPage = () => {
         <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4'>
           <SummaryCard
             title={t('总消耗额度')}
-            value={renderQuota(summary.quota || 0)}
+            value={formatQuotaUSD(summary.quota || 0)}
             hint={`${t('请求数')} ${renderNumber(summary.request_count || 0)}`}
             icon={<WalletCards size={20} />}
           />
@@ -668,8 +748,8 @@ const UsageStatsPage = () => {
           />
           <SummaryCard
             title={t('总 Tokens')}
-            value={renderNumber(summary.total_tokens || 0)}
-            hint={`${t('Prompt')} ${renderNumber(summary.prompt_tokens || 0)} / ${t('Completion')} ${renderNumber(summary.completion_tokens || 0)}`}
+            value={formatTokensMillion(summary.total_tokens || 0)}
+            hint={`${t('输入(含缓存写)')} ${formatTokensMillion(summary.input_tokens ?? summary.prompt_tokens ?? 0)} / ${t('缓存读取')} ${formatTokensMillion(summary.cache_tokens || 0)} / ${t('输出')} ${formatTokensMillion(summary.completion_tokens || 0)}`}
             icon={<Sparkles size={20} />}
           />
           <SummaryCard
