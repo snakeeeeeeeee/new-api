@@ -40,6 +40,7 @@ import {
   BarChart3,
   CalendarDays,
   CreditCard,
+  Layers,
   RefreshCw,
   Search,
   TrendingUp,
@@ -96,6 +97,8 @@ const InviteStats = () => {
   const [dateRange, setDateRange] = useState(defaultDateRange());
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [rankPage, setRankPage] = useState(1);
+  const [rankPageSize, setRankPageSize] = useState(20);
 
   useEffect(() => {
     initVChartSemiTheme({
@@ -118,7 +121,7 @@ const InviteStats = () => {
     };
   }, [dateRange]);
 
-  const loadStats = async () => {
+  const loadStats = async (page = 1, pageSize = rankPageSize) => {
     const normalizedUsername = username.trim();
     if (!normalizedUsername) {
       showError(t('请输入邀请人用户名'));
@@ -135,11 +138,15 @@ const InviteStats = () => {
           username: normalizedUsername,
           start_time: normalizedRange.startTime,
           end_time: normalizedRange.endTime,
+          p: page,
+          page_size: pageSize,
         },
       });
       const { success, message, data } = res.data;
       if (success) {
         setStats(data);
+        setRankPage(data?.user_rank?.page || page);
+        setRankPageSize(data?.user_rank?.page_size || pageSize);
       } else {
         showError(message || t('加载失败'));
       }
@@ -161,6 +168,9 @@ const InviteStats = () => {
   const subscriptionPurchaseSummary = subscriptionPurchase.summary || {};
   const subscriptionPurchasePlans = subscriptionPurchase.plans || [];
   const subscriptionPurchaseTrend = subscriptionPurchase.trend || [];
+  const userRank = stats?.user_rank || {};
+  const userRankItems = userRank.items || [];
+  const groupStats = stats?.group_stats || [];
   const hasWalletData =
     models.length > 0 || trend.some((item) => item.quota > 0);
   const hasSubscriptionUsageData =
@@ -169,6 +179,21 @@ const InviteStats = () => {
   const hasSubscriptionPurchaseData =
     subscriptionPurchasePlans.length > 0 ||
     subscriptionPurchaseTrend.some((item) => item.amount > 0);
+
+  const handleSearch = () => {
+    setRankPage(1);
+    loadStats(1, rankPageSize);
+  };
+
+  const handleRankPageChange = (page) => {
+    loadStats(page, rankPageSize);
+  };
+
+  const handleRankPageSizeChange = (pageSize) => {
+    setRankPageSize(pageSize);
+    setRankPage(1);
+    loadStats(1, pageSize);
+  };
 
   const modelRankSpec = useMemo(
     () => ({
@@ -193,7 +218,11 @@ const InviteStats = () => {
         subtext: t('仅统计余额消费，不含订阅包额度'),
       },
       axes: [
-        { orient: 'bottom', type: 'linear', title: { visible: true, text: t('金额') } },
+        {
+          orient: 'bottom',
+          type: 'linear',
+          title: { visible: true, text: t('金额') },
+        },
         { orient: 'left', type: 'band', label: { visible: true } },
       ],
       tooltip: {
@@ -243,7 +272,11 @@ const InviteStats = () => {
       },
       axes: [
         { orient: 'bottom', type: 'band' },
-        { orient: 'left', type: 'linear', title: { visible: true, text: t('金额') } },
+        {
+          orient: 'left',
+          type: 'linear',
+          title: { visible: true, text: t('金额') },
+        },
       ],
       tooltip: {
         mark: {
@@ -290,7 +323,11 @@ const InviteStats = () => {
         subtext: t('仅表示订阅包额度消耗，不等同于收入'),
       },
       axes: [
-        { orient: 'bottom', type: 'linear', title: { visible: true, text: t('额度金额') } },
+        {
+          orient: 'bottom',
+          type: 'linear',
+          title: { visible: true, text: t('额度金额') },
+        },
         { orient: 'left', type: 'band', label: { visible: true } },
       ],
       tooltip: {
@@ -340,7 +377,11 @@ const InviteStats = () => {
       },
       axes: [
         { orient: 'bottom', type: 'band' },
-        { orient: 'left', type: 'linear', title: { visible: true, text: t('实付金额') } },
+        {
+          orient: 'left',
+          type: 'linear',
+          title: { visible: true, text: t('实付金额') },
+        },
       ],
       tooltip: {
         mark: {
@@ -471,6 +512,119 @@ const InviteStats = () => {
     [t],
   );
 
+  const inviteUserRankColumns = useMemo(
+    () => [
+      {
+        title: t('用户'),
+        dataIndex: 'username',
+        render: (value, record) => (
+          <div className='flex flex-col gap-1'>
+            <Text strong>{value || '-'}</Text>
+            <Text type='tertiary' size='small'>
+              #{record.user_id || '-'}
+            </Text>
+          </div>
+        ),
+      },
+      {
+        title: t('分组'),
+        dataIndex: 'group',
+        render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
+      },
+      {
+        title: t('总消费金额'),
+        dataIndex: 'total_amount',
+        render: (value) => renderQuotaWithAmount(value || 0),
+        sorter: (a, b) => (a.total_amount || 0) - (b.total_amount || 0),
+      },
+      {
+        title: t('余额消费金额'),
+        dataIndex: 'wallet_amount',
+        render: (value, record) => (
+          <div className='flex flex-col gap-1'>
+            <Text>{renderQuotaWithAmount(value || 0)}</Text>
+            <Text type='tertiary' size='small'>
+              {renderQuota(record.wallet_quota || 0)}
+            </Text>
+          </div>
+        ),
+        sorter: (a, b) => (a.wallet_amount || 0) - (b.wallet_amount || 0),
+      },
+      {
+        title: t('订阅额度使用'),
+        dataIndex: 'subscription_amount',
+        render: (value, record) => (
+          <div className='flex flex-col gap-1'>
+            <Text>{renderQuotaWithAmount(value || 0)}</Text>
+            <Text type='tertiary' size='small'>
+              {renderQuota(record.subscription_quota || 0)}
+            </Text>
+          </div>
+        ),
+        sorter: (a, b) =>
+          (a.subscription_amount || 0) - (b.subscription_amount || 0),
+      },
+      {
+        title: t('请求数'),
+        dataIndex: 'total_request_count',
+        render: (value) => renderNumber(value || 0),
+        sorter: (a, b) =>
+          (a.total_request_count || 0) - (b.total_request_count || 0),
+      },
+    ],
+    [t],
+  );
+
+  const groupStatsColumns = useMemo(
+    () => [
+      {
+        title: t('分组'),
+        dataIndex: 'group',
+        render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
+      },
+      {
+        title: t('总消费金额'),
+        dataIndex: 'total_amount',
+        render: (value, record) => (
+          <div className='flex flex-col gap-1'>
+            <Text>{renderQuotaWithAmount(value || 0)}</Text>
+            <Text type='tertiary' size='small'>
+              {renderQuota(record.total_quota || 0)}
+            </Text>
+          </div>
+        ),
+        sorter: (a, b) => (a.total_amount || 0) - (b.total_amount || 0),
+      },
+      {
+        title: t('余额消费金额'),
+        dataIndex: 'wallet_amount',
+        render: (value) => renderQuotaWithAmount(value || 0),
+        sorter: (a, b) => (a.wallet_amount || 0) - (b.wallet_amount || 0),
+      },
+      {
+        title: t('订阅额度使用'),
+        dataIndex: 'subscription_amount',
+        render: (value) => renderQuotaWithAmount(value || 0),
+        sorter: (a, b) =>
+          (a.subscription_amount || 0) - (b.subscription_amount || 0),
+      },
+      {
+        title: t('用户数'),
+        dataIndex: 'user_count',
+        render: (value) => renderNumber(value || 0),
+        sorter: (a, b) => (a.user_count || 0) - (b.user_count || 0),
+      },
+      {
+        title: t('请求数'),
+        dataIndex: 'total_request_count',
+        render: (value) => renderNumber(value || 0),
+        sorter: (a, b) =>
+          (a.total_request_count || 0) - (b.total_request_count || 0),
+      },
+    ],
+    [t],
+  );
+
   return (
     <div className='mt-[60px] px-2'>
       <div className='flex flex-col gap-4'>
@@ -496,7 +650,7 @@ const InviteStats = () => {
                 onChange={(value) => setUsername(value)}
                 placeholder={t('邀请人用户名')}
                 showClear
-                onEnterPress={loadStats}
+                onEnterPress={handleSearch}
               />
               <DatePicker
                 type='dateRange'
@@ -516,7 +670,7 @@ const InviteStats = () => {
                   type='primary'
                   icon={<Search size={16} />}
                   loading={loading}
-                  onClick={loadStats}
+                  onClick={handleSearch}
                 >
                   {t('查询')}
                 </Button>
@@ -524,7 +678,7 @@ const InviteStats = () => {
                   icon={<RefreshCw size={16} />}
                   disabled={!stats}
                   loading={loading}
-                  onClick={loadStats}
+                  onClick={() => loadStats(rankPage, rankPageSize)}
                 >
                   {t('刷新')}
                 </Button>
@@ -543,7 +697,11 @@ const InviteStats = () => {
           <SummaryCard
             title={t('邀请用户数')}
             value={renderNumber(summary.invite_user_count || 0)}
-            hint={stats?.inviter?.username ? `@${stats.inviter.username}` : t('等待查询')}
+            hint={
+              stats?.inviter?.username
+                ? `@${stats.inviter.username}`
+                : t('等待查询')
+            }
             icon={<Users size={20} />}
           />
           <SummaryCard
@@ -585,6 +743,18 @@ const InviteStats = () => {
             icon={<CalendarDays size={20} />}
           />
         </div>
+        {(subscriptionPurchaseSummary.invalidated_order_count || 0) > 0 && (
+          <div className='grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4'>
+            <SummaryCard
+              title={t('管理员作废订阅金额')}
+              value={formatMoney(
+                subscriptionPurchaseSummary.invalidated_amount || 0,
+              )}
+              hint={`${t('已从订阅包购买金额中排除')} ${renderNumber(subscriptionPurchaseSummary.invalidated_order_count || 0)} ${t('个订单')}`}
+              icon={<CreditCard size={20} />}
+            />
+          </div>
+        )}
 
         <div className='grid grid-cols-1 xl:grid-cols-2 gap-4'>
           <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
@@ -593,8 +763,14 @@ const InviteStats = () => {
                 <VChart spec={modelRankSpec} option={CHART_CONFIG} />
               ) : (
                 <Empty
-                  image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-                  darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                  image={
+                    <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                  }
+                  darkModeImage={
+                    <IllustrationNoResultDark
+                      style={{ width: 150, height: 150 }}
+                    />
+                  }
                   title={t('暂无模型消费数据')}
                   description={t('请选择邀请人和时间范围后查询')}
                 />
@@ -607,8 +783,14 @@ const InviteStats = () => {
                 <VChart spec={trendSpec} option={CHART_CONFIG} />
               ) : (
                 <Empty
-                  image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-                  darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                  image={
+                    <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                  }
+                  darkModeImage={
+                    <IllustrationNoResultDark
+                      style={{ width: 150, height: 150 }}
+                    />
+                  }
                   title={t('暂无趋势数据')}
                   description={t('余额消费趋势将在查询后展示')}
                 />
@@ -620,11 +802,20 @@ const InviteStats = () => {
           <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
             <div className='h-96'>
               {hasSubscriptionUsageData ? (
-                <VChart spec={subscriptionUsageRankSpec} option={CHART_CONFIG} />
+                <VChart
+                  spec={subscriptionUsageRankSpec}
+                  option={CHART_CONFIG}
+                />
               ) : (
                 <Empty
-                  image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-                  darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                  image={
+                    <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                  }
+                  darkModeImage={
+                    <IllustrationNoResultDark
+                      style={{ width: 150, height: 150 }}
+                    />
+                  }
                   title={t('暂无订阅额度使用数据')}
                   description={t('订阅包额度使用将在查询后展示')}
                 />
@@ -634,16 +825,100 @@ const InviteStats = () => {
           <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
             <div className='h-96'>
               {hasSubscriptionPurchaseData ? (
-                <VChart spec={subscriptionPurchaseTrendSpec} option={CHART_CONFIG} />
+                <VChart
+                  spec={subscriptionPurchaseTrendSpec}
+                  option={CHART_CONFIG}
+                />
               ) : (
                 <Empty
-                  image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-                  darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                  image={
+                    <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                  }
+                  darkModeImage={
+                    <IllustrationNoResultDark
+                      style={{ width: 150, height: 150 }}
+                    />
+                  }
                   title={t('暂无订阅包购买数据')}
                   description={t('成功支付的订阅订单将在查询后展示')}
                 />
               )}
             </div>
+          </Card>
+        </div>
+
+        <div className='grid grid-cols-1 xl:grid-cols-2 gap-4'>
+          <Card
+            className='!rounded-lg'
+            title={
+              <div className='flex items-center gap-2'>
+                <Users size={16} />
+                {t('邀请人员消费排行')}
+              </div>
+            }
+          >
+            <Table
+              rowKey='user_id'
+              columns={inviteUserRankColumns}
+              dataSource={userRankItems}
+              loading={loading}
+              pagination={{
+                currentPage: userRank.page || rankPage,
+                pageSize: userRank.page_size || rankPageSize,
+                total: userRank.total || 0,
+                showSizeChanger: true,
+                pageSizeOpts: [20, 50, 100],
+                onPageChange: handleRankPageChange,
+                onPageSizeChange: handleRankPageSizeChange,
+              }}
+              scroll={{ x: 'max-content' }}
+              empty={
+                <Empty
+                  image={
+                    <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                  }
+                  darkModeImage={
+                    <IllustrationNoResultDark
+                      style={{ width: 150, height: 150 }}
+                    />
+                  }
+                  title={t('暂无邀请人员消费数据')}
+                  description={t('当前筛选范围内没有消费日志')}
+                />
+              }
+            />
+          </Card>
+          <Card
+            className='!rounded-lg'
+            title={
+              <div className='flex items-center gap-2'>
+                <Layers size={16} />
+                {t('分组消耗统计')}
+              </div>
+            }
+          >
+            <Table
+              rowKey='group'
+              columns={groupStatsColumns}
+              dataSource={groupStats}
+              loading={loading}
+              pagination={false}
+              scroll={{ x: 'max-content' }}
+              empty={
+                <Empty
+                  image={
+                    <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                  }
+                  darkModeImage={
+                    <IllustrationNoResultDark
+                      style={{ width: 150, height: 150 }}
+                    />
+                  }
+                  title={t('暂无分组消耗数据')}
+                  description={t('当前筛选范围内没有消费日志')}
+                />
+              }
+            />
           </Card>
         </div>
 
@@ -665,8 +940,14 @@ const InviteStats = () => {
             scroll={{ x: 'max-content' }}
             empty={
               <Empty
-                image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-                darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                image={
+                  <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                }
+                darkModeImage={
+                  <IllustrationNoResultDark
+                    style={{ width: 150, height: 150 }}
+                  />
+                }
                 title={t('暂无数据')}
               />
             }
@@ -691,8 +972,14 @@ const InviteStats = () => {
               scroll={{ x: 'max-content' }}
               empty={
                 <Empty
-                  image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-                  darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                  image={
+                    <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                  }
+                  darkModeImage={
+                    <IllustrationNoResultDark
+                      style={{ width: 150, height: 150 }}
+                    />
+                  }
                   title={t('暂无数据')}
                 />
               }
@@ -716,8 +1003,14 @@ const InviteStats = () => {
               scroll={{ x: 'max-content' }}
               empty={
                 <Empty
-                  image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-                  darkModeImage={<IllustrationNoResultDark style={{ width: 150, height: 150 }} />}
+                  image={
+                    <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                  }
+                  darkModeImage={
+                    <IllustrationNoResultDark
+                      style={{ width: 150, height: 150 }}
+                    />
+                  }
                   title={t('暂无数据')}
                 />
               }

@@ -4274,6 +4274,15 @@
     "该用户在当前筛选范围内没有模型消费记录": "This user has no model consumption records in the current filter range",
     "调整筛选条件后重新查询": "Adjust filters and query again",
     "消耗额度 ($)": "Consumption ($)",
-    "额度趋势": "Quota trend"
+    "额度趋势": "Quota trend",
+    "管理员作废订阅金额": "Admin-invalidated subscription amount",
+    "已从订阅包购买金额中排除": "Excluded from subscription purchase amount",
+    "个订单": "orders",
+    "邀请人员消费排行": "Invited user consumption ranking",
+    "暂无邀请人员消费数据": "No invited user consumption data",
+    "分组消耗统计": "Group consumption stats",
+    "暂无分组消耗数据": "No group consumption data",
+    "总消费金额": "Total consumption amount",
+    "用户数": "Users"
   }
 }

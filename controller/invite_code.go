@@ -112,7 +112,11 @@ func GetInviteConsumptionStats(c *gin.Context) {
 		common.ApiErrorMsg(c, "结束时间无效")
 		return
 	}
-	stats, err := model.GetInviteConsumptionStats(username, startTime, endTime)
+	pageInfo := common.GetPageQuery(c)
+	if c.Query("page_size") == "" && c.Query("ps") == "" && c.Query("size") == "" {
+		pageInfo.PageSize = 20
+	}
+	stats, err := model.GetInviteConsumptionStats(username, startTime, endTime, pageInfo.GetPage(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return

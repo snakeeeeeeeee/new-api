@@ -351,7 +351,7 @@ func AdminInvalidateUserSubscription(c *gin.Context) {
 		common.ApiErrorMsg(c, "无效的订阅ID")
 		return
 	}
-	msg, err := model.AdminInvalidateUserSubscription(subId)
+	msg, err := model.AdminInvalidateUserSubscription(subId, c.GetInt("id"))
 	if err != nil {
 		common.ApiError(c, err)
 		return

@@ -71,6 +71,10 @@ func seedInviteConsumeLogAt(t *testing.T, userID int, username string, quota int
 }
 
 func seedInviteModelConsumeLogAt(t *testing.T, userID int, username string, modelName string, quota int, createdAt int64, other map[string]interface{}) {
+	seedInviteModelConsumeLogWithGroupAt(t, userID, username, modelName, quota, createdAt, "", other)
+}
+
+func seedInviteModelConsumeLogWithGroupAt(t *testing.T, userID int, username string, modelName string, quota int, createdAt int64, group string, other map[string]interface{}) {
 	t.Helper()
 	require.NoError(t, LOG_DB.Create(&Log{
 		UserId:    userID,
@@ -79,6 +83,7 @@ func seedInviteModelConsumeLogAt(t *testing.T, userID int, username string, mode
 		Username:  username,
 		ModelName: modelName,
 		Quota:     quota,
+		Group:     group,
 		Other:     common.MapToJsonStr(other),
 	}).Error)
 }
@@ -110,6 +115,24 @@ func seedInviteSubscriptionOrderAt(t *testing.T, userID int, planID int, tradeNo
 		CreateTime:    completeTime - 60,
 		CompleteTime:  completeTime,
 		Status:        status,
+	}
+	require.NoError(t, order.Insert())
+}
+
+func seedInviteSubscriptionOrderInvalidatedAt(t *testing.T, userID int, planID int, tradeNo string, money float64, status string, completeTime int64, invalidatedAt int64) {
+	t.Helper()
+	order := &SubscriptionOrder{
+		UserId:              userID,
+		PlanId:              planID,
+		Money:               money,
+		TradeNo:             tradeNo,
+		PaymentMethod:       "stripe",
+		CreateTime:          completeTime - 60,
+		CompleteTime:        completeTime,
+		Status:              status,
+		InvalidatedAt:       invalidatedAt,
+		InvalidatedByUserId: 1,
+		InvalidationReason:  "admin_cancelled",
 	}
 	require.NoError(t, order.Insert())
 }
@@ -366,15 +389,16 @@ func TestGetInviteConsumptionStatsIncludesSubscriptionUsageAndPurchases(t *testi
 	may10 := fixedInviteStatsTime(2026, time.May, 10)
 	may11 := fixedInviteStatsTime(2026, time.May, 11)
 	may12 := fixedInviteStatsTime(2026, time.May, 12)
-	seedInviteModelConsumeLogAt(t, 1211, "sub_invitee_a", "claude-opus", 4000, may10, map[string]interface{}{"billing_source": "subscription"})
-	seedInviteModelConsumeLogAt(t, 1212, "sub_invitee_b", "claude-opus", 2000, may11, map[string]interface{}{"billing_source": "subscription"})
-	seedInviteModelConsumeLogAt(t, 1212, "sub_invitee_b", "gpt-4o", 1000, may11+60, map[string]interface{}{"billing_source": "wallet"})
-	seedInviteModelConsumeLogAt(t, 1213, "sub_not_invited", "claude-opus", 9000, may10, map[string]interface{}{"billing_source": "subscription"})
+	seedInviteModelConsumeLogWithGroupAt(t, 1211, "sub_invitee_a", "claude-opus", 4000, may10, "vip", map[string]interface{}{"billing_source": "subscription"})
+	seedInviteModelConsumeLogWithGroupAt(t, 1212, "sub_invitee_b", "claude-opus", 2000, may11, "vip", map[string]interface{}{"billing_source": "subscription"})
+	seedInviteModelConsumeLogWithGroupAt(t, 1212, "sub_invitee_b", "gpt-4o", 1000, may11+60, "default", map[string]interface{}{"billing_source": "wallet"})
+	seedInviteModelConsumeLogWithGroupAt(t, 1213, "sub_not_invited", "claude-opus", 9000, may10, "vip", map[string]interface{}{"billing_source": "subscription"})
 
 	seedInviteSubscriptionPlan(t, 701, "Pro Monthly", 29.9)
 	seedInviteSubscriptionPlan(t, 702, "Team Monthly", 99)
 	seedInviteSubscriptionOrderAt(t, 1211, 701, "sub_order_success_a", 29.9, common.TopUpStatusSuccess, may10)
 	seedInviteSubscriptionOrderAt(t, 1212, 701, "sub_order_success_b", 29.9, common.TopUpStatusSuccess, may11)
+	seedInviteSubscriptionOrderInvalidatedAt(t, 1212, 702, "sub_order_invalidated", 99, common.TopUpStatusSuccess, may11, may11+300)
 	seedInviteSubscriptionOrderAt(t, 1212, 702, "sub_order_pending", 99, common.TopUpStatusPending, may11)
 	seedInviteSubscriptionOrderAt(t, 1212, 702, "sub_order_out_of_range", 99, common.TopUpStatusSuccess, may12)
 	seedInviteSubscriptionOrderAt(t, 1213, 702, "sub_order_not_invited", 99, common.TopUpStatusSuccess, may10)
@@ -398,6 +422,9 @@ func TestGetInviteConsumptionStatsIncludesSubscriptionUsageAndPurchases(t *testi
 	require.Equal(t, int64(2), stats.SubscriptionPurchase.Summary.OrderCount)
 	require.Equal(t, int64(2), stats.SubscriptionPurchase.Summary.BuyerCount)
 	require.Equal(t, 1, stats.SubscriptionPurchase.Summary.PlanCount)
+	require.InDelta(t, 99.0, stats.SubscriptionPurchase.Summary.InvalidatedAmount, 0.0001)
+	require.Equal(t, int64(1), stats.SubscriptionPurchase.Summary.InvalidatedOrderCount)
+	require.Equal(t, int64(1), stats.SubscriptionPurchase.Summary.InvalidatedBuyerCount)
 	require.Len(t, stats.SubscriptionPurchase.Plans, 1)
 	require.Equal(t, 701, stats.SubscriptionPurchase.Plans[0].PlanId)
 	require.Equal(t, "Pro Monthly", stats.SubscriptionPurchase.Plans[0].PlanTitle)
@@ -407,6 +434,32 @@ func TestGetInviteConsumptionStatsIncludesSubscriptionUsageAndPurchases(t *testi
 	require.InDelta(t, 29.9, stats.SubscriptionPurchase.Trend[0].Amount, 0.0001)
 	require.Equal(t, int64(1), stats.SubscriptionPurchase.Trend[0].BuyerCount)
 	require.InDelta(t, 29.9, stats.SubscriptionPurchase.Trend[1].Amount, 0.0001)
+
+	require.Equal(t, 1, stats.UserRank.Page)
+	require.Equal(t, 20, stats.UserRank.PageSize)
+	require.Equal(t, 2, stats.UserRank.Total)
+	require.Len(t, stats.UserRank.Items, 2)
+	require.Equal(t, 1211, stats.UserRank.Items[0].UserId)
+	require.Equal(t, int64(4000), stats.UserRank.Items[0].TotalQuota)
+	require.Equal(t, int64(4000), stats.UserRank.Items[0].SubscriptionQuota)
+	require.Equal(t, 1212, stats.UserRank.Items[1].UserId)
+	require.Equal(t, int64(3000), stats.UserRank.Items[1].TotalQuota)
+	require.Equal(t, int64(1000), stats.UserRank.Items[1].WalletQuota)
+
+	require.Len(t, stats.GroupStats, 2)
+	require.Equal(t, "vip", stats.GroupStats[0].Group)
+	require.Equal(t, int64(6000), stats.GroupStats[0].TotalQuota)
+	require.Equal(t, int64(2), stats.GroupStats[0].UserCount)
+	require.Equal(t, "default", stats.GroupStats[1].Group)
+	require.Equal(t, int64(1000), stats.GroupStats[1].WalletQuota)
+
+	pagedStats, err := GetInviteConsumptionStats("sub_owner", may10-10, may11+3600, 2, 1)
+	require.NoError(t, err)
+	require.Equal(t, 2, pagedStats.UserRank.Page)
+	require.Equal(t, 1, pagedStats.UserRank.PageSize)
+	require.Equal(t, 2, pagedStats.UserRank.Total)
+	require.Len(t, pagedStats.UserRank.Items, 1)
+	require.Equal(t, 1212, pagedStats.UserRank.Items[0].UserId)
 }
 
 func TestGetInviteConsumptionBreakdownByOwnerIDsSplitsWalletAndSubscription(t *testing.T) {

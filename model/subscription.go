@@ -198,6 +198,11 @@ type SubscriptionOrder struct {
 	PlanId int     `json:"plan_id" gorm:"index"`
 	Money  float64 `json:"money"`
 
+	UserSubscriptionId  int    `json:"user_subscription_id" gorm:"index;default:0"`
+	InvalidatedAt       int64  `json:"invalidated_at" gorm:"bigint;index;default:0"`
+	InvalidatedByUserId int    `json:"invalidated_by_user_id" gorm:"index;default:0"`
+	InvalidationReason  string `json:"invalidation_reason" gorm:"type:varchar(32);default:''"`
+
 	TradeNo       string `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod string `json:"payment_method" gorm:"type:varchar(50)"`
 	Status        string `json:"status" gorm:"index:idx_subscription_orders_user_status_time,priority:2"`
@@ -465,7 +470,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 			return nil, errors.New("已达到该套餐购买上限")
 		}
 	}
-	nowUnix := GetDBTimestamp()
+	nowUnix := getDBTimestampTx(tx)
 	now := time.Unix(nowUnix, 0)
 	endUnix, err := calcPlanEndTime(now, plan)
 	if err != nil {
@@ -539,7 +544,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string) error {
 		if order.Status != common.TopUpStatusPending {
 			return ErrSubscriptionOrderStatusInvalid
 		}
-		plan, err := GetSubscriptionPlanById(order.PlanId)
+		plan, err := getSubscriptionPlanByIdTx(tx, order.PlanId)
 		if err != nil {
 			return err
 		}
@@ -547,7 +552,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string) error {
 			// still allow completion for already purchased orders
 		}
 		upgradeGroup = strings.TrimSpace(plan.UpgradeGroup)
-		_, err = CreateUserSubscriptionFromPlanTx(tx, order.UserId, plan, "order")
+		sub, err := CreateUserSubscriptionFromPlanTx(tx, order.UserId, plan, "order")
 		if err != nil {
 			return err
 		}
@@ -556,6 +561,9 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string) error {
 		}
 		order.Status = common.TopUpStatusSuccess
 		order.CompleteTime = common.GetTimestamp()
+		if sub != nil {
+			order.UserSubscriptionId = sub.Id
+		}
 		if providerPayload != "" {
 			order.ProviderPayload = providerPayload
 		}
@@ -864,12 +872,112 @@ func fallbackSubscriptionOnlyPreferenceToWallet(userId int) error {
 	return user.Update(false)
 }
 
+func markSubscriptionOrderInvalidatedTx(tx *gorm.DB, sub *UserSubscription, adminUserID int, reason string, now int64) error {
+	if tx == nil || sub == nil || sub.Id <= 0 {
+		return nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "admin_cancelled"
+	}
+	updates := map[string]interface{}{
+		"user_subscription_id":   sub.Id,
+		"invalidated_at":         now,
+		"invalidated_by_user_id": adminUserID,
+		"invalidation_reason":    reason,
+	}
+	result := tx.Model(&SubscriptionOrder{}).
+		Where("user_subscription_id = ? AND invalidated_at = 0", sub.Id).
+		Updates(updates)
+	if result.Error != nil || result.RowsAffected > 0 {
+		return result.Error
+	}
+	var linkedCount int64
+	if err := tx.Model(&SubscriptionOrder{}).Where("user_subscription_id = ?", sub.Id).Count(&linkedCount).Error; err != nil {
+		return err
+	}
+	if linkedCount > 0 {
+		return nil
+	}
+	return markLegacySubscriptionOrderInvalidatedTx(tx, sub, updates)
+}
+
+func markLegacySubscriptionOrderInvalidatedTx(tx *gorm.DB, sub *UserSubscription, updates map[string]interface{}) error {
+	if sub.UserId <= 0 || sub.PlanId <= 0 || sub.StartTime <= 0 {
+		return nil
+	}
+	const matchWindowSeconds int64 = 600
+	var candidates []SubscriptionOrder
+	if err := tx.Where(
+		"user_id = ? AND plan_id = ? AND status = ? AND user_subscription_id = 0 AND invalidated_at = 0 AND complete_time >= ? AND complete_time <= ?",
+		sub.UserId,
+		sub.PlanId,
+		common.TopUpStatusSuccess,
+		sub.StartTime-matchWindowSeconds,
+		sub.StartTime+matchWindowSeconds,
+	).Order("complete_time desc, id desc").Limit(2).Find(&candidates).Error; err != nil {
+		return err
+	}
+	if len(candidates) != 1 {
+		return nil
+	}
+	return tx.Model(&SubscriptionOrder{}).
+		Where("id = ? AND user_subscription_id = 0 AND invalidated_at = 0", candidates[0].Id).
+		Updates(updates).Error
+}
+
+func backfillInvalidatedSubscriptionOrders() error {
+	if DB == nil || !DB.Migrator().HasTable(&SubscriptionOrder{}) || !DB.Migrator().HasTable(&UserSubscription{}) {
+		return nil
+	}
+	if !DB.Migrator().HasColumn(&SubscriptionOrder{}, "user_subscription_id") ||
+		!DB.Migrator().HasColumn(&SubscriptionOrder{}, "invalidated_at") {
+		return nil
+	}
+	const batchSize = 200
+	lastID := 0
+	for {
+		var subs []UserSubscription
+		if err := DB.Where("id > ? AND status = ? AND (source = ? OR source = ?)", lastID, "cancelled", "order", "").
+			Order("id asc").
+			Limit(batchSize).
+			Find(&subs).Error; err != nil {
+			return err
+		}
+		if len(subs) == 0 {
+			return nil
+		}
+		for i := range subs {
+			sub := subs[i]
+			if sub.Id > lastID {
+				lastID = sub.Id
+			}
+			invalidatedAt := sub.UpdatedAt
+			if invalidatedAt <= 0 {
+				invalidatedAt = sub.EndTime
+			}
+			if invalidatedAt <= 0 {
+				invalidatedAt = common.GetTimestamp()
+			}
+			if err := DB.Transaction(func(tx *gorm.DB) error {
+				return markSubscriptionOrderInvalidatedTx(tx, &sub, 0, "admin_cancelled_backfill", invalidatedAt)
+			}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 // AdminInvalidateUserSubscription marks a user subscription as cancelled and ends it immediately.
-func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
+func AdminInvalidateUserSubscription(userSubscriptionId int, adminUserID ...int) (string, error) {
 	if userSubscriptionId <= 0 {
 		return "", errors.New("invalid userSubscriptionId")
 	}
 	now := common.GetTimestamp()
+	operatorID := 0
+	if len(adminUserID) > 0 {
+		operatorID = adminUserID[0]
+	}
 	cacheGroup := ""
 	downgradeGroup := ""
 	var userId int
@@ -887,6 +995,9 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 			"end_time":   now,
 			"updated_at": now,
 		}).Error; err != nil {
+			return err
+		}
+		if err := markSubscriptionOrderInvalidatedTx(tx, &sub, operatorID, "admin_cancelled", now); err != nil {
 			return err
 		}
 		if wasActive {
@@ -948,6 +1059,9 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 		if target != "" {
 			cacheGroup = target
 			downgradeGroup = target
+		}
+		if err := markSubscriptionOrderInvalidatedTx(tx, &sub, 0, "admin_deleted", now); err != nil {
+			return err
 		}
 		if err := tx.Where("id = ?", userSubscriptionId).Delete(&UserSubscription{}).Error; err != nil {
 			return err
