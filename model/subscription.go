@@ -679,12 +679,18 @@ func GetAllActiveUserSubscriptions(userId int) ([]SubscriptionSummary, error) {
 // HasActiveUserSubscription returns whether the user has any active subscription.
 // This is a lightweight existence check to avoid heavy pre-consume transactions.
 func HasActiveUserSubscription(userId int) (bool, error) {
+	return hasActiveUserSubscriptionTx(nil, userId, common.GetTimestamp())
+}
+
+func hasActiveUserSubscriptionTx(tx *gorm.DB, userId int, now int64) (bool, error) {
 	if userId <= 0 {
 		return false, errors.New("invalid userId")
 	}
-	now := common.GetTimestamp()
+	if tx == nil {
+		tx = DB
+	}
 	var count int64
-	if err := DB.Model(&UserSubscription{}).
+	if err := tx.Model(&UserSubscription{}).
 		Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
 		Count(&count).Error; err != nil {
 		return false, err
@@ -834,6 +840,30 @@ func PopulateUsersSubscriptionQuotaSummary(users []*User) error {
 	return nil
 }
 
+func fallbackSubscriptionOnlyPreferenceToWallet(userId int) error {
+	if userId <= 0 {
+		return nil
+	}
+	hasActive, err := HasActiveUserSubscription(userId)
+	if err != nil {
+		return err
+	}
+	if hasActive {
+		return nil
+	}
+	user, err := GetUserById(userId, true)
+	if err != nil {
+		return err
+	}
+	setting := user.GetSetting()
+	if common.NormalizeBillingPreference(setting.BillingPreference) != "subscription_only" {
+		return nil
+	}
+	setting.BillingPreference = "subscription_first"
+	user.SetSetting(setting)
+	return user.Update(false)
+}
+
 // AdminInvalidateUserSubscription marks a user subscription as cancelled and ends it immediately.
 func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 	if userSubscriptionId <= 0 {
@@ -843,6 +873,7 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 	cacheGroup := ""
 	downgradeGroup := ""
 	var userId int
+	shouldFallbackPreference := false
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var sub UserSubscription
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").
@@ -850,12 +881,20 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 			return err
 		}
 		userId = sub.UserId
+		wasActive := sub.Status == "active" && sub.EndTime > now
 		if err := tx.Model(&sub).Updates(map[string]interface{}{
 			"status":     "cancelled",
 			"end_time":   now,
 			"updated_at": now,
 		}).Error; err != nil {
 			return err
+		}
+		if wasActive {
+			hasActive, err := hasActiveUserSubscriptionTx(tx, sub.UserId, now)
+			if err != nil {
+				return err
+			}
+			shouldFallbackPreference = !hasActive
 		}
 		target, err := downgradeUserGroupForSubscriptionTx(tx, &sub, now)
 		if err != nil {
@@ -872,6 +911,11 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 	}
 	if cacheGroup != "" && userId > 0 {
 		_ = UpdateUserGroupCache(userId, cacheGroup)
+	}
+	if shouldFallbackPreference {
+		if err := fallbackSubscriptionOnlyPreferenceToWallet(userId); err != nil {
+			return "", err
+		}
 	}
 	if downgradeGroup != "" {
 		return fmt.Sprintf("用户分组将回退到 %s", downgradeGroup), nil
@@ -888,6 +932,7 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 	cacheGroup := ""
 	downgradeGroup := ""
 	var userId int
+	shouldFallbackPreference := false
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var sub UserSubscription
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").
@@ -895,6 +940,7 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 			return err
 		}
 		userId = sub.UserId
+		wasActive := sub.Status == "active" && sub.EndTime > now
 		target, err := downgradeUserGroupForSubscriptionTx(tx, &sub, now)
 		if err != nil {
 			return err
@@ -906,6 +952,13 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 		if err := tx.Where("id = ?", userSubscriptionId).Delete(&UserSubscription{}).Error; err != nil {
 			return err
 		}
+		if wasActive {
+			hasActive, err := hasActiveUserSubscriptionTx(tx, sub.UserId, now)
+			if err != nil {
+				return err
+			}
+			shouldFallbackPreference = !hasActive
+		}
 		return nil
 	})
 	if err != nil {
@@ -913,6 +966,11 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 	}
 	if cacheGroup != "" && userId > 0 {
 		_ = UpdateUserGroupCache(userId, cacheGroup)
+	}
+	if shouldFallbackPreference {
+		if err := fallbackSubscriptionOnlyPreferenceToWallet(userId); err != nil {
+			return "", err
+		}
 	}
 	if downgradeGroup != "" {
 		return fmt.Sprintf("用户分组将回退到 %s", downgradeGroup), nil
