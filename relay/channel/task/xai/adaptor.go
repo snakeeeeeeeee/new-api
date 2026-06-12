@@ -143,6 +143,18 @@ func getString(payload requestPayload, key string) string {
 	return value
 }
 
+func normalizeXAIVideoModel(modelName string) string {
+	modelName = strings.TrimSpace(modelName)
+	if strings.HasPrefix(modelName, "grok-imagine-video-1.5-preview") ||
+		strings.HasPrefix(modelName, "grok-imagine-video-1.5-2026-05-30") {
+		return "grok-imagine-video-1.5-preview"
+	}
+	if strings.HasPrefix(modelName, "grok-imagine-video") {
+		return "grok-imagine-video"
+	}
+	return modelName
+}
+
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	action := ""
 	if info != nil && info.TaskRelayInfo != nil {
@@ -179,6 +191,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if upstreamModel == "" && info != nil {
 		upstreamModel = info.OriginModelName
 	}
+	upstreamModel = normalizeXAIVideoModel(upstreamModel)
 	if upstreamModel != "" {
 		payload["model"] = upstreamModel
 	}

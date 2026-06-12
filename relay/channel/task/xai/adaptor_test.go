@@ -1,6 +1,7 @@
 package xai
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -84,6 +85,67 @@ func TestValidateAndBuildRequestBodyPassThroughOfficialFields(t *testing.T) {
 	output, ok := payload["output"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "https://uploads.example.com/signed", output["upload_url"])
+}
+
+func TestBuildRequestBodyNormalizesXAIVideoAliasWithoutModelMapping(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "stable short alias",
+			in:   "grok-imagine-video-15s-720p",
+			want: "grok-imagine-video",
+		},
+		{
+			name: "preview quality alias",
+			in:   "grok-imagine-video-1.5-preview-15s-720p",
+			want: "grok-imagine-video-1.5-preview",
+		},
+		{
+			name: "preview dated alias",
+			in:   "grok-imagine-video-1.5-2026-05-30-15s-480p",
+			want: "grok-imagine-video-1.5-preview",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{
+				"model":%q,
+				"prompt":"pan out",
+				"reference_images":[{"url":"https://example.com/ref.png"}],
+				"duration":10,
+				"aspect_ratio":"9:16",
+				"resolution":"720p"
+			}`, tt.in)
+			c, _ := buildTestContext(t, "/v1/videos/generations", body)
+			info := &relaycommon.RelayInfo{
+				OriginModelName: tt.in,
+				ChannelMeta: &relaycommon.ChannelMeta{
+					UpstreamModelName: tt.in,
+					ChannelBaseUrl:    "https://api.x.ai",
+					ApiKey:            "sk-test",
+				},
+			}
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			require.Nil(t, taskErr)
+			reader, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(reader)
+			require.NoError(t, err)
+
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(data, &payload))
+			assert.Equal(t, tt.want, payload["model"])
+			assert.Equal(t, "9:16", payload["aspect_ratio"])
+			assert.Equal(t, "720p", payload["resolution"])
+		})
+	}
 }
 
 func TestBuildRequestURLByAction(t *testing.T) {
