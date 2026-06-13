@@ -1811,7 +1811,7 @@
     "总耗时P90": "",
     "总耗时慢": "",
     "总计": "Total",
-    "总请求数": "",
+    "总请求数": "Total des requêtes",
     "总额度": "Quota total",
     "恢复策略": "",
     "恢复间隔（秒）": "",
@@ -4255,6 +4255,18 @@
     "分组消耗统计": "",
     "暂无分组消耗数据": "",
     "总消费金额": "",
-    "用户数": ""
+    "用户数": "",
+    "加载中": "Chargement",
+    "用户总消耗趋势": "Tendance de consommation totale de l'utilisateur",
+    "不区分模型，仅按时间汇总消耗额度": "Consommation agrégée dans le temps, sans distinction de modèle",
+    "暂无用户趋势数据": "Aucune donnée de tendance utilisateur",
+    "该用户在当前筛选范围内没有消费趋势": "Cet utilisateur n'a aucune tendance de consommation dans la plage filtrée",
+    "邀请人员消费明细": "Détails de consommation de l'utilisateur invité",
+    "余额和订阅额度按天合计": "Total quotidien du solde et du quota d'abonnement",
+    "用户模型消耗排行": "Classement de consommation par modèle de l'utilisateur",
+    "该用户当前时间范围内各模型消耗": "Consommation par modèle de cet utilisateur dans la période actuelle",
+    "暂无用户模型消费数据": "Aucune donnée de consommation par modèle utilisateur",
+    "点击邀请用户行查看该用户消费明细": "Cliquez sur une ligne d'utilisateur invité pour voir ses détails de consommation",
+    "默认前20，可分页查看更多": "Top 20 par défaut, pagination pour voir plus"
   }
 }

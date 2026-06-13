@@ -27,6 +27,7 @@ import {
   DatePicker,
   Empty,
   Input,
+  SideSheet,
   Space,
   Table,
   Tag,
@@ -99,6 +100,11 @@ const InviteStats = () => {
   const [loading, setLoading] = useState(false);
   const [rankPage, setRankPage] = useState(1);
   const [rankPageSize, setRankPageSize] = useState(20);
+  const [selectedInviteUser, setSelectedInviteUser] = useState(null);
+  const [selectedInviteUserDetail, setSelectedInviteUserDetail] =
+    useState(null);
+  const [selectedInviteUserLoading, setSelectedInviteUserLoading] =
+    useState(false);
 
   useEffect(() => {
     initVChartSemiTheme({
@@ -147,6 +153,8 @@ const InviteStats = () => {
         setStats(data);
         setRankPage(data?.user_rank?.page || page);
         setRankPageSize(data?.user_rank?.page_size || pageSize);
+        setSelectedInviteUser(null);
+        setSelectedInviteUserDetail(null);
       } else {
         showError(message || t('加载失败'));
       }
@@ -171,6 +179,9 @@ const InviteStats = () => {
   const userRank = stats?.user_rank || {};
   const userRankItems = userRank.items || [];
   const groupStats = stats?.group_stats || [];
+  const inviteUserDetailSummary = selectedInviteUserDetail?.summary || {};
+  const inviteUserDetailModels = selectedInviteUserDetail?.models || [];
+  const inviteUserDetailTrend = selectedInviteUserDetail?.trend || [];
   const hasWalletData =
     models.length > 0 || trend.some((item) => item.quota > 0);
   const hasSubscriptionUsageData =
@@ -193,6 +204,36 @@ const InviteStats = () => {
     setRankPageSize(pageSize);
     setRankPage(1);
     loadStats(1, pageSize);
+  };
+
+  const loadInviteUserDetail = async (record) => {
+    const normalizedUsername = username.trim();
+    if (!record?.user_id || !normalizedUsername || !normalizedRange) {
+      return;
+    }
+    setSelectedInviteUser(record);
+    setSelectedInviteUserDetail(null);
+    setSelectedInviteUserLoading(true);
+    try {
+      const res = await API.get('/api/invite_code/consumption/user', {
+        params: {
+          username: normalizedUsername,
+          user_id: record.user_id,
+          start_time: normalizedRange.startTime,
+          end_time: normalizedRange.endTime,
+        },
+      });
+      const { success, message, data } = res.data;
+      if (success) {
+        setSelectedInviteUserDetail(data);
+      } else {
+        showError(message || t('加载失败'));
+      }
+    } catch (error) {
+      showError(error.message || t('加载失败'));
+    } finally {
+      setSelectedInviteUserLoading(false);
+    }
   };
 
   const modelRankSpec = useMemo(
@@ -405,6 +446,115 @@ const InviteStats = () => {
     [subscriptionPurchaseTrend, t],
   );
 
+  const inviteUserTrendSpec = useMemo(
+    () => ({
+      type: 'line',
+      data: [
+        {
+          id: 'invite-selected-user-trend',
+          values: inviteUserDetailTrend.map((item) => ({
+            label: item.label,
+            amount: item.amount || 0,
+            quota: item.quota || 0,
+            request_count: item.request_count || 0,
+          })),
+        },
+      ],
+      xField: 'label',
+      yField: 'amount',
+      point: { visible: true },
+      line: { style: { lineWidth: 2 } },
+      title: {
+        visible: true,
+        text: t('用户总消耗趋势'),
+        subtext: t('余额和订阅额度按天合计'),
+      },
+      axes: [
+        { orient: 'bottom', type: 'band' },
+        {
+          orient: 'left',
+          type: 'linear',
+          title: { visible: true, text: t('金额') },
+        },
+      ],
+      tooltip: {
+        mark: {
+          content: [
+            {
+              key: t('消费金额'),
+              value: (datum) => renderQuotaWithAmount(datum.amount || 0),
+            },
+            {
+              key: t('消费额度'),
+              value: (datum) => renderQuota(datum.quota || 0),
+            },
+            {
+              key: t('请求数'),
+              value: (datum) => renderNumber(datum.request_count || 0),
+            },
+          ],
+        },
+      },
+    }),
+    [inviteUserDetailTrend, t],
+  );
+
+  const inviteUserModelRankSpec = useMemo(
+    () => ({
+      type: 'bar',
+      data: [
+        {
+          id: 'invite-selected-user-model-rank',
+          values: inviteUserDetailModels
+            .slice()
+            .sort((a, b) => (b.amount || 0) - (a.amount || 0))
+            .slice(0, 15)
+            .map((item) => ({
+              model_name: item.model_name,
+              amount: item.amount || 0,
+              quota: item.quota || 0,
+              request_count: item.request_count || 0,
+            })),
+        },
+      ],
+      direction: 'horizontal',
+      xField: 'amount',
+      yField: 'model_name',
+      title: {
+        visible: true,
+        text: t('用户模型消耗排行'),
+        subtext: t('该用户当前时间范围内各模型消耗'),
+      },
+      axes: [
+        {
+          orient: 'bottom',
+          type: 'linear',
+          title: { visible: true, text: t('金额') },
+        },
+        { orient: 'left', type: 'band', label: { visible: true } },
+      ],
+      tooltip: {
+        mark: {
+          content: [
+            {
+              key: t('消费金额'),
+              value: (datum) => renderQuotaWithAmount(datum.amount || 0),
+            },
+            {
+              key: t('消费额度'),
+              value: (datum) => renderQuota(datum.quota || 0),
+            },
+            {
+              key: t('请求数'),
+              value: (datum) => renderNumber(datum.request_count || 0),
+            },
+          ],
+        },
+      },
+    }),
+    [inviteUserDetailModels, t],
+  );
+
   const walletColumns = useMemo(
     () => [
       {
@@ -570,6 +720,41 @@ const InviteStats = () => {
         render: (value) => renderNumber(value || 0),
         sorter: (a, b) =>
           (a.total_request_count || 0) - (b.total_request_count || 0),
+      },
+    ],
+    [t],
+  );
+
+  const inviteUserDetailColumns = useMemo(
+    () => [
+      {
+        title: t('模型'),
+        dataIndex: 'model_name',
+        render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
+      },
+      {
+        title: t('总消费金额'),
+        dataIndex: 'amount',
+        render: (value) => renderQuotaWithAmount(value || 0),
+        sorter: (a, b) => (a.amount || 0) - (b.amount || 0),
+      },
+      {
+        title: t('消费额度'),
+        dataIndex: 'quota',
+        render: (value) => renderQuota(value || 0),
+        sorter: (a, b) => (a.quota || 0) - (b.quota || 0),
+      },
+      {
+        title: t('请求数'),
+        dataIndex: 'request_count',
+        render: (value) => renderNumber(value || 0),
+        sorter: (a, b) => (a.request_count || 0) - (b.request_count || 0),
+      },
+      {
+        title: t('占比'),
+        dataIndex: 'percent',
+        render: (value) => formatPercent(value),
+        sorter: (a, b) => (a.percent || 0) - (b.percent || 0),
       },
     ],
     [t],
@@ -848,20 +1033,32 @@ const InviteStats = () => {
         </div>
 
         <div className='grid grid-cols-1 xl:grid-cols-2 gap-4'>
-          <Card
-            className='!rounded-lg'
-            title={
-              <div className='flex items-center gap-2'>
-                <Users size={16} />
-                {t('邀请人员消费排行')}
+          <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
+            <div className='mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between'>
+              <div>
+                <Title heading={6} className='!mb-1'>
+                  <span className='inline-flex items-center gap-2'>
+                    <Users size={16} />
+                    {t('邀请人员消费排行')}
+                  </span>
+                </Title>
+                <Text type='tertiary'>
+                  {t('点击邀请用户行查看该用户消费明细')}
+                </Text>
               </div>
-            }
-          >
+              <Tag color='green' shape='circle'>
+                {t('默认前20，可分页查看更多')}
+              </Tag>
+            </div>
             <Table
               rowKey='user_id'
               columns={inviteUserRankColumns}
               dataSource={userRankItems}
               loading={loading}
+              onRow={(record) => ({
+                onClick: () => loadInviteUserDetail(record),
+                className: 'cursor-pointer',
+              })}
               pagination={{
                 currentPage: userRank.page || rankPage,
                 pageSize: userRank.page_size || rankPageSize,
@@ -1018,6 +1215,134 @@ const InviteStats = () => {
           </Card>
         </div>
       </div>
+      <SideSheet
+        title={
+          selectedInviteUser
+            ? `${t('邀请人员消费明细')} · ${selectedInviteUser.username || selectedInviteUser.user_id}`
+            : t('邀请人员消费明细')
+        }
+        visible={!!selectedInviteUser}
+        onCancel={() => {
+          setSelectedInviteUser(null);
+          setSelectedInviteUserDetail(null);
+        }}
+        width='min(980px, 100vw)'
+        placement='right'
+      >
+        {selectedInviteUser && (
+          <div className='flex flex-col gap-4'>
+            <div className='grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+              <SummaryCard
+                title={t('总消费金额')}
+                value={renderQuotaWithAmount(
+                  inviteUserDetailSummary.total_amount ??
+                    selectedInviteUser.total_amount ??
+                    0,
+                )}
+                hint={`${t('用户')} #${selectedInviteUser.user_id || '-'}`}
+                icon={<WalletCards size={18} />}
+              />
+              <SummaryCard
+                title={t('余额消费金额')}
+                value={renderQuotaWithAmount(
+                  inviteUserDetailSummary.wallet_amount ??
+                    selectedInviteUser.wallet_amount ??
+                    0,
+                )}
+                hint={renderQuota(
+                  inviteUserDetailSummary.wallet_quota ??
+                    selectedInviteUser.wallet_quota ??
+                    0,
+                )}
+                icon={<WalletCards size={18} />}
+              />
+              <SummaryCard
+                title={t('订阅额度使用')}
+                value={renderQuotaWithAmount(
+                  inviteUserDetailSummary.subscription_amount ??
+                    selectedInviteUser.subscription_amount ??
+                    0,
+                )}
+                hint={renderQuota(
+                  inviteUserDetailSummary.subscription_quota ??
+                    selectedInviteUser.subscription_quota ??
+                    0,
+                )}
+                icon={<CalendarDays size={18} />}
+              />
+              <SummaryCard
+                title={t('总请求数')}
+                value={renderNumber(
+                  inviteUserDetailSummary.total_request_count ??
+                    selectedInviteUser.total_request_count ??
+                    0,
+                )}
+                hint={`${t('模型数')} ${renderNumber(inviteUserDetailSummary.model_count || 0)}`}
+                icon={<TrendingUp size={18} />}
+              />
+            </div>
+            <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
+              <div className='h-80'>
+                {selectedInviteUserLoading ? (
+                  <div className='flex h-full items-center justify-center'>
+                    <Text type='tertiary'>{t('加载中')}</Text>
+                  </div>
+                ) : inviteUserDetailTrend.some((item) => item.quota > 0) ? (
+                  <VChart spec={inviteUserTrendSpec} option={CHART_CONFIG} />
+                ) : (
+                  <Empty
+                    image={
+                      <IllustrationNoResult
+                        style={{ width: 150, height: 150 }}
+                      />
+                    }
+                    darkModeImage={
+                      <IllustrationNoResultDark
+                        style={{ width: 150, height: 150 }}
+                      />
+                    }
+                    title={t('暂无用户趋势数据')}
+                    description={t('该用户在当前筛选范围内没有消费趋势')}
+                  />
+                )}
+              </div>
+            </Card>
+            {inviteUserDetailModels.length > 0 ? (
+              <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
+                <div className='h-80'>
+                  <VChart
+                    spec={inviteUserModelRankSpec}
+                    option={CHART_CONFIG}
+                  />
+                </div>
+              </Card>
+            ) : (
+              <Card className='!rounded-lg'>
+                <Empty
+                  image={
+                    <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                  }
+                  darkModeImage={
+                    <IllustrationNoResultDark
+                      style={{ width: 150, height: 150 }}
+                    />
+                  }
+                  title={t('暂无用户模型消费数据')}
+                  description={t('该用户在当前筛选范围内没有模型消费记录')}
+                />
+              </Card>
+            )}
+            <Table
+              rowKey='model_name'
+              columns={inviteUserDetailColumns}
+              dataSource={inviteUserDetailModels}
+              loading={selectedInviteUserLoading}
+              pagination={false}
+              scroll={{ x: 'max-content' }}
+            />
+          </div>
+        )}
+      </SideSheet>
     </div>
   );
 };

@@ -144,6 +144,43 @@ func TestGetUsageStatsReturnsStructuredData(t *testing.T) {
 	require.Contains(t, string(resp.Data), `"user_model_details"`)
 }
 
+func TestGetUsageStatsPassesUserIDFilter(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	base := time.Date(2026, 6, 12, 10, 0, 0, 0, time.Local).Unix()
+	require.NoError(t, db.Create(&model.Log{
+		UserId:           902,
+		Username:         "usage_user_filter_a",
+		CreatedAt:        base,
+		Type:             model.LogTypeConsume,
+		ModelName:        "gpt-4o",
+		Quota:            123,
+		PromptTokens:     11,
+		CompletionTokens: 22,
+	}).Error)
+	require.NoError(t, db.Create(&model.Log{
+		UserId:           903,
+		Username:         "usage_user_filter_b",
+		CreatedAt:        base,
+		Type:             model.LogTypeConsume,
+		ModelName:        "gpt-4o",
+		Quota:            999,
+		PromptTokens:     99,
+		CompletionTokens: 99,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/log/usage_stats?user_id=902&start_timestamp="+strconv.FormatInt(base-60, 10)+"&end_timestamp="+strconv.FormatInt(base+3600, 10)+"&trend_granularity=hour", nil)
+	GetUsageStats(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+	require.Contains(t, string(resp.Data), `"quota":123`)
+	require.Contains(t, string(resp.Data), `"user_id":902`)
+	require.NotContains(t, string(resp.Data), `"user_id":903`)
+}
+
 func TestGetUsageStatsRejectsInvalidGranularity(t *testing.T) {
 	setupInviteCodeControllerTestDB(t)
 

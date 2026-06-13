@@ -473,6 +473,53 @@ func TestGetUsageStatsRankingLimitAndDailyTrend(t *testing.T) {
 	require.Equal(t, 2, stats.UserModelDetails[0].UserId)
 }
 
+func TestGetUsageStatsFiltersByUserID(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+
+	base := time.Date(2026, 6, 3, 12, 0, 0, 0, time.Local).Unix()
+	seedUsageStatsLog(t, &Log{
+		UserId:           11,
+		Username:         "usage_user_a",
+		CreatedAt:        base,
+		Type:             LogTypeConsume,
+		ModelName:        "model-a",
+		Quota:            100,
+		PromptTokens:     10,
+		CompletionTokens: 20,
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId:           12,
+		Username:         "usage_user_b",
+		CreatedAt:        base + 3600,
+		Type:             LogTypeConsume,
+		ModelName:        "model-b",
+		Quota:            900,
+		PromptTokens:     90,
+		CompletionTokens: 100,
+	})
+
+	stats, err := GetUsageStats(UsageStatsQuery{
+		StartTimestamp:   base - 10,
+		EndTimestamp:     base + 7200,
+		UserId:           11,
+		Limit:            10,
+		TrendGranularity: UsageStatsGranularityHour,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(100), stats.Summary.Quota)
+	require.Equal(t, int64(1), stats.Summary.RequestCount)
+	require.Len(t, stats.Ranking, 1)
+	require.Equal(t, 11, stats.Ranking[0].UserId)
+	require.Len(t, stats.Models, 1)
+	require.Equal(t, "model-a", stats.Models[0].ModelName)
+	trendTotal := sumUsageStatsTrend(stats.Trend)
+	require.Equal(t, int64(100), trendTotal.Quota)
+	require.Len(t, stats.UserModelDetails, 1)
+	require.Equal(t, 11, stats.UserModelDetails[0].UserId)
+}
+
 func TestGetUsageStatsRejectsInvalidRangeAndGranularity(t *testing.T) {
 	_, err := GetUsageStats(UsageStatsQuery{
 		StartTimestamp: time.Date(2026, 6, 2, 0, 0, 0, 0, time.Local).Unix(),

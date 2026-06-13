@@ -1803,7 +1803,7 @@
     "总耗时P90": "",
     "总耗时慢": "",
     "总计": "Total",
-    "总请求数": "",
+    "总请求数": "Total requests",
     "总额度": "Total quota",
     "恢复策略": "",
     "恢复间隔（秒）": "",
@@ -4283,6 +4283,18 @@
     "分组消耗统计": "Group consumption stats",
     "暂无分组消耗数据": "No group consumption data",
     "总消费金额": "Total consumption amount",
-    "用户数": "Users"
+    "用户数": "Users",
+    "加载中": "Loading",
+    "用户总消耗趋势": "User total consumption trend",
+    "不区分模型，仅按时间汇总消耗额度": "Total consumption over time without splitting by model",
+    "暂无用户趋势数据": "No user trend data",
+    "该用户在当前筛选范围内没有消费趋势": "This user has no consumption trend in the current filter range",
+    "邀请人员消费明细": "Invited user consumption details",
+    "余额和订阅额度按天合计": "Daily total of wallet and subscription quota",
+    "用户模型消耗排行": "User model consumption ranking",
+    "该用户当前时间范围内各模型消耗": "This user's model consumption in the current time range",
+    "暂无用户模型消费数据": "No user model consumption data",
+    "点击邀请用户行查看该用户消费明细": "Click an invited user row to view that user's consumption details",
+    "默认前20，可分页查看更多": "Top 20 by default, use pagination for more"
   }
 }

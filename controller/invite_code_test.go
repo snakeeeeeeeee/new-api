@@ -294,6 +294,95 @@ func TestGetInviteConsumptionStatsController(t *testing.T) {
 	require.Equal(t, "gpt-4o", data.Models[0].ModelName)
 }
 
+func TestGetInviteConsumptionUserDetailController(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	originalQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 1000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
+	seedInviteCodeControllerUser(t, db, 55, "owner_detail_controller", "aff-owner-detail")
+	code := &model.InviteCode{
+		Code:        "CTRL-DETAIL",
+		Prefix:      "CTRL",
+		OwnerUserId: 55,
+		TargetGroup: "default",
+		Status:      model.InviteCodeStatusEnabled,
+	}
+	require.NoError(t, code.Insert())
+	require.NoError(t, db.Create(&model.User{
+		Id:                551,
+		Username:          "controller_detail_invitee",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "default",
+		AffCode:           "aff-controller-detail",
+		InviteCodeId:      code.Id,
+		InviteCodeOwnerId: 55,
+		InviterId:         55,
+	}).Error)
+	eventTime := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.Local).Unix()
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		UserId:    551,
+		Username:  "controller_detail_invitee",
+		CreatedAt: eventTime,
+		Type:      model.LogTypeConsume,
+		ModelName: "gpt-4o",
+		Quota:     3000,
+		Other:     common.MapToJsonStr(map[string]interface{}{"billing_source": "subscription"}),
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/invite_code/consumption/user?username=owner_detail_controller&user_id=551&start_time=%d&end_time=%d", eventTime-10, eventTime+10), nil)
+	GetInviteConsumptionUserDetail(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+
+	var data model.InviteConsumptionUserDetailResponse
+	require.NoError(t, common.Unmarshal(resp.Data, &data))
+	require.Equal(t, 551, data.User.UserId)
+	require.Equal(t, int64(3000), data.Summary.SubscriptionQuota)
+	require.Equal(t, int64(3000), data.Summary.TotalQuota)
+	require.Len(t, data.Trend, 1)
+}
+
+func TestGetInviteConsumptionUserDetailControllerRejectsInvalidAndMismatchedUser(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	seedInviteCodeControllerUser(t, db, 56, "owner_detail_reject", "aff-owner-reject")
+	require.NoError(t, db.Create(&model.User{
+		Id:       561,
+		Username: "controller_detail_not_invited",
+		Password: "password123",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		AffCode:  "aff-controller-detail-not",
+	}).Error)
+	eventTime := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.Local).Unix()
+
+	invalidRecorder := httptest.NewRecorder()
+	invalidCtx, _ := gin.CreateTestContext(invalidRecorder)
+	invalidCtx.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/invite_code/consumption/user?username=owner_detail_reject&user_id=abc&start_time=%d&end_time=%d", eventTime-10, eventTime+10), nil)
+	GetInviteConsumptionUserDetail(invalidCtx)
+	var invalidResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(invalidRecorder.Body.Bytes(), &invalidResp))
+	require.False(t, invalidResp.Success)
+	require.Contains(t, invalidResp.Message, "受邀用户ID无效")
+
+	mismatchRecorder := httptest.NewRecorder()
+	mismatchCtx, _ := gin.CreateTestContext(mismatchRecorder)
+	mismatchCtx.Request = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/invite_code/consumption/user?username=owner_detail_reject&user_id=561&start_time=%d&end_time=%d", eventTime-10, eventTime+10), nil)
+	GetInviteConsumptionUserDetail(mismatchCtx)
+	var mismatchResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(mismatchRecorder.Body.Bytes(), &mismatchResp))
+	require.False(t, mismatchResp.Success)
+	require.Contains(t, mismatchResp.Message, "受邀用户不属于该邀请人")
+}
+
 func TestGetInviteConsumptionBreakdownController(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	seedInviteCodeControllerUser(t, db, 60, "breakdown_controller_owner", "aff-breakdown-controller-owner")

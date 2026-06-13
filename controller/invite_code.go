@@ -124,6 +124,31 @@ func GetInviteConsumptionStats(c *gin.Context) {
 	common.ApiSuccess(c, stats)
 }
 
+func GetInviteConsumptionUserDetail(c *gin.Context) {
+	username := c.Query("username")
+	userID, err := strconv.Atoi(c.Query("user_id"))
+	if err != nil || userID <= 0 {
+		common.ApiErrorMsg(c, "受邀用户ID无效")
+		return
+	}
+	startTime, err := strconv.ParseInt(c.Query("start_time"), 10, 64)
+	if err != nil {
+		common.ApiErrorMsg(c, "开始时间无效")
+		return
+	}
+	endTime, err := strconv.ParseInt(c.Query("end_time"), 10, 64)
+	if err != nil {
+		common.ApiErrorMsg(c, "结束时间无效")
+		return
+	}
+	detail, err := model.GetInviteConsumptionUserDetail(username, userID, startTime, endTime)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, detail)
+}
+
 func GetInviteCode(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {

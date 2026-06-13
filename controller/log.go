@@ -125,10 +125,12 @@ func GetUsageStats(c *gin.Context) {
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	limit, _ := strconv.Atoi(c.Query("limit"))
+	userId, _ := strconv.Atoi(c.Query("user_id"))
 
 	stats, err := model.GetUsageStats(model.UsageStatsQuery{
 		StartTimestamp:   startTimestamp,
 		EndTimestamp:     endTimestamp,
+		UserId:           userId,
 		ModelName:        c.Query("model_name"),
 		Username:         c.Query("username"),
 		Group:            c.Query("group"),

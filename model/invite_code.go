@@ -254,6 +254,34 @@ type InviteConsumptionGroupStat struct {
 	TotalRequestCount        int64   `json:"total_request_count"`
 }
 
+type InviteConsumptionUserDetailUser struct {
+	UserId   int    `json:"user_id"`
+	Username string `json:"username"`
+	Group    string `json:"group"`
+}
+
+type InviteConsumptionUserDetailSummary struct {
+	WalletQuota              int64   `json:"wallet_quota"`
+	WalletAmount             float64 `json:"wallet_amount"`
+	WalletRequestCount       int64   `json:"wallet_request_count"`
+	SubscriptionQuota        int64   `json:"subscription_quota"`
+	SubscriptionAmount       float64 `json:"subscription_amount"`
+	SubscriptionRequestCount int64   `json:"subscription_request_count"`
+	TotalQuota               int64   `json:"total_quota"`
+	TotalAmount              float64 `json:"total_amount"`
+	TotalRequestCount        int64   `json:"total_request_count"`
+	ModelCount               int     `json:"model_count"`
+}
+
+type InviteConsumptionUserDetailResponse struct {
+	User      InviteConsumptionUserDetailUser    `json:"user"`
+	StartTime int64                              `json:"start_time"`
+	EndTime   int64                              `json:"end_time"`
+	Summary   InviteConsumptionUserDetailSummary `json:"summary"`
+	Models    []InviteConsumptionModelStat       `json:"models"`
+	Trend     []InviteConsumptionTrendPoint      `json:"trend"`
+}
+
 type InviteConsumptionStatsResponse struct {
 	Inviter                          InviteConsumptionInviter        `json:"inviter"`
 	StartTime                        int64                           `json:"start_time"`
@@ -935,6 +963,111 @@ func GetInviteConsumptionStats(username string, startTime int64, endTime int64, 
 	resp.GroupStats = inviteConsumptionGroupStatsToSlice(groupStats, groupUsers)
 	if err := populateInviteSubscriptionPurchaseStats(resp, inviteeIDs, startTime, endTime); err != nil {
 		return nil, err
+	}
+	return resp, nil
+}
+
+func GetInviteConsumptionUserDetail(username string, userID int, startTime int64, endTime int64) (*InviteConsumptionUserDetailResponse, error) {
+	ensureCommonColumnsInitialized()
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return nil, errors.New("邀请人用户名不能为空")
+	}
+	if userID <= 0 {
+		return nil, errors.New("受邀用户ID无效")
+	}
+	if startTime <= 0 || endTime <= 0 {
+		return nil, errors.New("时间范围不能为空")
+	}
+	if startTime > endTime {
+		startTime, endTime = endTime, startTime
+	}
+
+	inviter, err := GetUserByUsername(username, false)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("邀请人不存在")
+		}
+		return nil, err
+	}
+
+	var invitee struct {
+		Id       int    `gorm:"column:id"`
+		Username string `gorm:"column:username"`
+		Group    string `gorm:"column:user_group"`
+	}
+	query := DB.Model(&User{}).
+		Select(fmt.Sprintf("id, username, %s as user_group", commonGroupCol)).
+		Where("id = ? AND invite_code_owner_id = ? AND invite_code_id > 0", userID, inviter.Id).
+		Limit(1).
+		Find(&invitee)
+	if query.Error != nil {
+		return nil, query.Error
+	}
+	if query.RowsAffected == 0 || invitee.Id == 0 {
+		return nil, errors.New("受邀用户不属于该邀请人")
+	}
+
+	resp := &InviteConsumptionUserDetailResponse{
+		User: InviteConsumptionUserDetailUser{
+			UserId:   invitee.Id,
+			Username: invitee.Username,
+			Group:    normalizeInviteConsumptionGroup(invitee.Group),
+		},
+		StartTime: startTime,
+		EndTime:   endTime,
+		Models:    []InviteConsumptionModelStat{},
+		Trend:     emptyInviteConsumptionTrend(startTime, endTime),
+	}
+
+	var rows []inviteConsumptionLogRow
+	if err := LOG_DB.Model(&Log{}).
+		Select("user_id, model_name, quota, created_at, other").
+		Where("user_id = ? AND type = ? AND created_at >= ? AND created_at <= ?", invitee.Id, LogTypeConsume, startTime, endTime).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	modelStats := make(map[string]*InviteConsumptionModelStat)
+	trendIndex := inviteConsumptionTrendIndex(resp.Trend)
+	for _, row := range rows {
+		quota := int64(row.Quota)
+		if quota <= 0 {
+			continue
+		}
+		modelName := normalizeInviteConsumptionModelName(row.ModelName)
+		stat := modelStats[modelName]
+		if stat == nil {
+			stat = &InviteConsumptionModelStat{ModelName: modelName}
+			modelStats[modelName] = stat
+		}
+		stat.Quota += quota
+		stat.RequestCount++
+
+		resp.Summary.TotalQuota += quota
+		resp.Summary.TotalRequestCount++
+		if inviteConsumptionLogIsSubscription(row.Other) {
+			resp.Summary.SubscriptionQuota += quota
+			resp.Summary.SubscriptionRequestCount++
+		} else {
+			resp.Summary.WalletQuota += quota
+			resp.Summary.WalletRequestCount++
+		}
+
+		bucket, _ := bucketInviteTime(row.CreatedAt, "day")
+		if idx, ok := trendIndex[bucket]; ok {
+			resp.Trend[idx].Quota += quota
+			resp.Trend[idx].RequestCount++
+		}
+	}
+
+	resp.Summary.WalletAmount = quotaToInviteConsumptionAmount(resp.Summary.WalletQuota)
+	resp.Summary.SubscriptionAmount = quotaToInviteConsumptionAmount(resp.Summary.SubscriptionQuota)
+	resp.Summary.TotalAmount = quotaToInviteConsumptionAmount(resp.Summary.TotalQuota)
+	resp.Summary.ModelCount = len(modelStats)
+	resp.Models = inviteConsumptionModelStatsToSlice(modelStats, resp.Summary.TotalQuota)
+	for i := range resp.Trend {
+		resp.Trend[i].Amount = quotaToInviteConsumptionAmount(resp.Trend[i].Quota)
 	}
 	return resp, nil
 }

@@ -146,6 +146,8 @@ const UsageStatsPage = () => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedUserStats, setSelectedUserStats] = useState(null);
+  const [selectedUserLoading, setSelectedUserLoading] = useState(false);
 
   useEffect(() => {
     initVChartSemiTheme({
@@ -202,6 +204,7 @@ const UsageStatsPage = () => {
       if (success) {
         setStats(data);
         setSelectedUser(null);
+        setSelectedUserStats(null);
       } else {
         showError(message || t('加载失败'));
       }
@@ -225,13 +228,64 @@ const UsageStatsPage = () => {
     [stats?.user_model_details],
   );
   const selectedUserDetails = useMemo(
-    () => (selectedUser ? detailsByUser[selectedUser.user_id] || [] : []),
-    [detailsByUser, selectedUser],
+    () =>
+      selectedUserStats?.user_model_details?.length > 0
+        ? normalizeDetailsByUser(selectedUserStats.user_model_details)[
+            selectedUser?.user_id
+          ] || []
+        : selectedUser
+          ? detailsByUser[selectedUser.user_id] || []
+          : [],
+    [detailsByUser, selectedUser, selectedUserStats?.user_model_details],
   );
+  const selectedUserSummary = selectedUserStats?.summary || {};
+  const selectedUserRank =
+    selectedUserStats?.ranking?.[0] || selectedUser || {};
+  const selectedUserTrend = selectedUserStats?.trend || [];
   const hasUsageData =
     ranking.length > 0 ||
     models.length > 0 ||
     trend.some((item) => item.request_count > 0);
+
+  const loadSelectedUserStats = async (record) => {
+    if (!record || !normalizedRange) {
+      return;
+    }
+    setSelectedUser(record);
+    setSelectedUserStats(null);
+    setSelectedUserLoading(true);
+    try {
+      const params = {
+        start_timestamp: normalizedRange.startTime,
+        end_timestamp: normalizedRange.endTime,
+        user_id: record.user_id,
+        limit: 50,
+      };
+      if (modelName.trim()) {
+        params.model_name = modelName.trim();
+      }
+      if (group.trim()) {
+        params.group = group.trim();
+      }
+      if (channel.trim()) {
+        params.channel = channel.trim();
+      }
+      if (trendGranularity !== 'auto') {
+        params.trend_granularity = trendGranularity;
+      }
+      const res = await API.get('/api/log/usage_stats', { params });
+      const { success, message, data } = res.data;
+      if (success) {
+        setSelectedUserStats(data);
+      } else {
+        showError(message || t('加载失败'));
+      }
+    } catch (error) {
+      showError(error.message || t('加载失败'));
+    } finally {
+      setSelectedUserLoading(false);
+    }
+  };
 
   const trendSpec = useMemo(
     () => ({
@@ -451,6 +505,58 @@ const UsageStatsPage = () => {
       },
     }),
     [selectedUserDetails, t],
+  );
+
+  const selectedUserTrendSpec = useMemo(
+    () => ({
+      type: 'line',
+      data: [
+        {
+          id: 'usage-stats-selected-user-trend',
+          values: selectedUserTrend.map((item) => ({
+            label: item.label,
+            amount_usd: quotaToUSD(item.quota),
+            quota: item.quota || 0,
+            request_count: item.request_count || 0,
+          })),
+        },
+      ],
+      xField: 'label',
+      yField: 'amount_usd',
+      point: { visible: true },
+      line: { style: { lineWidth: 2 } },
+      title: {
+        visible: true,
+        text: t('用户总消耗趋势'),
+        subtext: t('不区分模型，仅按时间汇总消耗额度'),
+      },
+      axes: [
+        { orient: 'bottom', type: 'band' },
+        {
+          orient: 'left',
+          type: 'linear',
+          title: { visible: true, text: '$' },
+          label: {
+            formatMethod: (value) => formatUSDValue(value),
+          },
+        },
+      ],
+      tooltip: {
+        mark: {
+          content: [
+            {
+              key: t('消耗额度 ($)'),
+              value: (datum) => formatUSDValue(datum.amount_usd || 0),
+            },
+            {
+              key: t('请求数'),
+              value: (datum) => renderNumber(datum.request_count || 0),
+            },
+          ],
+        },
+      },
+    }),
+    [selectedUserTrend, t],
   );
 
   const selectedUserTokensSpec = useMemo(
@@ -830,7 +936,7 @@ const UsageStatsPage = () => {
               pageSizeOpts: [10, 20, 50],
             }}
             onRow={(record) => ({
-              onClick: () => setSelectedUser(record),
+              onClick: () => loadSelectedUserStats(record),
               className: 'cursor-pointer',
             })}
             empty={
@@ -867,28 +973,67 @@ const UsageStatsPage = () => {
             <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
               <SummaryCard
                 title={t('消耗额度 ($)')}
-                value={formatQuotaUSD(selectedUser.quota || 0)}
+                value={formatQuotaUSD(
+                  selectedUserSummary.quota ?? selectedUser.quota ?? 0,
+                )}
                 hint={`${t('ID')} ${selectedUser.user_id}`}
                 icon={<WalletCards size={18} />}
               />
               <SummaryCard
                 title={t('请求数')}
-                value={renderNumber(selectedUser.request_count || 0)}
-                hint={formatDateTime(selectedUser.last_request_at)}
+                value={renderNumber(
+                  selectedUserSummary.request_count ??
+                    selectedUser.request_count ??
+                    0,
+                )}
+                hint={formatDateTime(selectedUserRank.last_request_at)}
                 icon={<TrendingUp size={18} />}
               />
               <SummaryCard
                 title={t('Token 消耗 (M)')}
-                value={formatTokensMillion(selectedUser.total_tokens || 0)}
-                hint={`${t('平均耗时')} ${formatUseTime(selectedUser.average_use_time)}`}
+                value={formatTokensMillion(
+                  selectedUserSummary.total_tokens ??
+                    selectedUser.total_tokens ??
+                    0,
+                )}
+                hint={`${t('平均耗时')} ${formatUseTime(selectedUserRank.average_use_time)}`}
                 icon={<Clock3 size={18} />}
               />
             </div>
+            <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
+              <div className='h-80'>
+                {selectedUserLoading ? (
+                  <div className='flex h-full items-center justify-center'>
+                    <Text type='tertiary'>{t('加载中')}</Text>
+                  </div>
+                ) : selectedUserTrend.some((item) => item.quota > 0) ? (
+                  <VChart spec={selectedUserTrendSpec} option={CHART_CONFIG} />
+                ) : (
+                  <Empty
+                    image={
+                      <IllustrationNoResult
+                        style={{ width: 150, height: 150 }}
+                      />
+                    }
+                    darkModeImage={
+                      <IllustrationNoResultDark
+                        style={{ width: 150, height: 150 }}
+                      />
+                    }
+                    title={t('暂无用户趋势数据')}
+                    description={t('该用户在当前筛选范围内没有消费趋势')}
+                  />
+                )}
+              </div>
+            </Card>
             {selectedUserDetails.length > 0 ? (
               <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
                 <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
                   <div className='h-80'>
-                    <VChart spec={selectedUserQuotaSpec} option={CHART_CONFIG} />
+                    <VChart
+                      spec={selectedUserQuotaSpec}
+                      option={CHART_CONFIG}
+                    />
                   </div>
                 </Card>
                 <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
@@ -921,6 +1066,7 @@ const UsageStatsPage = () => {
                 rowKey='key'
                 columns={detailColumns}
                 dataSource={selectedUserDetails}
+                loading={selectedUserLoading}
                 pagination={false}
                 scroll={{ x: true }}
               />

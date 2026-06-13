@@ -462,6 +462,83 @@ func TestGetInviteConsumptionStatsIncludesSubscriptionUsageAndPurchases(t *testi
 	require.Equal(t, 1212, pagedStats.UserRank.Items[0].UserId)
 }
 
+func TestGetInviteConsumptionUserDetailAggregatesSelectedInvitee(t *testing.T) {
+	truncateTables(t)
+	originalQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 1000
+	t.Cleanup(func() {
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
+
+	seedInviteOwner(t, 125, "detail_owner")
+	inviteCode := seedInviteCode(t, "DETAIL-STATS", 125, "vip", 0, 0, 0, InviteCodeStatusEnabled)
+	require.NoError(t, DB.Create(&User{
+		Id:                1251,
+		Username:          "detail_invitee",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		InviteCodeId:      inviteCode.Id,
+		InviteCodeOwnerId: 125,
+		InviterId:         125,
+		AffCode:           "aff-detail",
+	}).Error)
+	require.NoError(t, DB.Create(&User{
+		Id:                1252,
+		Username:          "detail_other_invitee",
+		Password:          "password123",
+		Role:              common.RoleCommonUser,
+		Status:            common.UserStatusEnabled,
+		Group:             "vip",
+		InviteCodeId:      inviteCode.Id,
+		InviteCodeOwnerId: 125,
+		InviterId:         125,
+		AffCode:           "aff-detail-other",
+	}).Error)
+
+	may10 := fixedInviteStatsTime(2026, time.May, 10)
+	may11 := fixedInviteStatsTime(2026, time.May, 11)
+	seedInviteModelConsumeLogAt(t, 1251, "detail_invitee", "gpt-4o", 1000, may10, map[string]interface{}{"billing_source": "wallet"})
+	seedInviteModelConsumeLogAt(t, 1251, "detail_invitee", "claude-opus", 2000, may11, map[string]interface{}{"billing_source": "subscription"})
+	seedInviteModelConsumeLogAt(t, 1252, "detail_other_invitee", "gpt-4o", 9000, may10, nil)
+
+	detail, err := GetInviteConsumptionUserDetail("detail_owner", 1251, may10-10, may11+3600)
+	require.NoError(t, err)
+	require.Equal(t, 1251, detail.User.UserId)
+	require.Equal(t, "detail_invitee", detail.User.Username)
+	require.Equal(t, "vip", detail.User.Group)
+	require.Equal(t, int64(1000), detail.Summary.WalletQuota)
+	require.Equal(t, int64(2000), detail.Summary.SubscriptionQuota)
+	require.Equal(t, int64(3000), detail.Summary.TotalQuota)
+	require.InDelta(t, 3.0, detail.Summary.TotalAmount, 0.0001)
+	require.Equal(t, int64(2), detail.Summary.TotalRequestCount)
+	require.Equal(t, 2, detail.Summary.ModelCount)
+	require.Len(t, detail.Models, 2)
+	require.Len(t, detail.Trend, 2)
+	require.Equal(t, int64(1000), detail.Trend[0].Quota)
+	require.Equal(t, int64(2000), detail.Trend[1].Quota)
+}
+
+func TestGetInviteConsumptionUserDetailRejectsNonInvitee(t *testing.T) {
+	truncateTables(t)
+	seedInviteOwner(t, 126, "detail_owner_reject")
+	require.NoError(t, DB.Create(&User{
+		Id:       1261,
+		Username: "detail_not_invited",
+		Password: "password123",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		AffCode:  "aff-not-detail",
+	}).Error)
+
+	now := fixedInviteStatsTime(2026, time.May, 10)
+	_, err := GetInviteConsumptionUserDetail("detail_owner_reject", 1261, now-10, now+10)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "受邀用户不属于该邀请人")
+}
+
 func TestGetInviteConsumptionBreakdownByOwnerIDsSplitsWalletAndSubscription(t *testing.T) {
 	truncateTables(t)
 	seedInviteOwner(t, 122, "breakdown_owner_a")

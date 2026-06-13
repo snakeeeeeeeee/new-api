@@ -1777,7 +1777,7 @@
     "总耗时P90": "",
     "总耗时慢": "",
     "总计": "Tổng cộng",
-    "总请求数": "",
+    "总请求数": "Tổng số yêu cầu",
     "总额度": "Tổng hạn ngạch",
     "恢复策略": "",
     "恢复间隔（秒）": "",
@@ -4777,6 +4777,18 @@
     "分组消耗统计": "",
     "暂无分组消耗数据": "",
     "总消费金额": "",
-    "用户数": ""
+    "用户数": "",
+    "加载中": "Đang tải",
+    "用户总消耗趋势": "Xu hướng tiêu hao tổng của người dùng",
+    "不区分模型，仅按时间汇总消耗额度": "Tổng hợp tiêu hao theo thời gian, không tách theo mô hình",
+    "暂无用户趋势数据": "Chưa có dữ liệu xu hướng người dùng",
+    "该用户在当前筛选范围内没有消费趋势": "Người dùng này không có xu hướng tiêu hao trong phạm vi lọc hiện tại",
+    "邀请人员消费明细": "Chi tiết tiêu hao của người dùng được mời",
+    "余额和订阅额度按天合计": "Tổng hằng ngày của số dư và hạn mức gói đăng ký",
+    "用户模型消耗排行": "Xếp hạng tiêu hao mô hình của người dùng",
+    "该用户当前时间范围内各模型消耗": "Tiêu hao theo mô hình của người dùng này trong khoảng thời gian hiện tại",
+    "暂无用户模型消费数据": "Chưa có dữ liệu tiêu hao mô hình của người dùng",
+    "点击邀请用户行查看该用户消费明细": "Nhấp vào dòng người dùng được mời để xem chi tiết tiêu hao",
+    "默认前20，可分页查看更多": "Mặc định 20 mục đầu, dùng phân trang để xem thêm"
   }
 }

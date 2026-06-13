@@ -503,6 +503,7 @@ const (
 type UsageStatsQuery struct {
 	StartTimestamp   int64
 	EndTimestamp     int64
+	UserId           int
 	ModelName        string
 	Username         string
 	Group            string
@@ -668,6 +669,9 @@ func normalizeUsageStatsQuery(query UsageStatsQuery) (UsageStatsQuery, error) {
 func applyUsageStatsFilters(tx *gorm.DB, query UsageStatsQuery) (*gorm.DB, error) {
 	tx = tx.Where("logs.type = ?", LogTypeConsume)
 	tx = tx.Where("logs.created_at >= ? AND logs.created_at <= ?", query.StartTimestamp, query.EndTimestamp)
+	if query.UserId > 0 {
+		tx = tx.Where("logs.user_id = ?", query.UserId)
+	}
 	if query.ModelName != "" {
 		modelNamePattern, err := sanitizeLikePattern(query.ModelName)
 		if err != nil {
