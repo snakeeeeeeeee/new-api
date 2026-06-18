@@ -101,6 +101,27 @@ func authHelper(c *gin.Context, minRole int) {
 		c.Abort()
 		return
 	}
+
+	if !useAccessToken && minRole >= common.RoleAdminUser {
+		user, err := model.GetUserById(apiUserId, false)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			c.Abort()
+			return
+		}
+		username = user.Username
+		role = user.Role
+		status = user.Status
+		session.Set("username", user.Username)
+		session.Set("role", user.Role)
+		session.Set("status", user.Status)
+		session.Set("group", user.Group)
+		_ = session.Save()
+	}
+
 	if status.(int) == common.UserStatusDisabled {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,

@@ -249,10 +249,12 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 	return users, total, nil
 }
 
-func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, int64, error) {
+func SearchUsers(keyword string, group string, role *int, startIdx int, num int) ([]*User, int64, error) {
 	var users []*User
 	var total int64
 	var err error
+
+	ensureCommonColumnsInitialized()
 
 	// 开始事务
 	tx := DB.Begin()
@@ -268,30 +270,26 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 	// 构建基础查询
 	query := tx.Unscoped().Model(&User{})
 
-	// 构建搜索条件
-	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
+	keyword = strings.TrimSpace(keyword)
+	group = strings.TrimSpace(group)
 
-	// 尝试将关键字转换为整数ID
-	keywordInt, err := strconv.Atoi(keyword)
-	if err == nil {
-		// 如果是数字，同时搜索ID和其他字段
-		likeCondition = "id = ? OR " + likeCondition
-		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+commonGroupCol+" = ?",
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
+	if keyword != "" {
+		likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
+		likeKeyword := "%" + keyword + "%"
+		keywordInt, convertErr := strconv.Atoi(keyword)
+		if convertErr == nil {
+			query = query.Where("(id = ? OR "+likeCondition+")", keywordInt, likeKeyword, likeKeyword, likeKeyword)
 		} else {
-			query = query.Where(likeCondition,
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+			query = query.Where("("+likeCondition+")", likeKeyword, likeKeyword, likeKeyword)
 		}
-	} else {
-		// 非数字关键字，只搜索字符串字段
-		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+commonGroupCol+" = ?",
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
-		} else {
-			query = query.Where(likeCondition,
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
-		}
+	}
+
+	if group != "" {
+		query = query.Where(commonGroupCol+" = ?", group)
+	}
+
+	if role != nil {
+		query = query.Where("role = ?", *role)
 	}
 
 	// 获取总数

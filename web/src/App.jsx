@@ -119,7 +119,7 @@ function App() {
         <Route
           path='/console/models'
           element={
-            <AdminRoute>
+            <AdminRoute menu='models'>
               <ModelPage />
             </AdminRoute>
           }
@@ -127,7 +127,7 @@ function App() {
         <Route
           path='/console/deployment'
           element={
-            <AdminRoute>
+            <AdminRoute menu='deployment'>
               <ModelDeploymentPage />
             </AdminRoute>
           }
@@ -135,7 +135,7 @@ function App() {
         <Route
           path='/console/subscription'
           element={
-            <AdminRoute>
+            <AdminRoute menu='subscription'>
               <Subscription />
             </AdminRoute>
           }
@@ -143,7 +143,7 @@ function App() {
         <Route
           path='/console/aggregate-group'
           element={
-            <AdminRoute>
+            <AdminRoute menu='aggregate_group'>
               <AggregateGroupPage />
             </AdminRoute>
           }
@@ -151,7 +151,7 @@ function App() {
         <Route
           path='/console/channel'
           element={
-            <AdminRoute>
+            <AdminRoute menu='channel'>
               <Channel />
             </AdminRoute>
           }
@@ -175,7 +175,7 @@ function App() {
         <Route
           path='/console/invite-code'
           element={
-            <AdminRoute>
+            <AdminRoute menu='invite_code'>
               <InviteCode />
             </AdminRoute>
           }
@@ -183,7 +183,7 @@ function App() {
         <Route
           path='/console/invite-stats'
           element={
-            <AdminRoute>
+            <AdminRoute menu='invite_stats'>
               <InviteStats />
             </AdminRoute>
           }
@@ -191,7 +191,7 @@ function App() {
         <Route
           path='/console/log-dashboard'
           element={
-            <AdminRoute>
+            <AdminRoute menu='log_dashboard'>
               <LogDashboardPage />
             </AdminRoute>
           }
@@ -199,7 +199,7 @@ function App() {
         <Route
           path='/console/usage-stats'
           element={
-            <AdminRoute>
+            <AdminRoute menu='usage_stats'>
               <UsageStatsPage />
             </AdminRoute>
           }
@@ -207,7 +207,7 @@ function App() {
         <Route
           path='/console/request-dump'
           element={
-            <AdminRoute>
+            <AdminRoute menu='request_dump'>
               <RequestDumpPage />
             </AdminRoute>
           }
@@ -215,7 +215,7 @@ function App() {
         <Route
           path='/console/violation'
           element={
-            <AdminRoute>
+            <AdminRoute menu='violation'>
               <ViolationPage />
             </AdminRoute>
           }
@@ -223,7 +223,7 @@ function App() {
         <Route
           path='/console/compatibility'
           element={
-            <AdminRoute>
+            <AdminRoute menu='compatibility'>
               <CompatibilityPage />
             </AdminRoute>
           }
@@ -231,7 +231,7 @@ function App() {
         <Route
           path='/console/redemption'
           element={
-            <AdminRoute>
+            <AdminRoute menu='redemption'>
               <Redemption />
             </AdminRoute>
           }
@@ -239,7 +239,7 @@ function App() {
         <Route
           path='/console/user'
           element={
-            <AdminRoute>
+            <AdminRoute menu='user'>
               <User />
             </AdminRoute>
           }
@@ -323,7 +323,7 @@ function App() {
         <Route
           path='/console/setting'
           element={
-            <AdminRoute>
+            <AdminRoute menu='setting'>
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <Setting />
               </Suspense>
@@ -391,7 +391,7 @@ function App() {
         <Route
           path='/console/async-task'
           element={
-            <AdminRoute>
+            <AdminRoute menu='async_task'>
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <AsyncTask />
               </Suspense>

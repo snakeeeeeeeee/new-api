@@ -36,6 +36,7 @@ import {
   renderQuota,
   renderQuotaWithAmount,
   normalizeSubscriptionQuotaSummary,
+  isRoot,
 } from '../../../helpers';
 
 /**
@@ -362,6 +363,8 @@ const renderOperations = (
     showInviteBindingModal,
     showExtraUsableGroupsModal,
     showAggregateGroupRatioOverridesModal,
+    showAdminMenuPermissionsModal,
+    showPromoteRootModal,
     t,
   },
 ) => {
@@ -370,6 +373,24 @@ const renderOperations = (
   }
 
   const moreMenu = [
+    ...(isRoot() && record.role === 10
+      ? [
+          {
+            node: 'item',
+            name: t('菜单权限'),
+            onClick: () => showAdminMenuPermissionsModal(record),
+          },
+          {
+            node: 'item',
+            name: t('提升为超级管理员'),
+            type: 'warning',
+            onClick: () => showPromoteRootModal(record),
+          },
+          {
+            node: 'divider',
+          },
+        ]
+      : []),
     {
       node: 'item',
       name: t('订阅管理'),
@@ -480,6 +501,8 @@ export const getUsersColumns = ({
   showInviteBindingModal,
   showExtraUsableGroupsModal,
   showAggregateGroupRatioOverridesModal,
+  showAdminMenuPermissionsModal,
+  showPromoteRootModal,
 }) => {
   return [
     {
@@ -545,6 +568,8 @@ export const getUsersColumns = ({
           showInviteBindingModal,
           showExtraUsableGroupsModal,
           showAggregateGroupRatioOverridesModal,
+          showAdminMenuPermissionsModal,
+          showPromoteRootModal,
           t,
         }),
     },

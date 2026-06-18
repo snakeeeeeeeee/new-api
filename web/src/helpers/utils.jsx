@@ -46,6 +46,67 @@ export function isRoot() {
   return user.role >= 100;
 }
 
+export function getAdminMenuPermissionsFromUser(user) {
+  if (!user || typeof user !== 'object') return {};
+  if (user.role >= 100) {
+    return {
+      channel: true,
+      aggregate_group: true,
+      invite_code: true,
+      invite_stats: true,
+      log_dashboard: true,
+      usage_stats: true,
+      async_task: true,
+      request_dump: true,
+      violation: true,
+      compatibility: true,
+      subscription: true,
+      models: true,
+      deployment: true,
+      redemption: true,
+      user: true,
+      setting: true,
+    };
+  }
+  return (
+    user.admin_menu_permissions ||
+    user.permissions?.admin_menu_permissions ||
+    {}
+  );
+}
+
+export function mergeUserPermissionData(currentUser, selfData) {
+  if (!selfData || typeof selfData !== 'object') {
+    return currentUser || {};
+  }
+
+  return {
+    ...(currentUser || {}),
+    id: selfData.id ?? currentUser?.id,
+    username: selfData.username ?? currentUser?.username,
+    display_name: selfData.display_name ?? currentUser?.display_name,
+    role: selfData.role ?? currentUser?.role,
+    status: selfData.status ?? currentUser?.status,
+    group: selfData.group ?? currentUser?.group,
+    setting: selfData.setting ?? currentUser?.setting,
+    admin_menu_permissions:
+      selfData.permissions?.admin_menu_permissions ||
+      selfData.admin_menu_permissions ||
+      currentUser?.admin_menu_permissions,
+    permissions: selfData.permissions || currentUser?.permissions,
+  };
+}
+
+export function hasAdminMenuPermission(menuKey) {
+  if (!menuKey) return isAdmin();
+  let user = localStorage.getItem('user');
+  if (!user) return false;
+  user = JSON.parse(user);
+  if (user.role >= 100) return true;
+  if (user.role < 10) return false;
+  return getAdminMenuPermissionsFromUser(user)?.[menuKey] === true;
+}
+
 export function getSystemName() {
   let system_name = localStorage.getItem('system_name');
   if (!system_name) return 'New API';

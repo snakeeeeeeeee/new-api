@@ -17,9 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { history } from './history';
+import { API } from './api';
+import {
+  hasAdminMenuPermission,
+  mergeUserPermissionData,
+} from './utils';
+import Loading from '../components/common/ui/Loading';
 
 export function authHeader() {
   // return authorization header with jwt token
@@ -49,14 +55,80 @@ function PrivateRoute({ children }) {
   return children;
 }
 
-export function AdminRoute({ children }) {
+export function AdminRoute({ children, menu }) {
+  const [checking, setChecking] = useState(Boolean(menu));
+  const [allowed, setAllowed] = useState(() => {
+    const raw = localStorage.getItem('user');
+    if (!raw) return false;
+    try {
+      const user = JSON.parse(raw);
+      return (
+        user &&
+        typeof user.role === 'number' &&
+        user.role >= 10 &&
+        (!menu || hasAdminMenuPermission(menu))
+      );
+    } catch (e) {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    if (!menu) return;
+    const raw = localStorage.getItem('user');
+    if (!raw) {
+      setChecking(false);
+      setAllowed(false);
+      return;
+    }
+
+    let cancelled = false;
+    setChecking(true);
+    API.get('/api/user/self')
+      .then((res) => {
+        if (cancelled) return;
+        if (!res.data.success) {
+          setAllowed(false);
+          return;
+        }
+        const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+        const nextUser = mergeUserPermissionData(currentUser, res.data.data);
+        localStorage.setItem('user', JSON.stringify(nextUser));
+        setAllowed(
+          typeof nextUser.role === 'number' &&
+            nextUser.role >= 10 &&
+            hasAdminMenuPermission(menu),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAllowed(false);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setChecking(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [menu]);
+
   const raw = localStorage.getItem('user');
   if (!raw) {
     return <Navigate to='/login' state={{ from: history.location }} />;
   }
+  if (checking) {
+    return <Loading />;
+  }
   try {
     const user = JSON.parse(raw);
     if (user && typeof user.role === 'number' && user.role >= 10) {
+      if (menu && !allowed) {
+        return <Navigate to='/forbidden' replace />;
+      }
       return children;
     }
   } catch (e) {

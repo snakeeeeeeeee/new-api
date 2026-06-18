@@ -121,32 +121,39 @@ func SetApiRouter(router *gin.Engine) {
 			adminRoute := userRoute.Group("/")
 			adminRoute.Use(middleware.AdminAuth())
 			{
-				adminRoute.GET("/", controller.GetAllUsers)
-				adminRoute.GET("/topup", controller.GetAllTopUps)
-				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
-				adminRoute.GET("/search", controller.SearchUsers)
-				adminRoute.GET("/by_username", controller.GetUserByUsername)
-				adminRoute.GET("/invite_consumption_breakdown", controller.GetInviteConsumptionBreakdown)
-				adminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)
-				adminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
-				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
-				adminRoute.GET("/:id/extra_usable_groups", controller.GetUserExtraUsableGroups)
-				adminRoute.PUT("/:id/extra_usable_groups", controller.UpdateUserExtraUsableGroups)
-				adminRoute.GET("/:id/aggregate_group_ratio_overrides", controller.GetUserAggregateGroupRatioOverrides)
-				adminRoute.PUT("/:id/aggregate_group_ratio_overrides", controller.UpdateUserAggregateGroupRatioOverrides)
-				adminRoute.GET("/:id/invite_codes", controller.GetUserInviteCodesByAdmin)
-				adminRoute.PUT("/:id/invite_binding", controller.UpdateUserInviteBinding)
-				adminRoute.DELETE("/:id/invite_binding", controller.DeleteUserInviteBinding)
-				adminRoute.GET("/:id", controller.GetUser)
-				adminRoute.POST("/", controller.CreateUser)
-				adminRoute.POST("/manage", controller.ManageUser)
-				adminRoute.PUT("/", controller.UpdateUser)
-				adminRoute.DELETE("/:id", controller.DeleteUser)
-				adminRoute.DELETE("/:id/reset_passkey", controller.AdminResetPasskey)
+				adminRoute.GET("/:id/admin_menu_permissions", middleware.RootAuth(), controller.GetAdminMenuPermissions)
+				adminRoute.PUT("/:id/admin_menu_permissions", middleware.RootAuth(), controller.UpdateAdminMenuPermissions)
 
-				// Admin 2FA routes
-				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
-				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
+				userAdminRoute := adminRoute.Group("/")
+				userAdminRoute.Use(middleware.AdminMenuAuth("user"))
+				{
+					userAdminRoute.GET("/", controller.GetAllUsers)
+					userAdminRoute.GET("/topup", controller.GetAllTopUps)
+					userAdminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
+					userAdminRoute.GET("/search", controller.SearchUsers)
+					userAdminRoute.GET("/by_username", controller.GetUserByUsername)
+					userAdminRoute.GET("/invite_consumption_breakdown", controller.GetInviteConsumptionBreakdown)
+					userAdminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)
+					userAdminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
+					userAdminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
+					userAdminRoute.GET("/:id/extra_usable_groups", controller.GetUserExtraUsableGroups)
+					userAdminRoute.PUT("/:id/extra_usable_groups", controller.UpdateUserExtraUsableGroups)
+					userAdminRoute.GET("/:id/aggregate_group_ratio_overrides", controller.GetUserAggregateGroupRatioOverrides)
+					userAdminRoute.PUT("/:id/aggregate_group_ratio_overrides", controller.UpdateUserAggregateGroupRatioOverrides)
+					userAdminRoute.GET("/:id/invite_codes", controller.GetUserInviteCodesByAdmin)
+					userAdminRoute.PUT("/:id/invite_binding", controller.UpdateUserInviteBinding)
+					userAdminRoute.DELETE("/:id/invite_binding", controller.DeleteUserInviteBinding)
+					userAdminRoute.GET("/:id", controller.GetUser)
+					userAdminRoute.POST("/", controller.CreateUser)
+					userAdminRoute.POST("/manage", controller.ManageUser)
+					userAdminRoute.PUT("/", controller.UpdateUser)
+					userAdminRoute.DELETE("/:id", controller.DeleteUser)
+					userAdminRoute.DELETE("/:id/reset_passkey", controller.AdminResetPasskey)
+
+					// Admin 2FA routes
+					userAdminRoute.GET("/2fa/stats", controller.Admin2FAStats)
+					userAdminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
+				}
 			}
 		}
 
@@ -163,6 +170,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		subscriptionAdminRoute := apiRouter.Group("/subscription/admin")
 		subscriptionAdminRoute.Use(middleware.AdminAuth())
+		subscriptionAdminRoute.Use(middleware.AdminMenuAuth("subscription"))
 		{
 			subscriptionAdminRoute.GET("/plans", controller.AdminListSubscriptionPlans)
 			subscriptionAdminRoute.POST("/plans", controller.AdminCreateSubscriptionPlan)
@@ -230,6 +238,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		requestDumpRoute := apiRouter.Group("/request_dump")
 		requestDumpRoute.Use(middleware.AdminAuth())
+		requestDumpRoute.Use(middleware.AdminMenuAuth("request_dump"))
 		{
 			requestDumpRoute.GET("/status", controller.GetRequestDumpStatus)
 			requestDumpRoute.POST("/start", controller.StartRequestDump)
@@ -239,6 +248,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		violationRoute := apiRouter.Group("/violation")
 		violationRoute.Use(middleware.AdminAuth())
+		violationRoute.Use(middleware.AdminMenuAuth("violation"))
 		{
 			violationRoute.GET("/status", controller.GetViolationStatus)
 			violationRoute.PUT("/setting", controller.UpdateViolationSetting)
@@ -247,6 +257,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		channelRoute := apiRouter.Group("/channel")
 		channelRoute.Use(middleware.AdminAuth())
+		channelRoute.Use(middleware.AdminMenuAuth("channel"))
 		{
 			channelRoute.GET("/", controller.GetAllChannels)
 			channelRoute.GET("/search", controller.SearchChannels)
@@ -290,6 +301,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		aggregateGroupRoute := apiRouter.Group("/aggregate_group")
 		aggregateGroupRoute.Use(middleware.AdminAuth())
+		aggregateGroupRoute.Use(middleware.AdminMenuAuth("aggregate_group"))
 		{
 			aggregateGroupRoute.GET("/", controller.GetAggregateGroups)
 			aggregateGroupRoute.GET("/:id/runtime", controller.GetAggregateGroupRuntime)
@@ -323,6 +335,7 @@ func SetApiRouter(router *gin.Engine) {
 
 		redemptionRoute := apiRouter.Group("/redemption")
 		redemptionRoute.Use(middleware.AdminAuth())
+		redemptionRoute.Use(middleware.AdminMenuAuth("redemption"))
 		{
 			redemptionRoute.GET("/", controller.GetAllRedemptions)
 			redemptionRoute.GET("/search", controller.SearchRedemptions)
@@ -334,6 +347,7 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		inviteCodeRoute := apiRouter.Group("/invite_code")
 		inviteCodeRoute.Use(middleware.AdminAuth())
+		inviteCodeRoute.Use(middleware.AdminMenuAuth("invite_code"))
 		{
 			inviteCodeRoute.GET("/", controller.GetAllInviteCodes)
 			inviteCodeRoute.GET("/search", controller.SearchInviteCodes)
@@ -345,19 +359,19 @@ func SetApiRouter(router *gin.Engine) {
 			inviteCodeRoute.DELETE("/:id", controller.DeleteInviteCode)
 		}
 		logRoute := apiRouter.Group("/log")
-		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
-		logRoute.GET("/dashboard", middleware.AdminAuth(), controller.GetLogsDashboard)
-		logRoute.DELETE("/", middleware.AdminAuth(), controller.DeleteHistoryLogs)
-		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)
-		logRoute.GET("/usage_stats", middleware.AdminAuth(), controller.GetUsageStats)
+		logRoute.GET("/", middleware.AdminAuth(), middleware.AdminMenuAuth("log_dashboard"), controller.GetAllLogs)
+		logRoute.GET("/dashboard", middleware.AdminAuth(), middleware.AdminMenuAuth("log_dashboard"), controller.GetLogsDashboard)
+		logRoute.DELETE("/", middleware.AdminAuth(), middleware.AdminMenuAuth("log_dashboard"), controller.DeleteHistoryLogs)
+		logRoute.GET("/stat", middleware.AdminAuth(), middleware.AdminMenuAuth("log_dashboard"), controller.GetLogsStat)
+		logRoute.GET("/usage_stats", middleware.AdminAuth(), middleware.AdminMenuAuth("usage_stats"), controller.GetUsageStats)
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
-		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
-		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
+		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), middleware.AdminMenuAuth("log_dashboard"), controller.GetChannelAffinityUsageCacheStats)
+		logRoute.GET("/search", middleware.AdminAuth(), middleware.AdminMenuAuth("log_dashboard"), controller.SearchAllLogs)
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
 		logRoute.GET("/self/search", middleware.UserAuth(), middleware.SearchRateLimit(), controller.SearchUserLogs)
 
 		dataRoute := apiRouter.Group("/data")
-		dataRoute.GET("/", middleware.AdminAuth(), controller.GetAllQuotaDates)
+		dataRoute.GET("/", middleware.AdminAuth(), middleware.AdminMenuAuth("log_dashboard"), controller.GetAllQuotaDates)
 		dataRoute.GET("/self", middleware.UserAuth(), controller.GetUserQuotaDates)
 
 		logRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
@@ -372,6 +386,7 @@ func SetApiRouter(router *gin.Engine) {
 
 		prefillGroupRoute := apiRouter.Group("/prefill_group")
 		prefillGroupRoute.Use(middleware.AdminAuth())
+		prefillGroupRoute.Use(middleware.AdminMenuAuth("models"))
 		{
 			prefillGroupRoute.GET("/", controller.GetPrefillGroups)
 			prefillGroupRoute.POST("/", controller.CreatePrefillGroup)
@@ -381,18 +396,19 @@ func SetApiRouter(router *gin.Engine) {
 
 		mjRoute := apiRouter.Group("/mj")
 		mjRoute.GET("/self", middleware.UserAuth(), controller.GetUserMidjourney)
-		mjRoute.GET("/", middleware.AdminAuth(), controller.GetAllMidjourney)
+		mjRoute.GET("/", middleware.AdminAuth(), middleware.AdminMenuAuth("log_dashboard"), controller.GetAllMidjourney)
 
 		taskRoute := apiRouter.Group("/task")
 		{
 			taskRoute.GET("/self", middleware.UserAuth(), controller.GetUserTask)
-			taskRoute.GET("/async/stats", middleware.AdminAuth(), controller.GetAsyncTaskStats)
-			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
-			taskRoute.PUT("/:task_id/block", middleware.AdminAuth(), controller.UpdateTaskBlockStatus)
+			taskRoute.GET("/async/stats", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.GetAsyncTaskStats)
+			taskRoute.GET("/", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.GetAllTask)
+			taskRoute.PUT("/:task_id/block", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.UpdateTaskBlockStatus)
 		}
 
 		vendorRoute := apiRouter.Group("/vendors")
 		vendorRoute.Use(middleware.AdminAuth())
+		vendorRoute.Use(middleware.AdminMenuAuth("models"))
 		{
 			vendorRoute.GET("/", controller.GetAllVendors)
 			vendorRoute.GET("/search", controller.SearchVendors)
@@ -404,6 +420,7 @@ func SetApiRouter(router *gin.Engine) {
 
 		modelsRoute := apiRouter.Group("/models")
 		modelsRoute.Use(middleware.AdminAuth())
+		modelsRoute.Use(middleware.AdminMenuAuth("models"))
 		{
 			modelsRoute.GET("/sync_upstream/preview", controller.SyncUpstreamPreview)
 			modelsRoute.POST("/sync_upstream", controller.SyncUpstreamModels)
@@ -419,6 +436,7 @@ func SetApiRouter(router *gin.Engine) {
 		// Deployments (model deployment management)
 		deploymentsRoute := apiRouter.Group("/deployments")
 		deploymentsRoute.Use(middleware.AdminAuth())
+		deploymentsRoute.Use(middleware.AdminMenuAuth("deployment"))
 		{
 			deploymentsRoute.GET("/settings", controller.GetModelDeploymentSettings)
 			deploymentsRoute.POST("/settings/test-connection", controller.TestIoNetConnection)

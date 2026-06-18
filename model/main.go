@@ -290,6 +290,7 @@ func migrateDB() error {
 		&UserOAuthBinding{},
 		&InviteCode{},
 		&ViolationLog{},
+		&AdminMenuPermission{},
 	)
 	if err != nil {
 		return err
@@ -305,6 +306,9 @@ func migrateDB() error {
 	}
 	if err := backfillInvalidatedSubscriptionOrders(); err != nil {
 		common.SysLog(fmt.Sprintf("Warning: failed to backfill invalidated subscription orders: %v", err))
+	}
+	if err := BackfillAdminMenuPermissionsForExistingAdmins(); err != nil {
+		common.SysLog(fmt.Sprintf("Warning: failed to backfill admin menu permissions: %v", err))
 	}
 	return nil
 }
@@ -345,6 +349,7 @@ func migrateDBFast() error {
 		{&UserOAuthBinding{}, "UserOAuthBinding"},
 		{&InviteCode{}, "InviteCode"},
 		{&ViolationLog{}, "ViolationLog"},
+		{&AdminMenuPermission{}, "AdminMenuPermission"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
@@ -380,6 +385,9 @@ func migrateDBFast() error {
 	}
 	if err := backfillInvalidatedSubscriptionOrders(); err != nil {
 		common.SysLog(fmt.Sprintf("Warning: failed to backfill invalidated subscription orders: %v", err))
+	}
+	if err := BackfillAdminMenuPermissionsForExistingAdmins(); err != nil {
+		common.SysLog(fmt.Sprintf("Warning: failed to backfill admin menu permissions: %v", err))
 	}
 	common.SysLog("database migrated")
 	return nil

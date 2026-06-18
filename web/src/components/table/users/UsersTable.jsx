@@ -35,6 +35,8 @@ import UserSubscriptionsModal from './modals/UserSubscriptionsModal';
 import InviteBindingModal from './modals/InviteBindingModal';
 import AggregateGroupRatioOverridesModal from './modals/AggregateGroupRatioOverridesModal';
 import ExtraUsableGroupsModal from './modals/ExtraUsableGroupsModal';
+import AdminMenuPermissionsModal from './modals/AdminMenuPermissionsModal';
+import PromoteRootUserModal from './modals/PromoteRootUserModal';
 
 const UsersTable = (usersData) => {
   const {
@@ -65,6 +67,9 @@ const UsersTable = (usersData) => {
   const [enableDisableAction, setEnableDisableAction] = useState('');
   const [showResetPasskeyModal, setShowResetPasskeyModal] = useState(false);
   const [showResetTwoFAModal, setShowResetTwoFAModal] = useState(false);
+  const [showAdminMenuPermissionsModal, setShowAdminMenuPermissionsModal] =
+    useState(false);
+  const [showPromoteRootModal, setShowPromoteRootModal] = useState(false);
   const [showUserSubscriptionsModal, setShowUserSubscriptionsModal] =
     useState(false);
   const [showInviteBindingModal, setShowInviteBindingModal] = useState(false);
@@ -127,6 +132,16 @@ const UsersTable = (usersData) => {
     setShowAggregateGroupRatioOverridesModal(true);
   };
 
+  const showAdminMenuPermissionsUserModal = (user) => {
+    setModalUser(user);
+    setShowAdminMenuPermissionsModal(true);
+  };
+
+  const showPromoteRootUserModal = (user) => {
+    setModalUser(user);
+    setShowPromoteRootModal(true);
+  };
+
   // Modal confirm handlers
   const handlePromoteConfirm = () => {
     manageUser(modalUser.id, 'promote', modalUser);
@@ -136,6 +151,11 @@ const UsersTable = (usersData) => {
   const handleDemoteConfirm = () => {
     manageUser(modalUser.id, 'demote', modalUser);
     setShowDemoteModal(false);
+  };
+
+  const handlePromoteRootConfirm = () => {
+    manageUser(modalUser.id, 'promote_root', modalUser);
+    setShowPromoteRootModal(false);
   };
 
   const handleEnableDisableConfirm = () => {
@@ -170,6 +190,8 @@ const UsersTable = (usersData) => {
       showExtraUsableGroupsModal: showExtraUsableGroupsUserModal,
       showAggregateGroupRatioOverridesModal:
         showAggregateGroupRatioOverridesUserModal,
+      showAdminMenuPermissionsModal: showAdminMenuPermissionsUserModal,
+      showPromoteRootModal: showPromoteRootUserModal,
     });
   }, [
     t,
@@ -185,6 +207,8 @@ const UsersTable = (usersData) => {
     showInviteBindingUserModal,
     showExtraUsableGroupsUserModal,
     showAggregateGroupRatioOverridesUserModal,
+    showAdminMenuPermissionsUserModal,
+    showPromoteRootUserModal,
   ]);
 
   // Handle compact mode by removing fixed positioning
@@ -315,6 +339,21 @@ const UsersTable = (usersData) => {
         user={modalUser}
         t={t}
         onSuccess={() => refresh?.()}
+      />
+
+      <AdminMenuPermissionsModal
+        visible={showAdminMenuPermissionsModal}
+        onCancel={() => setShowAdminMenuPermissionsModal(false)}
+        user={modalUser}
+        t={t}
+      />
+
+      <PromoteRootUserModal
+        visible={showPromoteRootModal}
+        onCancel={() => setShowPromoteRootModal(false)}
+        onConfirm={handlePromoteRootConfirm}
+        user={modalUser}
+        t={t}
       />
     </>
   );

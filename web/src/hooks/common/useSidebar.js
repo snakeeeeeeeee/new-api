@@ -19,7 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useEffect, useMemo, useContext, useRef } from 'react';
 import { StatusContext } from '../../context/Status';
-import { API } from '../../helpers';
+import {
+  API,
+  getAdminMenuPermissionsFromUser,
+  mergeUserPermissionData,
+} from '../../helpers';
 
 // 创建一个全局事件系统来同步所有useSidebar实例
 const sidebarEventTarget = new EventTarget();
@@ -123,6 +127,12 @@ export const useSidebar = () => {
       }
 
       const res = await API.get('/api/user/self');
+      if (res.data.success) {
+        const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+        const nextUser = mergeUserPermissionData(currentUser, res.data.data);
+        localStorage.setItem('user', JSON.stringify(nextUser));
+      }
+
       if (res.data.success && res.data.data.sidebar_modules) {
         let config;
         // 检查sidebar_modules是字符串还是对象
@@ -255,13 +265,19 @@ export const useSidebar = () => {
         if (moduleKey === 'enabled') return;
 
         const adminAllowed = adminSection[moduleKey];
+        let menuAllowed = true;
+        if (sectionKey === 'admin') {
+          const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+          menuAllowed =
+            getAdminMenuPermissionsFromUser(currentUser)?.[moduleKey] === true;
+        }
         // 当userSection存在时检查模块状态，否则默认为true
         const userAllowed = userSection
           ? userSection[moduleKey] !== false
           : true;
 
         result[sectionKey][moduleKey] =
-          adminAllowed && userAllowed && sectionEnabled;
+          adminAllowed && menuAllowed && userAllowed && sectionEnabled;
       });
     });
 

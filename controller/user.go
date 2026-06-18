@@ -210,13 +210,18 @@ func Login(c *gin.Context) {
 
 // setup session & cookies and then return user info
 func setupLogin(user *model.User, c *gin.Context) {
+	adminMenuPermissions, err := model.GetAdminMenuPermissionMap(user.Id, user.Role)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	session := sessions.Default(c)
 	session.Set("id", user.Id)
 	session.Set("username", user.Username)
 	session.Set("role", user.Role)
 	session.Set("status", user.Status)
 	session.Set("group", user.Group)
-	err := session.Save()
+	err = session.Save()
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserSessionSaveFailed)
 		return
@@ -225,12 +230,13 @@ func setupLogin(user *model.User, c *gin.Context) {
 		"message": "",
 		"success": true,
 		"data": map[string]any{
-			"id":           user.Id,
-			"username":     user.Username,
-			"display_name": user.DisplayName,
-			"role":         user.Role,
-			"status":       user.Status,
-			"group":        user.Group,
+			"id":                     user.Id,
+			"username":               user.Username,
+			"display_name":           user.DisplayName,
+			"role":                   user.Role,
+			"status":                 user.Status,
+			"group":                  user.Group,
+			"admin_menu_permissions": adminMenuPermissions,
 		},
 	})
 }
@@ -488,8 +494,21 @@ func GetAllUsers(c *gin.Context) {
 func SearchUsers(c *gin.Context) {
 	keyword := c.Query("keyword")
 	group := c.Query("group")
+	roleQuery := strings.TrimSpace(c.Query("role"))
+	var role *int
+	if roleQuery != "" {
+		roleValue, err := strconv.Atoi(roleQuery)
+		if err != nil ||
+			(roleValue != common.RoleCommonUser &&
+				roleValue != common.RoleAdminUser &&
+				roleValue != common.RoleRootUser) {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		role = &roleValue
+	}
 	pageInfo := common.GetPageQuery(c)
-	users, total, err := model.SearchUsers(keyword, group, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	users, total, err := model.SearchUsers(keyword, group, role, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -701,17 +720,21 @@ func GetAffCode(c *gin.Context) {
 
 func GetSelf(c *gin.Context) {
 	id := c.GetInt("id")
-	userRole := c.GetInt("role")
 	user, err := model.GetUserById(id, false)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	syncSessionUserInfo(c, user)
 	// Hide admin remarks: set to empty to trigger omitempty tag, ensuring the remark field is not included in JSON returned to regular users
 	user.Remark = ""
 
 	// 计算用户权限信息
-	permissions := calculateUserPermissions(userRole)
+	permissions, err := calculateUserPermissions(user.Id, user.Role)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	// 获取用户设置并提取sidebar_modules
 	userSetting := user.GetSetting()
@@ -821,9 +844,37 @@ func GetSelf(c *gin.Context) {
 	return
 }
 
+func syncSessionUserInfo(c *gin.Context, user *model.User) {
+	if c.GetBool("use_access_token") {
+		return
+	}
+	if _, exists := c.Get(sessions.DefaultKey); !exists {
+		return
+	}
+	session := sessions.Default(c)
+	if session.Get("id") == nil {
+		return
+	}
+	session.Set("id", user.Id)
+	session.Set("username", user.Username)
+	session.Set("role", user.Role)
+	session.Set("status", user.Status)
+	session.Set("group", user.Group)
+	_ = session.Save()
+	c.Set("role", user.Role)
+	c.Set("status", user.Status)
+	c.Set("group", user.Group)
+	c.Set("user_group", user.Group)
+}
+
 // 计算用户权限的辅助函数
-func calculateUserPermissions(userRole int) map[string]interface{} {
+func calculateUserPermissions(userId int, userRole int) (map[string]interface{}, error) {
 	permissions := map[string]interface{}{}
+	adminMenuPermissions, err := model.GetAdminMenuPermissionMap(userId, userRole)
+	if err != nil {
+		return nil, err
+	}
+	permissions["admin_menu_permissions"] = adminMenuPermissions
 
 	// 根据用户角色计算权限
 	if userRole == common.RoleRootUser {
@@ -846,7 +897,7 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 		}
 	}
 
-	return permissions
+	return permissions, nil
 }
 
 // 根据用户角色生成默认的边栏配置
@@ -1036,6 +1087,79 @@ func AdminClearUserBinding(c *gin.Context) {
 func canAdminManageUser(c *gin.Context, user *model.User) bool {
 	myRole := c.GetInt("role")
 	return myRole > user.Role || myRole == common.RoleRootUser
+}
+
+type UpdateAdminMenuPermissionsRequest struct {
+	MenuKeys []string `json:"menu_keys"`
+}
+
+func GetAdminMenuPermissions(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	user, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if user.Role != common.RoleAdminUser {
+		common.ApiErrorMsg(c, "只能配置普通管理员的菜单权限")
+		return
+	}
+	keys, err := model.GetAdminMenuPermissionKeys(user.Id, user.Role)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	permissionMap, err := model.GetAdminMenuPermissionMap(user.Id, user.Role)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"menu_keys":      keys,
+		"permissions":    permissionMap,
+		"default_keys":   model.DefaultAdminMenuPermissionKeys(),
+		"grantable_keys": model.DefaultAdminMenuPermissionKeys(),
+	})
+}
+
+func UpdateAdminMenuPermissions(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	user, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if user.Role != common.RoleAdminUser {
+		common.ApiErrorMsg(c, "只能配置普通管理员的菜单权限")
+		return
+	}
+
+	var req UpdateAdminMenuPermissionsRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	normalized, invalid := model.NormalizeAdminMenuPermissionKeys(req.MenuKeys)
+	if len(invalid) > 0 {
+		common.ApiErrorMsg(c, "菜单权限无效: "+strings.Join(invalid, ", "))
+		return
+	}
+	if err := model.SetAdminMenuPermissions(user.Id, normalized); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(user.Id, model.LogTypeManage, fmt.Sprintf("超级管理员修改管理员菜单权限: %s", strings.Join(normalized, ",")))
+	common.ApiSuccess(c, gin.H{
+		"menu_keys": normalized,
+	})
 }
 
 func formatInviteBindingLog(adminID int, change *model.InviteBindingChange) string {
@@ -1656,6 +1780,24 @@ func ManageUser(c *gin.Context) {
 			return
 		}
 		user.Role = common.RoleAdminUser
+		if err := model.AddMissingDefaultAdminMenuPermissions(user.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	case "promote_root":
+		if myRole != common.RoleRootUser {
+			common.ApiErrorI18n(c, i18n.MsgUserAdminCannotPromote)
+			return
+		}
+		if user.Role != common.RoleAdminUser {
+			common.ApiErrorMsg(c, "只能将普通管理员提升为超级管理员")
+			return
+		}
+		user.Role = common.RoleRootUser
+		if err := model.DeleteAdminMenuPermissions(user.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	case "demote":
 		if user.Role == common.RoleRootUser {
 			common.ApiErrorI18n(c, i18n.MsgUserCannotDemoteRootUser)
@@ -1666,6 +1808,10 @@ func ManageUser(c *gin.Context) {
 			return
 		}
 		user.Role = common.RoleCommonUser
+		if err := model.DeleteAdminMenuPermissions(user.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 
 	if err := user.Update(false); err != nil {
