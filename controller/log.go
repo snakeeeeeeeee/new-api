@@ -126,17 +126,27 @@ func GetUsageStats(c *gin.Context) {
 	channel, _ := strconv.Atoi(c.Query("channel"))
 	limit, _ := strconv.Atoi(c.Query("limit"))
 	userId, _ := strconv.Atoi(c.Query("user_id"))
+	rechargePage, _ := strconv.Atoi(c.Query("recharge_page"))
+	rechargePageSize, _ := strconv.Atoi(c.Query("recharge_page_size"))
+	rechargeUserId, _ := strconv.Atoi(c.Query("recharge_user_id"))
+	rechargeDetailPage, _ := strconv.Atoi(c.Query("recharge_detail_page"))
+	rechargeDetailPageSize, _ := strconv.Atoi(c.Query("recharge_detail_page_size"))
 
 	stats, err := model.GetUsageStats(model.UsageStatsQuery{
-		StartTimestamp:   startTimestamp,
-		EndTimestamp:     endTimestamp,
-		UserId:           userId,
-		ModelName:        c.Query("model_name"),
-		Username:         c.Query("username"),
-		Group:            c.Query("group"),
-		Channel:          channel,
-		Limit:            limit,
-		TrendGranularity: c.Query("trend_granularity"),
+		StartTimestamp:     startTimestamp,
+		EndTimestamp:       endTimestamp,
+		UserId:             userId,
+		ModelName:          c.Query("model_name"),
+		Username:           c.Query("username"),
+		Group:              c.Query("group"),
+		Channel:            channel,
+		Limit:              limit,
+		TrendGranularity:   c.Query("trend_granularity"),
+		RechargePage:       rechargePage,
+		RechargePageSize:   rechargePageSize,
+		RechargeUserId:     rechargeUserId,
+		RechargeDetailPage: rechargeDetailPage,
+		RechargeDetailSize: rechargeDetailPageSize,
 	})
 	if err != nil {
 		common.ApiError(c, err)

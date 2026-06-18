@@ -41,6 +41,7 @@ import {
 import {
   BarChart3,
   Clock3,
+  CreditCard,
   RefreshCw,
   Search,
   Sparkles,
@@ -50,16 +51,24 @@ import {
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { DATE_RANGE_PRESETS } from '../../constants/console.constants';
-import { API, renderNumber, showError } from '../../helpers';
+import {
+  API,
+  renderNumber,
+  renderPaymentAmount,
+  renderQuotaWithAmount,
+  showError,
+} from '../../helpers';
 
 const { Text, Title } = Typography;
 
 const CHART_CONFIG = { mode: 'desktop-browser' };
 
 const defaultDateRange = () => [
-  dayjs().subtract(6, 'day').startOf('day').toDate(),
+  dayjs().startOf('day').toDate(),
   dayjs().endOf('day').toDate(),
 ];
+
+const DEFAULT_RECHARGE_PAGE_SIZE = 20;
 
 const DEFAULT_QUOTA_PER_UNIT = 500000;
 
@@ -148,6 +157,17 @@ const UsageStatsPage = () => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedUserStats, setSelectedUserStats] = useState(null);
   const [selectedUserLoading, setSelectedUserLoading] = useState(false);
+  const [rechargePage, setRechargePage] = useState(1);
+  const [rechargePageSize, setRechargePageSize] = useState(
+    DEFAULT_RECHARGE_PAGE_SIZE,
+  );
+  const [selectedRechargeUser, setSelectedRechargeUser] = useState(null);
+  const [selectedRechargeStats, setSelectedRechargeStats] = useState(null);
+  const [selectedRechargeLoading, setSelectedRechargeLoading] = useState(false);
+  const [rechargeDetailPage, setRechargeDetailPage] = useState(1);
+  const [rechargeDetailPageSize, setRechargeDetailPageSize] = useState(
+    DEFAULT_RECHARGE_PAGE_SIZE,
+  );
 
   useEffect(() => {
     initVChartSemiTheme({
@@ -170,41 +190,59 @@ const UsageStatsPage = () => {
     };
   }, [dateRange]);
 
-  const loadStats = async () => {
+  const buildBaseParams = () => {
     if (!normalizedRange) {
+      return null;
+    }
+    const params = {
+      start_timestamp: normalizedRange.startTime,
+      end_timestamp: normalizedRange.endTime,
+      limit: 50,
+    };
+    if (modelName.trim()) {
+      params.model_name = modelName.trim();
+    }
+    if (username.trim()) {
+      params.username = username.trim();
+    }
+    if (group.trim()) {
+      params.group = group.trim();
+    }
+    if (channel.trim()) {
+      params.channel = channel.trim();
+    }
+    if (trendGranularity !== 'auto') {
+      params.trend_granularity = trendGranularity;
+    }
+    return params;
+  };
+
+  const loadStats = async (options = {}) => {
+    const params = buildBaseParams();
+    if (!params) {
       showError(t('请选择时间范围'));
       return;
     }
 
+    const nextRechargePage = options.rechargePage || 1;
+    const nextRechargePageSize = options.rechargePageSize || rechargePageSize;
+    params.recharge_page = nextRechargePage;
+    params.recharge_page_size = nextRechargePageSize;
+
     setLoading(true);
     try {
-      const params = {
-        start_timestamp: normalizedRange.startTime,
-        end_timestamp: normalizedRange.endTime,
-        limit: 50,
-      };
-      if (modelName.trim()) {
-        params.model_name = modelName.trim();
-      }
-      if (username.trim()) {
-        params.username = username.trim();
-      }
-      if (group.trim()) {
-        params.group = group.trim();
-      }
-      if (channel.trim()) {
-        params.channel = channel.trim();
-      }
-      if (trendGranularity !== 'auto') {
-        params.trend_granularity = trendGranularity;
-      }
-
       const res = await API.get('/api/log/usage_stats', { params });
       const { success, message, data } = res.data;
       if (success) {
         setStats(data);
+        setRechargePage(data?.recharge_ranking?.page || nextRechargePage);
+        setRechargePageSize(
+          data?.recharge_ranking?.page_size || nextRechargePageSize,
+        );
         setSelectedUser(null);
         setSelectedUserStats(null);
+        setSelectedRechargeUser(null);
+        setSelectedRechargeStats(null);
       } else {
         showError(message || t('加载失败'));
       }
@@ -242,37 +280,28 @@ const UsageStatsPage = () => {
   const selectedUserRank =
     selectedUserStats?.ranking?.[0] || selectedUser || {};
   const selectedUserTrend = selectedUserStats?.trend || [];
+  const rechargeSummary = stats?.recharge_summary || {};
+  const rechargeRanking = stats?.recharge_ranking || {};
+  const rechargeItems = rechargeRanking.items || [];
+  const selectedRechargeDetails =
+    selectedRechargeStats?.recharge_details?.items || [];
+  const selectedRechargeDetailPage =
+    selectedRechargeStats?.recharge_details || {};
   const hasUsageData =
     ranking.length > 0 ||
     models.length > 0 ||
     trend.some((item) => item.request_count > 0);
 
   const loadSelectedUserStats = async (record) => {
-    if (!record || !normalizedRange) {
+    const params = buildBaseParams();
+    if (!record || !params) {
       return;
     }
     setSelectedUser(record);
     setSelectedUserStats(null);
     setSelectedUserLoading(true);
     try {
-      const params = {
-        start_timestamp: normalizedRange.startTime,
-        end_timestamp: normalizedRange.endTime,
-        user_id: record.user_id,
-        limit: 50,
-      };
-      if (modelName.trim()) {
-        params.model_name = modelName.trim();
-      }
-      if (group.trim()) {
-        params.group = group.trim();
-      }
-      if (channel.trim()) {
-        params.channel = channel.trim();
-      }
-      if (trendGranularity !== 'auto') {
-        params.trend_granularity = trendGranularity;
-      }
+      params.user_id = record.user_id;
       const res = await API.get('/api/log/usage_stats', { params });
       const { success, message, data } = res.data;
       if (success) {
@@ -285,6 +314,71 @@ const UsageStatsPage = () => {
     } finally {
       setSelectedUserLoading(false);
     }
+  };
+
+  const loadSelectedRechargeStats = async (record, options = {}) => {
+    const params = buildBaseParams();
+    if (!record || !params) {
+      return;
+    }
+    const nextPage = options.page || 1;
+    const nextPageSize = options.pageSize || rechargeDetailPageSize;
+
+    setSelectedRechargeUser(record);
+    setSelectedRechargeStats(null);
+    setSelectedRechargeLoading(true);
+    try {
+      params.recharge_user_id = record.user_id;
+      params.recharge_detail_page = nextPage;
+      params.recharge_detail_page_size = nextPageSize;
+      const res = await API.get('/api/log/usage_stats', { params });
+      const { success, message, data } = res.data;
+      if (success) {
+        setSelectedRechargeStats(data);
+        setRechargeDetailPage(data?.recharge_details?.page || nextPage);
+        setRechargeDetailPageSize(
+          data?.recharge_details?.page_size || nextPageSize,
+        );
+      } else {
+        showError(message || t('加载失败'));
+      }
+    } catch (error) {
+      showError(error.message || t('加载失败'));
+    } finally {
+      setSelectedRechargeLoading(false);
+    }
+  };
+
+  const handleRechargePageChange = (page) => {
+    loadStats({ rechargePage: page, rechargePageSize });
+  };
+
+  const handleRechargePageSizeChange = (pageSize) => {
+    loadStats({ rechargePage: 1, rechargePageSize: pageSize });
+  };
+
+  const handleRechargeDetailPageChange = (page) => {
+    if (!selectedRechargeUser) {
+      return;
+    }
+    loadSelectedRechargeStats(selectedRechargeUser, {
+      page,
+      pageSize: rechargeDetailPageSize,
+    });
+  };
+
+  const handleRechargeDetailPageSizeChange = (pageSize) => {
+    if (!selectedRechargeUser) {
+      return;
+    }
+    loadSelectedRechargeStats(selectedRechargeUser, {
+      page: 1,
+      pageSize,
+    });
+  };
+
+  const refreshStats = () => {
+    loadStats({ rechargePage, rechargePageSize });
   };
 
   const trendSpec = useMemo(
@@ -744,6 +838,102 @@ const UsageStatsPage = () => {
     [t],
   );
 
+  const rechargeRankingColumns = useMemo(
+    () => [
+      {
+        title: t('排名'),
+        dataIndex: 'rank',
+        width: 76,
+        render: (_, __, index) =>
+          ((rechargeRanking.page || rechargePage) - 1) *
+            (rechargeRanking.page_size || rechargePageSize) +
+          index +
+          1,
+      },
+      {
+        title: t('用户'),
+        dataIndex: 'username',
+        render: (_, record) => (
+          <div className='min-w-0'>
+            <div className='truncate font-medium'>{record.username || '-'}</div>
+            <Text type='tertiary' size='small'>
+              {t('ID')} {record.user_id}
+            </Text>
+          </div>
+        ),
+      },
+      {
+        title: t('站内充值额度'),
+        dataIndex: 'amount',
+        sorter: (a, b) => (a.amount || 0) - (b.amount || 0),
+        render: (value) => renderQuotaWithAmount(value || 0),
+      },
+      {
+        title: t('实付金额'),
+        dataIndex: 'money',
+        sorter: (a, b) => (a.money || 0) - (b.money || 0),
+        render: (value) => renderPaymentAmount(value || 0),
+      },
+      {
+        title: t('充值笔数'),
+        dataIndex: 'order_count',
+        sorter: (a, b) => (a.order_count || 0) - (b.order_count || 0),
+        render: (value) => renderNumber(value || 0),
+      },
+      {
+        title: t('最后充值时间'),
+        dataIndex: 'last_topup_at',
+        render: (value) => formatDateTime(value),
+      },
+    ],
+    [rechargePage, rechargePageSize, rechargeRanking, t],
+  );
+
+  const rechargeDetailColumns = useMemo(
+    () => [
+      {
+        title: t('订单号'),
+        dataIndex: 'trade_no',
+        render: (value) => <Text copyable>{value || '-'}</Text>,
+      },
+      {
+        title: t('支付方式'),
+        dataIndex: 'payment_method',
+        render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
+      },
+      {
+        title: t('站内充值额度'),
+        dataIndex: 'amount',
+        render: (value) => renderQuotaWithAmount(value || 0),
+      },
+      {
+        title: t('实付金额'),
+        dataIndex: 'money',
+        render: (value) => renderPaymentAmount(value || 0),
+      },
+      {
+        title: t('创建时间'),
+        dataIndex: 'create_time',
+        render: (value) => formatDateTime(value),
+      },
+      {
+        title: t('完成时间'),
+        dataIndex: 'complete_time',
+        render: (value) => formatDateTime(value),
+      },
+      {
+        title: t('状态'),
+        dataIndex: 'status',
+        render: (value) => (
+          <Tag color={value === 'success' ? 'green' : 'grey'} shape='circle'>
+            {value || '-'}
+          </Tag>
+        ),
+      },
+    ],
+    [t],
+  );
+
   return (
     <div className='mt-[60px] px-2'>
       <div className='flex flex-col gap-4'>
@@ -830,7 +1020,7 @@ const UsageStatsPage = () => {
                   icon={<RefreshCw size={16} />}
                   disabled={!stats}
                   loading={loading}
-                  onClick={loadStats}
+                  onClick={refreshStats}
                 >
                   {t('刷新')}
                 </Button>
@@ -839,7 +1029,7 @@ const UsageStatsPage = () => {
           </div>
         </Card>
 
-        <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4'>
+        <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
           <SummaryCard
             title={t('总消耗额度')}
             value={formatQuotaUSD(summary.quota || 0)}
@@ -867,6 +1057,18 @@ const UsageStatsPage = () => {
                 : t('等待查询')
             }
             icon={<BarChart3 size={20} />}
+          />
+          <SummaryCard
+            title={t('站内充值额度')}
+            value={renderQuotaWithAmount(rechargeSummary.amount || 0)}
+            hint={`${t('充值笔数')} ${renderNumber(rechargeSummary.order_count || 0)}`}
+            icon={<CreditCard size={20} />}
+          />
+          <SummaryCard
+            title={t('实付金额')}
+            value={renderPaymentAmount(rechargeSummary.money || 0)}
+            hint={`${t('充值用户')} ${renderNumber(rechargeSummary.user_count || 0)} / ${t('最后充值时间')} ${formatDateTime(rechargeSummary.last_topup_at)}`}
+            icon={<WalletCards size={20} />}
           />
         </div>
 
@@ -951,6 +1153,56 @@ const UsageStatsPage = () => {
                 }
                 title={t('暂无用户消耗数据')}
                 description={t('当前筛选范围内没有消费日志')}
+              />
+            }
+          />
+        </Card>
+
+        <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
+          <div className='mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between'>
+            <div>
+              <Title heading={6} className='!mb-1'>
+                {t('用户充值排行')}
+              </Title>
+              <Text type='tertiary'>
+                {t('点击用户行查看该用户的充值订单详情')}
+              </Text>
+            </div>
+            <Tag color='orange' shape='circle'>
+              {t('按实付金额倒序')}
+            </Tag>
+          </div>
+          <Table
+            rowKey='user_id'
+            columns={rechargeRankingColumns}
+            dataSource={rechargeItems}
+            loading={loading}
+            pagination={{
+              currentPage: rechargeRanking.page || rechargePage,
+              pageSize: rechargeRanking.page_size || rechargePageSize,
+              total: rechargeRanking.total || 0,
+              showSizeChanger: true,
+              pageSizeOpts: [10, 20, 50, 100],
+              onPageChange: handleRechargePageChange,
+              onPageSizeChange: handleRechargePageSizeChange,
+            }}
+            onRow={(record) => ({
+              onClick: () => loadSelectedRechargeStats(record),
+              className: 'cursor-pointer',
+            })}
+            scroll={{ x: 'max-content' }}
+            empty={
+              <Empty
+                image={
+                  <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                }
+                darkModeImage={
+                  <IllustrationNoResultDark
+                    style={{ width: 150, height: 150 }}
+                  />
+                }
+                title={t('暂无用户充值数据')}
+                description={t('当前筛选范围内没有成功充值订单')}
               />
             }
           />
@@ -1071,6 +1323,80 @@ const UsageStatsPage = () => {
                 scroll={{ x: true }}
               />
             )}
+          </div>
+        )}
+      </SideSheet>
+
+      <SideSheet
+        title={
+          selectedRechargeUser
+            ? `${t('用户充值详情')} · ${selectedRechargeUser.username || selectedRechargeUser.user_id}`
+            : t('用户充值详情')
+        }
+        visible={!!selectedRechargeUser}
+        onCancel={() => setSelectedRechargeUser(null)}
+        width='min(980px, 100vw)'
+        placement='right'
+      >
+        {selectedRechargeUser && (
+          <div className='flex flex-col gap-4'>
+            <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
+              <SummaryCard
+                title={t('站内充值额度')}
+                value={renderQuotaWithAmount(selectedRechargeUser.amount || 0)}
+                hint={`${t('ID')} ${selectedRechargeUser.user_id}`}
+                icon={<CreditCard size={18} />}
+              />
+              <SummaryCard
+                title={t('实付金额')}
+                value={renderPaymentAmount(selectedRechargeUser.money || 0)}
+                hint={`${t('充值笔数')} ${renderNumber(selectedRechargeUser.order_count || 0)}`}
+                icon={<WalletCards size={18} />}
+              />
+              <SummaryCard
+                title={t('最后充值时间')}
+                value={formatDateTime(selectedRechargeUser.last_topup_at)}
+                hint={`${t('订单总数')} ${renderNumber(selectedRechargeDetailPage.total ?? selectedRechargeUser.order_count ?? 0)}`}
+                icon={<Clock3 size={18} />}
+              />
+            </div>
+            <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
+              <Table
+                rowKey='id'
+                columns={rechargeDetailColumns}
+                dataSource={selectedRechargeDetails}
+                loading={selectedRechargeLoading}
+                pagination={{
+                  currentPage:
+                    selectedRechargeDetailPage.page || rechargeDetailPage,
+                  pageSize:
+                    selectedRechargeDetailPage.page_size ||
+                    rechargeDetailPageSize,
+                  total: selectedRechargeDetailPage.total || 0,
+                  showSizeChanger: true,
+                  pageSizeOpts: [10, 20, 50, 100],
+                  onPageChange: handleRechargeDetailPageChange,
+                  onPageSizeChange: handleRechargeDetailPageSizeChange,
+                }}
+                scroll={{ x: 'max-content' }}
+                empty={
+                  <Empty
+                    image={
+                      <IllustrationNoResult
+                        style={{ width: 150, height: 150 }}
+                      />
+                    }
+                    darkModeImage={
+                      <IllustrationNoResultDark
+                        style={{ width: 150, height: 150 }}
+                      />
+                    }
+                    title={t('暂无充值订单')}
+                    description={t('该用户在当前筛选范围内没有成功充值订单')}
+                  />
+                }
+              />
+            </Card>
           </div>
         )}
       </SideSheet>

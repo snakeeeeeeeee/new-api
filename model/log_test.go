@@ -218,6 +218,11 @@ func seedUsageStatsLog(t *testing.T, logItem *Log) {
 	require.NoError(t, LOG_DB.Create(logItem).Error)
 }
 
+func seedUsageStatsTopUp(t *testing.T, topUp *TopUp) {
+	t.Helper()
+	require.NoError(t, DB.Create(topUp).Error)
+}
+
 func sumUsageStatsTrend(trend []UsageStatsTrendPoint) UsageStatsTrendPoint {
 	var total UsageStatsTrendPoint
 	for _, point := range trend {
@@ -520,6 +525,130 @@ func TestGetUsageStatsFiltersByUserID(t *testing.T) {
 	require.Equal(t, 11, stats.UserModelDetails[0].UserId)
 }
 
+func TestGetUsageStatsRechargeRankingAndDetails(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM top_ups").Error)
+
+	base := time.Date(2026, 6, 13, 10, 0, 0, 0, time.Local).Unix()
+	require.NoError(t, DB.Create(&User{Id: 101, Username: "recharge_alice", Group: "vip", Password: "password123", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, AffCode: "usage-recharge-101"}).Error)
+	require.NoError(t, DB.Create(&User{Id: 102, Username: "recharge_bob", Group: "vip", Password: "password123", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, AffCode: "usage-recharge-102"}).Error)
+	require.NoError(t, DB.Create(&User{Id: 103, Username: "recharge_carol", Group: "default", Password: "password123", Status: common.UserStatusEnabled, Role: common.RoleCommonUser, AffCode: "usage-recharge-103"}).Error)
+
+	seedUsageStatsTopUp(t, &TopUp{
+		UserId:        101,
+		Amount:        100,
+		Money:         10.5,
+		TradeNo:       "usage_recharge_alice_1",
+		PaymentMethod: "stripe",
+		CreateTime:    base - 60,
+		CompleteTime:  base,
+		Status:        common.TopUpStatusSuccess,
+	})
+	seedUsageStatsTopUp(t, &TopUp{
+		UserId:        101,
+		Amount:        200,
+		Money:         20,
+		TradeNo:       "usage_recharge_alice_2",
+		PaymentMethod: "epay",
+		CreateTime:    base + 30,
+		CompleteTime:  base + 60,
+		Status:        common.TopUpStatusSuccess,
+	})
+	seedUsageStatsTopUp(t, &TopUp{
+		UserId:        102,
+		Amount:        300,
+		Money:         15,
+		TradeNo:       "usage_recharge_bob_1",
+		PaymentMethod: "waffo",
+		CreateTime:    base + 90,
+		CompleteTime:  base + 120,
+		Status:        common.TopUpStatusSuccess,
+	})
+	seedUsageStatsTopUp(t, &TopUp{
+		UserId:        102,
+		Amount:        999,
+		Money:         99,
+		TradeNo:       "usage_recharge_bob_pending",
+		PaymentMethod: "stripe",
+		CreateTime:    base + 120,
+		CompleteTime:  base + 180,
+		Status:        common.TopUpStatusPending,
+	})
+	seedUsageStatsTopUp(t, &TopUp{
+		UserId:        103,
+		Amount:        400,
+		Money:         40,
+		TradeNo:       "usage_recharge_carol_default_group",
+		PaymentMethod: "stripe",
+		CreateTime:    base + 120,
+		CompleteTime:  base + 180,
+		Status:        common.TopUpStatusSuccess,
+	})
+	seedUsageStatsTopUp(t, &TopUp{
+		UserId:        101,
+		Amount:        500,
+		Money:         50,
+		TradeNo:       "usage_recharge_alice_out_of_range",
+		PaymentMethod: "stripe",
+		CreateTime:    base - 7200,
+		CompleteTime:  base - 3600,
+		Status:        common.TopUpStatusSuccess,
+	})
+
+	stats, err := GetUsageStats(UsageStatsQuery{
+		StartTimestamp:     base - 1,
+		EndTimestamp:       base + 3600,
+		Group:              "vip",
+		TrendGranularity:   UsageStatsGranularityHour,
+		RechargePage:       1,
+		RechargePageSize:   1,
+		RechargeUserId:     101,
+		RechargeDetailPage: 1,
+		RechargeDetailSize: 1,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, int64(600), stats.RechargeSummary.Amount)
+	require.InDelta(t, 45.5, stats.RechargeSummary.Money, 0.000001)
+	require.Equal(t, int64(3), stats.RechargeSummary.OrderCount)
+	require.Equal(t, int64(2), stats.RechargeSummary.UserCount)
+	require.Equal(t, base+120, stats.RechargeSummary.LastTopUpAt)
+
+	require.Equal(t, 1, stats.RechargeRanking.Page)
+	require.Equal(t, 1, stats.RechargeRanking.PageSize)
+	require.Equal(t, int64(2), stats.RechargeRanking.Total)
+	require.Len(t, stats.RechargeRanking.Items, 1)
+	require.Equal(t, 101, stats.RechargeRanking.Items[0].UserId)
+	require.Equal(t, "recharge_alice", stats.RechargeRanking.Items[0].Username)
+	require.Equal(t, int64(300), stats.RechargeRanking.Items[0].Amount)
+	require.InDelta(t, 30.5, stats.RechargeRanking.Items[0].Money, 0.000001)
+	require.Equal(t, int64(2), stats.RechargeRanking.Items[0].OrderCount)
+	require.Equal(t, base+60, stats.RechargeRanking.Items[0].LastTopUpAt)
+
+	require.Equal(t, 101, stats.RechargeDetails.UserId)
+	require.Equal(t, int64(2), stats.RechargeDetails.Total)
+	require.Len(t, stats.RechargeDetails.Items, 1)
+	require.Equal(t, "usage_recharge_alice_2", stats.RechargeDetails.Items[0].TradeNo)
+	require.Equal(t, int64(200), stats.RechargeDetails.Items[0].Amount)
+	require.InDelta(t, 20, stats.RechargeDetails.Items[0].Money, 0.000001)
+	require.Equal(t, common.TopUpStatusSuccess, stats.RechargeDetails.Items[0].Status)
+
+	pageTwoStats, err := GetUsageStats(UsageStatsQuery{
+		StartTimestamp:   base - 1,
+		EndTimestamp:     base + 3600,
+		Group:            "vip",
+		TrendGranularity: UsageStatsGranularityHour,
+		RechargePage:     2,
+		RechargePageSize: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, pageTwoStats.RechargeRanking.Items, 1)
+	require.Equal(t, 102, pageTwoStats.RechargeRanking.Items[0].UserId)
+	require.Equal(t, int64(300), pageTwoStats.RechargeRanking.Items[0].Amount)
+	require.InDelta(t, 15, pageTwoStats.RechargeRanking.Items[0].Money, 0.000001)
+}
+
 func TestGetUsageStatsRejectsInvalidRangeAndGranularity(t *testing.T) {
 	_, err := GetUsageStats(UsageStatsQuery{
 		StartTimestamp: time.Date(2026, 6, 2, 0, 0, 0, 0, time.Local).Unix(),
@@ -539,4 +668,22 @@ func TestGetUsageStatsRejectsInvalidRangeAndGranularity(t *testing.T) {
 		EndTimestamp:   time.Date(2026, 5, 1, 0, 0, 0, 0, time.Local).Unix(),
 	})
 	require.ErrorContains(t, err, "90 天")
+}
+
+func TestNormalizeUsageStatsQueryDefaultsToToday(t *testing.T) {
+	query, err := normalizeUsageStatsQuery(UsageStatsQuery{})
+
+	require.NoError(t, err)
+	start := time.Unix(query.StartTimestamp, 0).Local()
+	end := time.Unix(query.EndTimestamp, 0).Local()
+	require.Equal(t, start.Year(), end.Year())
+	require.Equal(t, start.Month(), end.Month())
+	require.Equal(t, start.Day(), end.Day())
+	require.Equal(t, 0, start.Hour())
+	require.Equal(t, 0, start.Minute())
+	require.Equal(t, 0, start.Second())
+	require.Equal(t, 23, end.Hour())
+	require.Equal(t, 59, end.Minute())
+	require.Equal(t, 59, end.Second())
+	require.Equal(t, UsageStatsGranularityHour, query.TrendGranularity)
 }

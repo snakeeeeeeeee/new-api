@@ -501,15 +501,20 @@ const (
 )
 
 type UsageStatsQuery struct {
-	StartTimestamp   int64
-	EndTimestamp     int64
-	UserId           int
-	ModelName        string
-	Username         string
-	Group            string
-	Channel          int
-	Limit            int
-	TrendGranularity string
+	StartTimestamp     int64
+	EndTimestamp       int64
+	UserId             int
+	ModelName          string
+	Username           string
+	Group              string
+	Channel            int
+	Limit              int
+	TrendGranularity   string
+	RechargePage       int
+	RechargePageSize   int
+	RechargeUserId     int
+	RechargeDetailPage int
+	RechargeDetailSize int
 }
 
 type UsageStatsSummary struct {
@@ -575,16 +580,64 @@ type UsageStatsUserModelDetail struct {
 	AverageUseTime   float64 `json:"average_use_time"`
 }
 
+type UsageStatsRechargeSummary struct {
+	Amount      int64   `json:"amount"`
+	Money       float64 `json:"money"`
+	OrderCount  int64   `json:"order_count"`
+	UserCount   int64   `json:"user_count"`
+	LastTopUpAt int64   `json:"last_topup_at"`
+}
+
+type UsageStatsRechargeRankItem struct {
+	UserId      int     `json:"user_id"`
+	Username    string  `json:"username"`
+	Amount      int64   `json:"amount"`
+	Money       float64 `json:"money"`
+	OrderCount  int64   `json:"order_count"`
+	LastTopUpAt int64   `json:"last_topup_at"`
+}
+
+type UsageStatsRechargeRankPage struct {
+	Page     int                          `json:"page"`
+	PageSize int                          `json:"page_size"`
+	Total    int64                        `json:"total"`
+	Items    []UsageStatsRechargeRankItem `json:"items"`
+}
+
+type UsageStatsRechargeDetailItem struct {
+	Id            int     `json:"id"`
+	UserId        int     `json:"user_id"`
+	Username      string  `json:"username"`
+	Amount        int64   `json:"amount"`
+	Money         float64 `json:"money"`
+	TradeNo       string  `json:"trade_no"`
+	PaymentMethod string  `json:"payment_method"`
+	CreateTime    int64   `json:"create_time"`
+	CompleteTime  int64   `json:"complete_time"`
+	Status        string  `json:"status"`
+}
+
+type UsageStatsRechargeDetailPage struct {
+	Page     int                            `json:"page"`
+	PageSize int                            `json:"page_size"`
+	Total    int64                          `json:"total"`
+	UserId   int                            `json:"user_id"`
+	Items    []UsageStatsRechargeDetailItem `json:"items"`
+}
+
 type UsageStatsData struct {
-	StartTimestamp   int64                       `json:"start_timestamp"`
-	EndTimestamp     int64                       `json:"end_timestamp"`
-	TrendGranularity string                      `json:"trend_granularity"`
-	GeneratedAt      int64                       `json:"generated_at"`
-	Summary          UsageStatsSummary           `json:"summary"`
-	Ranking          []UsageStatsRankItem        `json:"ranking"`
-	Trend            []UsageStatsTrendPoint      `json:"trend"`
-	Models           []UsageStatsModelItem       `json:"models"`
-	UserModelDetails []UsageStatsUserModelDetail `json:"user_model_details"`
+	StartTimestamp   int64                        `json:"start_timestamp"`
+	EndTimestamp     int64                        `json:"end_timestamp"`
+	TrendGranularity string                       `json:"trend_granularity"`
+	GeneratedAt      int64                        `json:"generated_at"`
+	Summary          UsageStatsSummary            `json:"summary"`
+	Ranking          []UsageStatsRankItem         `json:"ranking"`
+	Trend            []UsageStatsTrendPoint       `json:"trend"`
+	Models           []UsageStatsModelItem        `json:"models"`
+	UserModelDetails []UsageStatsUserModelDetail  `json:"user_model_details"`
+	RechargeSummary  UsageStatsRechargeSummary    `json:"recharge_summary"`
+	RechargeRanking  UsageStatsRechargeRankPage   `json:"recharge_ranking"`
+	RechargeDetails  UsageStatsRechargeDetailPage `json:"recharge_details"`
 }
 
 type usageStatsBaseRow struct {
@@ -626,6 +679,36 @@ type usageStatsLogRow struct {
 	Other            string
 }
 
+type usageStatsRechargeSummaryRow struct {
+	Amount      int64   `gorm:"column:amount"`
+	Money       float64 `gorm:"column:money"`
+	OrderCount  int64   `gorm:"column:order_count"`
+	UserCount   int64   `gorm:"column:user_count"`
+	LastTopUpAt int64   `gorm:"column:last_topup_at"`
+}
+
+type usageStatsRechargeRankRow struct {
+	UserId      int     `gorm:"column:user_id"`
+	Username    string  `gorm:"column:username"`
+	Amount      int64   `gorm:"column:amount"`
+	Money       float64 `gorm:"column:money"`
+	OrderCount  int64   `gorm:"column:order_count"`
+	LastTopUpAt int64   `gorm:"column:last_topup_at"`
+}
+
+type usageStatsRechargeDetailRow struct {
+	Id            int     `gorm:"column:id"`
+	UserId        int     `gorm:"column:user_id"`
+	Username      string  `gorm:"column:username"`
+	Amount        int64   `gorm:"column:amount"`
+	Money         float64 `gorm:"column:money"`
+	TradeNo       string  `gorm:"column:trade_no"`
+	PaymentMethod string  `gorm:"column:payment_method"`
+	CreateTime    int64   `gorm:"column:create_time"`
+	CompleteTime  int64   `gorm:"column:complete_time"`
+	Status        string  `gorm:"column:status"`
+}
+
 type usageStatsTokenBreakdown struct {
 	InputTokens      int64
 	CacheTokens      int64
@@ -634,12 +717,13 @@ type usageStatsTokenBreakdown struct {
 }
 
 func normalizeUsageStatsQuery(query UsageStatsQuery) (UsageStatsQuery, error) {
-	now := time.Now().Unix()
+	nowTime := time.Now()
 	if query.EndTimestamp == 0 {
-		query.EndTimestamp = now
+		query.EndTimestamp = time.Date(nowTime.Year(), nowTime.Month(), nowTime.Day(), 23, 59, 59, 0, nowTime.Location()).Unix()
 	}
 	if query.StartTimestamp == 0 {
-		query.StartTimestamp = query.EndTimestamp - 7*24*60*60 + 1
+		startTime := time.Unix(query.EndTimestamp, 0).Local()
+		query.StartTimestamp = time.Date(startTime.Year(), startTime.Month(), startTime.Day(), 0, 0, 0, 0, startTime.Location()).Unix()
 	}
 	if query.StartTimestamp > query.EndTimestamp {
 		return query, errors.New("开始时间不能晚于结束时间")
@@ -653,6 +737,24 @@ func normalizeUsageStatsQuery(query UsageStatsQuery) (UsageStatsQuery, error) {
 	if query.Limit > usageStatsMaxLimit {
 		query.Limit = usageStatsMaxLimit
 	}
+	if query.RechargePage <= 0 {
+		query.RechargePage = 1
+	}
+	if query.RechargePageSize <= 0 {
+		query.RechargePageSize = 20
+	}
+	if query.RechargePageSize > usageStatsMaxLimit {
+		query.RechargePageSize = usageStatsMaxLimit
+	}
+	if query.RechargeDetailPage <= 0 {
+		query.RechargeDetailPage = 1
+	}
+	if query.RechargeDetailSize <= 0 {
+		query.RechargeDetailSize = 20
+	}
+	if query.RechargeDetailSize > usageStatsMaxLimit {
+		query.RechargeDetailSize = usageStatsMaxLimit
+	}
 	if query.TrendGranularity == "" {
 		if query.EndTimestamp-query.StartTimestamp > 3*24*60*60 {
 			query.TrendGranularity = UsageStatsGranularityDay
@@ -664,6 +766,19 @@ func normalizeUsageStatsQuery(query UsageStatsQuery) (UsageStatsQuery, error) {
 		return query, errors.New("trend_granularity 仅支持 hour 或 day")
 	}
 	return query, nil
+}
+
+func applyUsageStatsRechargeFilters(tx *gorm.DB, query UsageStatsQuery) (*gorm.DB, error) {
+	tx = tx.Where("top_ups.status = ?", common.TopUpStatusSuccess)
+	tx = tx.Where("top_ups.complete_time >= ? AND top_ups.complete_time <= ?", query.StartTimestamp, query.EndTimestamp)
+	if query.Username != "" {
+		tx = tx.Where("users.username = ?", query.Username)
+	}
+	if query.Group != "" {
+		ensureCommonColumnsInitialized()
+		tx = tx.Where("users."+commonGroupCol+" = ?", query.Group)
+	}
+	return tx, nil
 }
 
 func applyUsageStatsFilters(tx *gorm.DB, query UsageStatsQuery) (*gorm.DB, error) {
@@ -890,6 +1005,145 @@ func buildUsageStatsUserModelDetails(rows []usageStatsBaseRow, rankedUsers []Usa
 	return details
 }
 
+func newUsageStatsRechargeBaseQuery(query UsageStatsQuery) (*gorm.DB, error) {
+	tx := DB.Table("top_ups").
+		Joins("LEFT JOIN users ON users.id = top_ups.user_id")
+	return applyUsageStatsRechargeFilters(tx, query)
+}
+
+func populateUsageStatsRechargeSummary(data *UsageStatsData, query UsageStatsQuery) error {
+	baseQuery, err := newUsageStatsRechargeBaseQuery(query)
+	if err != nil {
+		return err
+	}
+	var row usageStatsRechargeSummaryRow
+	if err := baseQuery.
+		Select("COALESCE(sum(top_ups.amount), 0) as amount, COALESCE(sum(top_ups.money), 0) as money, count(*) as order_count, count(distinct top_ups.user_id) as user_count, COALESCE(max(top_ups.complete_time), 0) as last_topup_at").
+		Scan(&row).Error; err != nil {
+		return err
+	}
+	data.RechargeSummary = UsageStatsRechargeSummary{
+		Amount:      row.Amount,
+		Money:       row.Money,
+		OrderCount:  row.OrderCount,
+		UserCount:   row.UserCount,
+		LastTopUpAt: row.LastTopUpAt,
+	}
+	return nil
+}
+
+func populateUsageStatsRechargeRanking(data *UsageStatsData, query UsageStatsQuery) error {
+	data.RechargeRanking = UsageStatsRechargeRankPage{
+		Page:     query.RechargePage,
+		PageSize: query.RechargePageSize,
+		Items:    []UsageStatsRechargeRankItem{},
+	}
+
+	groupedQuery, err := newUsageStatsRechargeBaseQuery(query)
+	if err != nil {
+		return err
+	}
+	groupedQuery = groupedQuery.Select("top_ups.user_id").Group("top_ups.user_id")
+	if err := DB.Table("(?) as recharge_users", groupedQuery).Count(&data.RechargeRanking.Total).Error; err != nil {
+		return err
+	}
+	if data.RechargeRanking.Total == 0 {
+		return nil
+	}
+
+	rankQuery, err := newUsageStatsRechargeBaseQuery(query)
+	if err != nil {
+		return err
+	}
+	var rows []usageStatsRechargeRankRow
+	offset := (query.RechargePage - 1) * query.RechargePageSize
+	if err := rankQuery.
+		Select("top_ups.user_id as user_id, COALESCE(users.username, '') as username, COALESCE(sum(top_ups.amount), 0) as amount, COALESCE(sum(top_ups.money), 0) as money, count(*) as order_count, COALESCE(max(top_ups.complete_time), 0) as last_topup_at").
+		Group("top_ups.user_id, users.username").
+		Order("money desc, amount desc, order_count desc, user_id asc").
+		Limit(query.RechargePageSize).
+		Offset(offset).
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		data.RechargeRanking.Items = append(data.RechargeRanking.Items, UsageStatsRechargeRankItem{
+			UserId:      row.UserId,
+			Username:    row.Username,
+			Amount:      row.Amount,
+			Money:       row.Money,
+			OrderCount:  row.OrderCount,
+			LastTopUpAt: row.LastTopUpAt,
+		})
+	}
+	return nil
+}
+
+func populateUsageStatsRechargeDetails(data *UsageStatsData, query UsageStatsQuery) error {
+	data.RechargeDetails = UsageStatsRechargeDetailPage{
+		Page:     query.RechargeDetailPage,
+		PageSize: query.RechargeDetailSize,
+		UserId:   query.RechargeUserId,
+		Items:    []UsageStatsRechargeDetailItem{},
+	}
+	if query.RechargeUserId <= 0 {
+		return nil
+	}
+
+	countQuery, err := newUsageStatsRechargeBaseQuery(query)
+	if err != nil {
+		return err
+	}
+	countQuery = countQuery.Where("top_ups.user_id = ?", query.RechargeUserId)
+	if err := countQuery.Count(&data.RechargeDetails.Total).Error; err != nil {
+		return err
+	}
+	if data.RechargeDetails.Total == 0 {
+		return nil
+	}
+
+	detailQuery, err := newUsageStatsRechargeBaseQuery(query)
+	if err != nil {
+		return err
+	}
+	var rows []usageStatsRechargeDetailRow
+	offset := (query.RechargeDetailPage - 1) * query.RechargeDetailSize
+	if err := detailQuery.
+		Where("top_ups.user_id = ?", query.RechargeUserId).
+		Select("top_ups.id as id, top_ups.user_id as user_id, COALESCE(users.username, '') as username, top_ups.amount as amount, top_ups.money as money, top_ups.trade_no as trade_no, top_ups.payment_method as payment_method, top_ups.create_time as create_time, top_ups.complete_time as complete_time, top_ups.status as status").
+		Order("top_ups.complete_time desc, top_ups.id desc").
+		Limit(query.RechargeDetailSize).
+		Offset(offset).
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		data.RechargeDetails.Items = append(data.RechargeDetails.Items, UsageStatsRechargeDetailItem{
+			Id:            row.Id,
+			UserId:        row.UserId,
+			Username:      row.Username,
+			Amount:        row.Amount,
+			Money:         row.Money,
+			TradeNo:       row.TradeNo,
+			PaymentMethod: row.PaymentMethod,
+			CreateTime:    row.CreateTime,
+			CompleteTime:  row.CompleteTime,
+			Status:        row.Status,
+		})
+	}
+	return nil
+}
+
+func populateUsageStatsRecharge(data *UsageStatsData, query UsageStatsQuery) error {
+	if err := populateUsageStatsRechargeSummary(data, query); err != nil {
+		return err
+	}
+	if err := populateUsageStatsRechargeRanking(data, query); err != nil {
+		return err
+	}
+	return populateUsageStatsRechargeDetails(data, query)
+}
+
 func addUsageStatsBaseRow(target *usageStatsBaseRow, row usageStatsLogRow, tokens usageStatsTokenBreakdown) {
 	target.Quota += row.Quota
 	target.RequestCount++
@@ -959,6 +1213,17 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 		Trend:            []UsageStatsTrendPoint{},
 		Models:           []UsageStatsModelItem{},
 		UserModelDetails: []UsageStatsUserModelDetail{},
+		RechargeRanking: UsageStatsRechargeRankPage{
+			Page:     query.RechargePage,
+			PageSize: query.RechargePageSize,
+			Items:    []UsageStatsRechargeRankItem{},
+		},
+		RechargeDetails: UsageStatsRechargeDetailPage{
+			Page:     query.RechargeDetailPage,
+			PageSize: query.RechargeDetailSize,
+			UserId:   query.RechargeUserId,
+			Items:    []UsageStatsRechargeDetailItem{},
+		},
 	}
 
 	baseQuery, err := applyUsageStatsFilters(LOG_DB.Table("logs"), query)
@@ -1102,6 +1367,10 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 			detailRows = append(detailRows, *row)
 		}
 		data.UserModelDetails = buildUsageStatsUserModelDetails(detailRows, data.Ranking)
+	}
+
+	if err = populateUsageStatsRecharge(&data, query); err != nil {
+		return data, err
 	}
 
 	return data, nil
