@@ -28,6 +28,7 @@ type ClaudeSettings struct {
 	PromoteLeadingSystemRoleEnabled       bool                           `json:"promote_leading_system_role_enabled"`
 	MergeAdjacentSameRoleEnabled          bool                           `json:"merge_adjacent_same_role_enabled"`
 	ReorderToolResultBlocksEnabled        bool                           `json:"reorder_tool_result_blocks_enabled"`
+	OpenAIToolCallCompatEnabled           bool                           `json:"openai_tool_call_compat_enabled"`
 	ApplyCompatInPassthroughEnabled       bool                           `json:"apply_compat_in_passthrough_enabled"`
 	RequestSchemaValidationMode           string                         `json:"request_schema_validation_mode"`
 	ToolProtocolValidationMode            string                         `json:"tool_protocol_validation_mode"`
@@ -54,6 +55,7 @@ var defaultClaudeSettings = ClaudeSettings{
 	PromoteLeadingSystemRoleEnabled:      true,
 	MergeAdjacentSameRoleEnabled:         true,
 	ReorderToolResultBlocksEnabled:       false,
+	OpenAIToolCallCompatEnabled:          true,
 	ApplyCompatInPassthroughEnabled:      false,
 	RequestSchemaValidationMode:          "reject",
 	ToolProtocolValidationMode:           "reject",

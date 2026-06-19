@@ -352,6 +352,7 @@ func TestClaudeCompatibilityOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.Contains(t, data, `"key":"claude.promote_leading_system_role_enabled","value":"true"`)
 	require.Contains(t, data, `"key":"claude.merge_adjacent_same_role_enabled","value":"true"`)
 	require.Contains(t, data, `"key":"claude.reorder_tool_result_blocks_enabled","value":"false"`)
+	require.Contains(t, data, `"key":"claude.openai_tool_call_compat_enabled","value":"true"`)
 	require.Contains(t, data, `"key":"claude.apply_compat_in_passthrough_enabled","value":"false"`)
 	require.Contains(t, data, `"key":"claude.request_schema_validation_mode","value":"reject"`)
 	require.Contains(t, data, `"key":"claude.tool_protocol_validation_mode","value":"reject"`)
@@ -376,6 +377,18 @@ func TestClaudeCompatibilityOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.NoError(t, common.Unmarshal(updateRecorder.Body.Bytes(), &updateResp))
 	require.True(t, updateResp.Success, updateResp.Message)
 	require.True(t, model_setting.GetClaudeSettings().ReorderToolResultBlocksEnabled)
+
+	toolCompatPayload := []byte(`{"key":"claude.openai_tool_call_compat_enabled","value":false}`)
+	toolCompatRecorder := httptest.NewRecorder()
+	toolCompatCtx, _ := gin.CreateTestContext(toolCompatRecorder)
+	toolCompatCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(toolCompatPayload))
+	toolCompatCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(toolCompatCtx)
+
+	var toolCompatResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(toolCompatRecorder.Body.Bytes(), &toolCompatResp))
+	require.True(t, toolCompatResp.Success, toolCompatResp.Message)
+	require.False(t, model_setting.GetClaudeSettings().OpenAIToolCallCompatEnabled)
 
 	contentPayload := []byte(`{"key":"claude.normalize_simple_message_content_enabled","value":false}`)
 	contentRecorder := httptest.NewRecorder()

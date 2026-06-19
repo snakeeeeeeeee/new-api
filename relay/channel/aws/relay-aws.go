@@ -185,8 +185,34 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 		if err := common.Unmarshal(body, &data); err != nil {
 			return nil, errors.Wrap(err, "pass-through unmarshal request body fail")
 		}
+		if model_setting.GetClaudeSettings().OpenAIToolCallCompatEnabled && isAwsPassThroughOpenAIChatBody(data) {
+			var openAIReq dto.GeneralOpenAIRequest
+			if err := common.Unmarshal(body, &openAIReq); err != nil {
+				return nil, errors.Wrap(err, "pass-through unmarshal openai request body fail")
+			}
+			claudeReq, err := claude.RequestOpenAI2ClaudeMessage(c, info, openAIReq)
+			if err != nil {
+				return nil, errors.Wrap(err, "pass-through convert openai request to claude fail")
+			}
+			if compatErr := relaycommon.NormalizeClaudeRequestCompat(claudeReq, info); compatErr != nil {
+				return nil, compatErr
+			}
+			bodyWithoutModel, err := common.Marshal(claudeReq)
+			if err != nil {
+				return nil, errors.Wrap(err, "pass-through marshal converted claude request fail")
+			}
+			if err := common.Unmarshal(bodyWithoutModel, &data); err != nil {
+				return nil, errors.Wrap(err, "pass-through unmarshal converted claude request body fail")
+			}
+			delete(data, "model")
+			delete(data, "stream")
+			ensureAwsClaudeAnthropicVersion(data, awsClaudeReq)
+			relaycommon.CaptureClaudeToolSchemaCompatFinalSchemas(data["tools"], info)
+			return common.Marshal(data)
+		}
 		delete(data, "model")
 		delete(data, "stream")
+		ensureAwsClaudeAnthropicVersion(data, awsClaudeReq)
 		bodyWithoutModel, err := common.Marshal(data)
 		if err != nil {
 			return nil, errors.Wrap(err, "pass-through marshal request body fail")
@@ -224,6 +250,60 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 		relaycommon.CaptureClaudeToolSchemaCompatFinalSchemas(req.Tools, info)
 	}
 	return common.Marshal(awsClaudeReq)
+}
+
+func ensureAwsClaudeAnthropicVersion(data map[string]any, awsClaudeReq any) {
+	if data == nil {
+		return
+	}
+	if strings.TrimSpace(common.Interface2String(data["anthropic_version"])) != "" {
+		return
+	}
+	if req, ok := awsClaudeReq.(*AwsClaudeRequest); ok && strings.TrimSpace(req.AnthropicVersion) != "" {
+		data["anthropic_version"] = req.AnthropicVersion
+		return
+	}
+	data["anthropic_version"] = "bedrock-2023-05-31"
+}
+
+func isAwsPassThroughOpenAIChatBody(data map[string]any) bool {
+	messages, ok := data["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		return false
+	}
+	if _, ok := data["input"]; ok {
+		return false
+	}
+	for _, item := range messages {
+		message, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		role := strings.TrimSpace(common.Interface2String(message["role"]))
+		if role == "tool" || role == "developer" || role == "system" {
+			return true
+		}
+		if _, ok := message["tool_calls"]; ok {
+			return true
+		}
+		if _, ok := message["tool_call_id"]; ok {
+			return true
+		}
+	}
+	tools, ok := data["tools"].([]any)
+	if !ok {
+		return false
+	}
+	for _, item := range tools {
+		tool, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, ok := tool["function"]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func getAwsRegionPrefix(awsRegionId string) string {

@@ -165,6 +165,68 @@ func TestBuildAwsRequestBodyPassThroughFixesToolSchemaBeforeCompatReject(t *test
 	require.Equal(t, map[string]any{}, schema["properties"])
 }
 
+func TestBuildAwsRequestBodyPassThroughConvertsOpenAIToolCallsToClaude(t *testing.T) {
+	oldPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	oldClaudeSettings := *model_setting.GetClaudeSettings()
+	model_setting.GetGlobalSettings().PassThroughRequestEnabled = false
+	model_setting.GetClaudeSettings().OpenAIToolCallCompatEnabled = true
+	model_setting.GetClaudeSettings().ToolProtocolValidationMode = model_setting.ClaudeValidationModeReject
+	t.Cleanup(func() {
+		model_setting.GetGlobalSettings().PassThroughRequestEnabled = oldPassThrough
+		*model_setting.GetClaudeSettings() = oldClaudeSettings
+	})
+
+	rawBody := `{
+		"model":"claude-opus-4-7",
+		"stream":true,
+		"messages":[
+			{"role":"user","content":"check"},
+			{"role":"assistant","content":"Let me check."},
+			{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"exec","arguments":"{\"code\" title=\"Open page\": \"bad json\"}"}}]},
+			{"role":"tool","tool_call_id":"call_1","content":"ok"},
+			{"role":"user","content":"done"}
+		],
+		"tools":[{"type":"function","function":{"name":"exec","description":"run","parameters":{"type":"object","properties":{"code":{"type":"string"}}}}}]
+	}`
+	ctx := awsTestContext(rawBody)
+	info := awsRelayInfoWithToolSchemaCompat(false, true)
+	info.RelayFormat = "openai"
+	info.UpstreamModelName = "claude-opus-4-7"
+
+	body, err := buildAwsRequestBody(ctx, info, &AwsClaudeRequest{AnthropicVersion: "bedrock-2023-05-31"})
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.NotContains(t, payload, "model")
+	require.NotContains(t, payload, "stream")
+	require.Equal(t, "bedrock-2023-05-31", payload["anthropic_version"])
+	require.NotContains(t, string(body), `"tool_calls"`)
+	require.NotContains(t, string(body), `"tool_call_id"`)
+
+	messages, ok := payload["messages"].([]any)
+	require.True(t, ok)
+	require.Len(t, messages, 4)
+	assistantMessage, ok := messages[1].(map[string]any)
+	require.True(t, ok)
+	assistantContents, ok := assistantMessage["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, assistantContents, 2)
+	require.Equal(t, "text", assistantContents[0].(map[string]any)["type"])
+	toolUse := assistantContents[1].(map[string]any)
+	require.Equal(t, "tool_use", toolUse["type"])
+	require.Equal(t, "call_1", toolUse["id"])
+	require.Equal(t, map[string]any{"_raw_arguments": `{"code" title="Open page": "bad json"}`}, toolUse["input"])
+
+	resultMessage, ok := messages[2].(map[string]any)
+	require.True(t, ok)
+	resultContents, ok := resultMessage["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, resultContents, 1)
+	require.Equal(t, "tool_result", resultContents[0].(map[string]any)["type"])
+	require.Equal(t, "call_1", resultContents[0].(map[string]any)["tool_use_id"])
+}
+
 func TestBuildAwsRequestBodyToolSchemaCompatWhitelistMissKeepsSchema(t *testing.T) {
 	oldPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
 	model_setting.GetGlobalSettings().PassThroughRequestEnabled = false

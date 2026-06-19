@@ -31,6 +31,12 @@ const (
 	WebSearchMaxUsesHigh   = 10
 )
 
+const (
+	claudeRawArgumentsKey        = "_raw_arguments"
+	claudeWrappedArgumentsKey    = "value"
+	claudeToolCallCompatLogLimit = 512
+)
+
 func stopReasonClaude2OpenAI(reason string) string {
 	return reasonmap.ClaudeStopReasonToOpenAIFinishReason(reason)
 }
@@ -42,6 +48,226 @@ func maybeMarkClaudeRefusal(c *gin.Context, stopReason string) {
 	if strings.EqualFold(stopReason, "refusal") {
 		common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "claude_stop_reason=refusal")
 	}
+}
+
+func parseClaudeToolCallInput(toolCall dto.ToolCallRequest, compatEnabled bool) (map[string]any, bool) {
+	rawArguments := strings.TrimSpace(toolCall.Function.Arguments)
+	if rawArguments == "" {
+		return map[string]any{}, true
+	}
+	inputObj := make(map[string]any)
+	if err := common.Unmarshal([]byte(rawArguments), &inputObj); err == nil {
+		if inputObj == nil {
+			if !compatEnabled {
+				common.SysLog("tool call function arguments is not a map[string]any: " + fmt.Sprintf("%v", toolCall.Function.Arguments))
+				return nil, false
+			}
+			common.SysLog(fmt.Sprintf("claude openai tool call compat wrapped non-object arguments: tool_call_id=%s tool_name=%s argument_type=null", toolCall.ID, toolCall.Function.Name))
+			return map[string]any{claudeWrappedArgumentsKey: nil}, true
+		}
+		return inputObj, true
+	}
+	if !compatEnabled {
+		common.SysLog("tool call function arguments is not a map[string]any: " + fmt.Sprintf("%v", toolCall.Function.Arguments))
+		return nil, false
+	}
+	var parsed any
+	if err := common.Unmarshal([]byte(rawArguments), &parsed); err == nil {
+		common.SysLog(fmt.Sprintf("claude openai tool call compat wrapped non-object arguments: tool_call_id=%s tool_name=%s argument_type=%s", toolCall.ID, toolCall.Function.Name, common.GetJsonType([]byte(rawArguments))))
+		return map[string]any{claudeWrappedArgumentsKey: parsed}, true
+	}
+	common.SysLog(fmt.Sprintf("claude openai tool call compat wrapped raw arguments: tool_call_id=%s tool_name=%s arguments=%s", toolCall.ID, toolCall.Function.Name, common.MaskSensitiveInfo(limitClaudeToolCallCompatLog(rawArguments))))
+	return map[string]any{claudeRawArgumentsKey: rawArguments}, true
+}
+
+func limitClaudeToolCallCompatLog(value string) string {
+	if len(value) <= claudeToolCallCompatLogLimit {
+		return value
+	}
+	return value[:claudeToolCallCompatLogLimit] + "..."
+}
+
+func claudeMessageContentBlocks(content any) ([]dto.ClaudeMediaMessage, bool) {
+	if content == nil {
+		return nil, false
+	}
+	if text, ok := content.(string); ok {
+		return []dto.ClaudeMediaMessage{{
+			Type: "text",
+			Text: common.GetPointer(text),
+		}}, true
+	}
+	contents, err := common.Any2Type[[]dto.ClaudeMediaMessage](content)
+	if err != nil {
+		return nil, false
+	}
+	return contents, true
+}
+
+func claudeContentHasToolUse(contents []dto.ClaudeMediaMessage) bool {
+	for _, content := range contents {
+		if content.Type == "tool_use" && content.Id != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func claudeContentHasToolResult(contents []dto.ClaudeMediaMessage) bool {
+	for _, content := range contents {
+		if content.Type == "tool_result" {
+			return true
+		}
+	}
+	return false
+}
+
+func claudeToolUseIDSet(contents []dto.ClaudeMediaMessage) map[string]struct{} {
+	ids := make(map[string]struct{})
+	for _, content := range contents {
+		if content.Type == "tool_use" && content.Id != "" {
+			ids[content.Id] = struct{}{}
+		}
+	}
+	return ids
+}
+
+func claudeToolResultIDs(contents []dto.ClaudeMediaMessage) []string {
+	ids := make([]string, 0)
+	for _, content := range contents {
+		if content.Type == "tool_result" && content.ToolUseId != "" {
+			ids = append(ids, content.ToolUseId)
+		}
+	}
+	return ids
+}
+
+func claudeToolResultIDSet(contents []dto.ClaudeMediaMessage) map[string]struct{} {
+	ids := make(map[string]struct{})
+	for _, id := range claudeToolResultIDs(contents) {
+		ids[id] = struct{}{}
+	}
+	return ids
+}
+
+func normalizeClaudeOpenAIToolMessages(messages []dto.ClaudeMessage) []dto.ClaudeMessage {
+	if len(messages) < 2 {
+		return messages
+	}
+	normalized := make([]dto.ClaudeMessage, 0, len(messages))
+	for _, message := range messages {
+		currentContents, currentHasBlocks := claudeMessageContentBlocks(message.Content)
+		if len(normalized) == 0 {
+			normalized = append(normalized, message)
+			continue
+		}
+		last := &normalized[len(normalized)-1]
+		lastContents, lastHasBlocks := claudeMessageContentBlocks(last.Content)
+		if message.Role == "assistant" && last.Role == "assistant" && currentHasBlocks && claudeContentHasToolUse(currentContents) {
+			if !lastHasBlocks {
+				lastContents = nil
+			}
+			last.Content = append(lastContents, currentContents...)
+			continue
+		}
+		if message.Role == "user" && last.Role == "user" && currentHasBlocks && claudeContentHasToolResult(currentContents) {
+			if !lastHasBlocks {
+				normalized = append(normalized, message)
+				continue
+			}
+			if claudeContentHasToolResult(lastContents) {
+				last.Content = append(lastContents, currentContents...)
+				continue
+			}
+		}
+		normalized = append(normalized, message)
+	}
+	return repairClaudeToolProtocol(normalized)
+}
+
+func repairClaudeToolProtocol(messages []dto.ClaudeMessage) []dto.ClaudeMessage {
+	if len(messages) == 0 {
+		return messages
+	}
+	normalized := make([]dto.ClaudeMessage, 0, len(messages))
+	for index, message := range messages {
+		contents, ok := claudeMessageContentBlocks(message.Content)
+		if message.Role == "assistant" && ok && claudeContentHasToolUse(contents) {
+			nextResultIDs := map[string]struct{}{}
+			if index+1 < len(messages) && messages[index+1].Role == "user" {
+				if nextContents, nextOK := claudeMessageContentBlocks(messages[index+1].Content); nextOK && claudeContentHasToolResult(nextContents) {
+					nextResultIDs = claudeToolResultIDSet(nextContents)
+				}
+			}
+			filtered := filterClaudeAssistantToolUseBlocks(contents, nextResultIDs)
+			if len(filtered) == 0 {
+				continue
+			}
+			message.Content = filtered
+			contents = filtered
+		}
+		if message.Role == "user" && ok && claudeContentHasToolResult(contents) {
+			allowedIDs := map[string]struct{}{}
+			if len(normalized) > 0 {
+				last := normalized[len(normalized)-1]
+				if last.Role == "assistant" {
+					if lastContents, lastOK := claudeMessageContentBlocks(last.Content); lastOK {
+						allowedIDs = claudeToolUseIDSet(lastContents)
+					}
+				}
+			}
+			filtered := make([]dto.ClaudeMediaMessage, 0, len(contents))
+			droppedIDs := make([]string, 0)
+			for _, content := range contents {
+				if content.Type != "tool_result" {
+					filtered = append(filtered, content)
+					continue
+				}
+				if _, ok := allowedIDs[content.ToolUseId]; ok {
+					filtered = append(filtered, content)
+				} else {
+					droppedIDs = append(droppedIDs, content.ToolUseId)
+				}
+			}
+			if len(droppedIDs) > 0 {
+				common.SysLog(fmt.Sprintf("claude openai tool call compat dropped orphan tool_result blocks: tool_use_ids=%s", strings.Join(droppedIDs, ",")))
+			}
+			if len(filtered) == 0 {
+				continue
+			}
+			if len(filtered) < len(contents) {
+				allowedResultIDs := claudeToolResultIDSet(filtered)
+				if len(normalized) > 0 && normalized[len(normalized)-1].Role == "assistant" {
+					if lastContents, lastOK := claudeMessageContentBlocks(normalized[len(normalized)-1].Content); lastOK {
+						normalized[len(normalized)-1].Content = filterClaudeAssistantToolUseBlocks(lastContents, allowedResultIDs)
+					}
+				}
+			}
+			message.Content = filtered
+		}
+		normalized = append(normalized, message)
+	}
+	return normalized
+}
+
+func filterClaudeAssistantToolUseBlocks(contents []dto.ClaudeMediaMessage, allowedIDs map[string]struct{}) []dto.ClaudeMediaMessage {
+	filtered := make([]dto.ClaudeMediaMessage, 0, len(contents))
+	droppedIDs := make([]string, 0)
+	for _, content := range contents {
+		if content.Type != "tool_use" {
+			filtered = append(filtered, content)
+			continue
+		}
+		if _, ok := allowedIDs[content.Id]; ok {
+			filtered = append(filtered, content)
+		} else {
+			droppedIDs = append(droppedIDs, content.Id)
+		}
+	}
+	if len(droppedIDs) > 0 {
+		common.SysLog(fmt.Sprintf("claude openai tool call compat dropped unmatched tool_use blocks: tool_use_ids=%s", strings.Join(droppedIDs, ",")))
+	}
+	return filtered
 }
 
 func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, textRequest dto.GeneralOpenAIRequest) (*dto.ClaudeRequest, error) {
@@ -254,6 +480,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 			claudeRequest.StopSequences = stopSequences
 		}
 	}
+	openAIToolCallCompatEnabled := model_setting.GetClaudeSettings().OpenAIToolCallCompatEnabled
 	formatMessages := make([]dto.Message, 0)
 	lastMessage := dto.Message{
 		Role: "tool",
@@ -284,7 +511,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 				formatMessages = formatMessages[:len(formatMessages)-1]
 			}
 		}
-		if fmtMessage.Content == nil {
+		if fmtMessage.Content == nil && !(openAIToolCallCompatEnabled && message.Role == "assistant" && message.ToolCalls != nil) {
 			fmtMessage.SetStringContent("...")
 		}
 		formatMessages = append(formatMessages, fmtMessage)
@@ -389,9 +616,8 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 				}
 				if message.ToolCalls != nil {
 					for _, toolCall := range message.ParseToolCalls() {
-						inputObj := make(map[string]any)
-						if err := common.Unmarshal([]byte(toolCall.Function.Arguments), &inputObj); err != nil {
-							common.SysLog("tool call function arguments is not a map[string]any: " + fmt.Sprintf("%v", toolCall.Function.Arguments))
+						inputObj, ok := parseClaudeToolCallInput(toolCall, openAIToolCallCompatEnabled)
+						if !ok {
 							continue
 						}
 						claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
@@ -406,6 +632,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, info *relaycommon.RelayInfo, te
 			}
 			claudeMessages = append(claudeMessages, claudeMessage)
 		}
+	}
+	if openAIToolCallCompatEnabled {
+		claudeMessages = normalizeClaudeOpenAIToolMessages(claudeMessages)
 	}
 
 	// 设置累积的system消息

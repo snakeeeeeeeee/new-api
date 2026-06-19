@@ -5,6 +5,7 @@ import (
 
 	commonpkg "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/stretchr/testify/require"
 )
@@ -68,6 +69,7 @@ func TestRequestOpenAI2ClaudeMessagePromotesOnlyLeadingSystemAndDeveloper(t *tes
 
 func TestRequestOpenAI2ClaudeMessageMergesAdjacentUserAndAssistantOnly(t *testing.T) {
 	withClaudeRequestCompatSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.OpenAIToolCallCompatEnabled = false
 		settings.PromoteLeadingSystemRoleEnabled = true
 		settings.MergeAdjacentSameRoleEnabled = true
 	})
@@ -90,6 +92,207 @@ func TestRequestOpenAI2ClaudeMessageMergesAdjacentUserAndAssistantOnly(t *testin
 	require.Equal(t, "c d", claudeReq.Messages[1].Content)
 	require.Equal(t, "user", claudeReq.Messages[2].Role)
 	require.Equal(t, "user", claudeReq.Messages[3].Role)
+}
+
+func TestRequestOpenAI2ClaudeMessageOpenAIToolCallCompatPreservesNullContentToolCalls(t *testing.T) {
+	withClaudeRequestCompatSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.OpenAIToolCallCompatEnabled = true
+		settings.MergeAdjacentSameRoleEnabled = true
+		settings.ToolProtocolValidationMode = model_setting.ClaudeValidationModeReject
+	})
+
+	req := dto.GeneralOpenAIRequest{
+		Model: "claude-sonnet-4-6",
+		Messages: []dto.Message{
+			{Role: "user", Content: "check"},
+			openAIToolCallMessage(nil, "call_1", "lookup", `{"q":"status"}`),
+			{Role: "tool", ToolCallId: "call_1", Content: "ok"},
+			{Role: "user", Content: "done"},
+		},
+	}
+
+	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+	require.NoError(t, err)
+	require.Nil(t, relaycommon.NormalizeClaudeRequestCompat(claudeReq, nil))
+	require.Len(t, claudeReq.Messages, 4)
+
+	contents, err := claudeReq.Messages[1].ParseContent()
+	require.NoError(t, err)
+	require.Len(t, contents, 1)
+	require.Equal(t, "tool_use", contents[0].Type)
+	require.Equal(t, "call_1", contents[0].Id)
+	require.Equal(t, map[string]any{"q": "status"}, contents[0].Input)
+}
+
+func TestRequestOpenAI2ClaudeMessageOpenAIToolCallCompatMergesAssistantTextAndToolCalls(t *testing.T) {
+	withClaudeRequestCompatSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.OpenAIToolCallCompatEnabled = true
+		settings.MergeAdjacentSameRoleEnabled = true
+		settings.ToolProtocolValidationMode = model_setting.ClaudeValidationModeReject
+	})
+
+	req := dto.GeneralOpenAIRequest{
+		Model: "claude-sonnet-4-6",
+		Messages: []dto.Message{
+			{Role: "user", Content: "check"},
+			{Role: "assistant", Content: "Let me check."},
+			openAIToolCallMessage(nil, "call_1", "lookup", `{"q":"port"}`),
+			{Role: "tool", ToolCallId: "call_1", Content: "3000"},
+			{Role: "user", Content: "done"},
+		},
+	}
+
+	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+	require.NoError(t, err)
+	require.Nil(t, relaycommon.NormalizeClaudeRequestCompat(claudeReq, nil))
+	require.Len(t, claudeReq.Messages, 4)
+	require.Equal(t, "assistant", claudeReq.Messages[1].Role)
+
+	contents, err := claudeReq.Messages[1].ParseContent()
+	require.NoError(t, err)
+	require.Len(t, contents, 2)
+	require.Equal(t, "text", contents[0].Type)
+	require.Equal(t, "Let me check.", contents[0].GetText())
+	require.Equal(t, "tool_use", contents[1].Type)
+	require.Equal(t, "call_1", contents[1].Id)
+}
+
+func TestRequestOpenAI2ClaudeMessageOpenAIToolCallCompatWrapsInvalidArguments(t *testing.T) {
+	withClaudeRequestCompatSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.OpenAIToolCallCompatEnabled = true
+		settings.MergeAdjacentSameRoleEnabled = true
+		settings.ToolProtocolValidationMode = model_setting.ClaudeValidationModeReject
+	})
+
+	rawArguments := `{"code" title="Open page": "bad json"}`
+	req := dto.GeneralOpenAIRequest{
+		Model: "claude-sonnet-4-6",
+		Messages: []dto.Message{
+			{Role: "user", Content: "check"},
+			openAIToolCallMessage(nil, "call_1", "exec", rawArguments),
+			{Role: "tool", ToolCallId: "call_1", Content: "ok"},
+			{Role: "user", Content: "done"},
+		},
+	}
+
+	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+	require.NoError(t, err)
+	require.Nil(t, relaycommon.NormalizeClaudeRequestCompat(claudeReq, nil))
+
+	contents, err := claudeReq.Messages[1].ParseContent()
+	require.NoError(t, err)
+	require.Equal(t, "tool_use", contents[0].Type)
+	require.Equal(t, map[string]any{"_raw_arguments": rawArguments}, contents[0].Input)
+}
+
+func TestRequestOpenAI2ClaudeMessageOpenAIToolCallCompatWrapsNonObjectArguments(t *testing.T) {
+	withClaudeRequestCompatSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.OpenAIToolCallCompatEnabled = true
+		settings.MergeAdjacentSameRoleEnabled = true
+		settings.ToolProtocolValidationMode = model_setting.ClaudeValidationModeReject
+	})
+
+	for name, arguments := range map[string]string{
+		"array":  `[1,2]`,
+		"string": `"abc"`,
+		"number": `123`,
+		"bool":   `true`,
+		"null":   `null`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := dto.GeneralOpenAIRequest{
+				Model: "claude-sonnet-4-6",
+				Messages: []dto.Message{
+					{Role: "user", Content: "check"},
+					openAIToolCallMessage(nil, "call_1", "exec", arguments),
+					{Role: "tool", ToolCallId: "call_1", Content: "ok"},
+					{Role: "user", Content: "done"},
+				},
+			}
+
+			claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+			require.NoError(t, err)
+			require.Nil(t, relaycommon.NormalizeClaudeRequestCompat(claudeReq, nil))
+			contents, err := claudeReq.Messages[1].ParseContent()
+			require.NoError(t, err)
+			input, ok := contents[0].Input.(map[string]any)
+			require.True(t, ok)
+			require.Contains(t, input, "value")
+		})
+	}
+}
+
+func TestRequestOpenAI2ClaudeMessageOpenAIToolCallCompatMergesContinuousToolResults(t *testing.T) {
+	withClaudeRequestCompatSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.OpenAIToolCallCompatEnabled = true
+		settings.MergeAdjacentSameRoleEnabled = true
+		settings.ToolProtocolValidationMode = model_setting.ClaudeValidationModeReject
+	})
+
+	req := dto.GeneralOpenAIRequest{
+		Model: "claude-sonnet-4-6",
+		Messages: []dto.Message{
+			{Role: "user", Content: "check"},
+			openAIToolCallMessage(nil, "call_1", "lookup", `{"q":"a"}`, extraOpenAIToolCall("call_2", "lookup", `{"q":"b"}`)),
+			{Role: "tool", ToolCallId: "call_1", Content: "a"},
+			{Role: "tool", ToolCallId: "call_2", Content: "b"},
+			{Role: "user", Content: "done"},
+		},
+	}
+
+	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+	require.NoError(t, err)
+	require.Nil(t, relaycommon.NormalizeClaudeRequestCompat(claudeReq, nil))
+	require.Len(t, claudeReq.Messages, 4)
+
+	resultContents, err := claudeReq.Messages[2].ParseContent()
+	require.NoError(t, err)
+	require.Len(t, resultContents, 2)
+	require.Equal(t, "call_1", resultContents[0].ToolUseId)
+	require.Equal(t, "call_2", resultContents[1].ToolUseId)
+}
+
+func TestRequestOpenAI2ClaudeMessageOpenAIToolCallCompatDisabledKeepsOldInvalidArgumentBehavior(t *testing.T) {
+	withClaudeRequestCompatSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.OpenAIToolCallCompatEnabled = false
+		settings.MergeAdjacentSameRoleEnabled = true
+		settings.ToolProtocolValidationMode = model_setting.ClaudeValidationModeReject
+	})
+
+	req := dto.GeneralOpenAIRequest{
+		Model: "claude-sonnet-4-6",
+		Messages: []dto.Message{
+			{Role: "user", Content: "check"},
+			openAIToolCallMessage(nil, "call_1", "exec", `{"code" title="Open page": "bad json"}`),
+			{Role: "tool", ToolCallId: "call_1", Content: "ok"},
+		},
+	}
+
+	claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+	require.NoError(t, err)
+	require.NotNil(t, relaycommon.NormalizeClaudeRequestCompat(claudeReq, nil))
+}
+
+func openAIToolCallMessage(content any, id string, name string, arguments string, extra ...map[string]any) dto.Message {
+	toolCalls := []map[string]any{extraOpenAIToolCall(id, name, arguments)}
+	toolCalls = append(toolCalls, extra...)
+	body, _ := commonpkg.Marshal(toolCalls)
+	return dto.Message{
+		Role:      "assistant",
+		Content:   content,
+		ToolCalls: body,
+	}
+}
+
+func extraOpenAIToolCall(id string, name string, arguments string) map[string]any {
+	return map[string]any{
+		"id":   id,
+		"type": "function",
+		"function": map[string]any{
+			"name":      name,
+			"arguments": arguments,
+		},
+	}
 }
 
 func TestRequestOpenAI2ClaudeMessagePassesTopLevelThinking(t *testing.T) {
