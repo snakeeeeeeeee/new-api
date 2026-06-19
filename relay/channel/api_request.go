@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,7 @@ func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Hea
 }
 
 const clientHeaderPlaceholderPrefix = "{client_header:"
+const clientHeaderJSONPlaceholderPrefix = "{client_header_json:"
 
 const (
 	headerPassthroughAllKey        = "*"
@@ -127,8 +129,97 @@ func shouldSkipPassthroughHeader(name string) bool {
 	return false
 }
 
+func extractJSONFieldValue(raw string, path string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	path = strings.TrimSpace(path)
+	if raw == "" || path == "" {
+		return "", false
+	}
+
+	var data interface{}
+	if err := common2.Unmarshal([]byte(raw), &data); err != nil {
+		return "", false
+	}
+
+	current := data
+	for _, segment := range strings.Split(path, ".") {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			return "", false
+		}
+		switch typed := current.(type) {
+		case map[string]interface{}:
+			next, ok := typed[segment]
+			if !ok {
+				return "", false
+			}
+			current = next
+		case []interface{}:
+			index, err := strconv.Atoi(segment)
+			if err != nil || index < 0 || index >= len(typed) {
+				return "", false
+			}
+			current = typed[index]
+		default:
+			return "", false
+		}
+	}
+
+	switch typed := current.(type) {
+	case nil:
+		return "", false
+	case string:
+		value := strings.TrimSpace(typed)
+		return value, value != ""
+	case float64, bool:
+		value := strings.TrimSpace(fmt.Sprintf("%v", typed))
+		return value, value != ""
+	default:
+		bytes, err := common2.Marshal(typed)
+		if err != nil {
+			return "", false
+		}
+		value := strings.TrimSpace(string(bytes))
+		return value, value != "" && value != "null"
+	}
+}
+
 func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey string) (string, bool, error) {
 	trimmed := strings.TrimSpace(template)
+	if strings.HasPrefix(trimmed, clientHeaderJSONPlaceholderPrefix) {
+		afterPrefix := trimmed[len(clientHeaderJSONPlaceholderPrefix):]
+		end := strings.Index(afterPrefix, "}")
+		if end < 0 || end != len(afterPrefix)-1 {
+			return "", false, fmt.Errorf("client_header_json placeholder must be the full value: %q", template)
+		}
+
+		rawMappings := strings.TrimSpace(afterPrefix[:end])
+		if rawMappings == "" {
+			return "", false, fmt.Errorf("client_header_json placeholder mapping is empty: %q", template)
+		}
+		if c == nil || c.Request == nil {
+			return "", false, fmt.Errorf("missing request context for client_header_json placeholder")
+		}
+		for _, item := range strings.Split(rawMappings, ",") {
+			mapping := strings.TrimSpace(item)
+			if mapping == "" {
+				return "", false, fmt.Errorf("client_header_json placeholder mapping is empty: %q", template)
+			}
+			parts := strings.SplitN(mapping, ":", 2)
+			if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+				return "", false, fmt.Errorf("client_header_json placeholder mapping must be header:path: %q", template)
+			}
+			headerValue := c.Request.Header.Get(strings.TrimSpace(parts[0]))
+			if strings.TrimSpace(headerValue) == "" {
+				continue
+			}
+			if value, ok := extractJSONFieldValue(headerValue, parts[1]); ok {
+				return value, true, nil
+			}
+		}
+		return "", false, nil
+	}
+
 	if strings.HasPrefix(trimmed, clientHeaderPlaceholderPrefix) {
 		afterPrefix := trimmed[len(clientHeaderPlaceholderPrefix):]
 		end := strings.Index(afterPrefix, "}")
@@ -136,19 +227,26 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
 			return "", false, fmt.Errorf("client_header placeholder must be the full value: %q", template)
 		}
 
-		name := strings.TrimSpace(afterPrefix[:end])
-		if name == "" {
+		rawNames := strings.TrimSpace(afterPrefix[:end])
+		if rawNames == "" {
 			return "", false, fmt.Errorf("client_header placeholder name is empty: %q", template)
 		}
 		if c == nil || c.Request == nil {
 			return "", false, fmt.Errorf("missing request context for client_header placeholder")
 		}
-		clientHeaderValue := c.Request.Header.Get(name)
-		if strings.TrimSpace(clientHeaderValue) == "" {
-			return "", false, nil
+		for _, item := range strings.Split(rawNames, ",") {
+			name := strings.TrimSpace(item)
+			if name == "" {
+				return "", false, fmt.Errorf("client_header placeholder name is empty: %q", template)
+			}
+			clientHeaderValue := c.Request.Header.Get(name)
+			if strings.TrimSpace(clientHeaderValue) == "" {
+				continue
+			}
+			// Do not interpolate {api_key} inside client-supplied content.
+			return clientHeaderValue, true, nil
 		}
-		// Do not interpolate {api_key} inside client-supplied content.
-		return clientHeaderValue, true, nil
+		return "", false, nil
 	}
 
 	if strings.Contains(template, "{api_key}") {
@@ -163,7 +261,8 @@ func applyHeaderOverridePlaceholders(template string, c *gin.Context, apiKey str
 // processHeaderOverride applies channel header overrides, with placeholder substitution.
 // Supported placeholders:
 //   - {api_key}: resolved to the channel API key
-//   - {client_header:<name>}: resolved to the incoming request header value
+//   - {client_header:<name>[,<fallback-name>...]}: resolved to the first non-empty incoming request header value
+//   - {client_header_json:<name>:<path>[,<fallback-name>:<fallback-path>...]}: resolved to the first non-empty JSON path value from an incoming request header
 //
 // Header passthrough rules (keys only; values are ignored):
 //   - "*": passthrough all incoming headers by name (excluding unsafe headers)

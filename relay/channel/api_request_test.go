@@ -80,6 +80,166 @@ func TestProcessHeaderOverride_NonTestKeepsClientHeaderPlaceholder(t *testing.T)
 	require.Equal(t, "trace-123", headers["x-upstream-trace"])
 }
 
+func TestProcessHeaderOverride_ClientHeaderPlaceholderFallbackUsesFirstAvailableHeader(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Request.Header.Set("Thread-Id", "thread-123")
+	ctx.Request.Header.Set("Session-Id", "session-123")
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{
+				"X-Conversation-Id": "{client_header:X-Conversation-Id,Thread-Id,Session-Id}",
+			},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "thread-123", headers["x-conversation-id"])
+}
+
+func TestProcessHeaderOverride_ClientHeaderPlaceholderFallbackKeepsFirstHeaderPriority(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Request.Header.Set("X-Conversation-Id", "conversation-123")
+	ctx.Request.Header.Set("Thread-Id", "thread-123")
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{
+				"X-Conversation-Id": "{client_header:X-Conversation-Id,Thread-Id}",
+			},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "conversation-123", headers["x-conversation-id"])
+}
+
+func TestProcessHeaderOverride_ClientHeaderPlaceholderFallbackRejectsEmptyName(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Request.Header.Set("Thread-Id", "thread-123")
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{
+				"X-Conversation-Id": "{client_header:X-Conversation-Id,,Thread-Id}",
+			},
+		},
+	}
+
+	_, err := processHeaderOverride(info, ctx)
+	require.Error(t, err)
+}
+
+func TestProcessHeaderOverride_ClientHeaderJSONPlaceholderExtractsNestedField(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Request.Header.Set("X-Codex-Turn-Metadata", `{"session_id":"session-123","thread_id":"thread-123","turn_id":"turn-123","nested":{"conversation":{"id":"conversation-123"}}}`)
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{
+				"X-Conversation-Id": "{client_header_json:X-Codex-Turn-Metadata:nested.conversation.id}",
+			},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "conversation-123", headers["x-conversation-id"])
+}
+
+func TestProcessHeaderOverride_ClientHeaderJSONPlaceholderFallsBackToNextMapping(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Request.Header.Set("X-Codex-Turn-Metadata", `{"session_id":"session-123","thread_id":"thread-123"}`)
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{
+				"X-Conversation-Id": "{client_header_json:X-Missing-Metadata:thread_id,X-Codex-Turn-Metadata:thread_id}",
+			},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "thread-123", headers["x-conversation-id"])
+}
+
+func TestProcessHeaderOverride_ClientHeaderJSONPlaceholderSupportsArrayIndex(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Request.Header.Set("X-Metadata", `{"items":[{"id":"first"},{"id":"second"}]}`)
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{
+				"X-Item-Id": "{client_header_json:X-Metadata:items.1.id}",
+			},
+		},
+	}
+
+	headers, err := processHeaderOverride(info, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "second", headers["x-item-id"])
+}
+
+func TestProcessHeaderOverride_ClientHeaderJSONPlaceholderRejectsInvalidMapping(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: false,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			HeadersOverride: map[string]any{
+				"X-Conversation-Id": "{client_header_json:X-Codex-Turn-Metadata}",
+			},
+		},
+	}
+
+	_, err := processHeaderOverride(info, ctx)
+	require.Error(t, err)
+}
+
 func TestProcessHeaderOverride_RuntimeOverrideIsFinalHeaderMap(t *testing.T) {
 	t.Parallel()
 
