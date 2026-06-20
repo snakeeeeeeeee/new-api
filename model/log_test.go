@@ -688,7 +688,6 @@ func TestGetUsageStatsRechargeRankingAndDetails(t *testing.T) {
 	require.Equal(t, common.TopUpStatusSuccess, stats.RechargeDetails.Items[0].Status)
 	require.NotEqual(t, "usage_subscription_alice_1", stats.RechargeDetails.Items[0].TradeNo)
 
-	require.Equal(t, int64(1200), stats.SubscriptionPurchaseSummary.Amount)
 	require.InDelta(t, 29.9, stats.SubscriptionPurchaseSummary.Money, 0.000001)
 	require.Equal(t, int64(1), stats.SubscriptionPurchaseSummary.OrderCount)
 	require.Equal(t, int64(1), stats.SubscriptionPurchaseSummary.UserCount)
@@ -697,7 +696,6 @@ func TestGetUsageStatsRechargeRankingAndDetails(t *testing.T) {
 	require.Equal(t, int64(1), stats.SubscriptionPurchaseRanking.Total)
 	require.Len(t, stats.SubscriptionPurchaseRanking.Items, 1)
 	require.Equal(t, 101, stats.SubscriptionPurchaseRanking.Items[0].UserId)
-	require.Equal(t, int64(1200), stats.SubscriptionPurchaseRanking.Items[0].Amount)
 	require.InDelta(t, 29.9, stats.SubscriptionPurchaseRanking.Items[0].Money, 0.000001)
 	require.Equal(t, int64(1), stats.SubscriptionPurchaseRanking.Items[0].OrderCount)
 	require.Equal(t, int64(1), stats.SubscriptionPurchaseRanking.Items[0].PlanCount)
@@ -706,7 +704,6 @@ func TestGetUsageStatsRechargeRankingAndDetails(t *testing.T) {
 	require.Len(t, stats.SubscriptionPurchaseDetails.Items, 1)
 	require.Equal(t, "usage_subscription_alice_1", stats.SubscriptionPurchaseDetails.Items[0].TradeNo)
 	require.Equal(t, "Pro Monthly", stats.SubscriptionPurchaseDetails.Items[0].PlanTitle)
-	require.Equal(t, int64(1200), stats.SubscriptionPurchaseDetails.Items[0].Amount)
 	require.InDelta(t, 29.9, stats.SubscriptionPurchaseDetails.Items[0].Money, 0.000001)
 
 	pageTwoStats, err := GetUsageStats(UsageStatsQuery{

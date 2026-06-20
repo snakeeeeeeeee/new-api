@@ -1103,12 +1103,6 @@ const UsageStatsPage = () => {
         render: (value) => renderPaymentAmount(value || 0),
       },
       {
-        title: t('订阅包额度'),
-        dataIndex: 'amount',
-        sorter: (a, b) => (a.amount || 0) - (b.amount || 0),
-        render: (value) => renderQuotaWithAmount(value || 0),
-      },
-      {
         title: t('订阅购买笔数'),
         dataIndex: 'order_count',
         sorter: (a, b) => (a.order_count || 0) - (b.order_count || 0),
@@ -1159,11 +1153,6 @@ const UsageStatsPage = () => {
         title: t('支付方式'),
         dataIndex: 'payment_method',
         render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
-      },
-      {
-        title: t('订阅包额度'),
-        dataIndex: 'amount',
-        render: (value) => renderQuotaWithAmount(value || 0),
       },
       {
         title: t('订阅包购买金额'),
@@ -1332,16 +1321,8 @@ const UsageStatsPage = () => {
           <SummaryCard
             title={t('订阅包购买金额')}
             value={renderPaymentAmount(subscriptionPurchaseSummary.money || 0)}
-            hint={`${t('订阅购买笔数')} ${renderNumber(subscriptionPurchaseSummary.order_count || 0)}`}
+            hint={`${t('订阅购买人数')} ${renderNumber(subscriptionPurchaseSummary.user_count || 0)} / ${t('订阅购买笔数')} ${renderNumber(subscriptionPurchaseSummary.order_count || 0)}`}
             icon={<CreditCard size={20} />}
-          />
-          <SummaryCard
-            title={t('订阅包额度')}
-            value={renderQuotaWithAmount(
-              subscriptionPurchaseSummary.amount || 0,
-            )}
-            hint={`${t('订阅购买人数')} ${renderNumber(subscriptionPurchaseSummary.user_count || 0)} / ${t('订阅包数')} ${renderNumber(subscriptionPurchaseSummary.plan_count || 0)}`}
-            icon={<WalletCards size={20} />}
           />
         </div>
 
@@ -1494,6 +1475,48 @@ const UsageStatsPage = () => {
             <Tag color='violet' shape='circle'>
               {t('已排除管理员作废订单')}
             </Tag>
+          </div>
+          <div className='mb-3 grid grid-cols-2 gap-2 rounded-lg bg-[var(--semi-color-fill-0)] p-3 md:grid-cols-5'>
+            <div className='min-w-0'>
+              <Text type='tertiary' size='small'>
+                {t('订阅包购买金额')}
+              </Text>
+              <div className='mt-1 truncate text-base font-semibold'>
+                {renderPaymentAmount(subscriptionPurchaseSummary.money || 0)}
+              </div>
+            </div>
+            <div className='min-w-0'>
+              <Text type='tertiary' size='small'>
+                {t('订阅购买人数')}
+              </Text>
+              <div className='mt-1 truncate text-base font-semibold'>
+                {renderNumber(subscriptionPurchaseSummary.user_count || 0)}
+              </div>
+            </div>
+            <div className='min-w-0'>
+              <Text type='tertiary' size='small'>
+                {t('订阅购买笔数')}
+              </Text>
+              <div className='mt-1 truncate text-base font-semibold'>
+                {renderNumber(subscriptionPurchaseSummary.order_count || 0)}
+              </div>
+            </div>
+            <div className='min-w-0'>
+              <Text type='tertiary' size='small'>
+                {t('订阅包数')}
+              </Text>
+              <div className='mt-1 truncate text-base font-semibold'>
+                {renderNumber(subscriptionPurchaseSummary.plan_count || 0)}
+              </div>
+            </div>
+            <div className='min-w-0'>
+              <Text type='tertiary' size='small'>
+                {t('最后购买时间')}
+              </Text>
+              <div className='mt-1 truncate text-base font-semibold'>
+                {formatDateTime(subscriptionPurchaseSummary.last_purchase_at)}
+              </div>
+            </div>
           </div>
           <Table
             rowKey='user_id'
@@ -1752,11 +1775,11 @@ const UsageStatsPage = () => {
                 icon={<CreditCard size={18} />}
               />
               <SummaryCard
-                title={t('订阅包额度')}
-                value={renderQuotaWithAmount(
-                  selectedSubscriptionPurchaseUser.amount || 0,
+                title={t('订阅购买笔数')}
+                value={renderNumber(
+                  selectedSubscriptionPurchaseUser.order_count || 0,
                 )}
-                hint={`${t('订阅购买笔数')} ${renderNumber(selectedSubscriptionPurchaseUser.order_count || 0)}`}
+                hint={`${t('订阅包数')} ${renderNumber(selectedSubscriptionPurchaseUser.plan_count || 0)}`}
                 icon={<WalletCards size={18} />}
               />
               <SummaryCard

@@ -632,7 +632,6 @@ type UsageStatsRechargeDetailPage struct {
 
 type UsageStatsSubscriptionPurchaseSummary struct {
 	Money          float64 `json:"money"`
-	Amount         int64   `json:"amount"`
 	OrderCount     int64   `json:"order_count"`
 	UserCount      int64   `json:"user_count"`
 	PlanCount      int64   `json:"plan_count"`
@@ -643,7 +642,6 @@ type UsageStatsSubscriptionPurchaseRankItem struct {
 	UserId         int     `json:"user_id"`
 	Username       string  `json:"username"`
 	Money          float64 `json:"money"`
-	Amount         int64   `json:"amount"`
 	OrderCount     int64   `json:"order_count"`
 	PlanCount      int64   `json:"plan_count"`
 	LastPurchaseAt int64   `json:"last_purchase_at"`
@@ -662,7 +660,6 @@ type UsageStatsSubscriptionPurchaseDetailItem struct {
 	Username           string  `json:"username"`
 	PlanId             int     `json:"plan_id"`
 	PlanTitle          string  `json:"plan_title"`
-	Amount             int64   `json:"amount"`
 	Money              float64 `json:"money"`
 	TradeNo            string  `json:"trade_no"`
 	PaymentMethod      string  `json:"payment_method"`
@@ -769,7 +766,6 @@ type usageStatsRechargeDetailRow struct {
 
 type usageStatsSubscriptionPurchaseSummaryRow struct {
 	Money          float64 `gorm:"column:money"`
-	Amount         int64   `gorm:"column:amount"`
 	OrderCount     int64   `gorm:"column:order_count"`
 	UserCount      int64   `gorm:"column:user_count"`
 	PlanCount      int64   `gorm:"column:plan_count"`
@@ -780,7 +776,6 @@ type usageStatsSubscriptionPurchaseRankRow struct {
 	UserId         int     `gorm:"column:user_id"`
 	Username       string  `gorm:"column:username"`
 	Money          float64 `gorm:"column:money"`
-	Amount         int64   `gorm:"column:amount"`
 	OrderCount     int64   `gorm:"column:order_count"`
 	PlanCount      int64   `gorm:"column:plan_count"`
 	LastPurchaseAt int64   `gorm:"column:last_purchase_at"`
@@ -792,7 +787,6 @@ type usageStatsSubscriptionPurchaseDetailRow struct {
 	Username           string  `gorm:"column:username"`
 	PlanId             int     `gorm:"column:plan_id"`
 	PlanTitle          string  `gorm:"column:plan_title"`
-	Amount             int64   `gorm:"column:amount"`
 	Money              float64 `gorm:"column:money"`
 	TradeNo            string  `gorm:"column:trade_no"`
 	PaymentMethod      string  `gorm:"column:payment_method"`
@@ -1141,8 +1135,7 @@ func newUsageStatsRechargeBaseQuery(query UsageStatsQuery) (*gorm.DB, error) {
 func newUsageStatsSubscriptionPurchaseBaseQuery(query UsageStatsQuery) (*gorm.DB, error) {
 	tx := DB.Table("subscription_orders").
 		Joins("LEFT JOIN users ON users.id = subscription_orders.user_id").
-		Joins("LEFT JOIN subscription_plans ON subscription_plans.id = subscription_orders.plan_id").
-		Joins("LEFT JOIN user_subscriptions ON user_subscriptions.id = subscription_orders.user_subscription_id")
+		Joins("LEFT JOIN subscription_plans ON subscription_plans.id = subscription_orders.plan_id")
 	return applyUsageStatsSubscriptionPurchaseFilters(tx, query)
 }
 
@@ -1286,13 +1279,12 @@ func populateUsageStatsSubscriptionPurchaseSummary(data *UsageStatsData, query U
 	}
 	var row usageStatsSubscriptionPurchaseSummaryRow
 	if err := baseQuery.
-		Select("COALESCE(sum(subscription_orders.money), 0) as money, COALESCE(sum(COALESCE(user_subscriptions.amount_total, subscription_plans.total_amount, 0)), 0) as amount, count(*) as order_count, count(distinct subscription_orders.user_id) as user_count, count(distinct subscription_orders.plan_id) as plan_count, COALESCE(max(subscription_orders.complete_time), 0) as last_purchase_at").
+		Select("COALESCE(sum(subscription_orders.money), 0) as money, count(*) as order_count, count(distinct subscription_orders.user_id) as user_count, count(distinct subscription_orders.plan_id) as plan_count, COALESCE(max(subscription_orders.complete_time), 0) as last_purchase_at").
 		Scan(&row).Error; err != nil {
 		return err
 	}
 	data.SubscriptionPurchaseSummary = UsageStatsSubscriptionPurchaseSummary{
 		Money:          row.Money,
-		Amount:         row.Amount,
 		OrderCount:     row.OrderCount,
 		UserCount:      row.UserCount,
 		PlanCount:      row.PlanCount,
@@ -1327,9 +1319,9 @@ func populateUsageStatsSubscriptionPurchaseRanking(data *UsageStatsData, query U
 	var rows []usageStatsSubscriptionPurchaseRankRow
 	offset := (query.SubscriptionPurchasePage - 1) * query.SubscriptionPurchasePageSize
 	if err := rankQuery.
-		Select("subscription_orders.user_id as user_id, COALESCE(users.username, '') as username, COALESCE(sum(subscription_orders.money), 0) as money, COALESCE(sum(COALESCE(user_subscriptions.amount_total, subscription_plans.total_amount, 0)), 0) as amount, count(*) as order_count, count(distinct subscription_orders.plan_id) as plan_count, COALESCE(max(subscription_orders.complete_time), 0) as last_purchase_at").
+		Select("subscription_orders.user_id as user_id, COALESCE(users.username, '') as username, COALESCE(sum(subscription_orders.money), 0) as money, count(*) as order_count, count(distinct subscription_orders.plan_id) as plan_count, COALESCE(max(subscription_orders.complete_time), 0) as last_purchase_at").
 		Group("subscription_orders.user_id, users.username").
-		Order("money desc, amount desc, order_count desc, user_id asc").
+		Order("money desc, order_count desc, plan_count desc, user_id asc").
 		Limit(query.SubscriptionPurchasePageSize).
 		Offset(offset).
 		Scan(&rows).Error; err != nil {
@@ -1340,7 +1332,6 @@ func populateUsageStatsSubscriptionPurchaseRanking(data *UsageStatsData, query U
 			UserId:         row.UserId,
 			Username:       row.Username,
 			Money:          row.Money,
-			Amount:         row.Amount,
 			OrderCount:     row.OrderCount,
 			PlanCount:      row.PlanCount,
 			LastPurchaseAt: row.LastPurchaseAt,
@@ -1380,7 +1371,7 @@ func populateUsageStatsSubscriptionPurchaseDetails(data *UsageStatsData, query U
 	offset := (query.SubscriptionPurchaseDetailPage - 1) * query.SubscriptionPurchaseDetailSize
 	if err := detailQuery.
 		Where("subscription_orders.user_id = ?", query.SubscriptionPurchaseUserId).
-		Select("subscription_orders.id as id, subscription_orders.user_id as user_id, COALESCE(users.username, '') as username, subscription_orders.plan_id as plan_id, COALESCE(subscription_plans.title, '') as plan_title, COALESCE(user_subscriptions.amount_total, subscription_plans.total_amount, 0) as amount, subscription_orders.money as money, subscription_orders.trade_no as trade_no, subscription_orders.payment_method as payment_method, subscription_orders.create_time as create_time, subscription_orders.complete_time as complete_time, subscription_orders.status as status, subscription_orders.user_subscription_id as user_subscription_id").
+		Select("subscription_orders.id as id, subscription_orders.user_id as user_id, COALESCE(users.username, '') as username, subscription_orders.plan_id as plan_id, COALESCE(subscription_plans.title, '') as plan_title, subscription_orders.money as money, subscription_orders.trade_no as trade_no, subscription_orders.payment_method as payment_method, subscription_orders.create_time as create_time, subscription_orders.complete_time as complete_time, subscription_orders.status as status, subscription_orders.user_subscription_id as user_subscription_id").
 		Order("subscription_orders.complete_time desc, subscription_orders.id desc").
 		Limit(query.SubscriptionPurchaseDetailSize).
 		Offset(offset).
@@ -1394,7 +1385,6 @@ func populateUsageStatsSubscriptionPurchaseDetails(data *UsageStatsData, query U
 			Username:           row.Username,
 			PlanId:             row.PlanId,
 			PlanTitle:          row.PlanTitle,
-			Amount:             row.Amount,
 			Money:              row.Money,
 			TradeNo:            row.TradeNo,
 			PaymentMethod:      row.PaymentMethod,
