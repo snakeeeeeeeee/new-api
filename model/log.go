@@ -501,20 +501,25 @@ const (
 )
 
 type UsageStatsQuery struct {
-	StartTimestamp     int64
-	EndTimestamp       int64
-	UserId             int
-	ModelName          string
-	Username           string
-	Group              string
-	Channel            int
-	Limit              int
-	TrendGranularity   string
-	RechargePage       int
-	RechargePageSize   int
-	RechargeUserId     int
-	RechargeDetailPage int
-	RechargeDetailSize int
+	StartTimestamp                 int64
+	EndTimestamp                   int64
+	UserId                         int
+	ModelName                      string
+	Username                       string
+	Group                          string
+	Channel                        int
+	Limit                          int
+	TrendGranularity               string
+	RechargePage                   int
+	RechargePageSize               int
+	RechargeUserId                 int
+	RechargeDetailPage             int
+	RechargeDetailSize             int
+	SubscriptionPurchasePage       int
+	SubscriptionPurchasePageSize   int
+	SubscriptionPurchaseUserId     int
+	SubscriptionPurchaseDetailPage int
+	SubscriptionPurchaseDetailSize int
 }
 
 type UsageStatsSummary struct {
@@ -625,19 +630,72 @@ type UsageStatsRechargeDetailPage struct {
 	Items    []UsageStatsRechargeDetailItem `json:"items"`
 }
 
+type UsageStatsSubscriptionPurchaseSummary struct {
+	Money          float64 `json:"money"`
+	Amount         int64   `json:"amount"`
+	OrderCount     int64   `json:"order_count"`
+	UserCount      int64   `json:"user_count"`
+	PlanCount      int64   `json:"plan_count"`
+	LastPurchaseAt int64   `json:"last_purchase_at"`
+}
+
+type UsageStatsSubscriptionPurchaseRankItem struct {
+	UserId         int     `json:"user_id"`
+	Username       string  `json:"username"`
+	Money          float64 `json:"money"`
+	Amount         int64   `json:"amount"`
+	OrderCount     int64   `json:"order_count"`
+	PlanCount      int64   `json:"plan_count"`
+	LastPurchaseAt int64   `json:"last_purchase_at"`
+}
+
+type UsageStatsSubscriptionPurchaseRankPage struct {
+	Page     int                                      `json:"page"`
+	PageSize int                                      `json:"page_size"`
+	Total    int64                                    `json:"total"`
+	Items    []UsageStatsSubscriptionPurchaseRankItem `json:"items"`
+}
+
+type UsageStatsSubscriptionPurchaseDetailItem struct {
+	Id                 int     `json:"id"`
+	UserId             int     `json:"user_id"`
+	Username           string  `json:"username"`
+	PlanId             int     `json:"plan_id"`
+	PlanTitle          string  `json:"plan_title"`
+	Amount             int64   `json:"amount"`
+	Money              float64 `json:"money"`
+	TradeNo            string  `json:"trade_no"`
+	PaymentMethod      string  `json:"payment_method"`
+	CreateTime         int64   `json:"create_time"`
+	CompleteTime       int64   `json:"complete_time"`
+	Status             string  `json:"status"`
+	UserSubscriptionId int     `json:"user_subscription_id"`
+}
+
+type UsageStatsSubscriptionPurchaseDetailPage struct {
+	Page     int                                        `json:"page"`
+	PageSize int                                        `json:"page_size"`
+	Total    int64                                      `json:"total"`
+	UserId   int                                        `json:"user_id"`
+	Items    []UsageStatsSubscriptionPurchaseDetailItem `json:"items"`
+}
+
 type UsageStatsData struct {
-	StartTimestamp   int64                        `json:"start_timestamp"`
-	EndTimestamp     int64                        `json:"end_timestamp"`
-	TrendGranularity string                       `json:"trend_granularity"`
-	GeneratedAt      int64                        `json:"generated_at"`
-	Summary          UsageStatsSummary            `json:"summary"`
-	Ranking          []UsageStatsRankItem         `json:"ranking"`
-	Trend            []UsageStatsTrendPoint       `json:"trend"`
-	Models           []UsageStatsModelItem        `json:"models"`
-	UserModelDetails []UsageStatsUserModelDetail  `json:"user_model_details"`
-	RechargeSummary  UsageStatsRechargeSummary    `json:"recharge_summary"`
-	RechargeRanking  UsageStatsRechargeRankPage   `json:"recharge_ranking"`
-	RechargeDetails  UsageStatsRechargeDetailPage `json:"recharge_details"`
+	StartTimestamp              int64                                    `json:"start_timestamp"`
+	EndTimestamp                int64                                    `json:"end_timestamp"`
+	TrendGranularity            string                                   `json:"trend_granularity"`
+	GeneratedAt                 int64                                    `json:"generated_at"`
+	Summary                     UsageStatsSummary                        `json:"summary"`
+	Ranking                     []UsageStatsRankItem                     `json:"ranking"`
+	Trend                       []UsageStatsTrendPoint                   `json:"trend"`
+	Models                      []UsageStatsModelItem                    `json:"models"`
+	UserModelDetails            []UsageStatsUserModelDetail              `json:"user_model_details"`
+	RechargeSummary             UsageStatsRechargeSummary                `json:"recharge_summary"`
+	RechargeRanking             UsageStatsRechargeRankPage               `json:"recharge_ranking"`
+	RechargeDetails             UsageStatsRechargeDetailPage             `json:"recharge_details"`
+	SubscriptionPurchaseSummary UsageStatsSubscriptionPurchaseSummary    `json:"subscription_purchase_summary"`
+	SubscriptionPurchaseRanking UsageStatsSubscriptionPurchaseRankPage   `json:"subscription_purchase_ranking"`
+	SubscriptionPurchaseDetails UsageStatsSubscriptionPurchaseDetailPage `json:"subscription_purchase_details"`
 }
 
 type usageStatsBaseRow struct {
@@ -709,6 +767,41 @@ type usageStatsRechargeDetailRow struct {
 	Status        string  `gorm:"column:status"`
 }
 
+type usageStatsSubscriptionPurchaseSummaryRow struct {
+	Money          float64 `gorm:"column:money"`
+	Amount         int64   `gorm:"column:amount"`
+	OrderCount     int64   `gorm:"column:order_count"`
+	UserCount      int64   `gorm:"column:user_count"`
+	PlanCount      int64   `gorm:"column:plan_count"`
+	LastPurchaseAt int64   `gorm:"column:last_purchase_at"`
+}
+
+type usageStatsSubscriptionPurchaseRankRow struct {
+	UserId         int     `gorm:"column:user_id"`
+	Username       string  `gorm:"column:username"`
+	Money          float64 `gorm:"column:money"`
+	Amount         int64   `gorm:"column:amount"`
+	OrderCount     int64   `gorm:"column:order_count"`
+	PlanCount      int64   `gorm:"column:plan_count"`
+	LastPurchaseAt int64   `gorm:"column:last_purchase_at"`
+}
+
+type usageStatsSubscriptionPurchaseDetailRow struct {
+	Id                 int     `gorm:"column:id"`
+	UserId             int     `gorm:"column:user_id"`
+	Username           string  `gorm:"column:username"`
+	PlanId             int     `gorm:"column:plan_id"`
+	PlanTitle          string  `gorm:"column:plan_title"`
+	Amount             int64   `gorm:"column:amount"`
+	Money              float64 `gorm:"column:money"`
+	TradeNo            string  `gorm:"column:trade_no"`
+	PaymentMethod      string  `gorm:"column:payment_method"`
+	CreateTime         int64   `gorm:"column:create_time"`
+	CompleteTime       int64   `gorm:"column:complete_time"`
+	Status             string  `gorm:"column:status"`
+	UserSubscriptionId int     `gorm:"column:user_subscription_id"`
+}
+
 type usageStatsTokenBreakdown struct {
 	InputTokens      int64
 	CacheTokens      int64
@@ -755,6 +848,24 @@ func normalizeUsageStatsQuery(query UsageStatsQuery) (UsageStatsQuery, error) {
 	if query.RechargeDetailSize > usageStatsMaxLimit {
 		query.RechargeDetailSize = usageStatsMaxLimit
 	}
+	if query.SubscriptionPurchasePage <= 0 {
+		query.SubscriptionPurchasePage = 1
+	}
+	if query.SubscriptionPurchasePageSize <= 0 {
+		query.SubscriptionPurchasePageSize = 20
+	}
+	if query.SubscriptionPurchasePageSize > usageStatsMaxLimit {
+		query.SubscriptionPurchasePageSize = usageStatsMaxLimit
+	}
+	if query.SubscriptionPurchaseDetailPage <= 0 {
+		query.SubscriptionPurchaseDetailPage = 1
+	}
+	if query.SubscriptionPurchaseDetailSize <= 0 {
+		query.SubscriptionPurchaseDetailSize = 20
+	}
+	if query.SubscriptionPurchaseDetailSize > usageStatsMaxLimit {
+		query.SubscriptionPurchaseDetailSize = usageStatsMaxLimit
+	}
 	if query.TrendGranularity == "" {
 		if query.EndTimestamp-query.StartTimestamp > 3*24*60*60 {
 			query.TrendGranularity = UsageStatsGranularityDay
@@ -771,6 +882,21 @@ func normalizeUsageStatsQuery(query UsageStatsQuery) (UsageStatsQuery, error) {
 func applyUsageStatsRechargeFilters(tx *gorm.DB, query UsageStatsQuery) (*gorm.DB, error) {
 	tx = tx.Where("top_ups.status = ?", common.TopUpStatusSuccess)
 	tx = tx.Where("top_ups.complete_time >= ? AND top_ups.complete_time <= ?", query.StartTimestamp, query.EndTimestamp)
+	tx = tx.Where("subscription_orders.id IS NULL")
+	if query.Username != "" {
+		tx = tx.Where("users.username = ?", query.Username)
+	}
+	if query.Group != "" {
+		ensureCommonColumnsInitialized()
+		tx = tx.Where("users."+commonGroupCol+" = ?", query.Group)
+	}
+	return tx, nil
+}
+
+func applyUsageStatsSubscriptionPurchaseFilters(tx *gorm.DB, query UsageStatsQuery) (*gorm.DB, error) {
+	tx = tx.Where("subscription_orders.status = ?", common.TopUpStatusSuccess)
+	tx = tx.Where("(subscription_orders.invalidated_at = ? OR subscription_orders.invalidated_at IS NULL)", 0)
+	tx = tx.Where("subscription_orders.complete_time >= ? AND subscription_orders.complete_time <= ?", query.StartTimestamp, query.EndTimestamp)
 	if query.Username != "" {
 		tx = tx.Where("users.username = ?", query.Username)
 	}
@@ -1007,8 +1133,17 @@ func buildUsageStatsUserModelDetails(rows []usageStatsBaseRow, rankedUsers []Usa
 
 func newUsageStatsRechargeBaseQuery(query UsageStatsQuery) (*gorm.DB, error) {
 	tx := DB.Table("top_ups").
-		Joins("LEFT JOIN users ON users.id = top_ups.user_id")
+		Joins("LEFT JOIN users ON users.id = top_ups.user_id").
+		Joins("LEFT JOIN subscription_orders ON subscription_orders.trade_no = top_ups.trade_no AND subscription_orders.status = ?", common.TopUpStatusSuccess)
 	return applyUsageStatsRechargeFilters(tx, query)
+}
+
+func newUsageStatsSubscriptionPurchaseBaseQuery(query UsageStatsQuery) (*gorm.DB, error) {
+	tx := DB.Table("subscription_orders").
+		Joins("LEFT JOIN users ON users.id = subscription_orders.user_id").
+		Joins("LEFT JOIN subscription_plans ON subscription_plans.id = subscription_orders.plan_id").
+		Joins("LEFT JOIN user_subscriptions ON user_subscriptions.id = subscription_orders.user_subscription_id")
+	return applyUsageStatsSubscriptionPurchaseFilters(tx, query)
 }
 
 func populateUsageStatsRechargeSummary(data *UsageStatsData, query UsageStatsQuery) error {
@@ -1144,6 +1279,144 @@ func populateUsageStatsRecharge(data *UsageStatsData, query UsageStatsQuery) err
 	return populateUsageStatsRechargeDetails(data, query)
 }
 
+func populateUsageStatsSubscriptionPurchaseSummary(data *UsageStatsData, query UsageStatsQuery) error {
+	baseQuery, err := newUsageStatsSubscriptionPurchaseBaseQuery(query)
+	if err != nil {
+		return err
+	}
+	var row usageStatsSubscriptionPurchaseSummaryRow
+	if err := baseQuery.
+		Select("COALESCE(sum(subscription_orders.money), 0) as money, COALESCE(sum(COALESCE(user_subscriptions.amount_total, subscription_plans.total_amount, 0)), 0) as amount, count(*) as order_count, count(distinct subscription_orders.user_id) as user_count, count(distinct subscription_orders.plan_id) as plan_count, COALESCE(max(subscription_orders.complete_time), 0) as last_purchase_at").
+		Scan(&row).Error; err != nil {
+		return err
+	}
+	data.SubscriptionPurchaseSummary = UsageStatsSubscriptionPurchaseSummary{
+		Money:          row.Money,
+		Amount:         row.Amount,
+		OrderCount:     row.OrderCount,
+		UserCount:      row.UserCount,
+		PlanCount:      row.PlanCount,
+		LastPurchaseAt: row.LastPurchaseAt,
+	}
+	return nil
+}
+
+func populateUsageStatsSubscriptionPurchaseRanking(data *UsageStatsData, query UsageStatsQuery) error {
+	data.SubscriptionPurchaseRanking = UsageStatsSubscriptionPurchaseRankPage{
+		Page:     query.SubscriptionPurchasePage,
+		PageSize: query.SubscriptionPurchasePageSize,
+		Items:    []UsageStatsSubscriptionPurchaseRankItem{},
+	}
+
+	groupedQuery, err := newUsageStatsSubscriptionPurchaseBaseQuery(query)
+	if err != nil {
+		return err
+	}
+	groupedQuery = groupedQuery.Select("subscription_orders.user_id").Group("subscription_orders.user_id")
+	if err := DB.Table("(?) as subscription_purchase_users", groupedQuery).Count(&data.SubscriptionPurchaseRanking.Total).Error; err != nil {
+		return err
+	}
+	if data.SubscriptionPurchaseRanking.Total == 0 {
+		return nil
+	}
+
+	rankQuery, err := newUsageStatsSubscriptionPurchaseBaseQuery(query)
+	if err != nil {
+		return err
+	}
+	var rows []usageStatsSubscriptionPurchaseRankRow
+	offset := (query.SubscriptionPurchasePage - 1) * query.SubscriptionPurchasePageSize
+	if err := rankQuery.
+		Select("subscription_orders.user_id as user_id, COALESCE(users.username, '') as username, COALESCE(sum(subscription_orders.money), 0) as money, COALESCE(sum(COALESCE(user_subscriptions.amount_total, subscription_plans.total_amount, 0)), 0) as amount, count(*) as order_count, count(distinct subscription_orders.plan_id) as plan_count, COALESCE(max(subscription_orders.complete_time), 0) as last_purchase_at").
+		Group("subscription_orders.user_id, users.username").
+		Order("money desc, amount desc, order_count desc, user_id asc").
+		Limit(query.SubscriptionPurchasePageSize).
+		Offset(offset).
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		data.SubscriptionPurchaseRanking.Items = append(data.SubscriptionPurchaseRanking.Items, UsageStatsSubscriptionPurchaseRankItem{
+			UserId:         row.UserId,
+			Username:       row.Username,
+			Money:          row.Money,
+			Amount:         row.Amount,
+			OrderCount:     row.OrderCount,
+			PlanCount:      row.PlanCount,
+			LastPurchaseAt: row.LastPurchaseAt,
+		})
+	}
+	return nil
+}
+
+func populateUsageStatsSubscriptionPurchaseDetails(data *UsageStatsData, query UsageStatsQuery) error {
+	data.SubscriptionPurchaseDetails = UsageStatsSubscriptionPurchaseDetailPage{
+		Page:     query.SubscriptionPurchaseDetailPage,
+		PageSize: query.SubscriptionPurchaseDetailSize,
+		UserId:   query.SubscriptionPurchaseUserId,
+		Items:    []UsageStatsSubscriptionPurchaseDetailItem{},
+	}
+	if query.SubscriptionPurchaseUserId <= 0 {
+		return nil
+	}
+
+	countQuery, err := newUsageStatsSubscriptionPurchaseBaseQuery(query)
+	if err != nil {
+		return err
+	}
+	countQuery = countQuery.Where("subscription_orders.user_id = ?", query.SubscriptionPurchaseUserId)
+	if err := countQuery.Count(&data.SubscriptionPurchaseDetails.Total).Error; err != nil {
+		return err
+	}
+	if data.SubscriptionPurchaseDetails.Total == 0 {
+		return nil
+	}
+
+	detailQuery, err := newUsageStatsSubscriptionPurchaseBaseQuery(query)
+	if err != nil {
+		return err
+	}
+	var rows []usageStatsSubscriptionPurchaseDetailRow
+	offset := (query.SubscriptionPurchaseDetailPage - 1) * query.SubscriptionPurchaseDetailSize
+	if err := detailQuery.
+		Where("subscription_orders.user_id = ?", query.SubscriptionPurchaseUserId).
+		Select("subscription_orders.id as id, subscription_orders.user_id as user_id, COALESCE(users.username, '') as username, subscription_orders.plan_id as plan_id, COALESCE(subscription_plans.title, '') as plan_title, COALESCE(user_subscriptions.amount_total, subscription_plans.total_amount, 0) as amount, subscription_orders.money as money, subscription_orders.trade_no as trade_no, subscription_orders.payment_method as payment_method, subscription_orders.create_time as create_time, subscription_orders.complete_time as complete_time, subscription_orders.status as status, subscription_orders.user_subscription_id as user_subscription_id").
+		Order("subscription_orders.complete_time desc, subscription_orders.id desc").
+		Limit(query.SubscriptionPurchaseDetailSize).
+		Offset(offset).
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	for _, row := range rows {
+		data.SubscriptionPurchaseDetails.Items = append(data.SubscriptionPurchaseDetails.Items, UsageStatsSubscriptionPurchaseDetailItem{
+			Id:                 row.Id,
+			UserId:             row.UserId,
+			Username:           row.Username,
+			PlanId:             row.PlanId,
+			PlanTitle:          row.PlanTitle,
+			Amount:             row.Amount,
+			Money:              row.Money,
+			TradeNo:            row.TradeNo,
+			PaymentMethod:      row.PaymentMethod,
+			CreateTime:         row.CreateTime,
+			CompleteTime:       row.CompleteTime,
+			Status:             row.Status,
+			UserSubscriptionId: row.UserSubscriptionId,
+		})
+	}
+	return nil
+}
+
+func populateUsageStatsSubscriptionPurchase(data *UsageStatsData, query UsageStatsQuery) error {
+	if err := populateUsageStatsSubscriptionPurchaseSummary(data, query); err != nil {
+		return err
+	}
+	if err := populateUsageStatsSubscriptionPurchaseRanking(data, query); err != nil {
+		return err
+	}
+	return populateUsageStatsSubscriptionPurchaseDetails(data, query)
+}
+
 func addUsageStatsBaseRow(target *usageStatsBaseRow, row usageStatsLogRow, tokens usageStatsTokenBreakdown) {
 	target.Quota += row.Quota
 	target.RequestCount++
@@ -1223,6 +1496,17 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 			PageSize: query.RechargeDetailSize,
 			UserId:   query.RechargeUserId,
 			Items:    []UsageStatsRechargeDetailItem{},
+		},
+		SubscriptionPurchaseRanking: UsageStatsSubscriptionPurchaseRankPage{
+			Page:     query.SubscriptionPurchasePage,
+			PageSize: query.SubscriptionPurchasePageSize,
+			Items:    []UsageStatsSubscriptionPurchaseRankItem{},
+		},
+		SubscriptionPurchaseDetails: UsageStatsSubscriptionPurchaseDetailPage{
+			Page:     query.SubscriptionPurchaseDetailPage,
+			PageSize: query.SubscriptionPurchaseDetailSize,
+			UserId:   query.SubscriptionPurchaseUserId,
+			Items:    []UsageStatsSubscriptionPurchaseDetailItem{},
 		},
 	}
 
@@ -1370,6 +1654,9 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 	}
 
 	if err = populateUsageStatsRecharge(&data, query); err != nil {
+		return data, err
+	}
+	if err = populateUsageStatsSubscriptionPurchase(&data, query); err != nil {
 		return data, err
 	}
 

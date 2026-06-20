@@ -131,22 +131,32 @@ func GetUsageStats(c *gin.Context) {
 	rechargeUserId, _ := strconv.Atoi(c.Query("recharge_user_id"))
 	rechargeDetailPage, _ := strconv.Atoi(c.Query("recharge_detail_page"))
 	rechargeDetailPageSize, _ := strconv.Atoi(c.Query("recharge_detail_page_size"))
+	subscriptionPurchasePage, _ := strconv.Atoi(c.Query("subscription_purchase_page"))
+	subscriptionPurchasePageSize, _ := strconv.Atoi(c.Query("subscription_purchase_page_size"))
+	subscriptionPurchaseUserId, _ := strconv.Atoi(c.Query("subscription_purchase_user_id"))
+	subscriptionPurchaseDetailPage, _ := strconv.Atoi(c.Query("subscription_purchase_detail_page"))
+	subscriptionPurchaseDetailPageSize, _ := strconv.Atoi(c.Query("subscription_purchase_detail_page_size"))
 
 	stats, err := model.GetUsageStats(model.UsageStatsQuery{
-		StartTimestamp:     startTimestamp,
-		EndTimestamp:       endTimestamp,
-		UserId:             userId,
-		ModelName:          c.Query("model_name"),
-		Username:           c.Query("username"),
-		Group:              c.Query("group"),
-		Channel:            channel,
-		Limit:              limit,
-		TrendGranularity:   c.Query("trend_granularity"),
-		RechargePage:       rechargePage,
-		RechargePageSize:   rechargePageSize,
-		RechargeUserId:     rechargeUserId,
-		RechargeDetailPage: rechargeDetailPage,
-		RechargeDetailSize: rechargeDetailPageSize,
+		StartTimestamp:                 startTimestamp,
+		EndTimestamp:                   endTimestamp,
+		UserId:                         userId,
+		ModelName:                      c.Query("model_name"),
+		Username:                       c.Query("username"),
+		Group:                          c.Query("group"),
+		Channel:                        channel,
+		Limit:                          limit,
+		TrendGranularity:               c.Query("trend_granularity"),
+		RechargePage:                   rechargePage,
+		RechargePageSize:               rechargePageSize,
+		RechargeUserId:                 rechargeUserId,
+		RechargeDetailPage:             rechargeDetailPage,
+		RechargeDetailSize:             rechargeDetailPageSize,
+		SubscriptionPurchasePage:       subscriptionPurchasePage,
+		SubscriptionPurchasePageSize:   subscriptionPurchasePageSize,
+		SubscriptionPurchaseUserId:     subscriptionPurchaseUserId,
+		SubscriptionPurchaseDetailPage: subscriptionPurchaseDetailPage,
+		SubscriptionPurchaseDetailSize: subscriptionPurchaseDetailPageSize,
 	})
 	if err != nil {
 		common.ApiError(c, err)

@@ -168,6 +168,27 @@ const UsageStatsPage = () => {
   const [rechargeDetailPageSize, setRechargeDetailPageSize] = useState(
     DEFAULT_RECHARGE_PAGE_SIZE,
   );
+  const [subscriptionPurchasePage, setSubscriptionPurchasePage] = useState(1);
+  const [subscriptionPurchasePageSize, setSubscriptionPurchasePageSize] =
+    useState(DEFAULT_RECHARGE_PAGE_SIZE);
+  const [
+    selectedSubscriptionPurchaseUser,
+    setSelectedSubscriptionPurchaseUser,
+  ] = useState(null);
+  const [
+    selectedSubscriptionPurchaseStats,
+    setSelectedSubscriptionPurchaseStats,
+  ] = useState(null);
+  const [
+    selectedSubscriptionPurchaseLoading,
+    setSelectedSubscriptionPurchaseLoading,
+  ] = useState(false);
+  const [subscriptionPurchaseDetailPage, setSubscriptionPurchaseDetailPage] =
+    useState(1);
+  const [
+    subscriptionPurchaseDetailPageSize,
+    setSubscriptionPurchaseDetailPageSize,
+  ] = useState(DEFAULT_RECHARGE_PAGE_SIZE);
 
   useEffect(() => {
     initVChartSemiTheme({
@@ -226,8 +247,13 @@ const UsageStatsPage = () => {
 
     const nextRechargePage = options.rechargePage || 1;
     const nextRechargePageSize = options.rechargePageSize || rechargePageSize;
+    const nextSubscriptionPurchasePage = options.subscriptionPurchasePage || 1;
+    const nextSubscriptionPurchasePageSize =
+      options.subscriptionPurchasePageSize || subscriptionPurchasePageSize;
     params.recharge_page = nextRechargePage;
     params.recharge_page_size = nextRechargePageSize;
+    params.subscription_purchase_page = nextSubscriptionPurchasePage;
+    params.subscription_purchase_page_size = nextSubscriptionPurchasePageSize;
 
     setLoading(true);
     try {
@@ -239,10 +265,20 @@ const UsageStatsPage = () => {
         setRechargePageSize(
           data?.recharge_ranking?.page_size || nextRechargePageSize,
         );
+        setSubscriptionPurchasePage(
+          data?.subscription_purchase_ranking?.page ||
+            nextSubscriptionPurchasePage,
+        );
+        setSubscriptionPurchasePageSize(
+          data?.subscription_purchase_ranking?.page_size ||
+            nextSubscriptionPurchasePageSize,
+        );
         setSelectedUser(null);
         setSelectedUserStats(null);
         setSelectedRechargeUser(null);
         setSelectedRechargeStats(null);
+        setSelectedSubscriptionPurchaseUser(null);
+        setSelectedSubscriptionPurchaseStats(null);
       } else {
         showError(message || t('加载失败'));
       }
@@ -283,10 +319,20 @@ const UsageStatsPage = () => {
   const rechargeSummary = stats?.recharge_summary || {};
   const rechargeRanking = stats?.recharge_ranking || {};
   const rechargeItems = rechargeRanking.items || [];
+  const subscriptionPurchaseSummary =
+    stats?.subscription_purchase_summary || {};
+  const subscriptionPurchaseRanking =
+    stats?.subscription_purchase_ranking || {};
+  const subscriptionPurchaseItems = subscriptionPurchaseRanking.items || [];
   const selectedRechargeDetails =
     selectedRechargeStats?.recharge_details?.items || [];
   const selectedRechargeDetailPage =
     selectedRechargeStats?.recharge_details || {};
+  const selectedSubscriptionPurchaseDetails =
+    selectedSubscriptionPurchaseStats?.subscription_purchase_details?.items ||
+    [];
+  const selectedSubscriptionPurchaseDetailPage =
+    selectedSubscriptionPurchaseStats?.subscription_purchase_details || {};
   const hasUsageData =
     ranking.length > 0 ||
     models.length > 0 ||
@@ -349,12 +395,60 @@ const UsageStatsPage = () => {
     }
   };
 
+  const loadSelectedSubscriptionPurchaseStats = async (
+    record,
+    options = {},
+  ) => {
+    const params = buildBaseParams();
+    if (!record || !params) {
+      return;
+    }
+    const nextPage = options.page || 1;
+    const nextPageSize = options.pageSize || subscriptionPurchaseDetailPageSize;
+
+    setSelectedSubscriptionPurchaseUser(record);
+    setSelectedSubscriptionPurchaseStats(null);
+    setSelectedSubscriptionPurchaseLoading(true);
+    try {
+      params.subscription_purchase_user_id = record.user_id;
+      params.subscription_purchase_detail_page = nextPage;
+      params.subscription_purchase_detail_page_size = nextPageSize;
+      const res = await API.get('/api/log/usage_stats', { params });
+      const { success, message, data } = res.data;
+      if (success) {
+        setSelectedSubscriptionPurchaseStats(data);
+        setSubscriptionPurchaseDetailPage(
+          data?.subscription_purchase_details?.page || nextPage,
+        );
+        setSubscriptionPurchaseDetailPageSize(
+          data?.subscription_purchase_details?.page_size || nextPageSize,
+        );
+      } else {
+        showError(message || t('加载失败'));
+      }
+    } catch (error) {
+      showError(error.message || t('加载失败'));
+    } finally {
+      setSelectedSubscriptionPurchaseLoading(false);
+    }
+  };
+
   const handleRechargePageChange = (page) => {
-    loadStats({ rechargePage: page, rechargePageSize });
+    loadStats({
+      rechargePage: page,
+      rechargePageSize,
+      subscriptionPurchasePage,
+      subscriptionPurchasePageSize,
+    });
   };
 
   const handleRechargePageSizeChange = (pageSize) => {
-    loadStats({ rechargePage: 1, rechargePageSize: pageSize });
+    loadStats({
+      rechargePage: 1,
+      rechargePageSize: pageSize,
+      subscriptionPurchasePage,
+      subscriptionPurchasePageSize,
+    });
   };
 
   const handleRechargeDetailPageChange = (page) => {
@@ -377,8 +471,51 @@ const UsageStatsPage = () => {
     });
   };
 
+  const handleSubscriptionPurchasePageChange = (page) => {
+    loadStats({
+      rechargePage,
+      rechargePageSize,
+      subscriptionPurchasePage: page,
+      subscriptionPurchasePageSize,
+    });
+  };
+
+  const handleSubscriptionPurchasePageSizeChange = (pageSize) => {
+    loadStats({
+      rechargePage,
+      rechargePageSize,
+      subscriptionPurchasePage: 1,
+      subscriptionPurchasePageSize: pageSize,
+    });
+  };
+
+  const handleSubscriptionPurchaseDetailPageChange = (page) => {
+    if (!selectedSubscriptionPurchaseUser) {
+      return;
+    }
+    loadSelectedSubscriptionPurchaseStats(selectedSubscriptionPurchaseUser, {
+      page,
+      pageSize: subscriptionPurchaseDetailPageSize,
+    });
+  };
+
+  const handleSubscriptionPurchaseDetailPageSizeChange = (pageSize) => {
+    if (!selectedSubscriptionPurchaseUser) {
+      return;
+    }
+    loadSelectedSubscriptionPurchaseStats(selectedSubscriptionPurchaseUser, {
+      page: 1,
+      pageSize,
+    });
+  };
+
   const refreshStats = () => {
-    loadStats({ rechargePage, rechargePageSize });
+    loadStats({
+      rechargePage,
+      rechargePageSize,
+      subscriptionPurchasePage,
+      subscriptionPurchasePageSize,
+    });
   };
 
   const trendSpec = useMemo(
@@ -863,13 +1000,13 @@ const UsageStatsPage = () => {
         ),
       },
       {
-        title: t('站内充值额度'),
+        title: t('余额充值额度'),
         dataIndex: 'amount',
         sorter: (a, b) => (a.amount || 0) - (b.amount || 0),
         render: (value) => renderQuotaWithAmount(value || 0),
       },
       {
-        title: t('实付金额'),
+        title: t('余额充值实付'),
         dataIndex: 'money',
         sorter: (a, b) => (a.money || 0) - (b.money || 0),
         render: (value) => renderPaymentAmount(value || 0),
@@ -902,12 +1039,134 @@ const UsageStatsPage = () => {
         render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
       },
       {
-        title: t('站内充值额度'),
+        title: t('余额充值额度'),
         dataIndex: 'amount',
         render: (value) => renderQuotaWithAmount(value || 0),
       },
       {
-        title: t('实付金额'),
+        title: t('余额充值实付'),
+        dataIndex: 'money',
+        render: (value) => renderPaymentAmount(value || 0),
+      },
+      {
+        title: t('创建时间'),
+        dataIndex: 'create_time',
+        render: (value) => formatDateTime(value),
+      },
+      {
+        title: t('完成时间'),
+        dataIndex: 'complete_time',
+        render: (value) => formatDateTime(value),
+      },
+      {
+        title: t('状态'),
+        dataIndex: 'status',
+        render: (value) => (
+          <Tag color={value === 'success' ? 'green' : 'grey'} shape='circle'>
+            {value || '-'}
+          </Tag>
+        ),
+      },
+    ],
+    [t],
+  );
+
+  const subscriptionPurchaseRankingColumns = useMemo(
+    () => [
+      {
+        title: t('排名'),
+        dataIndex: 'rank',
+        width: 76,
+        render: (_, __, index) =>
+          ((subscriptionPurchaseRanking.page || subscriptionPurchasePage) - 1) *
+            (subscriptionPurchaseRanking.page_size ||
+              subscriptionPurchasePageSize) +
+          index +
+          1,
+      },
+      {
+        title: t('用户'),
+        dataIndex: 'username',
+        render: (_, record) => (
+          <div className='min-w-0'>
+            <div className='truncate font-medium'>{record.username || '-'}</div>
+            <Text type='tertiary' size='small'>
+              {t('ID')} {record.user_id}
+            </Text>
+          </div>
+        ),
+      },
+      {
+        title: t('订阅包购买金额'),
+        dataIndex: 'money',
+        sorter: (a, b) => (a.money || 0) - (b.money || 0),
+        render: (value) => renderPaymentAmount(value || 0),
+      },
+      {
+        title: t('订阅包额度'),
+        dataIndex: 'amount',
+        sorter: (a, b) => (a.amount || 0) - (b.amount || 0),
+        render: (value) => renderQuotaWithAmount(value || 0),
+      },
+      {
+        title: t('订阅购买笔数'),
+        dataIndex: 'order_count',
+        sorter: (a, b) => (a.order_count || 0) - (b.order_count || 0),
+        render: (value) => renderNumber(value || 0),
+      },
+      {
+        title: t('订阅包数'),
+        dataIndex: 'plan_count',
+        sorter: (a, b) => (a.plan_count || 0) - (b.plan_count || 0),
+        render: (value) => renderNumber(value || 0),
+      },
+      {
+        title: t('最后购买时间'),
+        dataIndex: 'last_purchase_at',
+        render: (value) => formatDateTime(value),
+      },
+    ],
+    [
+      subscriptionPurchasePage,
+      subscriptionPurchasePageSize,
+      subscriptionPurchaseRanking,
+      t,
+    ],
+  );
+
+  const subscriptionPurchaseDetailColumns = useMemo(
+    () => [
+      {
+        title: t('订单号'),
+        dataIndex: 'trade_no',
+        render: (value) => <Text copyable>{value || '-'}</Text>,
+      },
+      {
+        title: t('订阅套餐'),
+        dataIndex: 'plan_title',
+        render: (value, record) => (
+          <div className='min-w-0'>
+            <div className='truncate font-medium'>
+              {value || `${t('套餐')} #${record.plan_id || '-'}`}
+            </div>
+            <Text type='tertiary' size='small'>
+              {t('订阅实例')} #{record.user_subscription_id || '-'}
+            </Text>
+          </div>
+        ),
+      },
+      {
+        title: t('支付方式'),
+        dataIndex: 'payment_method',
+        render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
+      },
+      {
+        title: t('订阅包额度'),
+        dataIndex: 'amount',
+        render: (value) => renderQuotaWithAmount(value || 0),
+      },
+      {
+        title: t('订阅包购买金额'),
         dataIndex: 'money',
         render: (value) => renderPaymentAmount(value || 0),
       },
@@ -1059,15 +1318,29 @@ const UsageStatsPage = () => {
             icon={<BarChart3 size={20} />}
           />
           <SummaryCard
-            title={t('站内充值额度')}
+            title={t('余额充值额度')}
             value={renderQuotaWithAmount(rechargeSummary.amount || 0)}
             hint={`${t('充值笔数')} ${renderNumber(rechargeSummary.order_count || 0)}`}
             icon={<CreditCard size={20} />}
           />
           <SummaryCard
-            title={t('实付金额')}
+            title={t('余额充值实付')}
             value={renderPaymentAmount(rechargeSummary.money || 0)}
             hint={`${t('充值用户')} ${renderNumber(rechargeSummary.user_count || 0)} / ${t('最后充值时间')} ${formatDateTime(rechargeSummary.last_topup_at)}`}
+            icon={<WalletCards size={20} />}
+          />
+          <SummaryCard
+            title={t('订阅包购买金额')}
+            value={renderPaymentAmount(subscriptionPurchaseSummary.money || 0)}
+            hint={`${t('订阅购买笔数')} ${renderNumber(subscriptionPurchaseSummary.order_count || 0)}`}
+            icon={<CreditCard size={20} />}
+          />
+          <SummaryCard
+            title={t('订阅包额度')}
+            value={renderQuotaWithAmount(
+              subscriptionPurchaseSummary.amount || 0,
+            )}
+            hint={`${t('订阅购买人数')} ${renderNumber(subscriptionPurchaseSummary.user_count || 0)} / ${t('订阅包数')} ${renderNumber(subscriptionPurchaseSummary.plan_count || 0)}`}
             icon={<WalletCards size={20} />}
           />
         </div>
@@ -1162,7 +1435,7 @@ const UsageStatsPage = () => {
           <div className='mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between'>
             <div>
               <Title heading={6} className='!mb-1'>
-                {t('用户充值排行')}
+                {t('用户余额充值排行')}
               </Title>
               <Text type='tertiary'>
                 {t('点击用户行查看该用户的充值订单详情')}
@@ -1201,8 +1474,61 @@ const UsageStatsPage = () => {
                     style={{ width: 150, height: 150 }}
                   />
                 }
-                title={t('暂无用户充值数据')}
-                description={t('当前筛选范围内没有成功充值订单')}
+                title={t('暂无用户余额充值数据')}
+                description={t('当前筛选范围内没有成功余额充值订单')}
+              />
+            }
+          />
+        </Card>
+
+        <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
+          <div className='mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between'>
+            <div>
+              <Title heading={6} className='!mb-1'>
+                {t('用户订阅包购买排行')}
+              </Title>
+              <Text type='tertiary'>
+                {t('点击用户行查看该用户的订阅包购买详情')}
+              </Text>
+            </div>
+            <Tag color='violet' shape='circle'>
+              {t('已排除管理员作废订单')}
+            </Tag>
+          </div>
+          <Table
+            rowKey='user_id'
+            columns={subscriptionPurchaseRankingColumns}
+            dataSource={subscriptionPurchaseItems}
+            loading={loading}
+            pagination={{
+              currentPage:
+                subscriptionPurchaseRanking.page || subscriptionPurchasePage,
+              pageSize:
+                subscriptionPurchaseRanking.page_size ||
+                subscriptionPurchasePageSize,
+              total: subscriptionPurchaseRanking.total || 0,
+              showSizeChanger: true,
+              pageSizeOpts: [10, 20, 50, 100],
+              onPageChange: handleSubscriptionPurchasePageChange,
+              onPageSizeChange: handleSubscriptionPurchasePageSizeChange,
+            }}
+            onRow={(record) => ({
+              onClick: () => loadSelectedSubscriptionPurchaseStats(record),
+              className: 'cursor-pointer',
+            })}
+            scroll={{ x: 'max-content' }}
+            empty={
+              <Empty
+                image={
+                  <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                }
+                darkModeImage={
+                  <IllustrationNoResultDark
+                    style={{ width: 150, height: 150 }}
+                  />
+                }
+                title={t('暂无订阅包购买数据')}
+                description={t('当前筛选范围内没有有效订阅包购买订单')}
               />
             }
           />
@@ -1330,8 +1656,8 @@ const UsageStatsPage = () => {
       <SideSheet
         title={
           selectedRechargeUser
-            ? `${t('用户充值详情')} · ${selectedRechargeUser.username || selectedRechargeUser.user_id}`
-            : t('用户充值详情')
+            ? `${t('用户余额充值详情')} · ${selectedRechargeUser.username || selectedRechargeUser.user_id}`
+            : t('用户余额充值详情')
         }
         visible={!!selectedRechargeUser}
         onCancel={() => setSelectedRechargeUser(null)}
@@ -1342,13 +1668,13 @@ const UsageStatsPage = () => {
           <div className='flex flex-col gap-4'>
             <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
               <SummaryCard
-                title={t('站内充值额度')}
+                title={t('余额充值额度')}
                 value={renderQuotaWithAmount(selectedRechargeUser.amount || 0)}
                 hint={`${t('ID')} ${selectedRechargeUser.user_id}`}
                 icon={<CreditCard size={18} />}
               />
               <SummaryCard
-                title={t('实付金额')}
+                title={t('余额充值实付')}
                 value={renderPaymentAmount(selectedRechargeUser.money || 0)}
                 hint={`${t('充值笔数')} ${renderNumber(selectedRechargeUser.order_count || 0)}`}
                 icon={<WalletCards size={18} />}
@@ -1391,8 +1717,94 @@ const UsageStatsPage = () => {
                         style={{ width: 150, height: 150 }}
                       />
                     }
-                    title={t('暂无充值订单')}
-                    description={t('该用户在当前筛选范围内没有成功充值订单')}
+                    title={t('暂无余额充值订单')}
+                    description={t(
+                      '该用户在当前筛选范围内没有成功余额充值订单',
+                    )}
+                  />
+                }
+              />
+            </Card>
+          </div>
+        )}
+      </SideSheet>
+
+      <SideSheet
+        title={
+          selectedSubscriptionPurchaseUser
+            ? `${t('用户订阅包购买详情')} · ${selectedSubscriptionPurchaseUser.username || selectedSubscriptionPurchaseUser.user_id}`
+            : t('用户订阅包购买详情')
+        }
+        visible={!!selectedSubscriptionPurchaseUser}
+        onCancel={() => setSelectedSubscriptionPurchaseUser(null)}
+        width='min(1080px, 100vw)'
+        placement='right'
+      >
+        {selectedSubscriptionPurchaseUser && (
+          <div className='flex flex-col gap-4'>
+            <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
+              <SummaryCard
+                title={t('订阅包购买金额')}
+                value={renderPaymentAmount(
+                  selectedSubscriptionPurchaseUser.money || 0,
+                )}
+                hint={`${t('ID')} ${selectedSubscriptionPurchaseUser.user_id}`}
+                icon={<CreditCard size={18} />}
+              />
+              <SummaryCard
+                title={t('订阅包额度')}
+                value={renderQuotaWithAmount(
+                  selectedSubscriptionPurchaseUser.amount || 0,
+                )}
+                hint={`${t('订阅购买笔数')} ${renderNumber(selectedSubscriptionPurchaseUser.order_count || 0)}`}
+                icon={<WalletCards size={18} />}
+              />
+              <SummaryCard
+                title={t('最后购买时间')}
+                value={formatDateTime(
+                  selectedSubscriptionPurchaseUser.last_purchase_at,
+                )}
+                hint={`${t('订单总数')} ${renderNumber(selectedSubscriptionPurchaseDetailPage.total ?? selectedSubscriptionPurchaseUser.order_count ?? 0)}`}
+                icon={<Clock3 size={18} />}
+              />
+            </div>
+            <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>
+              <Table
+                rowKey='id'
+                columns={subscriptionPurchaseDetailColumns}
+                dataSource={selectedSubscriptionPurchaseDetails}
+                loading={selectedSubscriptionPurchaseLoading}
+                pagination={{
+                  currentPage:
+                    selectedSubscriptionPurchaseDetailPage.page ||
+                    subscriptionPurchaseDetailPage,
+                  pageSize:
+                    selectedSubscriptionPurchaseDetailPage.page_size ||
+                    subscriptionPurchaseDetailPageSize,
+                  total: selectedSubscriptionPurchaseDetailPage.total || 0,
+                  showSizeChanger: true,
+                  pageSizeOpts: [10, 20, 50, 100],
+                  onPageChange: handleSubscriptionPurchaseDetailPageChange,
+                  onPageSizeChange:
+                    handleSubscriptionPurchaseDetailPageSizeChange,
+                }}
+                scroll={{ x: 'max-content' }}
+                empty={
+                  <Empty
+                    image={
+                      <IllustrationNoResult
+                        style={{ width: 150, height: 150 }}
+                      />
+                    }
+                    darkModeImage={
+                      <IllustrationNoResultDark
+                        style={{ width: 150, height: 150 }}
+                      />
+                    }
+                    title={t('暂无订阅包购买订单')}
+                    description={t(
+                      '该用户在当前筛选范围内没有有效订阅包购买订单',
+                    )}
                   />
                 }
               />

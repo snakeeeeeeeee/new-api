@@ -4246,6 +4246,24 @@
     "充值笔数": "",
     "订单总数": "",
     "当前筛选范围内没有成功充值订单": "",
-    "该用户在当前筛选范围内没有成功充值订单": ""
+    "该用户在当前筛选范围内没有成功充值订单": "",
+    "余额充值额度": "Wallet top-up quota",
+    "余额充值实付": "Wallet top-up paid",
+    "用户余额充值排行": "User wallet top-up ranking",
+    "用户余额充值详情": "User wallet top-up details",
+    "暂无用户余额充值数据": "No wallet top-up data",
+    "当前筛选范围内没有成功余额充值订单": "No successful wallet top-up orders in the current filter range",
+    "暂无余额充值订单": "No wallet top-up orders",
+    "该用户在当前筛选范围内没有成功余额充值订单": "This user has no successful wallet top-up orders in the current filter range",
+    "用户订阅包购买排行": "User subscription purchase ranking",
+    "点击用户行查看该用户的订阅包购买详情": "Click a user row to view subscription purchase details",
+    "已排除管理员作废订单": "Admin-invalidated orders excluded",
+    "当前筛选范围内没有有效订阅包购买订单": "No valid subscription purchase orders in the current filter range",
+    "用户订阅包购买详情": "User subscription purchase details",
+    "暂无订阅包购买订单": "No subscription purchase orders",
+    "该用户在当前筛选范围内没有有效订阅包购买订单": "This user has no valid subscription purchase orders in the current filter range",
+    "订阅购买笔数": "Subscription purchase orders",
+    "订阅包额度": "Subscription package quota",
+    "最后购买时间": "Last purchase time"
   }
 }

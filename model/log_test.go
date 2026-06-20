@@ -595,17 +595,70 @@ func TestGetUsageStatsRechargeRankingAndDetails(t *testing.T) {
 		CompleteTime:  base - 3600,
 		Status:        common.TopUpStatusSuccess,
 	})
+	seedUsageStatsTopUp(t, &TopUp{
+		UserId:        101,
+		Amount:        0,
+		Money:         29.9,
+		TradeNo:       "usage_subscription_alice_1",
+		PaymentMethod: "stripe",
+		CreateTime:    base + 180,
+		CompleteTime:  base + 200,
+		Status:        common.TopUpStatusSuccess,
+	})
+	require.NoError(t, DB.Create(&SubscriptionPlan{
+		Id:          301,
+		Title:       "Pro Monthly",
+		PriceAmount: 29.9,
+		Currency:    "USD",
+		TotalAmount: 1000,
+		Enabled:     true,
+	}).Error)
+	require.NoError(t, DB.Create(&UserSubscription{
+		Id:          401,
+		UserId:      101,
+		PlanId:      301,
+		AmountTotal: 1200,
+		StartTime:   base + 200,
+		EndTime:     base + 30*24*3600,
+		Status:      "active",
+		Source:      "order",
+	}).Error)
+	require.NoError(t, DB.Create(&SubscriptionOrder{
+		UserId:             101,
+		PlanId:             301,
+		Money:              29.9,
+		UserSubscriptionId: 401,
+		TradeNo:            "usage_subscription_alice_1",
+		PaymentMethod:      "stripe",
+		Status:             common.TopUpStatusSuccess,
+		CreateTime:         base + 180,
+		CompleteTime:       base + 200,
+	}).Error)
+	require.NoError(t, DB.Create(&SubscriptionOrder{
+		UserId:        102,
+		PlanId:        301,
+		Money:         29.9,
+		TradeNo:       "usage_subscription_bob_invalidated",
+		PaymentMethod: "stripe",
+		Status:        common.TopUpStatusSuccess,
+		CreateTime:    base + 210,
+		CompleteTime:  base + 220,
+		InvalidatedAt: base + 300,
+	}).Error)
 
 	stats, err := GetUsageStats(UsageStatsQuery{
-		StartTimestamp:     base - 1,
-		EndTimestamp:       base + 3600,
-		Group:              "vip",
-		TrendGranularity:   UsageStatsGranularityHour,
-		RechargePage:       1,
-		RechargePageSize:   1,
-		RechargeUserId:     101,
-		RechargeDetailPage: 1,
-		RechargeDetailSize: 1,
+		StartTimestamp:                 base - 1,
+		EndTimestamp:                   base + 3600,
+		Group:                          "vip",
+		TrendGranularity:               UsageStatsGranularityHour,
+		RechargePage:                   1,
+		RechargePageSize:               1,
+		RechargeUserId:                 101,
+		RechargeDetailPage:             1,
+		RechargeDetailSize:             1,
+		SubscriptionPurchaseUserId:     101,
+		SubscriptionPurchaseDetailPage: 1,
+		SubscriptionPurchaseDetailSize: 1,
 	})
 
 	require.NoError(t, err)
@@ -633,6 +686,28 @@ func TestGetUsageStatsRechargeRankingAndDetails(t *testing.T) {
 	require.Equal(t, int64(200), stats.RechargeDetails.Items[0].Amount)
 	require.InDelta(t, 20, stats.RechargeDetails.Items[0].Money, 0.000001)
 	require.Equal(t, common.TopUpStatusSuccess, stats.RechargeDetails.Items[0].Status)
+	require.NotEqual(t, "usage_subscription_alice_1", stats.RechargeDetails.Items[0].TradeNo)
+
+	require.Equal(t, int64(1200), stats.SubscriptionPurchaseSummary.Amount)
+	require.InDelta(t, 29.9, stats.SubscriptionPurchaseSummary.Money, 0.000001)
+	require.Equal(t, int64(1), stats.SubscriptionPurchaseSummary.OrderCount)
+	require.Equal(t, int64(1), stats.SubscriptionPurchaseSummary.UserCount)
+	require.Equal(t, int64(1), stats.SubscriptionPurchaseSummary.PlanCount)
+	require.Equal(t, base+200, stats.SubscriptionPurchaseSummary.LastPurchaseAt)
+	require.Equal(t, int64(1), stats.SubscriptionPurchaseRanking.Total)
+	require.Len(t, stats.SubscriptionPurchaseRanking.Items, 1)
+	require.Equal(t, 101, stats.SubscriptionPurchaseRanking.Items[0].UserId)
+	require.Equal(t, int64(1200), stats.SubscriptionPurchaseRanking.Items[0].Amount)
+	require.InDelta(t, 29.9, stats.SubscriptionPurchaseRanking.Items[0].Money, 0.000001)
+	require.Equal(t, int64(1), stats.SubscriptionPurchaseRanking.Items[0].OrderCount)
+	require.Equal(t, int64(1), stats.SubscriptionPurchaseRanking.Items[0].PlanCount)
+	require.Equal(t, 101, stats.SubscriptionPurchaseDetails.UserId)
+	require.Equal(t, int64(1), stats.SubscriptionPurchaseDetails.Total)
+	require.Len(t, stats.SubscriptionPurchaseDetails.Items, 1)
+	require.Equal(t, "usage_subscription_alice_1", stats.SubscriptionPurchaseDetails.Items[0].TradeNo)
+	require.Equal(t, "Pro Monthly", stats.SubscriptionPurchaseDetails.Items[0].PlanTitle)
+	require.Equal(t, int64(1200), stats.SubscriptionPurchaseDetails.Items[0].Amount)
+	require.InDelta(t, 29.9, stats.SubscriptionPurchaseDetails.Items[0].Money, 0.000001)
 
 	pageTwoStats, err := GetUsageStats(UsageStatsQuery{
 		StartTimestamp:   base - 1,
