@@ -63,6 +63,8 @@ const { Text, Title } = Typography;
 
 const CHART_CONFIG = { mode: 'desktop-browser' };
 
+const RANKING_TABLE_MIN_WIDTH = 1200;
+
 const defaultDateRange = () => [
   dayjs().startOf('day').toDate(),
   dayjs().endOf('day').toDate(),
@@ -990,6 +992,7 @@ const UsageStatsPage = () => {
       {
         title: t('用户'),
         dataIndex: 'username',
+        width: 280,
         render: (_, record) => (
           <div className='min-w-0'>
             <div className='truncate font-medium'>{record.username || '-'}</div>
@@ -1002,24 +1005,28 @@ const UsageStatsPage = () => {
       {
         title: t('余额充值额度'),
         dataIndex: 'amount',
+        width: 190,
         sorter: (a, b) => (a.amount || 0) - (b.amount || 0),
         render: (value) => renderQuotaWithAmount(value || 0),
       },
       {
         title: t('余额充值实付'),
         dataIndex: 'money',
+        width: 190,
         sorter: (a, b) => (a.money || 0) - (b.money || 0),
         render: (value) => renderPaymentAmount(value || 0),
       },
       {
         title: t('充值笔数'),
         dataIndex: 'order_count',
+        width: 150,
         sorter: (a, b) => (a.order_count || 0) - (b.order_count || 0),
         render: (value) => renderNumber(value || 0),
       },
       {
         title: t('最后充值时间'),
         dataIndex: 'last_topup_at',
+        width: 260,
         render: (value) => formatDateTime(value),
       },
     ],
@@ -1087,6 +1094,7 @@ const UsageStatsPage = () => {
       {
         title: t('用户'),
         dataIndex: 'username',
+        width: 280,
         render: (_, record) => (
           <div className='min-w-0'>
             <div className='truncate font-medium'>{record.username || '-'}</div>
@@ -1099,24 +1107,28 @@ const UsageStatsPage = () => {
       {
         title: t('订阅包购买金额'),
         dataIndex: 'money',
+        width: 220,
         sorter: (a, b) => (a.money || 0) - (b.money || 0),
         render: (value) => renderPaymentAmount(value || 0),
       },
       {
         title: t('订阅购买笔数'),
         dataIndex: 'order_count',
+        width: 170,
         sorter: (a, b) => (a.order_count || 0) - (b.order_count || 0),
         render: (value) => renderNumber(value || 0),
       },
       {
         title: t('订阅包数'),
         dataIndex: 'plan_count',
+        width: 150,
         sorter: (a, b) => (a.plan_count || 0) - (b.plan_count || 0),
         render: (value) => renderNumber(value || 0),
       },
       {
         title: t('最后购买时间'),
         dataIndex: 'last_purchase_at',
+        width: 260,
         render: (value) => formatDateTime(value),
       },
     ],
@@ -1444,7 +1456,7 @@ const UsageStatsPage = () => {
               onClick: () => loadSelectedRechargeStats(record),
               className: 'cursor-pointer',
             })}
-            scroll={{ x: 'max-content' }}
+            scroll={{ x: RANKING_TABLE_MIN_WIDTH }}
             empty={
               <Empty
                 image={
@@ -1539,7 +1551,7 @@ const UsageStatsPage = () => {
               onClick: () => loadSelectedSubscriptionPurchaseStats(record),
               className: 'cursor-pointer',
             })}
-            scroll={{ x: 'max-content' }}
+            scroll={{ x: RANKING_TABLE_MIN_WIDTH }}
             empty={
               <Empty
                 image={
