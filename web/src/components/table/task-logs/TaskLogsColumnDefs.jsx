@@ -387,7 +387,8 @@ export const getTaskLogsColumns = ({
       title: t('平台'),
       dataIndex: 'platform',
       render: (text, record, index) => {
-        return <div>{renderPlatform(text, t)}</div>;
+        const platform = record.display_platform || text;
+        return <div>{renderPlatform(platform, t)}</div>;
       },
     },
     {

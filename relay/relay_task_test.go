@@ -3,6 +3,7 @@ package relay
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func setupRelayTaskTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	model.DB = db
-	require.NoError(t, db.AutoMigrate(&model.Task{}))
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}))
 	t.Cleanup(func() {
 		model.DB = originalDB
 		common.UsingSQLite = originalUsingSQLite
@@ -61,6 +62,28 @@ func setupRelayTaskTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 	return db
+}
+
+func TestTaskModel2DtoDisplaysRealChannelPlatformForImageHandleTask(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:   321,
+		Type: constant.ChannelTypeOpenAI,
+		Key:  "test-key",
+		Name: "openai-image-channel",
+	}).Error)
+
+	task := &model.Task{
+		TaskID:    "task_image_handle",
+		Platform:  constant.TaskPlatform("58"),
+		ChannelId: 321,
+		Status:    model.TaskStatusQueued,
+	}
+
+	result := TaskModel2Dto(task)
+
+	assert.Equal(t, "58", result.Platform)
+	assert.Equal(t, strconv.Itoa(constant.ChannelTypeOpenAI), result.DisplayPlatform)
 }
 
 func TestRelayTaskSubmitImageHandleClientTaskIDIdempotency(t *testing.T) {

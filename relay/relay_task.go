@@ -568,27 +568,47 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	if task.Status == model.TaskStatusSuccess {
 		resultURL = task.GetResultURL()
 	}
+	displayPlatform := taskDisplayPlatform(task)
 	return &dto.TaskDto{
-		ID:         task.ID,
-		CreatedAt:  task.CreatedAt,
-		UpdatedAt:  task.UpdatedAt,
-		TaskID:     task.TaskID,
-		Platform:   string(task.Platform),
-		UserId:     task.UserId,
-		Group:      task.Group,
-		ChannelId:  task.ChannelId,
-		Quota:      task.Quota,
-		Action:     task.Action,
-		Status:     string(task.Status),
-		FailReason: task.FailReason,
-		ResultURL:  resultURL,
-		SubmitTime: task.SubmitTime,
-		StartTime:  task.StartTime,
-		FinishTime: task.FinishTime,
-		Progress:   task.Progress,
-		IsBlocked:  task.IsBlocked,
-		Properties: task.Properties,
-		Username:   task.Username,
-		Data:       task.Data,
+		ID:              task.ID,
+		CreatedAt:       task.CreatedAt,
+		UpdatedAt:       task.UpdatedAt,
+		TaskID:          task.TaskID,
+		Platform:        string(task.Platform),
+		DisplayPlatform: displayPlatform,
+		UserId:          task.UserId,
+		Group:           task.Group,
+		ChannelId:       task.ChannelId,
+		Quota:           task.Quota,
+		Action:          task.Action,
+		Status:          string(task.Status),
+		FailReason:      task.FailReason,
+		ResultURL:       resultURL,
+		SubmitTime:      task.SubmitTime,
+		StartTime:       task.StartTime,
+		FinishTime:      task.FinishTime,
+		Progress:        task.Progress,
+		IsBlocked:       task.IsBlocked,
+		Properties:      task.Properties,
+		Username:        task.Username,
+		Data:            task.Data,
 	}
+}
+
+func taskDisplayPlatform(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	platform := string(task.Platform)
+	if platform != strconv.Itoa(constant.ChannelTypeImageHandle) || task.ChannelId <= 0 {
+		return platform
+	}
+	channelModel, err := model.CacheGetChannel(task.ChannelId)
+	if err != nil || channelModel == nil {
+		channelModel, err = model.GetChannelById(task.ChannelId, true)
+	}
+	if err != nil || channelModel == nil || channelModel.Type <= 0 {
+		return platform
+	}
+	return strconv.Itoa(channelModel.Type)
 }
