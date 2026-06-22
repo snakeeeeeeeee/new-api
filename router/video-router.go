@@ -8,12 +8,31 @@ import (
 )
 
 func SetVideoRouter(router *gin.Engine) {
+	assetV1Router := router.Group("/v1")
+	assetV1Router.Use(middleware.RouteTag("relay"))
+	assetV1Router.Use(middleware.AssetKeyAuth())
+	{
+		assetV1Router.GET("/assets", controller.ListAssetsByAPIKey)
+		assetV1Router.POST("/assets/query", controller.QueryAssetsByAPIKey)
+		assetV1Router.POST("/assets/batch/urls", controller.GetAssetBatchURLsByAPIKey)
+		assetV1Router.GET("/assets/export", controller.ExportAssetsByAPIKey)
+		assetV1Router.GET("/assets/:asset_id", controller.GetAssetByAPIKey)
+	}
+
 	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
 	videoProxyRouter := router.Group("/v1")
 	videoProxyRouter.Use(middleware.RouteTag("relay"))
 	videoProxyRouter.Use(middleware.TokenOrUserAuth())
 	{
 		videoProxyRouter.GET("/videos/:task_id/content", controller.VideoProxy)
+	}
+
+	imageTaskQueryRouter := router.Group("/v1")
+	imageTaskQueryRouter.Use(middleware.RouteTag("relay"))
+	imageTaskQueryRouter.Use(middleware.TokenAuth())
+	{
+		imageTaskQueryRouter.GET("/image/tasks/:task_id", controller.GetImageTask)
+		imageTaskQueryRouter.POST("/image/tasks/query", controller.QueryImageTasks)
 	}
 
 	videoV1Router := router.Group("/v1")
@@ -23,6 +42,7 @@ func SetVideoRouter(router *gin.Engine) {
 		videoV1Router.POST("/video/generations", controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
 		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
+		videoV1Router.POST("/image/tasks", controller.RelayTask)
 	}
 	// openai compatible API video routes
 	// docs: https://platform.openai.com/docs/api-reference/videos/create

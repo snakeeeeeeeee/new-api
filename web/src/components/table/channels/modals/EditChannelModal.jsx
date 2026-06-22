@@ -243,6 +243,7 @@ const EditChannelModal = (props) => {
     // 企业账户设置
     is_enterprise_account: false,
     image_response_adapter: '',
+    callback_secret: '',
     // 字段透传控制默认值
     allow_service_tier: false,
     disable_store: false, // false = 允许透传（默认开启）
@@ -663,6 +664,13 @@ const EditChannelModal = (props) => {
             base_url: 'https://ark.cn-beijing.volces.com',
           }));
           break;
+        case 58:
+          localModels = ['gpt-image-2'];
+          setInputs((prevInputs) => ({
+            ...prevInputs,
+            base_url: 'http://127.0.0.1:8787',
+          }));
+          break;
         default:
           localModels = getChannelModels(value);
           break;
@@ -884,6 +892,7 @@ const EditChannelModal = (props) => {
             parsedSettings.azure_responses_version || '';
           data.image_response_adapter =
             parsedSettings.image_response_adapter || '';
+          data.callback_secret = '';
           // 读取 Vertex 密钥格式
           data.vertex_key_type = parsedSettings.vertex_key_type || 'json';
           // 读取 AWS 密钥格式和区域
@@ -927,6 +936,7 @@ const EditChannelModal = (props) => {
           console.error('解析其他设置失败:', error);
           data.azure_responses_version = '';
           data.image_response_adapter = '';
+          data.callback_secret = '';
           data.region = '';
           data.vertex_key_type = 'json';
           data.aws_key_type = 'ak_sk';
@@ -948,6 +958,7 @@ const EditChannelModal = (props) => {
       } else {
         // 兼容历史数据：老渠道没有 settings 时，默认按 json 展示
         data.image_response_adapter = '';
+        data.callback_secret = '';
         data.vertex_key_type = 'json';
         data.aws_key_type = 'ak_sk';
         data.is_enterprise_account = false;
@@ -1799,6 +1810,14 @@ const EditChannelModal = (props) => {
       delete settings.image_response_adapter;
     }
 
+    if (localInputs.type === 58) {
+      if (localInputs.callback_secret && localInputs.callback_secret.trim()) {
+        settings.callback_secret = localInputs.callback_secret.trim();
+      }
+    } else if ('callback_secret' in settings) {
+      delete settings.callback_secret;
+    }
+
     // type === 33 (AWS): 保存 aws_key_type 到 settings
     if (localInputs.type === 33) {
       settings.aws_key_type = localInputs.aws_key_type || 'ak_sk';
@@ -1870,6 +1889,7 @@ const EditChannelModal = (props) => {
     delete localInputs.system_prompt_override;
     delete localInputs.is_enterprise_account;
     delete localInputs.image_response_adapter;
+    delete localInputs.callback_secret;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
     // 顶层的 aws_key_type 不应发送给后端
@@ -2571,6 +2591,25 @@ const EditChannelModal = (props) => {
                       }
                       extraText={t(
                         '仅用于图片接口响应兼容。启用后，会将特定上游图片返回转换为 OpenAI 图片格式。',
+                      )}
+                    />
+                  )}
+
+                  {inputs.type === 58 && (
+                    <Form.Input
+                      field='callback_secret'
+                      label={t('Callback Secret')}
+                      placeholder={t('编辑模式下，已保存的 Secret 不会显示')}
+                      mode='password'
+                      onChange={(value) =>
+                        handleChannelOtherSettingsChange(
+                          'callback_secret',
+                          value || '',
+                        )
+                      }
+                      showClear
+                      extraText={t(
+                        '用于验证 image-handle 回调签名。留空保存时不会覆盖已有 Secret。',
                       )}
                     />
                   )}

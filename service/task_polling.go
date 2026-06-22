@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/async_task_setting"
 
 	"github.com/samber/lo"
+	"gorm.io/gorm"
 )
 
 // TaskPollingAdaptor 定义轮询所需的最小适配器接口，避免 service -> relay 的循环依赖
@@ -30,6 +31,10 @@ type TaskPollingAdaptor interface {
 	// AdjustBillingOnComplete 在任务到达终态（成功/失败）时由轮询循环调用。
 	// 返回正数触发差额结算（补扣/退还），返回 0 保持预扣费金额不变。
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
+}
+
+type BatchTaskPollingAdaptor interface {
+	ParseBatchTaskResult(body []byte) (map[string]*relaycommon.TaskInfo, error)
 }
 
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
@@ -368,12 +373,65 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	info.ApiKey = cacheGetChannel.Key
 	adaptor.Init(info)
+	if batchAdaptor, ok := adaptor.(BatchTaskPollingAdaptor); ok && len(taskIds) > 1 {
+		if err := updateVideoBatchTasks(ctx, adaptor, batchAdaptor, cacheGetChannel, taskIds, taskM); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("Failed to update video task batch for channel %d: %s", cacheGetChannel.Id, err.Error()))
+		}
+		return nil
+	}
 	for _, taskId := range taskIds {
 		if err := updateVideoSingleTask(ctx, adaptor, cacheGetChannel, taskId, taskM); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", taskId, err.Error()))
 		}
 		// sleep 1 second between each task to avoid hitting rate limits of upstream platforms
 		time.Sleep(1 * time.Second)
+	}
+	return nil
+}
+
+func updateVideoBatchTasks(ctx context.Context, adaptor TaskPollingAdaptor, batchAdaptor BatchTaskPollingAdaptor, ch *model.Channel, taskIds []string, taskM map[string]*model.Task) error {
+	baseURL := constant.ChannelBaseURLs[ch.Type]
+	if ch.GetBaseURL() != "" {
+		baseURL = ch.GetBaseURL()
+	}
+	proxy := ch.GetSetting().Proxy
+	const batchSize = 100
+	for start := 0; start < len(taskIds); start += batchSize {
+		end := start + batchSize
+		if end > len(taskIds) {
+			end = len(taskIds)
+		}
+		chunk := taskIds[start:end]
+		resp, err := adaptor.FetchTask(baseURL, ch.Key, map[string]any{
+			"task_ids": chunk,
+		}, proxy)
+		if err != nil {
+			return fmt.Errorf("fetch batch tasks failed: %w", err)
+		}
+		responseBody, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return fmt.Errorf("read batch task response failed: %w", err)
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return fmt.Errorf("fetch batch tasks status code %d: %s", resp.StatusCode, string(responseBody))
+		}
+		results, err := batchAdaptor.ParseBatchTaskResult(responseBody)
+		if err != nil {
+			return fmt.Errorf("parse batch task response failed: %w", err)
+		}
+		for _, taskId := range chunk {
+			task := taskM[taskId]
+			if task == nil {
+				continue
+			}
+			taskResult := results[taskId]
+			if taskResult == nil {
+				continue
+			}
+			task.Data = redactVideoResponseBody(responseBody)
+			ApplyTaskResult(ctx, adaptor, task, taskResult)
+		}
 	}
 	return nil
 }
@@ -411,8 +469,6 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask response: %s", string(responseBody)))
 
-	snap := task.Snapshot()
-
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
 	var responseItems dto.TaskResponse[model.Task]
@@ -433,7 +489,6 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask taskResult: %+v", taskResult))
 
-	now := time.Now().Unix()
 	if taskResult.Status == "" {
 		//taskResult = relaycommon.FailTaskInfo("upstream returned empty status")
 		errorResult := &dto.GeneralErrorResponse{}
@@ -456,6 +511,16 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 	}
 
+	ApplyTaskResult(ctx, adaptor, task, taskResult)
+	return nil
+}
+
+func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) (updated bool, billed bool) {
+	if task == nil || taskResult == nil {
+		return false, false
+	}
+	now := time.Now().Unix()
+	snap := task.Snapshot()
 	shouldRefund := false
 	shouldSettle := false
 	quota := task.Quota
@@ -488,7 +553,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 		shouldSettle = true
 	case model.TaskStatusFailure:
-		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", taskId), task)
+		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", task.TaskID), task)
 		task.Status = model.TaskStatusFailure
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {
@@ -501,7 +566,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			shouldRefund = true
 		}
 	default:
-		return fmt.Errorf("unknown task status %s for task %s", taskResult.Status, task.TaskID)
+		logger.LogError(ctx, fmt.Sprintf("unknown task status %s for task %s", taskResult.Status, task.TaskID))
+		return false, false
 	}
 	if taskResult.Progress != "" {
 		task.Progress = taskResult.Progress
@@ -509,9 +575,30 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 	if isDone && snap.Status != task.Status {
-		won, err := task.UpdateWithStatus(snap.Status)
+		won := false
+		err := model.DB.Transaction(func(tx *gorm.DB) error {
+			var updateErr error
+			won, updateErr = task.UpdateWithStatusTx(tx, snap.Status)
+			if updateErr != nil || !won {
+				return updateErr
+			}
+			if task.Status == model.TaskStatusSuccess {
+				inputs := BuildAssetCreateInputs(task)
+				if err := model.CreateAssetsForTaskTx(tx, inputs); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))
+			task.Status = snap.Status
+			task.Progress = snap.Progress
+			task.StartTime = snap.StartTime
+			task.FinishTime = snap.FinishTime
+			task.FailReason = snap.FailReason
+			task.PrivateData.ResultURL = snap.ResultURL
+			task.Data = snap.Data
 			shouldRefund = false
 			shouldSettle = false
 		} else if !won {
@@ -530,12 +617,13 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	if shouldSettle {
 		settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+		billed = true
 	}
 	if shouldRefund {
 		RefundTaskQuota(ctx, task, task.FailReason)
+		billed = true
 	}
-
-	return nil
+	return !snap.Equal(task.Snapshot()), billed
 }
 
 func redactVideoResponseBody(body []byte) []byte {

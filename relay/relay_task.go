@@ -27,6 +27,7 @@ type TaskSubmitResult struct {
 	TaskData       []byte
 	Platform       constant.TaskPlatform
 	Quota          int
+	ExistingTask   *model.Task
 	//PerCallPrice   types.PriceData
 }
 
@@ -175,6 +176,30 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if info.PublicTaskID == "" {
 		info.PublicTaskID = model.GenerateTaskID()
 	}
+	if platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeImageHandle)) {
+		requestedClientTaskID := ""
+		if taskReq, err := relaycommon.GetTaskRequest(c); err == nil {
+			requestedClientTaskID = strings.TrimSpace(taskReq.ClientTaskID)
+		}
+		if requestedClientTaskID != "" {
+			if existingTask, exists, err := model.GetByOnlyTaskId(info.PublicTaskID); err != nil {
+				return nil, service.TaskErrorWrapper(err, "get_existing_task_failed", http.StatusInternalServerError)
+			} else if exists {
+				if existingTask.UserId != info.UserId || existingTask.Platform != platform {
+					return nil, service.TaskErrorWrapperLocal(fmt.Errorf("client_task_id already exists"), "duplicate_client_task_id", http.StatusConflict)
+				}
+				c.JSON(http.StatusOK, gin.H{
+					"task_id": existingTask.TaskID,
+					"status":  mapTaskStatusToSimple(existingTask.Status),
+				})
+				return &TaskSubmitResult{
+					Platform:     platform,
+					Quota:        existingTask.Quota,
+					ExistingTask: existingTask,
+				}, nil
+			}
+		}
+	}
 
 	// 4. 价格计算：基础模型价格
 	info.OriginModelName = modelName
@@ -221,7 +246,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
-	if resp != nil && resp.StatusCode != http.StatusOK {
+	if resp != nil && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
 		responseBody, _ := io.ReadAll(resp.Body)
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}

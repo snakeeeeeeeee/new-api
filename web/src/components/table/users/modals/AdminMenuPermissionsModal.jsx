@@ -56,6 +56,7 @@ const MENU_SECTIONS = [
       ['log_dashboard', '日志看板', '日志查询和运行态统计'],
       ['usage_stats', '用量统计', '用户与模型消耗排行'],
       ['async_task', '异步任务管理', '异步任务调度与超时监控'],
+      ['assets', '资源管理中心', '生成图片和视频资源管理'],
       ['request_dump', 'Dump 分析', '临时请求诊断控制台'],
       ['violation', '风险检测', '安全风控词命中审计'],
       ['compatibility', '兼容管理', '协议与渠道兼容策略'],

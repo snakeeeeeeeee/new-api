@@ -168,6 +168,7 @@ type SyncTaskQueryParams struct {
 	TaskID         string
 	UserID         string
 	Action         string
+	AssetType      string
 	Status         string
 	StartTimestamp int64
 	EndTimestamp   int64
@@ -230,6 +231,11 @@ func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQ
 	if queryParams.Action != "" {
 		query = query.Where("action = ?", queryParams.Action)
 	}
+	if queryParams.Action == "" && queryParams.AssetType != "" {
+		if actions := constant.TaskActionsByAssetType(queryParams.AssetType); len(actions) != 0 {
+			query = query.Where("action in (?)", actions)
+		}
+	}
 	if queryParams.Status != "" {
 		query = query.Where("status = ?", queryParams.Status)
 	}
@@ -278,6 +284,11 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 	}
 	if queryParams.Action != "" {
 		query = query.Where("action = ?", queryParams.Action)
+	}
+	if queryParams.Action == "" && queryParams.AssetType != "" {
+		if actions := constant.TaskActionsByAssetType(queryParams.AssetType); len(actions) != 0 {
+			query = query.Where("action in (?)", actions)
+		}
 	}
 	if queryParams.Status != "" {
 		query = query.Where("status = ?", queryParams.Status)
@@ -460,6 +471,22 @@ func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
 	return task, nil
 }
 
+func GetByTaskIDStrings(userId int, taskIds []string, platform constant.TaskPlatform) ([]*Task, error) {
+	if len(taskIds) == 0 {
+		return nil, nil
+	}
+	var tasks []*Task
+	query := visibleTaskQuery(DB.Where("user_id = ? and task_id in (?)", userId, taskIds))
+	if platform != "" {
+		query = query.Where("platform = ?", platform)
+	}
+	err := query.Find(&tasks).Error
+	if err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
 func (Task *Task) Insert() error {
 	var err error
 	err = DB.Create(Task).Error
@@ -512,7 +539,11 @@ func (Task *Task) Update() error {
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	result := DB.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
+	return t.UpdateWithStatusTx(DB, fromStatus)
+}
+
+func (t *Task) UpdateWithStatusTx(tx *gorm.DB, fromStatus TaskStatus) (bool, error) {
+	result := tx.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
 	if result.Error != nil {
 		return false, result.Error
 	}
@@ -575,6 +606,11 @@ func TaskCountAllTasks(queryParams SyncTaskQueryParams) int64 {
 	if queryParams.Action != "" {
 		query = query.Where("action = ?", queryParams.Action)
 	}
+	if queryParams.Action == "" && queryParams.AssetType != "" {
+		if actions := constant.TaskActionsByAssetType(queryParams.AssetType); len(actions) != 0 {
+			query = query.Where("action in (?)", actions)
+		}
+	}
 	if queryParams.Status != "" {
 		query = query.Where("status = ?", queryParams.Status)
 	}
@@ -597,6 +633,11 @@ func TaskCountAllUserTask(userId int, queryParams SyncTaskQueryParams) int64 {
 	}
 	if queryParams.Action != "" {
 		query = query.Where("action = ?", queryParams.Action)
+	}
+	if queryParams.Action == "" && queryParams.AssetType != "" {
+		if actions := constant.TaskActionsByAssetType(queryParams.AssetType); len(actions) != 0 {
+			query = query.Where("action in (?)", actions)
+		}
 	}
 	if queryParams.Status != "" {
 		query = query.Where("status = ?", queryParams.Status)

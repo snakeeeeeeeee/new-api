@@ -696,6 +696,7 @@ type TaskRelayInfo struct {
 }
 
 type TaskSubmitReq struct {
+	ClientTaskID   string                 `json:"client_task_id,omitempty"`
 	Prompt         string                 `json:"prompt"`
 	Model          string                 `json:"model,omitempty"`
 	Mode           string                 `json:"mode,omitempty"`

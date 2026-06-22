@@ -1,0 +1,336 @@
+package controller
+
+import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func signCallbackTestBody(timestamp string, body []byte, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte("."))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func makeCallbackRequest(t *testing.T, body []byte, secret string) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/task/callback/external-image/batch", bytes.NewReader(body))
+	ctx.Request.Header.Set("X-Callback-Timestamp", timestamp)
+	ctx.Request.Header.Set("X-Callback-Signature", signCallbackTestBody(timestamp, body, secret))
+	ctx.Request.Header.Set("X-Callback-Secret-Id", "channel_123")
+	return ctx, recorder
+}
+
+func TestImageTaskCallbackBatchAccepted(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "callback-secret"
+	settings, err := common.Marshal(dto.ChannelOtherSettings{CallbackSecret: secret})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            123,
+		Type:          constant.ChannelTypeImageHandle,
+		Name:          "image-handle",
+		Key:           "provider-key",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: string(settings),
+	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:     "task_image_success",
+		Platform:   constant.TaskPlatform("58"),
+		Action:     constant.TaskActionImageGeneration,
+		UserId:     1,
+		ChannelId:  123,
+		Quota:      100,
+		Status:     model.TaskStatusQueued,
+		Progress:   "20%",
+		SubmitTime: time.Now().Unix(),
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "imgtask_success",
+			BillingSource:  service.BillingSourceWallet,
+			BillingContext: &model.TaskBillingContext{
+				OriginModelName: "gpt-image-2",
+			},
+		},
+		Properties: model.Properties{OriginModelName: "gpt-image-2"},
+	}).Error)
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "u", Quota: 1000, Status: common.UserStatusEnabled}).Error)
+
+	body := []byte(`{"events":[{"event_id":"evt_1","client_task_id":"task_image_success","provider_task_id":"imgtask_success","status":"succeeded","progress":"100%","result":{"images":[{"url":"https://cdn.example.com/a.webp"}]},"usage":{"actual_quota":100}}]}`)
+	ctx, recorder := makeCallbackRequest(t, body, secret)
+
+	ImageTaskCallbackBatch(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"status":"accepted"`)
+	var task model.Task
+	require.NoError(t, db.Where("task_id = ?", "task_image_success").First(&task).Error)
+	assert.EqualValues(t, model.TaskStatusSuccess, task.Status)
+	assert.Equal(t, "https://cdn.example.com/a.webp", task.PrivateData.ResultURL)
+}
+
+func TestImageTaskCallbackBatchIgnoredTerminal(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "callback-secret"
+	settings, err := common.Marshal(dto.ChannelOtherSettings{CallbackSecret: secret})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            123,
+		Type:          constant.ChannelTypeImageHandle,
+		Name:          "image-handle",
+		Key:           "provider-key",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: string(settings),
+	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_image_done",
+		Platform:  constant.TaskPlatform("58"),
+		Action:    constant.TaskActionImageGeneration,
+		UserId:    1,
+		ChannelId: 123,
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "imgtask_done",
+			ResultURL:      "https://cdn.example.com/old.webp",
+		},
+	}).Error)
+
+	body := []byte(`{"events":[{"event_id":"evt_2","client_task_id":"task_image_done","provider_task_id":"imgtask_done","status":"succeeded","progress":"100%","result":{"images":[{"url":"https://cdn.example.com/new.webp"}]}}]}`)
+	ctx, recorder := makeCallbackRequest(t, body, secret)
+
+	ImageTaskCallbackBatch(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"status":"ignored_terminal"`)
+	var task model.Task
+	require.NoError(t, db.Where("task_id = ?", "task_image_done").First(&task).Error)
+	assert.Equal(t, "https://cdn.example.com/old.webp", task.PrivateData.ResultURL)
+}
+
+func TestImageTaskCallbackBatchRejectsChannelMismatch(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "callback-secret"
+	settings, err := common.Marshal(dto.ChannelOtherSettings{CallbackSecret: secret})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            123,
+		Type:          constant.ChannelTypeImageHandle,
+		Name:          "image-handle",
+		Key:           "provider-key",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: string(settings),
+	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_image_other_channel",
+		Platform:  constant.TaskPlatform("58"),
+		Action:    constant.TaskActionImageGeneration,
+		UserId:    1,
+		ChannelId: 456,
+		Status:    model.TaskStatusQueued,
+		Progress:  "20%",
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "imgtask_other_channel",
+		},
+	}).Error)
+
+	body := []byte(`{"events":[{"event_id":"evt_channel","client_task_id":"task_image_other_channel","provider_task_id":"imgtask_other_channel","status":"succeeded","progress":"100%","result":{"images":[{"url":"https://cdn.example.com/a.webp"}]}}]}`)
+	ctx, recorder := makeCallbackRequest(t, body, secret)
+
+	ImageTaskCallbackBatch(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"status":"channel_mismatch"`)
+	var task model.Task
+	require.NoError(t, db.Where("task_id = ?", "task_image_other_channel").First(&task).Error)
+	assert.EqualValues(t, model.TaskStatusQueued, task.Status)
+	assert.Empty(t, task.PrivateData.ResultURL)
+}
+
+func TestQueryImageTasksReturnsOnlyCurrentUserTasks(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_current_user",
+		Platform:  constant.TaskPlatform("58"),
+		Action:    constant.TaskActionImageGeneration,
+		UserId:    1,
+		ChannelId: 123,
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://cdn.example.com/current.webp",
+		},
+	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_other_user",
+		Platform:  constant.TaskPlatform("58"),
+		Action:    constant.TaskActionImageGeneration,
+		UserId:    2,
+		ChannelId: 123,
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://cdn.example.com/other.webp",
+		},
+	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_video_same_user",
+		Platform:  constant.TaskPlatform("48"),
+		Action:    constant.TaskActionVideoGeneration,
+		UserId:    1,
+		ChannelId: 123,
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://cdn.example.com/video.mp4",
+		},
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks/query", bytes.NewReader([]byte(`{"task_ids":["task_current_user","task_other_user","task_video_same_user"]}`)))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("id", 1)
+
+	QueryImageTasks(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"task_id":"task_current_user"`)
+	assert.Contains(t, recorder.Body.String(), `"result_url":"https://cdn.example.com/current.webp"`)
+	assert.NotContains(t, recorder.Body.String(), "task_other_user")
+	assert.NotContains(t, recorder.Body.String(), "other.webp")
+	assert.NotContains(t, recorder.Body.String(), "task_video_same_user")
+	assert.NotContains(t, recorder.Body.String(), "video.mp4")
+}
+
+func TestQueryImageTasksRejectsMoreThanOneHundredIDs(t *testing.T) {
+	setupInviteCodeControllerTestDB(t)
+	taskIDs := make([]string, 101)
+	for i := range taskIDs {
+		taskIDs[i] = fmt.Sprintf("task_%03d", i)
+	}
+	body, err := common.Marshal(imageTaskQueryRequest{TaskIDs: taskIDs})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks/query", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("id", 1)
+
+	QueryImageTasks(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "task_ids max size is 100")
+}
+
+func TestGetImageTaskRejectsNonImageHandleTask(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_video_same_user",
+		Platform:  constant.TaskPlatform("48"),
+		Action:    constant.TaskActionVideoGeneration,
+		UserId:    1,
+		ChannelId: 123,
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/image/tasks/task_video_same_user", nil)
+	ctx.Params = gin.Params{{Key: "task_id", Value: "task_video_same_user"}}
+	ctx.Set("id", 1)
+
+	GetImageTask(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "task_not_exist")
+}
+
+func TestVerifyImageCallbackRejectsInvalidSignature(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "callback-secret"
+	settings, err := common.Marshal(dto.ChannelOtherSettings{CallbackSecret: secret})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            123,
+		Type:          constant.ChannelTypeImageHandle,
+		Name:          "image-handle",
+		Key:           "provider-key",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: string(settings),
+	}).Error)
+	body := []byte(`{"events":[]}`)
+	ctx, recorder := makeCallbackRequest(t, body, secret)
+	ctx.Request.Header.Set("X-Callback-Signature", "bad-signature")
+
+	ImageTaskCallbackBatch(ctx)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "invalid callback signature")
+}
+
+func TestVerifyImageCallbackRejectsExpiredTimestamp(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "callback-secret"
+	settings, err := common.Marshal(dto.ChannelOtherSettings{CallbackSecret: secret})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            123,
+		Type:          constant.ChannelTypeImageHandle,
+		Name:          "image-handle",
+		Key:           "provider-key",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: string(settings),
+	}).Error)
+	body := []byte(`{"events":[]}`)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	timestamp := fmt.Sprintf("%d", time.Now().Add(-10*time.Minute).Unix())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/task/callback/external-image/batch", bytes.NewReader(body))
+	ctx.Request.Header.Set("X-Callback-Timestamp", timestamp)
+	ctx.Request.Header.Set("X-Callback-Signature", signCallbackTestBody(timestamp, body, secret))
+	ctx.Request.Header.Set("X-Callback-Secret-Id", "channel_123")
+
+	ImageTaskCallbackBatch(ctx)
+
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "callback timestamp expired")
+}
+
+func TestVerifyImageCallbackRejectsMissingSecretID(t *testing.T) {
+	setupInviteCodeControllerTestDB(t)
+	body := []byte(`{"events":[]}`)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/task/callback/external-image/batch", bytes.NewReader(body))
+	ctx.Request.Header.Set("X-Callback-Timestamp", timestamp)
+	ctx.Request.Header.Set("X-Callback-Signature", signCallbackTestBody(timestamp, body, "callback-secret"))
+	ctx.Request.Header.Set("X-Callback-Secret-Id", "channel_999")
+
+	ImageTaskCallbackBatch(ctx)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "callback secret not found")
+}

@@ -17,6 +17,7 @@ const (
 	AdminMenuLogDashboard   = "log_dashboard"
 	AdminMenuUsageStats     = "usage_stats"
 	AdminMenuAsyncTask      = "async_task"
+	AdminMenuAssets         = "assets"
 	AdminMenuRequestDump    = "request_dump"
 	AdminMenuViolation      = "violation"
 	AdminMenuCompatibility  = "compatibility"
@@ -36,6 +37,7 @@ var defaultAdminMenuPermissionKeys = []string{
 	AdminMenuLogDashboard,
 	AdminMenuUsageStats,
 	AdminMenuAsyncTask,
+	AdminMenuAssets,
 	AdminMenuRequestDump,
 	AdminMenuViolation,
 	AdminMenuCompatibility,

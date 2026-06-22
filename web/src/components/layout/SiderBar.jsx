@@ -42,6 +42,7 @@ const routerMap = {
   log_dashboard: '/console/log-dashboard',
   usage_stats: '/console/usage-stats',
   async_task: '/console/async-task',
+  assets: '/console/assets',
   token: '/console/token',
   redemption: '/console/redemption',
   topup: '/console/topup',
@@ -111,6 +112,13 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('任务日志'),
         itemKey: 'task',
         to: '/task',
+        className:
+          localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle',
+      },
+      {
+        text: t('资源管理中心'),
+        itemKey: 'assets',
+        to: '/assets',
         className:
           localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle',
       },

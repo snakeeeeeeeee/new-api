@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
@@ -834,15 +837,56 @@ func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 
 type mockAdaptor struct {
 	adjustReturn int
+	fetchResp    *http.Response
+	parseCalled  bool
 }
 
 func (m *mockAdaptor) Init(_ *relaycommon.RelayInfo) {}
 func (m *mockAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
-	return nil, nil
+	return m.fetchResp, nil
 }
 func (m *mockAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) { return nil, nil }
 func (m *mockAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
 	return m.adjustReturn
+}
+func (m *mockAdaptor) ParseBatchTaskResult([]byte) (map[string]*relaycommon.TaskInfo, error) {
+	m.parseCalled = true
+	return map[string]*relaycommon.TaskInfo{}, nil
+}
+
+func TestUpdateVideoBatchTasksRejectsNon2xxResponse(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	task := makeTask(40, 40, 0, 0, BillingSourceWallet, 0)
+	task.TaskID = "task_batch_error"
+	task.PrivateData.UpstreamTaskID = "imgtask_batch_error"
+	task.Status = model.TaskStatusQueued
+	require.NoError(t, model.DB.Create(task).Error)
+
+	baseURL := "http://image-handle.test"
+	adaptor := &mockAdaptor{
+		fetchResp: &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Body:       io.NopCloser(strings.NewReader(`{"error":"upstream unavailable"}`)),
+		},
+	}
+	err := updateVideoBatchTasks(ctx, adaptor, adaptor, &model.Channel{
+		Id:      40,
+		Type:    constant.ChannelTypeImageHandle,
+		Key:     "provider-key",
+		BaseURL: &baseURL,
+	}, []string{"imgtask_batch_error"}, map[string]*model.Task{
+		"imgtask_batch_error": task,
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "status code 500")
+	assert.False(t, adaptor.parseCalled)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusQueued, reloaded.Status)
 }
 
 // ===========================================================================

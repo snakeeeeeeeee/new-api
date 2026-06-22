@@ -40,6 +40,8 @@ export const API_ENDPOINTS = [
 ];
 
 export const TASK_ACTION_GENERATE = 'generate';
+export const TASK_ACTION_IMAGE_GENERATION = 'imageGeneration';
+export const TASK_ACTION_IMAGE_EDIT = 'imageEdit';
 export const TASK_ACTION_TEXT_GENERATE = 'textGenerate';
 export const TASK_ACTION_FIRST_TAIL_GENERATE = 'firstTailGenerate';
 export const TASK_ACTION_REFERENCE_GENERATE = 'referenceGenerate';

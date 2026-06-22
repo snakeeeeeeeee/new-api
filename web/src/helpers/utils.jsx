@@ -57,6 +57,7 @@ export function getAdminMenuPermissionsFromUser(user) {
       log_dashboard: true,
       usage_stats: true,
       async_task: true,
+      assets: true,
       request_dump: true,
       violation: true,
       compatibility: true,

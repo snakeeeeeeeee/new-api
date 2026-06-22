@@ -89,6 +89,7 @@ export const useTaskLogsData = () => {
   const formInitValues = {
     channel_id: '',
     task_id: '',
+    asset_type: '',
     dateRange: [
       timestamp2string(zeroNow.getTime() / 1000),
       timestamp2string(now.getTime() / 1000 + 3600),
@@ -207,6 +208,7 @@ export const useTaskLogsData = () => {
     return {
       channel_id: formValues.channel_id || '',
       task_id: formValues.task_id || '',
+      asset_type: formValues.asset_type || '',
       start_timestamp,
       end_timestamp,
     };
@@ -233,13 +235,13 @@ export const useTaskLogsData = () => {
   // Load logs function
   const loadLogs = async (page = 1, size = pageSize) => {
     setLoading(true);
-    const { channel_id, task_id, start_timestamp, end_timestamp } =
+    const { channel_id, task_id, asset_type, start_timestamp, end_timestamp } =
       getFormValues();
     let localStartTimestamp = parseInt(Date.parse(start_timestamp) / 1000);
     let localEndTimestamp = parseInt(Date.parse(end_timestamp) / 1000);
     let url = isAdminUser
-      ? `/api/task/?p=${page}&page_size=${size}&channel_id=${channel_id}&task_id=${task_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`
-      : `/api/task/self?p=${page}&page_size=${size}&task_id=${task_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
+      ? `/api/task/?p=${page}&page_size=${size}&channel_id=${channel_id}&task_id=${task_id}&asset_type=${asset_type}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`
+      : `/api/task/self?p=${page}&page_size=${size}&task_id=${task_id}&asset_type=${asset_type}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
     const res = await API.get(url);
     const { success, message, data } = res.data;
     if (success) {

@@ -400,10 +400,29 @@ func SetApiRouter(router *gin.Engine) {
 
 		taskRoute := apiRouter.Group("/task")
 		{
+			taskRoute.POST("/callback/external-image/batch", controller.ImageTaskCallbackBatch)
+			taskRoute.POST("/callback/external-image/:task_id", controller.ImageTaskCallback)
 			taskRoute.GET("/self", middleware.UserAuth(), controller.GetUserTask)
 			taskRoute.GET("/async/stats", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.GetAsyncTaskStats)
 			taskRoute.GET("/", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.GetAllTask)
 			taskRoute.PUT("/:task_id/block", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.UpdateTaskBlockStatus)
+		}
+
+		assetRoute := apiRouter.Group("/assets")
+		{
+			assetRoute.GET("/keys", middleware.UserAuth(), controller.GetUserAssetKeys)
+			assetRoute.POST("/keys", middleware.UserAuth(), controller.CreateUserAssetKey)
+			assetRoute.PUT("/keys/:id/status", middleware.UserAuth(), controller.UpdateUserAssetKeyStatus)
+			assetRoute.DELETE("/keys/:id", middleware.UserAuth(), controller.DeleteUserAssetKey)
+			assetRoute.GET("/self", middleware.TokenOrUserAuth(), controller.GetUserAssets)
+			assetRoute.GET("/self/export", middleware.TokenOrUserAuth(), controller.ExportUserAssets)
+			assetRoute.POST("/self/batch/urls", middleware.TokenOrUserAuth(), controller.GetUserAssetBatchURLs)
+			assetRoute.GET("/self/:asset_id", middleware.TokenOrUserAuth(), controller.GetUserAsset)
+			assetRoute.GET("/", middleware.AdminAuth(), middleware.AdminMenuAuth("assets"), controller.GetAllAssets)
+			assetRoute.GET("/export", middleware.AdminAuth(), middleware.AdminMenuAuth("assets"), controller.ExportAssets)
+			assetRoute.POST("/batch/urls", middleware.AdminAuth(), middleware.AdminMenuAuth("assets"), controller.GetAssetBatchURLs)
+			assetRoute.GET("/:asset_id", middleware.AdminAuth(), middleware.AdminMenuAuth("assets"), controller.GetAsset)
+			assetRoute.PUT("/:asset_id/block", middleware.AdminAuth(), middleware.AdminMenuAuth("assets"), controller.UpdateAssetBlockStatus)
 		}
 
 		vendorRoute := apiRouter.Group("/vendors")

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Form } from '@douyinfe/semi-ui';
+import { Button, Form, Select } from '@douyinfe/semi-ui';
 import { IconSearch } from '@douyinfe/semi-icons';
 
 import { DATE_RANGE_PRESETS } from '../../../constants/console.constants';
@@ -73,6 +73,19 @@ const TaskLogsFilters = ({
             pure
             size='small'
           />
+
+          <Form.Select
+            field='asset_type'
+            placeholder={t('资源类型')}
+            showClear
+            pure
+            size='small'
+          >
+            <Select.Option value=''>{t('全部类型')}</Select.Option>
+            <Select.Option value='image'>{t('图片')}</Select.Option>
+            <Select.Option value='video'>{t('视频')}</Select.Option>
+            <Select.Option value='audio'>{t('音频')}</Select.Option>
+          </Form.Select>
 
           {/* 渠道 ID - 仅管理员可见 */}
           {isAdminUser && (

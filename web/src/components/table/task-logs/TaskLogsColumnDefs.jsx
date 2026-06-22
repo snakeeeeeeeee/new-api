@@ -40,6 +40,8 @@ import {
 import {
   TASK_ACTION_FIRST_TAIL_GENERATE,
   TASK_ACTION_GENERATE,
+  TASK_ACTION_IMAGE_EDIT,
+  TASK_ACTION_IMAGE_GENERATION,
   TASK_ACTION_REFERENCE_GENERATE,
   TASK_ACTION_TEXT_GENERATE,
   TASK_ACTION_REMIX_GENERATE,
@@ -49,7 +51,7 @@ import {
 } from '../../../constants/common.constant';
 import { CHANNEL_OPTIONS } from '../../../constants/channel.constants';
 import { stringToColor } from '../../../helpers/render';
-import { Avatar, Space } from '@douyinfe/semi-ui';
+import { Avatar, ImagePreview, Space } from '@douyinfe/semi-ui';
 
 const colors = [
   'amber',
@@ -148,6 +150,18 @@ const renderType = (type, t) => {
           {t('视频')}
         </Tag>
       );
+    case TASK_ACTION_IMAGE_GENERATION:
+      return (
+        <Tag color='cyan' shape='circle' prefixIcon={<Sparkles size={14} />}>
+          {t('文生图')}
+        </Tag>
+      );
+    case TASK_ACTION_IMAGE_EDIT:
+      return (
+        <Tag color='cyan' shape='circle' prefixIcon={<Sparkles size={14} />}>
+          {t('图片编辑')}
+        </Tag>
+      );
     default:
       return (
         <Tag color='white' shape='circle' prefixIcon={<HelpCircle size={14} />}>
@@ -175,6 +189,25 @@ const buildVideoResultUrl = (record) => {
     return record.result_url.trim();
   }
   return record.task_id ? `/v1/videos/${record.task_id}/content` : '';
+};
+
+const isImageAction = (action) =>
+  action === TASK_ACTION_IMAGE_GENERATION || action === TASK_ACTION_IMAGE_EDIT;
+
+const buildImageResultUrl = (record) => {
+  if (!record || record.status !== 'SUCCESS' || !isImageAction(record.action)) {
+    return '';
+  }
+  if (typeof record.result_url === 'string' && record.result_url.trim()) {
+    return record.result_url.trim();
+  }
+  if (record.data?.result?.images?.[0]?.url) {
+    return record.data.result.images[0].url;
+  }
+  if (record.data?.images?.[0]?.url) {
+    return record.data.images[0].url;
+  }
+  return '';
 };
 
 const renderPlatform = (platform, t) => {
@@ -440,6 +473,35 @@ export const getTaskLogsColumns = ({
                   size='small'
                   icon={<Chrome size={18} />}
                   onClick={() => window.open(videoResultUrl, '_blank')}
+                  aria-label={t('用浏览器打开')}
+                />
+              </Tooltip>
+            </Space>
+          );
+        }
+        const imageResultUrl = buildImageResultUrl(record);
+        if (imageResultUrl) {
+          return (
+            <Space>
+              <Tooltip content={t('预览图片')}>
+                <ImagePreview
+                  src={imageResultUrl}
+                  renderPreviewMenu={() => null}
+                >
+                  <Button
+                    theme='borderless'
+                    size='small'
+                    icon={<Sparkles size={18} />}
+                    aria-label={t('预览图片')}
+                  />
+                </ImagePreview>
+              </Tooltip>
+              <Tooltip content={t('用浏览器打开')}>
+                <Button
+                  theme='borderless'
+                  size='small'
+                  icon={<Chrome size={18} />}
+                  onClick={() => window.open(imageResultUrl, '_blank')}
                   aria-label={t('用浏览器打开')}
                 />
               </Tooltip>

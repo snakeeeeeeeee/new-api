@@ -68,6 +68,26 @@ func clearChannelInfo(channel *model.Channel) {
 	}
 }
 
+func clearChannelSensitiveSettings(channel *model.Channel) {
+	if channel == nil || channel.OtherSettings == "" {
+		return
+	}
+	settings := channel.GetOtherSettings()
+	if settings.CallbackSecret == "" {
+		return
+	}
+	settings.CallbackSecret = ""
+	channel.SetOtherSettings(settings)
+}
+
+func clearChannelForResponse(channel *model.Channel) {
+	if channel == nil {
+		return
+	}
+	clearChannelInfo(channel)
+	clearChannelSensitiveSettings(channel)
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)
@@ -145,7 +165,7 @@ func GetAllChannels(c *gin.Context) {
 	}
 
 	for _, datum := range channelData {
-		clearChannelInfo(datum)
+		clearChannelForResponse(datum)
 	}
 
 	countQuery := model.DB.Model(&model.Channel{})
@@ -343,7 +363,7 @@ func SearchChannels(c *gin.Context) {
 	pagedData := channelData[startIdx:endIdx]
 
 	for _, datum := range pagedData {
-		clearChannelInfo(datum)
+		clearChannelForResponse(datum)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -370,7 +390,7 @@ func GetChannel(c *gin.Context) {
 		return
 	}
 	if channel != nil {
-		clearChannelInfo(channel)
+		clearChannelForResponse(channel)
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -867,6 +887,7 @@ func UpdateChannel(c *gin.Context) {
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
 	channel.ChannelInfo = originChannel.ChannelInfo
+	preserveImageHandleCallbackSecret(&channel.Channel, originChannel)
 
 	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
 	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
@@ -961,13 +982,29 @@ func UpdateChannel(c *gin.Context) {
 	model.InitChannelCache()
 	service.ResetProxyClientCache()
 	channel.Key = ""
-	clearChannelInfo(&channel.Channel)
+	clearChannelForResponse(&channel.Channel)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data":    channel,
 	})
 	return
+}
+
+func preserveImageHandleCallbackSecret(channel *model.Channel, originChannel *model.Channel) {
+	if channel == nil || originChannel == nil || channel.Type != constant.ChannelTypeImageHandle {
+		return
+	}
+	settings := channel.GetOtherSettings()
+	if strings.TrimSpace(settings.CallbackSecret) != "" {
+		return
+	}
+	originSettings := originChannel.GetOtherSettings()
+	if strings.TrimSpace(originSettings.CallbackSecret) == "" {
+		return
+	}
+	settings.CallbackSecret = originSettings.CallbackSecret
+	channel.SetOtherSettings(settings)
 }
 
 func FetchModels(c *gin.Context) {

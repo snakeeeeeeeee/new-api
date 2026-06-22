@@ -64,6 +64,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const About = lazy(() => import('./pages/About'));
 const UserAgreement = lazy(() => import('./pages/UserAgreement'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
+const AssetsPage = lazy(() => import('./pages/Assets'));
 
 function DynamicOAuth2Callback() {
   const { provider } = useParams();
@@ -396,6 +397,16 @@ function App() {
                 <AsyncTask />
               </Suspense>
             </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/assets'
+          element={
+            <PrivateRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <AssetsPage />
+              </Suspense>
+            </PrivateRoute>
           }
         />
         <Route
