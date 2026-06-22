@@ -892,7 +892,7 @@ const EditChannelModal = (props) => {
             parsedSettings.azure_responses_version || '';
           data.image_response_adapter =
             parsedSettings.image_response_adapter || '';
-          data.callback_secret = '';
+          data.callback_secret = parsedSettings.callback_secret || '';
           // 读取 Vertex 密钥格式
           data.vertex_key_type = parsedSettings.vertex_key_type || 'json';
           // 读取 AWS 密钥格式和区域
@@ -1810,10 +1810,8 @@ const EditChannelModal = (props) => {
       delete settings.image_response_adapter;
     }
 
-    if (localInputs.type === 58) {
-      if (localInputs.callback_secret && localInputs.callback_secret.trim()) {
-        settings.callback_secret = localInputs.callback_secret.trim();
-      }
+    if (localInputs.callback_secret && localInputs.callback_secret.trim()) {
+      settings.callback_secret = localInputs.callback_secret.trim();
     } else if ('callback_secret' in settings) {
       delete settings.callback_secret;
     }
@@ -2595,24 +2593,21 @@ const EditChannelModal = (props) => {
                     />
                   )}
 
-                  {inputs.type === 58 && (
-                    <Form.Input
-                      field='callback_secret'
-                      label={t('Callback Secret')}
-                      placeholder={t('编辑模式下，已保存的 Secret 不会显示')}
-                      mode='password'
-                      onChange={(value) =>
-                        handleChannelOtherSettingsChange(
-                          'callback_secret',
-                          value || '',
-                        )
-                      }
-                      showClear
-                      extraText={t(
-                        '用于验证 image-handle 回调签名。留空保存时不会覆盖已有 Secret。',
-                      )}
-                    />
-                  )}
+                  <Form.Input
+                    field='callback_secret'
+                    label={t('异步图片 Callback Secret')}
+                    placeholder={t('用于验证 image-handle 回调签名')}
+                    onChange={(value) =>
+                      handleChannelOtherSettingsChange(
+                        'callback_secret',
+                        value || '',
+                      )
+                    }
+                    showClear
+                    extraText={t(
+                      '用于异步图片任务 callback 验签。image-handle 需配置 CALLBACK_SECRETS_JSON 中的 channel_<渠道ID> 为同一值。',
+                    )}
+                  />
 
                   <Form.Switch field='thinking_to_content' label={t('思考内容转换')} initValue={inputs.thinking_to_content === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('thinking_to_content', value)} extraText={t('将 reasoning_content 转换为 <think> 标签拼接到内容中')} />
                   <Form.Switch field='pass_through_body_enabled' label={t('透传请求体')} initValue={inputs.pass_through_body_enabled === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('pass_through_body_enabled', value)} extraText={t('启用请求体透传功能')} />

@@ -69,15 +69,9 @@ func clearChannelInfo(channel *model.Channel) {
 }
 
 func clearChannelSensitiveSettings(channel *model.Channel) {
-	if channel == nil || channel.OtherSettings == "" {
-		return
-	}
-	settings := channel.GetOtherSettings()
-	if settings.CallbackSecret == "" {
-		return
-	}
-	settings.CallbackSecret = ""
-	channel.SetOtherSettings(settings)
+	// callback_secret is an operational channel setting for async image callbacks.
+	// It is intentionally returned to admins so production configuration can be
+	// audited from the channel edit page.
 }
 
 func clearChannelForResponse(channel *model.Channel) {
@@ -887,8 +881,6 @@ func UpdateChannel(c *gin.Context) {
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
 	channel.ChannelInfo = originChannel.ChannelInfo
-	preserveImageHandleCallbackSecret(&channel.Channel, originChannel)
-
 	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
 	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
 		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(*channel.MultiKeyMode)
@@ -989,22 +981,6 @@ func UpdateChannel(c *gin.Context) {
 		"data":    channel,
 	})
 	return
-}
-
-func preserveImageHandleCallbackSecret(channel *model.Channel, originChannel *model.Channel) {
-	if channel == nil || originChannel == nil || channel.Type != constant.ChannelTypeImageHandle {
-		return
-	}
-	settings := channel.GetOtherSettings()
-	if strings.TrimSpace(settings.CallbackSecret) != "" {
-		return
-	}
-	originSettings := originChannel.GetOtherSettings()
-	if strings.TrimSpace(originSettings.CallbackSecret) == "" {
-		return
-	}
-	settings.CallbackSecret = originSettings.CallbackSecret
-	channel.SetOtherSettings(settings)
 }
 
 func FetchModels(c *gin.Context) {

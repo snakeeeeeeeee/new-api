@@ -9,8 +9,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
@@ -27,6 +29,12 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	})
 	system_setting.ServerAddress = "https://new-api.example"
 	operation_setting.CustomCallbackAddress = ""
+	t.Setenv("IMAGE_HANDLE_BASE_URL", "http://127.0.0.1:8787")
+	t.Setenv("IMAGE_HANDLE_API_KEY", "provider-key")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_BASE_URL", "http://new-api:3000")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", "internal-secret")
+	image_handle_setting.ApplyEnvFallback()
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -44,13 +52,16 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 		UserId:          11,
 		OriginModelName: "gpt-image-2",
 		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelId:         123,
-			UpstreamModelName: "gpt-image-2",
+			ChannelId:            123,
+			UpstreamModelName:    "gpt-image-2",
+			ChannelOtherSettings: dto.ChannelOtherSettings{CallbackSecret: "callback-secret"},
 		},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
 	}
 	adaptor := &TaskAdaptor{}
-	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "http://127.0.0.1:8787", ApiKey: "provider-key"}})
+	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "http://wrong-channel-url", ApiKey: "wrong-key"}})
+	assert.Equal(t, "http://127.0.0.1:8787", adaptor.baseURL)
+	assert.Equal(t, "provider-key", adaptor.apiKey)
 
 	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
 	require.Nil(t, taskErr)
@@ -66,7 +77,6 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	require.NoError(t, common.Unmarshal(body, &payload))
 	assert.Equal(t, "req_test", payload["request_id"])
 	assert.Equal(t, "task_external_id", payload["client_task_id"])
-	assert.Equal(t, "openai", payload["provider"])
 	assert.Equal(t, "gpt-image-2", payload["model"])
 	assert.Equal(t, "generation", payload["operation"])
 	input := payload["input"].(map[string]any)
@@ -78,6 +88,10 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	assert.Equal(t, "https://new-api.example/api/task/callback/external-image/task_external_id", callback["url"])
 	assert.Equal(t, "https://new-api.example/api/task/callback/external-image/batch", callback["batch_url"])
 	assert.Equal(t, "channel_123", callback["secret_id"])
+	executor := payload["executor"].(map[string]any)
+	assert.Equal(t, "new_api_internal", executor["type"])
+	assert.Equal(t, "http://new-api:3000/api/internal/image/tasks/task_external_id/execute", executor["execute_url"])
+	assert.Equal(t, "image_handle_1", executor["secret_id"])
 }
 
 func TestValidateRequestRejectsUnsafeClientTaskID(t *testing.T) {

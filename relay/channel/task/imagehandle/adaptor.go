@@ -31,12 +31,13 @@ var clientTaskIDPattern = regexp.MustCompile(`^task_[A-Za-z0-9_-]{1,186}$`)
 type imageHandleSubmitRequest struct {
 	RequestID       string                 `json:"request_id"`
 	ClientTaskID    string                 `json:"client_task_id"`
-	Provider        string                 `json:"provider"`
+	Provider        string                 `json:"provider,omitempty"`
 	Model           string                 `json:"model"`
 	Operation       string                 `json:"operation"`
 	Input           imageHandleInput       `json:"input"`
 	Parameters      map[string]any         `json:"parameters,omitempty"`
 	ProviderOptions map[string]any         `json:"provider_options,omitempty"`
+	Executor        imageHandleExecutor    `json:"executor,omitempty"`
 	Callback        imageHandleCallback    `json:"callback,omitempty"`
 	Metadata        map[string]interface{} `json:"metadata,omitempty"`
 }
@@ -51,6 +52,12 @@ type imageHandleCallback struct {
 	URL      string `json:"url,omitempty"`
 	BatchURL string `json:"batch_url,omitempty"`
 	SecretID string `json:"secret_id,omitempty"`
+}
+
+type imageHandleExecutor struct {
+	Type       string `json:"type,omitempty"`
+	ExecuteURL string `json:"execute_url,omitempty"`
+	SecretID   string `json:"secret_id,omitempty"`
 }
 
 type imageHandleSubmitResponse struct {
@@ -95,8 +102,8 @@ type imageHandleError struct {
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
-	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
-	a.apiKey = info.ApiKey
+	a.baseURL = service.GetImageHandleSubmitBaseURL()
+	a.apiKey = service.GetImageHandleSubmitAPIKey()
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -133,9 +140,16 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return nil
 }
 
+func (a *TaskAdaptor) ValidateExecutorConfig(info *relaycommon.RelayInfo) error {
+	if err := service.ValidateImageHandleExecutorConfig(); err != nil {
+		return err
+	}
+	return validateImageHandleChannelSecrets(info)
+}
+
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	if a.baseURL == "" {
-		return "", fmt.Errorf("image-handle base_url is required")
+	if err := service.ValidateImageHandleExecutorConfig(); err != nil {
+		return "", err
 	}
 	return a.baseURL + "/v1/image/tasks", nil
 }
@@ -171,23 +185,30 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 	parameters := extractParameters(taskReq, metadata)
 	providerOptions := extractProviderOptions(metadata)
-	provider := metadataString(metadata, "provider", "openai")
 	operation := "generation"
 	if info.Action == constant.TaskActionImageEdit {
 		operation = "edit"
 	}
 
-	callbackBase := strings.TrimRight(service.GetCallbackAddress(), "/")
+	executorCfg := service.GetImageHandleExecutorConfig()
+	if err := validateImageHandleChannelSecrets(info); err != nil {
+		return nil, err
+	}
+	callbackBase := strings.TrimRight(service.ImageHandleCallbackAddress(), "/")
 	callbackSecretID := fmt.Sprintf("channel_%d", info.ChannelId)
 	payload := imageHandleSubmitRequest{
 		RequestID:       c.GetString(common.RequestIdKey),
 		ClientTaskID:    info.PublicTaskID,
-		Provider:        provider,
 		Model:           info.UpstreamModelName,
 		Operation:       operation,
 		Input:           imageHandleInput{Text: taskReq.Prompt, Images: images, Mask: mask},
 		Parameters:      parameters,
 		ProviderOptions: providerOptions,
+		Executor: imageHandleExecutor{
+			Type:       "new_api_internal",
+			ExecuteURL: service.BuildImageHandleExecuteURL(info.PublicTaskID),
+			SecretID:   executorCfg.InternalSecretID,
+		},
 		Callback: imageHandleCallback{
 			URL:      fmt.Sprintf("%s/api/task/callback/external-image/%s", callbackBase, info.PublicTaskID),
 			BatchURL: fmt.Sprintf("%s/api/task/callback/external-image/batch", callbackBase),
@@ -201,6 +222,20 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, errors.Wrap(err, "marshal_image_handle_request_failed")
 	}
 	return bytes.NewReader(body), nil
+}
+
+func validateImageHandleChannelSecrets(info *relaycommon.RelayInfo) error {
+	channelCallbackSecret := ""
+	if info != nil && info.ChannelMeta != nil {
+		channelCallbackSecret = strings.TrimSpace(info.ChannelOtherSettings.CallbackSecret)
+	}
+	if channelCallbackSecret == "" {
+		return fmt.Errorf("channel callback_secret is required for image-handle callbacks")
+	}
+	if service.GetImageHandleExecutorConfig().InternalSecret == channelCallbackSecret {
+		return fmt.Errorf("image-handle internal execute secret and channel callback_secret must be different")
+	}
+	return nil
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -235,7 +270,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 }
 
 func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
-	baseUrl = strings.TrimRight(baseUrl, "/")
+	if err := service.ValidateImageHandleSubmitConfig(); err != nil {
+		return nil, err
+	}
+	baseUrl = service.GetImageHandleSubmitBaseURL()
+	key = service.GetImageHandleSubmitAPIKey()
 	if ids, ok := body["task_ids"].([]string); ok && len(ids) > 0 {
 		payload, err := common.Marshal(map[string]any{"task_ids": ids})
 		if err != nil {

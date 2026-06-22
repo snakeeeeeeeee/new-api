@@ -102,6 +102,13 @@ type TaskPrivateData struct {
 	Key            string `json:"key,omitempty"`
 	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
 	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
+	// 异步图片 internal execute 上下文。用于 image-handle worker 回调 new-api 执行真实上游请求。
+	ImageRequest            json.RawMessage `json:"image_request,omitempty"`
+	ImageInputURLs          []string        `json:"image_input_urls,omitempty"`
+	ImageMaskURL            string          `json:"image_mask_url,omitempty"`
+	ImageHandleProviderTask string          `json:"image_handle_provider_task,omitempty"`
+	ExecuteEventID          string          `json:"execute_event_id,omitempty"`
+	ImageExecuteResponse    json.RawMessage `json:"image_execute_response,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -155,10 +162,26 @@ func (p *TaskPrivateData) Scan(val interface{}) error {
 }
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
-	if (p == TaskPrivateData{}) {
+	if p.IsZero() {
 		return nil, nil
 	}
 	return common.Marshal(p)
+}
+
+func (p TaskPrivateData) IsZero() bool {
+	return p.Key == "" &&
+		p.UpstreamTaskID == "" &&
+		p.ResultURL == "" &&
+		len(p.ImageRequest) == 0 &&
+		len(p.ImageInputURLs) == 0 &&
+		p.ImageMaskURL == "" &&
+		p.ImageHandleProviderTask == "" &&
+		p.ExecuteEventID == "" &&
+		len(p.ImageExecuteResponse) == 0 &&
+		p.BillingSource == "" &&
+		p.SubscriptionId == 0 &&
+		p.TokenId == 0 &&
+		p.BillingContext == nil
 }
 
 // SyncTaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段

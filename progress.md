@@ -1,32 +1,38 @@
 # Progress
 
 ## 2026-06-23
-- Started Assets Resource Center implementation on top of the completed ImageHandle async task integration.
-- Confirmed existing worktree contains ImageHandle changes and unrelated untracked local files; this implementation will not revert them.
-- Created the assets/resource-center task plan and findings files.
-- Added `assets` model, migration, query/export APIs, task success asset extraction, and Resource Center frontend page.
-- Added task-log `asset_type` filtering and resource/admin menu wiring.
-- Tightened consistency: first task `SUCCESS` transition and asset row inserts now commit in one DB transaction; asset insert failure rolls back task success and skips billing.
-- Added dedicated asset API keys (`ak_`), `/v1/assets` read APIs, Resource Center API Key tab, and Resource Center usage documentation tab.
+- User clarified that ImageHandle should not be a duplicate model channel. Async image tasks should reuse existing real image channels.
+- image-handle team accepted the `new_api_internal` executor model and will remove provider-direct execution.
+- Created a Markdown handoff document for image-handle at `docs/image-handle-new-api-internal-executor.md`.
+- Replaced old asset-center planning files with this internal executor implementation plan.
+- Added new-api executor env config, `executor.new_api_internal` task submission payload, signed internal execute route, and request snapshot storage.
+- Refactored `/v1/image/tasks` to force the ImageHandle task adaptor while preserving the selected real image channel on `task.channel_id`.
+- Aligned with image-handle's final integration doc: provider-direct mode is removed, callback secret comes from the selected real image channel, and internal execute secret is separate.
+- Added async image edit reconstruction from saved input URLs to multipart `/v1/images/edits` requests using existing download safety checks.
+- Added internal execute result caching and retryable failure claim release so repeated worker calls do not duplicate upstream generation.
+- Updated `.env.example` and `docs/image-handle-new-api-internal-executor.md`.
+- Rebuilt local Docker dev image and tested against the running image-handle Docker service with `PROVIDER_API_KEYS=test-api-key`.
+- Local Docker callback test succeeded with `task_codex_callback_1782166197`: new-api returned queued, image-handle called internal execute, uploaded R2, delivered batch callback, new-api moved the task to `SUCCESS`, and wrote one image asset.
+- Added `image_handle_setting` persisted configuration, dedicated admin APIs under `/api/task/async/image-handle/config`, and an `异步图片执行器` card inside `异步任务管理`.
+- Updated channel edit UI so real image channels can display, save, and clear `异步图片 Callback Secret`; the field is no longer limited to the deprecated ImageHandle model-channel type.
 
 ## Test Results
 | Test | Status | Notes |
 | --- | --- | --- |
-| `go test ./model ./service ./controller` | passed | Backend model/service/controller checks after assets API and task success write path. |
-| `cd web && bun run build` | passed | Resource Center frontend compiles; existing Browserslist/eval/chunk-size warnings remain. |
-| `go test ./...` | passed | Full backend regression after assets/resource center changes. |
-| `docker compose -f docker-compose-dev.yml build new-api-dev` | passed | Docker image rebuilt with backend and frontend changes. |
-| Docker dev image-handle smoke test | passed | `task_assets_dev_20260623012923` reached `SUCCESS`, created `asset_KrChLj9O62FLNpZ2T78wgoDT9ZK7Vcgh`, and `/api/assets/self`, batch URLs, CSV export returned it with `Bearer testapikey`. |
-| `go test ./service ./controller ./model && go test ./...` | passed | Regression after transactional task success + asset insert refactor. |
-| `cd web && bun run build` | passed | Frontend still compiles after consistency refactor; same existing warnings. |
-| `go test ./...` | passed | Full backend regression after asset API key implementation. |
-| `cd web && bun run build` | passed | Resource Center three-tab UI compiles; same existing Browserslist/eval/chunk-size warnings remain. |
-| `docker compose -f docker-compose-dev.yml build new-api-dev` | passed | Dev Docker image rebuilt after asset API key implementation. |
+| `go test ./controller ./relay/channel/task/imagehandle ./relay ./model ./service` | passed | Covers internal execute HMAC success/failure and image-handle executor payload. |
+| `go test ./...` | passed | Full backend regression after internal executor refactor. |
+| `go test ./...` | passed | Full backend regression after adding async task menu image-handle config. |
+| `cd web && bun run build` | passed | Frontend build after adding async task config card and callback secret field changes. |
+| `go test ./controller ./relay/channel/task/imagehandle ./service ./model` | passed | Re-run after image-handle final doc alignment and edit support. |
+| `docker compose -f docker-compose-dev.yml up -d --build --force-recreate new-api-dev` | passed | Built `new-api-local:dev` and recreated the dev container. |
+| Local `/v1/image/tasks` submit against image-handle | passed | `task_codex_callback_1782166197` reached `SUCCESS`; callback event `evt_d10d4cc7-21f9-4777-9af2-531c3305cbf1` was delivered on first attempt. |
+| Local asset query | passed | `/api/assets/self?task_id=task_codex_callback_1782166197` returned one available image asset. |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
 | --- | --- | --- | --- |
-| 2026-06-23 | DTO imported `model`, causing model -> dto -> model import cycle | `go test ./model ./service ./controller` | Changed DTO metadata type to `map[string]any`. |
-| 2026-06-23 | Semi UI does not export `Drawer` in this version | `cd web && bun run build` | Replaced the detail drawer with existing `SideSheet`. |
-| 2026-06-23 | `/api/assets/self` rejected OpenAI API token during curl smoke test | Local Docker API validation | Switched user assets routes from `UserAuth` to `TokenOrUserAuth`; admin routes remain `AdminAuth`. |
-| 2026-06-23 | Callback tests failed after making asset insert part of task success transaction because shared test DB had no `assets` table | `go test ./service ./controller` | Added `model.Asset` to shared controller test migration and added rollback coverage. |
+| 2026-06-23 | `TestBuildRequestBodyMatchesImageHandleContract` failed after adding mandatory internal secret config | Targeted test run | Added test env vars and callback secret settings, then re-ran targeted tests. |
+| 2026-06-23 | Invalid `client_task_id` test returned config error before validation error | Targeted test run | Reordered ImageHandle adaptor validation so request shape errors are returned before deployment config errors. |
+| 2026-06-23 | Local token `qArd...` returned 401 | Docker dev test | Token row was soft-deleted; created a local test token `codexasyncimage20260623localtest0000abcdef123456`. |
+| 2026-06-23 | Local token could not access `ikun_gpt-image-2` | Docker dev test | Added `ikun_gpt-image-2` to dev `UserUsableGroups`. |
+| 2026-06-23 | First callback event stayed pending | Docker dev test | Callback URL was `localhost:3001`, which points to the image-handle container. Changed local callback address to `http://host.docker.internal:3001`. |

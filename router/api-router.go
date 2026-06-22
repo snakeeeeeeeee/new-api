@@ -404,8 +404,15 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.POST("/callback/external-image/:task_id", controller.ImageTaskCallback)
 			taskRoute.GET("/self", middleware.UserAuth(), controller.GetUserTask)
 			taskRoute.GET("/async/stats", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.GetAsyncTaskStats)
+			taskRoute.GET("/async/image-handle/config", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.GetImageHandleConfig)
+			taskRoute.PUT("/async/image-handle/config", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.UpdateImageHandleConfig)
 			taskRoute.GET("/", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.GetAllTask)
 			taskRoute.PUT("/:task_id/block", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.UpdateTaskBlockStatus)
+		}
+
+		internalImageTaskRoute := apiRouter.Group("/internal/image/tasks")
+		{
+			internalImageTaskRoute.POST("/:task_id/execute", controller.ImageTaskInternalExecute)
 		}
 
 		assetRoute := apiRouter.Group("/assets")

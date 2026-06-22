@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -30,6 +31,7 @@ func AllOption() ([]*Option, error) {
 
 func InitOptionMap() {
 	async_task_setting.ApplyEnvFallback()
+	image_handle_setting.ApplyEnvFallback()
 
 	common.OptionMapRWMutex.Lock()
 	common.OptionMap = make(map[string]string)
@@ -675,6 +677,10 @@ func handleConfigUpdate(key, value string) (bool, error) {
 		value = normalized
 		common.OptionMap[key] = value
 	}
+	if configName == "image_handle_setting" {
+		value = normalizeImageHandleOptionValue(configKey, value)
+		common.OptionMap[key] = value
+	}
 
 	// 获取配置对象
 	cfg := config.GlobalConfig.Get(configName)
@@ -698,8 +704,22 @@ func handleConfigUpdate(key, value string) (bool, error) {
 	if configName == "async_task_setting" {
 		async_task_setting.ApplyNormalization()
 	}
+	if configName == "image_handle_setting" {
+		image_handle_setting.ApplyNormalization()
+	}
 
 	return true, nil // 已处理
+}
+
+func normalizeImageHandleOptionValue(configKey, value string) string {
+	switch configKey {
+	case "base_url", "internal_base_url":
+		return strings.TrimRight(strings.TrimSpace(value), "/")
+	case "api_key", "internal_secret_id", "internal_secret", "callback_secret":
+		return strings.TrimSpace(value)
+	default:
+		return value
+	}
 }
 
 func normalizeAsyncTaskOptionValue(configKey, value string) (string, error) {

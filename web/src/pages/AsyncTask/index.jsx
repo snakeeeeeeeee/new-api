@@ -22,6 +22,7 @@ import {
   Button,
   Card,
   Col,
+  Form,
   InputNumber,
   Row,
   Select,
@@ -41,6 +42,16 @@ const DEFAULT_OPTIONS = {
   'async_task_setting.default_timeout_minutes': 30,
   'async_task_setting.query_limit': 1000,
   'async_task_setting.timeout_overrides': '[]',
+};
+
+const DEFAULT_IMAGE_HANDLE_CONFIG = {
+  base_url: '',
+  api_key: '',
+  internal_base_url: '',
+  internal_secret_id: 'image_handle_1',
+  internal_secret: '',
+  callback_secret: '',
+  configured: false,
 };
 
 const PLATFORM_LABELS = {
@@ -141,7 +152,11 @@ const AsyncTask = () => {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [savingImageHandle, setSavingImageHandle] = useState(false);
   const [options, setOptions] = useState(DEFAULT_OPTIONS);
+  const [imageHandleConfig, setImageHandleConfig] = useState(
+    DEFAULT_IMAGE_HANDLE_CONFIG,
+  );
   const [stats, setStats] = useState(normalizeStats());
 
   const overrides = useMemo(
@@ -152,9 +167,10 @@ const AsyncTask = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [optionRes, statsRes] = await Promise.all([
+      const [optionRes, statsRes, imageHandleRes] = await Promise.all([
         API.get('/api/option/'),
         API.get('/api/task/async/stats'),
+        API.get('/api/task/async/image-handle/config'),
       ]);
       if (optionRes.data.success) {
         const next = { ...DEFAULT_OPTIONS };
@@ -171,6 +187,14 @@ const AsyncTask = () => {
         setStats(normalizeStats(statsRes.data.data));
       } else {
         showError(statsRes.data.message);
+      }
+      if (imageHandleRes.data.success) {
+        setImageHandleConfig({
+          ...DEFAULT_IMAGE_HANDLE_CONFIG,
+          ...(imageHandleRes.data.data || {}),
+        });
+      } else {
+        showError(imageHandleRes.data.message);
       }
     } catch {
       showError(t('加载失败'));
@@ -248,6 +272,38 @@ const AsyncTask = () => {
       showError(t('保存失败，请重试'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const updateImageHandleConfig = (key, value) => {
+    setImageHandleConfig((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const saveImageHandleConfig = async () => {
+    setSavingImageHandle(true);
+    try {
+      const res = await API.put('/api/task/async/image-handle/config', {
+        base_url: imageHandleConfig.base_url || '',
+        api_key: imageHandleConfig.api_key || '',
+        internal_base_url: imageHandleConfig.internal_base_url || '',
+        internal_secret_id:
+          imageHandleConfig.internal_secret_id || 'image_handle_1',
+        internal_secret: imageHandleConfig.internal_secret || '',
+        callback_secret: imageHandleConfig.callback_secret || '',
+      });
+      if (!res.data.success) {
+        showError(res.data.message || t('保存失败，请重试'));
+        return;
+      }
+      setImageHandleConfig({
+        ...DEFAULT_IMAGE_HANDLE_CONFIG,
+        ...(res.data.data || {}),
+      });
+      showSuccess(t('保存成功'));
+    } catch {
+      showError(t('保存失败，请重试'));
+    } finally {
+      setSavingImageHandle(false);
     }
   };
 
@@ -419,6 +475,107 @@ const AsyncTask = () => {
               />
             </Col>
           </Row>
+        </Card>
+
+        <Card style={{ marginTop: 12 }}>
+          <div className='flex items-center justify-between mb-3'>
+            <div>
+              <Title heading={5} style={{ margin: 0 }}>
+                {t('异步图片执行器')}
+              </Title>
+              <Text type='tertiary'>
+                {t(
+                  '配置 new-api 提交到 image-handle 的地址，以及 image-handle 回调 internal execute 的签名密钥。',
+                )}
+              </Text>
+            </div>
+            <Tag color={imageHandleConfig.configured ? 'green' : 'red'}>
+              {imageHandleConfig.configured ? t('已配置') : t('未配置')}
+            </Tag>
+          </div>
+          <Form layout='vertical'>
+            <Row gutter={16}>
+              <Col xs={24} md={12}>
+                <Form.Input
+                  field='base_url'
+                  label={t('image-handle 服务地址')}
+                  placeholder='http://image-handle:8787'
+                  value={imageHandleConfig.base_url}
+                  onChange={(value) =>
+                    updateImageHandleConfig('base_url', value)
+                  }
+                  showClear
+                  extraText={t('new-api 用它提交和轮询 image-handle 任务')}
+                />
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Input
+                  field='api_key'
+                  label={t('image-handle API Key')}
+                  placeholder={t('和 image-handle 的 PROVIDER_API_KEYS 对齐')}
+                  value={imageHandleConfig.api_key}
+                  onChange={(value) => updateImageHandleConfig('api_key', value)}
+                  showClear
+                />
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Input
+                  field='internal_base_url'
+                  label={t('internal execute 访问地址')}
+                  placeholder='http://new-api:3000'
+                  value={imageHandleConfig.internal_base_url}
+                  onChange={(value) =>
+                    updateImageHandleConfig('internal_base_url', value)
+                  }
+                  showClear
+                  extraText={t('必须是 image-handle 容器或 worker 能访问的 new-api 地址')}
+                />
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Input
+                  field='internal_secret_id'
+                  label={t('internal execute Secret ID')}
+                  placeholder='image_handle_1'
+                  value={imageHandleConfig.internal_secret_id}
+                  onChange={(value) =>
+                    updateImageHandleConfig('internal_secret_id', value)
+                  }
+                  showClear
+                />
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Input
+                  field='internal_secret'
+                  label={t('internal execute Secret')}
+                  value={imageHandleConfig.internal_secret}
+                  onChange={(value) =>
+                    updateImageHandleConfig('internal_secret', value)
+                  }
+                  showClear
+                  extraText={t('和 image-handle 的 INTERNAL_EXECUTE_SECRETS_JSON 对齐')}
+                />
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Input
+                  field='callback_secret'
+                  label={t('Callback 兜底 Secret')}
+                  value={imageHandleConfig.callback_secret}
+                  onChange={(value) =>
+                    updateImageHandleConfig('callback_secret', value)
+                  }
+                  showClear
+                  extraText={t('可选。正式建议在真实图片渠道 settings.callback_secret 中配置')}
+                />
+              </Col>
+            </Row>
+            <Button
+              type='primary'
+              loading={savingImageHandle}
+              onClick={saveImageHandleConfig}
+            >
+              {t('保存执行器配置')}
+            </Button>
+          </Form>
         </Card>
 
         <Card style={{ marginTop: 12 }}>

@@ -454,6 +454,8 @@ export const getTaskLogsColumns = ({
       key: COLUMN_KEYS.RESULT_URL,
       title: t('结果'),
       dataIndex: 'result_url',
+      width: 120,
+      align: 'center',
       render: (text, record) => {
         const videoResultUrl = buildVideoResultUrl(record);
         if (videoResultUrl) {
@@ -517,6 +519,8 @@ export const getTaskLogsColumns = ({
       title: t('详情'),
       dataIndex: 'fail_reason',
       fixed: 'right',
+      width: 120,
+      align: 'center',
       render: (text, record, index) => {
         // Suno audio preview
         const isSunoSuccess =
@@ -559,6 +563,8 @@ export const getTaskLogsColumns = ({
       title: t('操作'),
       dataIndex: 'actions',
       fixed: 'right',
+      width: 96,
+      align: 'center',
       render: (text, record) => {
         if (!isAdminUser) {
           return <></>;

@@ -188,6 +188,9 @@ func verifyImageCallback(c *gin.Context) ([]byte, bool) {
 
 func resolveCallbackSecret(secretID string) (string, int, error) {
 	if !strings.HasPrefix(secretID, "channel_") {
+		if secret, ok := service.ResolveImageHandleCallbackSecret(secretID); ok && secret != "" {
+			return secret, 0, nil
+		}
 		return "", 0, fmt.Errorf("invalid secret id")
 	}
 	channelID, err := strconv.Atoi(strings.TrimPrefix(secretID, "channel_"))
@@ -198,7 +201,13 @@ func resolveCallbackSecret(secretID string) (string, int, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	return ch.GetOtherSettings().CallbackSecret, channelID, nil
+	if secret := ch.GetOtherSettings().CallbackSecret; secret != "" {
+		return secret, channelID, nil
+	}
+	if secret, ok := service.ResolveImageHandleCallbackSecret(secretID); ok && secret != "" {
+		return secret, channelID, nil
+	}
+	return "", channelID, fmt.Errorf("callback secret not configured")
 }
 
 func signCallbackPayload(timestamp string, rawBody []byte, secret string) string {

@@ -150,6 +150,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if platform == "" {
 		platform = GetTaskPlatform(c)
 	}
+	if isAsyncImageTaskPath(c) {
+		platform = constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeImageHandle))
+	}
 	adaptor := GetTaskAdaptor(platform)
 	if adaptor == nil {
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
@@ -197,6 +200,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 					Quota:        existingTask.Quota,
 					ExistingTask: existingTask,
 				}, nil
+			}
+		}
+		if imageHandleAdaptor, ok := adaptor.(interface {
+			ValidateExecutorConfig(*relaycommon.RelayInfo) error
+		}); ok {
+			if err := imageHandleAdaptor.ValidateExecutorConfig(info); err != nil {
+				return nil, service.TaskErrorWrapperLocal(err, "image_handle_not_configured", http.StatusInternalServerError)
 			}
 		}
 	}
@@ -280,6 +290,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func isAsyncImageTaskPath(c *gin.Context) bool {
+	return c != nil && c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/image/tasks"
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

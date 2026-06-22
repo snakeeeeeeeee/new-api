@@ -2,7 +2,9 @@ package controller
 
 import (
 	"errors"
+	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -10,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -71,6 +74,70 @@ func GetUserTask(c *gin.Context) {
 
 func GetAsyncTaskStats(c *gin.Context) {
 	common.ApiSuccess(c, service.GetAsyncTaskStats())
+}
+
+type ImageHandleConfigRequest struct {
+	BaseURL          string `json:"base_url"`
+	APIKey           string `json:"api_key"`
+	InternalBaseURL  string `json:"internal_base_url"`
+	InternalSecretID string `json:"internal_secret_id"`
+	InternalSecret   string `json:"internal_secret"`
+	CallbackSecret   string `json:"callback_secret"`
+}
+
+func imageHandleConfigResponse(setting image_handle_setting.ImageHandleSetting) gin.H {
+	setting = image_handle_setting.NormalizeSetting(setting)
+	return gin.H{
+		"base_url":           setting.BaseURL,
+		"api_key":            setting.APIKey,
+		"internal_base_url":  setting.InternalBaseURL,
+		"internal_secret_id": setting.InternalSecretID,
+		"internal_secret":    setting.InternalSecret,
+		"callback_secret":    setting.CallbackSecret,
+		"configured":         image_handle_setting.Validate(setting) == nil,
+	}
+}
+
+func GetImageHandleConfig(c *gin.Context) {
+	common.ApiSuccess(c, imageHandleConfigResponse(*image_handle_setting.GetImageHandleSetting()))
+}
+
+func UpdateImageHandleConfig(c *gin.Context) {
+	var req ImageHandleConfigRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "无效的参数",
+		})
+		return
+	}
+	next := image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
+		BaseURL:          req.BaseURL,
+		APIKey:           req.APIKey,
+		InternalBaseURL:  req.InternalBaseURL,
+		InternalSecretID: req.InternalSecretID,
+		InternalSecret:   req.InternalSecret,
+		CallbackSecret:   req.CallbackSecret,
+	})
+	if err := image_handle_setting.Validate(next); err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	for key, value := range map[string]string{
+		"image_handle_setting.base_url":           next.BaseURL,
+		"image_handle_setting.api_key":            next.APIKey,
+		"image_handle_setting.internal_base_url":  next.InternalBaseURL,
+		"image_handle_setting.internal_secret_id": next.InternalSecretID,
+		"image_handle_setting.internal_secret":    next.InternalSecret,
+		"image_handle_setting.callback_secret":    strings.TrimSpace(next.CallbackSecret),
+	} {
+		if err := model.UpdateOption(key, value); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, "管理员更新 image-handle 异步图片执行器配置")
+	common.ApiSuccess(c, imageHandleConfigResponse(next))
 }
 
 type UpdateTaskBlockRequest struct {

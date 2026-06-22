@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -908,6 +909,13 @@ func RelayTask(c *gin.Context) {
 		perCallBilling := common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) ||
 			relayInfo.ChannelType == constant.ChannelTypeXai
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
+		if imageSnapshot, err := buildAsyncImageRequestSnapshot(c, relayInfo); err == nil && imageSnapshot != nil && len(imageSnapshot.request) > 0 {
+			task.PrivateData.ImageRequest = imageSnapshot.request
+			task.PrivateData.ImageInputURLs = imageSnapshot.images
+			task.PrivateData.ImageMaskURL = imageSnapshot.mask
+		} else if err != nil {
+			common.SysError("build async image request snapshot error: " + err.Error())
+		}
 		task.PrivateData.BillingSource = relayInfo.BillingSource
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 		task.PrivateData.TokenId = relayInfo.TokenId
@@ -941,6 +949,107 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
 	c.JSON(taskErr.StatusCode, taskErr)
+}
+
+type asyncImageRequestSnapshot struct {
+	request json.RawMessage
+	images  []string
+	mask    string
+}
+
+func buildAsyncImageRequestSnapshot(c *gin.Context, relayInfo *relaycommon.RelayInfo) (*asyncImageRequestSnapshot, error) {
+	if c == nil || c.Request == nil || c.Request.URL == nil || c.Request.URL.Path != "/v1/image/tasks" {
+		return nil, nil
+	}
+	taskReq, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+	imgReq := dto.ImageRequest{
+		Model:  relayInfo.UpstreamModelName,
+		Prompt: taskReq.Prompt,
+		Size:   taskReq.Size,
+	}
+	if imgReq.Model == "" {
+		imgReq.Model = relayInfo.OriginModelName
+	}
+	if taskReq.Image != "" {
+		imgReq.Image, _ = common.Marshal(taskReq.Image)
+	}
+	images := append([]string{}, taskReq.Images...)
+	if len(images) == 0 && strings.TrimSpace(taskReq.Image) != "" {
+		images = []string{strings.TrimSpace(taskReq.Image)}
+	}
+	mask := ""
+	if taskReq.Metadata != nil {
+		if v, ok := taskReq.Metadata["quality"].(string); ok {
+			imgReq.Quality = v
+		}
+		if v, ok := taskReq.Metadata["response_format"].(string); ok {
+			imgReq.ResponseFormat = v
+		}
+		if n, ok := numericMetadataToUint(taskReq.Metadata["n"]); ok {
+			imgReq.N = &n
+		}
+		if raw, ok := rawMetadataValue(taskReq.Metadata["output_format"]); ok {
+			imgReq.OutputFormat = raw
+		}
+		if raw, ok := rawMetadataValue(taskReq.Metadata["output_compression"]); ok {
+			imgReq.OutputCompression = raw
+		}
+		if raw, ok := rawMetadataValue(taskReq.Metadata["background"]); ok {
+			imgReq.Background = raw
+		}
+		if raw, ok := rawMetadataValue(taskReq.Metadata["moderation"]); ok {
+			imgReq.Moderation = raw
+		}
+		if v, ok := taskReq.Metadata["mask"].(string); ok {
+			mask = strings.TrimSpace(v)
+		}
+	}
+	data, err := common.Marshal(imgReq)
+	if err != nil {
+		return nil, err
+	}
+	return &asyncImageRequestSnapshot{
+		request: json.RawMessage(data),
+		images:  images,
+		mask:    mask,
+	}, nil
+}
+
+func numericMetadataToUint(value any) (uint, bool) {
+	switch v := value.(type) {
+	case int:
+		if v > 0 {
+			return uint(v), true
+		}
+	case int64:
+		if v > 0 {
+			return uint(v), true
+		}
+	case float64:
+		if v > 0 {
+			return uint(v), true
+		}
+	case json.Number:
+		i, err := v.Int64()
+		if err == nil && i > 0 {
+			return uint(i), true
+		}
+	}
+	return 0, false
+}
+
+func rawMetadataValue(value any) (json.RawMessage, bool) {
+	if value == nil {
+		return nil, false
+	}
+	data, err := common.Marshal(value)
+	if err != nil || len(data) == 0 {
+		return nil, false
+	}
+	return json.RawMessage(data), true
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {

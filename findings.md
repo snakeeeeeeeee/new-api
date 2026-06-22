@@ -1,26 +1,33 @@
 # Findings
 
-## Existing Task and UI Extension Points
-- `model.Task` stores task status, platform/action, user/channel, private result URL, and raw `Data`.
-- `service.ApplyTaskResult` is the shared polling/callback terminal update path from the ImageHandle integration.
-- Task logs already expose platform/action/status/time filters in backend APIs; frontend currently lacks a user-friendly resource type filter.
-- Sidebar/admin permissions use keyed modules; adding a new admin resource menu requires a new menu key and default config entry.
-- Frontend task-log rendering already recognizes image/video actions and can be reused for action-to-type mappings.
+## Current Direction
+- The previous ImageHandle implementation used `ChannelTypeImageHandle = 58` as a task adaptor selected by normal model distribution.
+- That makes `/v1/image/tasks` compete with existing image-generation channels for the same model name, which caused `metadata` to be forwarded to a normal OpenAI image endpoint.
+- The desired architecture is different: new-api should first select the existing real image channel, lock it on the task, and submit only an executor job to image-handle.
+- image-handle confirmed it will support only `executor.type = "new_api_internal"` and will not choose providers directly.
 
-## Assets Resource Center Decisions
-- The first version will persist direct URLs only, with optional metadata and thumbnail fields.
-- One task can create multiple assets, keyed by `task_id + asset_index`.
-- User assets endpoints must hide blocked/deleted/unavailable assets unless admin APIs explicitly request them.
-- CSV export should stream or write a simple response directly from query results and include the agreed fields.
-- Frontend should present a dense operational UI: filters, tabs, grid/table toggle, batch actions, and a detail drawer.
-- Asset API keys should be separate from normal model tokens. They will use the `ak_` prefix, fixed `assets:read` scope, optional IP restrictions, and optional expiration.
-- Because keys must remain viewable later, the first version stores the full key in `asset_keys.key`; the UI should mask by default and reveal on demand.
+## Key Constraints
+- Existing synchronous `/v1/images/generations` and `/v1/images/edits` must keep working.
+- Existing tasks, callback settlement/refund, polling fallback, and assets creation should remain compatible.
+- Internal execute must HMAC verify requests from image-handle and be idempotent.
+- Internal execute secret must be separate from callback secret.
+- `execute_url` must be configurable so it can point at a Docker/cluster-internal new-api address.
+- ImageHandle task rows still use `platform=58`, but `channel_id` is now the selected real image channel.
+- The executor is configured with environment variables: `IMAGE_HANDLE_BASE_URL`, `IMAGE_HANDLE_API_KEY`, `IMAGE_HANDLE_INTERNAL_BASE_URL`, `IMAGE_HANDLE_INTERNAL_SECRET_ID`, `IMAGE_HANDLE_INTERNAL_SECRET`; `IMAGE_HANDLE_CALLBACK_SECRET` is only a legacy fallback.
+- The formal callback secret should come from the selected real image channel settings as `callback_secret`, using `channel_<channel_id>` as the callback secret id.
+- The image-handle executor settings now live under `异步任务管理 -> 异步图片执行器`, are persisted as `image_handle_setting.*` options, and environment variables remain startup fallback values.
+- Admins can view saved image-handle API/internal/callback secrets in the async task page and can view saved channel `callback_secret` in the channel edit modal.
+- Internal execute parses standard OpenAI-compatible image responses with `data[].url` or `data[].b64_json`; this covers the current `gpt-image-2` path.
+- Async edit tasks are supported by storing `input.images`/`input.mask` URLs and rebuilding a multipart `/v1/images/edits` request during internal execute. Downloads go through the existing `service.DoDownloadRequest` SSRF and size checks.
+- Non-retry internal execute results are cached in task private data so repeated execute calls do not call the real upstream twice.
 
 ## Files Of Interest
-- `/Users/zhangyu/code/go/new-api/model/task.go`
+- `/Users/zhangyu/code/go/new-api/router/video-router.go`
+- `/Users/zhangyu/code/go/new-api/controller/relay.go`
+- `/Users/zhangyu/code/go/new-api/relay/relay_task.go`
+- `/Users/zhangyu/code/go/new-api/relay/channel/task/imagehandle/adaptor.go`
+- `/Users/zhangyu/code/go/new-api/controller/task_callback.go`
 - `/Users/zhangyu/code/go/new-api/service/task_polling.go`
-- `/Users/zhangyu/code/go/new-api/controller/task.go`
-- `/Users/zhangyu/code/go/new-api/router/api-router.go`
-- `/Users/zhangyu/code/go/new-api/web/src/components/table/task-logs`
-- `/Users/zhangyu/code/go/new-api/web/src/components/layout/SiderBar.jsx`
-- `/Users/zhangyu/code/go/new-api/web/src/App.jsx`
+- `/Users/zhangyu/code/go/new-api/model/task.go`
+- `/Users/zhangyu/code/go/new-api/controller/channel.go`
+- `/Users/zhangyu/code/go/new-api/dto/channel.go`

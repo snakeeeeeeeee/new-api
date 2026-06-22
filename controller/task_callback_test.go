@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,7 +16,9 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,6 +41,21 @@ func makeCallbackRequest(t *testing.T, body []byte, secret string) (*gin.Context
 	ctx.Request.Header.Set("X-Callback-Timestamp", timestamp)
 	ctx.Request.Header.Set("X-Callback-Signature", signCallbackTestBody(timestamp, body, secret))
 	ctx.Request.Header.Set("X-Callback-Secret-Id", "channel_123")
+	return ctx, recorder
+}
+
+func makeInternalExecuteRequest(t *testing.T, taskID string, body []byte, secretID string, secret string) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/internal/image/tasks/"+taskID+"/execute", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Request.Header.Set("X-ImageHandle-Timestamp", timestamp)
+	ctx.Request.Header.Set("X-ImageHandle-Signature", signCallbackTestBody(timestamp, body, secret))
+	ctx.Request.Header.Set("X-ImageHandle-Secret-Id", secretID)
+	ctx.Request.Header.Set("X-ImageHandle-Event-Id", "evt_execute_1")
+	ctx.Params = gin.Params{{Key: "task_id", Value: taskID}}
 	return ctx, recorder
 }
 
@@ -86,6 +104,95 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	require.NoError(t, db.Where("task_id = ?", "task_image_success").First(&task).Error)
 	assert.EqualValues(t, model.TaskStatusSuccess, task.Status)
 	assert.Equal(t, "https://cdn.example.com/a.webp", task.PrivateData.ResultURL)
+}
+
+func TestImageTaskInternalExecuteAccepted(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "internal-secret"
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+	upstreamCalls := 0
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		assert.Equal(t, "/v1/images/generations", r.URL.Path)
+		assert.Equal(t, "Bearer real-upstream-key", r.Header.Get("Authorization"))
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.JSONEq(t, `{"model":"gpt-image-2","prompt":"吃铜锣烧的机器猫","n":1,"size":"2560x1440","quality":"auto"}`, string(body))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"url":"https://upstream.example/image.png"}],"usage":{"total_tokens":321},"output_format":"png"}`))
+	}))
+	defer upstream.Close()
+
+	baseURL := upstream.URL
+	require.NoError(t, db.Create(&model.Channel{
+		Id:          777,
+		Type:        constant.ChannelTypeOpenAI,
+		Name:        "real-openai-image",
+		Key:         "real-upstream-key",
+		BaseURL:     &baseURL,
+		Status:      common.ChannelStatusEnabled,
+		Models:      "gpt-image-2",
+		Group:       "default",
+		CreatedTime: time.Now().Unix(),
+	}).Error)
+	imageRequest := []byte(`{"model":"gpt-image-2","prompt":"吃铜锣烧的机器猫","n":1,"size":"2560x1440","quality":"auto"}`)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_internal_execute",
+		Platform:  constant.TaskPlatform("58"),
+		Action:    constant.TaskActionImageGeneration,
+		UserId:    1,
+		ChannelId: 777,
+		Status:    model.TaskStatusQueued,
+		Progress:  "0%",
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "imgtask_internal",
+			ImageRequest:   imageRequest,
+		},
+		Properties: model.Properties{
+			OriginModelName:   "gpt-image-2",
+			UpstreamModelName: "gpt-image-2",
+		},
+	}).Error)
+
+	body := []byte(`{"provider_task_id":"imgtask_internal","attempt":1}`)
+	ctx, recorder := makeInternalExecuteRequest(t, "task_internal_execute", body, "image_handle_1", secret)
+
+	ImageTaskInternalExecute(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.JSONEq(t, `{"status":"succeeded","images":[{"url":"https://upstream.example/image.png","mime_type":"image/png"}],"usage":{"actual_quota":321,"total_tokens":321}}`, recorder.Body.String())
+	assert.Equal(t, 1, upstreamCalls)
+	var task model.Task
+	require.NoError(t, db.Where("task_id = ?", "task_internal_execute").First(&task).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), task.Status)
+	assert.Equal(t, relayconstant.RelayModeImagesGenerations, ctx.GetInt("relay_mode"))
+	assert.Equal(t, "imgtask_internal", task.PrivateData.ImageHandleProviderTask)
+	assert.Equal(t, "evt_execute_1", task.PrivateData.ExecuteEventID)
+	assert.NotEmpty(t, task.PrivateData.ImageExecuteResponse)
+
+	ctx2, recorder2 := makeInternalExecuteRequest(t, "task_internal_execute", body, "image_handle_1", secret)
+	ImageTaskInternalExecute(ctx2)
+	require.Equal(t, http.StatusOK, recorder2.Code)
+	assert.JSONEq(t, `{"status":"succeeded","images":[{"url":"https://upstream.example/image.png","mime_type":"image/png"}],"usage":{"actual_quota":321,"total_tokens":321}}`, recorder2.Body.String())
+	assert.Equal(t, 1, upstreamCalls)
+}
+
+func TestImageTaskInternalExecuteRejectsBadSignature(t *testing.T) {
+	setupInviteCodeControllerTestDB(t)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", "internal-secret")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+
+	body := []byte(`{"provider_task_id":"imgtask_internal","attempt":1}`)
+	ctx, recorder := makeInternalExecuteRequest(t, "task_internal_execute", body, "image_handle_1", "wrong-secret")
+
+	ImageTaskInternalExecute(ctx)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "invalid execute signature")
 }
 
 func TestImageTaskCallbackBatchIgnoredTerminal(t *testing.T) {
