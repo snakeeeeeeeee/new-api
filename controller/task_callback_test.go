@@ -230,6 +230,66 @@ func TestResolveImageCredentialLeaseNormalizesImagesEndpointBaseURL(t *testing.T
 	assert.Equal(t, "https://real.example/v1", resolveResp.BaseURL)
 }
 
+func TestResolveImageCredentialLeaseAddsV1ForOpenAICompatibleHostBaseURL(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "internal-secret"
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+
+	baseURL := "http://104.194.8.24:8008"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:          779,
+		Type:        constant.ChannelTypeOpenAI,
+		Name:        "openai-compatible-host-url",
+		Key:         "real-upstream-key",
+		BaseURL:     &baseURL,
+		Status:      common.ChannelStatusEnabled,
+		Models:      "gpt-image-2",
+		Group:       "default",
+		CreatedTime: time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_lease_host_url",
+		Platform:  constant.TaskPlatform("58"),
+		Action:    constant.TaskActionImageGeneration,
+		UserId:    1,
+		ChannelId: 779,
+		Status:    model.TaskStatusQueued,
+		Progress:  "0%",
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "imgtask_host_url",
+		},
+		Properties: model.Properties{
+			OriginModelName:   "gpt-image-2",
+			UpstreamModelName: "gpt-image-2",
+		},
+	}).Error)
+	require.NoError(t, db.Create(&model.ImageCredentialLease{
+		LeaseID:      "lease_host_url",
+		TaskID:       "task_lease_host_url",
+		TaskRecordID: 1,
+		UserID:       1,
+		ChannelID:    779,
+		Operation:    "generation",
+		Model:        "gpt-image-2",
+		Status:       model.ImageCredentialLeaseStatusActive,
+		ExpiresAt:    time.Now().Add(30 * time.Minute).Unix(),
+		CreatedAt:    time.Now().Unix(),
+		UpdatedAt:    time.Now().Unix(),
+	}).Error)
+
+	body := []byte(`{"provider_task_id":"imgtask_host_url","client_task_id":"task_lease_host_url","attempt":1,"operation":"generation","model":"gpt-image-2"}`)
+	ctx, recorder := makeLeaseResolveRequest(t, "lease_host_url", body, "image_handle_1", secret)
+
+	ResolveImageCredentialLease(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var resolveResp imageCredentialLeaseResolveResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resolveResp))
+	assert.Equal(t, "http://104.194.8.24:8008/v1", resolveResp.BaseURL)
+}
+
 func TestResolveImageCredentialLeaseRejectsExpiredLease(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	secret := "internal-secret"
