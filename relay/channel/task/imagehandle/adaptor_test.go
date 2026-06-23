@@ -21,9 +21,11 @@ import (
 )
 
 func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
 	originalServerAddress := system_setting.ServerAddress
 	originalCallbackAddress := operation_setting.CustomCallbackAddress
 	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
 		system_setting.ServerAddress = originalServerAddress
 		operation_setting.CustomCallbackAddress = originalCallbackAddress
 	})
@@ -92,6 +94,74 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	assert.Equal(t, "new_api_internal", executor["type"])
 	assert.Equal(t, "http://new-api:3000/api/internal/image/tasks/task_external_id/execute", executor["execute_url"])
 	assert.Equal(t, "image_handle_1", executor["secret_id"])
+}
+
+func TestValidateExecutorConfigUsesGlobalCallbackSecretFallback(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	})
+	t.Setenv("IMAGE_HANDLE_BASE_URL", "http://127.0.0.1:8787")
+	t.Setenv("IMAGE_HANDLE_API_KEY", "provider-key")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_BASE_URL", "http://new-api:3000")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", "internal-secret")
+	t.Setenv("IMAGE_HANDLE_CALLBACK_SECRET", "fallback-callback-secret")
+	image_handle_setting.ApplyEnvFallback()
+
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:            123,
+			ChannelOtherSettings: dto.ChannelOtherSettings{},
+		},
+	}
+
+	err := (&TaskAdaptor{}).ValidateExecutorConfig(info)
+
+	require.NoError(t, err)
+	assert.Equal(t, "fallback-callback-secret", resolveImageHandleSubmitCallbackSecret(info))
+}
+
+func TestValidateExecutorConfigRejectsMissingCallbackSecret(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	})
+	t.Setenv("IMAGE_HANDLE_BASE_URL", "http://127.0.0.1:8787")
+	t.Setenv("IMAGE_HANDLE_API_KEY", "provider-key")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_BASE_URL", "http://new-api:3000")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", "internal-secret")
+	t.Setenv("IMAGE_HANDLE_CALLBACK_SECRET", "")
+	image_handle_setting.ApplyEnvFallback()
+
+	err := (&TaskAdaptor{}).ValidateExecutorConfig(&relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 123},
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "callback_secret is required")
+}
+
+func TestValidateExecutorConfigRejectsGlobalCallbackSecretMatchingInternalSecret(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	})
+	t.Setenv("IMAGE_HANDLE_BASE_URL", "http://127.0.0.1:8787")
+	t.Setenv("IMAGE_HANDLE_API_KEY", "provider-key")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_BASE_URL", "http://new-api:3000")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", "same-secret")
+	t.Setenv("IMAGE_HANDLE_CALLBACK_SECRET", "same-secret")
+	image_handle_setting.ApplyEnvFallback()
+
+	err := (&TaskAdaptor{}).ValidateExecutorConfig(&relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 123},
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be different")
 }
 
 func TestValidateRequestRejectsUnsafeClientTaskID(t *testing.T) {

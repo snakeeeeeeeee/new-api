@@ -23,6 +23,7 @@ import {
   Card,
   Col,
   Form,
+  Input,
   InputNumber,
   Row,
   Select,
@@ -279,6 +280,18 @@ const AsyncTask = () => {
     setImageHandleConfig((prev) => ({ ...prev, [key]: value }));
   };
 
+  const renderImageHandleInput = (key, label, placeholder, extraText) => (
+    <Form.Slot label={label} extraText={extraText}>
+      <Input
+        placeholder={placeholder}
+        value={imageHandleConfig[key] || ''}
+        onChange={(value) => updateImageHandleConfig(key, value)}
+        showClear
+        style={{ width: '100%' }}
+      />
+    </Form.Slot>
+  );
+
   const saveImageHandleConfig = async () => {
     setSavingImageHandle(true);
     try {
@@ -496,76 +509,50 @@ const AsyncTask = () => {
           <Form layout='vertical'>
             <Row gutter={16}>
               <Col xs={24} md={12}>
-                <Form.Input
-                  field='base_url'
-                  label={t('image-handle 服务地址')}
-                  placeholder='http://image-handle:8787'
-                  value={imageHandleConfig.base_url}
-                  onChange={(value) =>
-                    updateImageHandleConfig('base_url', value)
-                  }
-                  showClear
-                  extraText={t('new-api 用它提交和轮询 image-handle 任务')}
-                />
+                {renderImageHandleInput(
+                  'base_url',
+                  t('image-handle 服务地址'),
+                  'http://image-handle:8787',
+                  t('new-api 用它提交和轮询 image-handle 任务'),
+                )}
               </Col>
               <Col xs={24} md={12}>
-                <Form.Input
-                  field='api_key'
-                  label={t('image-handle API Key')}
-                  placeholder={t('和 image-handle 的 PROVIDER_API_KEYS 对齐')}
-                  value={imageHandleConfig.api_key}
-                  onChange={(value) => updateImageHandleConfig('api_key', value)}
-                  showClear
-                />
+                {renderImageHandleInput(
+                  'api_key',
+                  t('image-handle API Key'),
+                  t('和 image-handle 的 PROVIDER_API_KEYS 对齐'),
+                )}
               </Col>
               <Col xs={24} md={12}>
-                <Form.Input
-                  field='internal_base_url'
-                  label={t('internal execute 访问地址')}
-                  placeholder='http://new-api:3000'
-                  value={imageHandleConfig.internal_base_url}
-                  onChange={(value) =>
-                    updateImageHandleConfig('internal_base_url', value)
-                  }
-                  showClear
-                  extraText={t('必须是 image-handle 容器或 worker 能访问的 new-api 地址')}
-                />
+                {renderImageHandleInput(
+                  'internal_base_url',
+                  t('internal execute 访问地址'),
+                  'http://new-api:3000',
+                  t('必须是 image-handle 容器或 worker 能访问的 new-api 地址'),
+                )}
               </Col>
               <Col xs={24} md={12}>
-                <Form.Input
-                  field='internal_secret_id'
-                  label={t('internal execute Secret ID')}
-                  placeholder='image_handle_1'
-                  value={imageHandleConfig.internal_secret_id}
-                  onChange={(value) =>
-                    updateImageHandleConfig('internal_secret_id', value)
-                  }
-                  showClear
-                />
+                {renderImageHandleInput(
+                  'internal_secret_id',
+                  t('internal execute Secret ID'),
+                  'image_handle_1',
+                )}
               </Col>
               <Col xs={24} md={12}>
-                <Form.Input
-                  field='internal_secret'
-                  label={t('internal execute Secret')}
-                  value={imageHandleConfig.internal_secret}
-                  onChange={(value) =>
-                    updateImageHandleConfig('internal_secret', value)
-                  }
-                  showClear
-                  extraText={t('和 image-handle 的 INTERNAL_EXECUTE_SECRETS_JSON 对齐')}
-                />
+                {renderImageHandleInput(
+                  'internal_secret',
+                  t('internal execute Secret'),
+                  '',
+                  t('和 image-handle 的 INTERNAL_EXECUTE_SECRETS_JSON 对齐'),
+                )}
               </Col>
               <Col xs={24} md={12}>
-                <Form.Input
-                  field='callback_secret'
-                  label={t('Callback 兜底 Secret')}
-                  value={imageHandleConfig.callback_secret}
-                  onChange={(value) =>
-                    updateImageHandleConfig('callback_secret', value)
-                  }
-                  showClear
-                  extraText={t('可选。正式建议在真实图片渠道 settings.callback_secret 中配置')}
-                />
+                {renderImageHandleInput(
+                  'callback_secret',
+                  t('Callback 兜底 Secret'),
+                  '',
+                  t('建议填写。作为 image-handle callback 默认验签密钥；单个图片渠道可用 settings.callback_secret 覆盖'),
+                )}
               </Col>
             </Row>
             <Button

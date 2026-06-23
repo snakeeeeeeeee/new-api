@@ -225,17 +225,23 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func validateImageHandleChannelSecrets(info *relaycommon.RelayInfo) error {
-	channelCallbackSecret := ""
-	if info != nil && info.ChannelMeta != nil {
-		channelCallbackSecret = strings.TrimSpace(info.ChannelOtherSettings.CallbackSecret)
+	callbackSecret := resolveImageHandleSubmitCallbackSecret(info)
+	if callbackSecret == "" {
+		return fmt.Errorf("callback_secret is required for image-handle callbacks; configure it in async image executor settings or image channel settings")
 	}
-	if channelCallbackSecret == "" {
-		return fmt.Errorf("channel callback_secret is required for image-handle callbacks")
-	}
-	if service.GetImageHandleExecutorConfig().InternalSecret == channelCallbackSecret {
-		return fmt.Errorf("image-handle internal execute secret and channel callback_secret must be different")
+	if service.GetImageHandleExecutorConfig().InternalSecret == callbackSecret {
+		return fmt.Errorf("image-handle internal execute secret and callback_secret must be different")
 	}
 	return nil
+}
+
+func resolveImageHandleSubmitCallbackSecret(info *relaycommon.RelayInfo) string {
+	if info != nil && info.ChannelMeta != nil {
+		if secret := strings.TrimSpace(info.ChannelOtherSettings.CallbackSecret); secret != "" {
+			return secret
+		}
+	}
+	return strings.TrimSpace(service.GetImageHandleExecutorConfig().CallbackSecret)
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
