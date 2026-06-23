@@ -83,6 +83,7 @@ type ImageHandleConfigRequest struct {
 	InternalSecretID string `json:"internal_secret_id"`
 	InternalSecret   string `json:"internal_secret"`
 	CallbackSecret   string `json:"callback_secret"`
+	DebugUpstream    bool   `json:"debug_upstream"`
 }
 
 func imageHandleConfigResponse(setting image_handle_setting.ImageHandleSetting) gin.H {
@@ -94,6 +95,7 @@ func imageHandleConfigResponse(setting image_handle_setting.ImageHandleSetting) 
 		"internal_secret_id": setting.InternalSecretID,
 		"internal_secret":    setting.InternalSecret,
 		"callback_secret":    setting.CallbackSecret,
+		"debug_upstream":     setting.DebugUpstream,
 		"configured":         image_handle_setting.Validate(setting) == nil,
 	}
 }
@@ -118,6 +120,7 @@ func UpdateImageHandleConfig(c *gin.Context) {
 		InternalSecretID: req.InternalSecretID,
 		InternalSecret:   req.InternalSecret,
 		CallbackSecret:   req.CallbackSecret,
+		DebugUpstream:    req.DebugUpstream,
 	})
 	if err := image_handle_setting.Validate(next); err != nil {
 		common.ApiErrorMsg(c, err.Error())
@@ -130,6 +133,7 @@ func UpdateImageHandleConfig(c *gin.Context) {
 		"image_handle_setting.internal_secret_id": next.InternalSecretID,
 		"image_handle_setting.internal_secret":    next.InternalSecret,
 		"image_handle_setting.callback_secret":    strings.TrimSpace(next.CallbackSecret),
+		"image_handle_setting.debug_upstream":     strconv.FormatBool(next.DebugUpstream),
 	} {
 		if err := model.UpdateOption(key, value); err != nil {
 			common.ApiError(c, err)

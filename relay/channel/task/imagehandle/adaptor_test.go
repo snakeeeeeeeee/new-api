@@ -37,6 +37,7 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
 	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", "internal-secret")
 	image_handle_setting.ApplyEnvFallback()
+	image_handle_setting.GetImageHandleSetting().DebugUpstream = true
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -96,6 +97,8 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	assert.Equal(t, "lease_test", executor["lease_id"])
 	assert.Equal(t, "http://new-api:3000/api/internal/image/credential-leases/lease_test/resolve", executor["resolve_url"])
 	assert.Equal(t, "image_handle_1", executor["secret_id"])
+	metadata := payload["metadata"].(map[string]any)
+	assert.Equal(t, true, metadata["debug_upstream"])
 }
 
 func TestValidateExecutorConfigUsesGlobalCallbackSecretFallback(t *testing.T) {

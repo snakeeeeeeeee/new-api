@@ -717,6 +717,12 @@ func normalizeImageHandleOptionValue(configKey, value string) string {
 		return strings.TrimRight(strings.TrimSpace(value), "/")
 	case "api_key", "internal_secret_id", "internal_secret", "callback_secret":
 		return strings.TrimSpace(value)
+	case "debug_upstream":
+		parsed, err := strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return "false"
+		}
+		return strconv.FormatBool(parsed)
 	default:
 		return value
 	}

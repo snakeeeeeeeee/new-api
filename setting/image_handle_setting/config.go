@@ -17,6 +17,7 @@ type ImageHandleSetting struct {
 	InternalSecretID string `json:"internal_secret_id"`
 	InternalSecret   string `json:"internal_secret"`
 	CallbackSecret   string `json:"callback_secret"`
+	DebugUpstream    bool   `json:"debug_upstream"`
 }
 
 var imageHandleSetting = envFallbackSetting()
@@ -33,6 +34,7 @@ func envFallbackSetting() ImageHandleSetting {
 		InternalSecretID: common.GetEnvOrDefaultString("IMAGE_HANDLE_INTERNAL_SECRET_ID", DefaultInternalSecretID),
 		InternalSecret:   common.GetEnvOrDefaultString("IMAGE_HANDLE_INTERNAL_SECRET", ""),
 		CallbackSecret:   common.GetEnvOrDefaultString("IMAGE_HANDLE_CALLBACK_SECRET", ""),
+		DebugUpstream:    false,
 	})
 }
 

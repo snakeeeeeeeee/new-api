@@ -104,7 +104,8 @@ func TestUpdateImageHandleConfigPersistsAndEchoesSecrets(t *testing.T) {
 		"internal_base_url":" http://new-api:3000/ ",
 		"internal_secret_id":"image_handle_1",
 		"internal_secret":"internal-secret",
-		"callback_secret":"fallback-callback-secret"
+		"callback_secret":"fallback-callback-secret",
+		"debug_upstream":true
 	}`)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -123,11 +124,16 @@ func TestUpdateImageHandleConfigPersistsAndEchoesSecrets(t *testing.T) {
 	require.Contains(t, string(resp.Data), `"api_key":"provider-key"`)
 	require.Contains(t, string(resp.Data), `"internal_secret":"internal-secret"`)
 	require.Contains(t, string(resp.Data), `"callback_secret":"fallback-callback-secret"`)
+	require.Contains(t, string(resp.Data), `"debug_upstream":true`)
 
 	var option model.Option
 	require.NoError(t, db.First(&option, "key = ?", "image_handle_setting.internal_secret").Error)
 	assert.Equal(t, "internal-secret", option.Value)
+	var debugOption model.Option
+	require.NoError(t, db.First(&debugOption, "key = ?", "image_handle_setting.debug_upstream").Error)
+	assert.Equal(t, "true", debugOption.Value)
 	assert.Equal(t, "provider-key", image_handle_setting.GetImageHandleSetting().APIKey)
+	assert.True(t, image_handle_setting.GetImageHandleSetting().DebugUpstream)
 }
 
 func TestUpdateImageHandleConfigRejectsSharedSecrets(t *testing.T) {

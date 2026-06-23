@@ -194,6 +194,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	executorCfg := service.GetImageHandleExecutorConfig()
+	if executorCfg.DebugUpstream {
+		metadata["debug_upstream"] = true
+	}
 	if err := validateImageHandleChannelSecrets(info); err != nil {
 		return nil, err
 	}

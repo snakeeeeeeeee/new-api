@@ -52,6 +52,7 @@ const DEFAULT_IMAGE_HANDLE_CONFIG = {
   internal_secret_id: 'image_handle_1',
   internal_secret: '',
   callback_secret: '',
+  debug_upstream: false,
   configured: false,
 };
 
@@ -303,6 +304,7 @@ const AsyncTask = () => {
           imageHandleConfig.internal_secret_id || 'image_handle_1',
         internal_secret: imageHandleConfig.internal_secret || '',
         callback_secret: imageHandleConfig.callback_secret || '',
+        debug_upstream: Boolean(imageHandleConfig.debug_upstream),
       });
       if (!res.data.success) {
         showError(res.data.message || t('保存失败，请重试'));
@@ -553,6 +555,21 @@ const AsyncTask = () => {
                   '',
                   t('建议填写。作为 image-handle callback 默认验签密钥；单个图片渠道可用 settings.callback_secret 覆盖'),
                 )}
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Slot
+                  label={t('上游调试日志')}
+                  extraText={t(
+                    '开启后，image-handle 会打印异步生图本次上游请求和响应摘要；调试完成后建议关闭。',
+                  )}
+                >
+                  <Switch
+                    checked={Boolean(imageHandleConfig.debug_upstream)}
+                    onChange={(value) =>
+                      updateImageHandleConfig('debug_upstream', value)
+                    }
+                  />
+                </Form.Slot>
               </Col>
             </Row>
             <Button

@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -140,9 +141,28 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		return
 	}
 	_ = model.MarkImageCredentialLeaseResolved(lease)
+	baseURL := resolveChannelBaseURL(channel)
+	if service.GetImageHandleExecutorConfig().DebugUpstream {
+		imageRequest := ""
+		if task.PrivateData.ImageRequest != nil {
+			imageRequest = string(task.PrivateData.ImageRequest)
+		}
+		logger.LogInfo(c.Request.Context(), fmt.Sprintf(
+			"image-handle resolve lease debug: task_id=%s provider_task_id=%s lease_id=%s channel_id=%d channel_type=%d model=%s operation=%s base_url=%s request=%s",
+			task.TaskID,
+			req.ProviderTaskID,
+			lease.LeaseID,
+			channel.Id,
+			channel.Type,
+			modelName,
+			lease.Operation,
+			baseURL,
+			imageRequest,
+		))
+	}
 	c.JSON(http.StatusOK, imageCredentialLeaseResolveResponse{
 		Provider:      "openai_compatible",
-		BaseURL:       resolveChannelBaseURL(channel),
+		BaseURL:       baseURL,
 		APIKey:        key,
 		Model:         modelName,
 		ChannelID:     fmt.Sprintf("channel_%d", channel.Id),

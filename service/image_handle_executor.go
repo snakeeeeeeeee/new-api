@@ -18,6 +18,7 @@ type ImageHandleExecutorConfig struct {
 	InternalSecretID string
 	InternalSecret   string
 	CallbackSecret   string
+	DebugUpstream    bool
 }
 
 func GetImageHandleExecutorConfig() ImageHandleExecutorConfig {
@@ -29,6 +30,7 @@ func GetImageHandleExecutorConfig() ImageHandleExecutorConfig {
 		InternalSecretID: setting.InternalSecretID,
 		InternalSecret:   setting.InternalSecret,
 		CallbackSecret:   setting.CallbackSecret,
+		DebugUpstream:    setting.DebugUpstream,
 	}
 }
 
