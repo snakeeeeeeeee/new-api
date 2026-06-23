@@ -213,7 +213,22 @@ func resolveChannelBaseURL(channel *model.Channel) string {
 		return ""
 	}
 	if baseURL := strings.TrimRight(strings.TrimSpace(channel.GetBaseURL()), "/"); baseURL != "" {
-		return baseURL
+		return normalizeOpenAIImagesBaseURL(baseURL)
 	}
-	return strings.TrimRight(constant.ChannelBaseURLs[channel.Type], "/")
+	return normalizeOpenAIImagesBaseURL(constant.ChannelBaseURLs[channel.Type])
+}
+
+func normalizeOpenAIImagesBaseURL(baseURL string) string {
+	normalized := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	for {
+		lower := strings.ToLower(normalized)
+		switch {
+		case strings.HasSuffix(lower, "/images/generations"):
+			normalized = strings.TrimRight(normalized[:len(normalized)-len("/images/generations")], "/")
+		case strings.HasSuffix(lower, "/images/edits"):
+			normalized = strings.TrimRight(normalized[:len(normalized)-len("/images/edits")], "/")
+		default:
+			return normalized
+		}
+	}
 }

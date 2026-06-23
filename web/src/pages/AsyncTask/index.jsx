@@ -543,7 +543,7 @@ const AsyncTask = () => {
                   'internal_secret',
                   t('internal resolve Secret'),
                   '',
-                  t('和 image-handle 的 INTERNAL_EXECUTE_SECRETS_JSON 对齐'),
+                  t('和 image-handle 的 CREDENTIAL_LEASE_SECRETS_JSON 对齐'),
                 )}
               </Col>
               <Col xs={24} md={12}>
