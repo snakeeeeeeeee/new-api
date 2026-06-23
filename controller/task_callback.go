@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 
 const callbackTimestampWindowSeconds = 5 * 60
 const imageCallbackChannelIDContextKey = "image_callback_channel_id"
+const rawResponseMaxBytes = 256 * 1024
 
 type imageTaskQueryRequest struct {
 	TaskIDs []string `json:"task_ids"`
@@ -35,14 +37,17 @@ type imageCallbackBatchRequest struct {
 }
 
 type imageCallbackEvent struct {
-	EventID        string               `json:"event_id"`
-	ClientTaskID   string               `json:"client_task_id"`
-	ProviderTaskID string               `json:"provider_task_id"`
-	Status         string               `json:"status"`
-	Progress       string               `json:"progress"`
-	Result         *imageCallbackResult `json:"result"`
-	Usage          *imageCallbackUsage  `json:"usage"`
-	Error          *imageCallbackError  `json:"error"`
+	EventID                  string               `json:"event_id"`
+	ClientTaskID             string               `json:"client_task_id"`
+	ProviderTaskID           string               `json:"provider_task_id"`
+	Status                   string               `json:"status"`
+	Progress                 string               `json:"progress"`
+	Result                   *imageCallbackResult `json:"result"`
+	Usage                    *imageCallbackUsage  `json:"usage"`
+	Error                    *imageCallbackError  `json:"error"`
+	RawResponse              json.RawMessage      `json:"raw_response,omitempty"`
+	RawResponseTruncated     bool                 `json:"raw_response_truncated,omitempty"`
+	RawResponseOmittedFields []string             `json:"raw_response_omitted_fields,omitempty"`
 }
 
 type imageCallbackResult struct {
@@ -54,8 +59,10 @@ type imageCallbackImage struct {
 }
 
 type imageCallbackUsage struct {
-	TotalTokens int `json:"total_tokens"`
-	ActualQuota int `json:"actual_quota"`
+	TotalTokens  int `json:"total_tokens"`
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+	ActualQuota  int `json:"actual_quota"`
 }
 
 type imageCallbackError struct {
@@ -218,6 +225,15 @@ func signCallbackPayload(timestamp string, rawBody []byte, secret string) string
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+func constantTimeEqualHex(got, expected string) bool {
+	got = strings.ToLower(strings.TrimSpace(got))
+	expected = strings.ToLower(strings.TrimSpace(expected))
+	if len(got) != len(expected) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(expected)) == 1
+}
+
 func handleImageCallbackEvent(c *gin.Context, event imageCallbackEvent) imageCallbackResultItem {
 	result := imageCallbackResultItem{
 		EventID:      event.EventID,
@@ -247,7 +263,7 @@ func handleImageCallbackEvent(c *gin.Context, event imageCallbackEvent) imageCal
 		result.Status = "channel_mismatch"
 		return result
 	}
-	if event.ProviderTaskID != "" && task.GetUpstreamTaskID() != "" && event.ProviderTaskID != task.GetUpstreamTaskID() {
+	if event.ProviderTaskID != "" && task.PrivateData.UpstreamTaskID != "" && event.ProviderTaskID != task.PrivateData.UpstreamTaskID {
 		result.Status = "provider_task_mismatch"
 		return result
 	}
@@ -266,6 +282,7 @@ func handleImageCallbackEvent(c *gin.Context, event imageCallbackEvent) imageCal
 		result.Message = "task adaptor not found"
 		return result
 	}
+	sanitizeImageCallbackEvent(&event)
 	raw, _ := common.Marshal(event)
 	task.Data = raw
 	service.ApplyTaskResult(c.Request.Context(), adaptor, task, taskInfo)
@@ -305,8 +322,11 @@ func imageCallbackEventToTaskInfo(event imageCallbackEvent) *relaycommon.TaskInf
 		info.Url = event.Result.Images[0].URL
 	}
 	if event.Usage != nil {
-		info.TotalTokens = event.Usage.TotalTokens
+		info.TotalTokens = firstPositiveInt(event.Usage.TotalTokens, event.Usage.InputTokens+event.Usage.OutputTokens)
 		info.CompletionTokens = event.Usage.ActualQuota
+	}
+	if info.TotalTokens == 0 {
+		info.TotalTokens = totalTokensFromRawResponse(event.RawResponse)
 	}
 	if event.Error != nil {
 		info.Reason = event.Error.Message
@@ -315,4 +335,57 @@ func imageCallbackEventToTaskInfo(event imageCallbackEvent) *relaycommon.TaskInf
 		}
 	}
 	return info
+}
+
+func sanitizeImageCallbackEvent(event *imageCallbackEvent) {
+	if event == nil || len(event.RawResponse) == 0 {
+		return
+	}
+	if len(event.RawResponse) <= rawResponseMaxBytes {
+		return
+	}
+	event.RawResponse = json.RawMessage([]byte(fmt.Sprintf(`{"truncated":true,"original_size_bytes":%d}`, len(event.RawResponse))))
+	event.RawResponseTruncated = true
+	if len(event.RawResponseOmittedFields) == 0 {
+		event.RawResponseOmittedFields = []string{"raw_response"}
+	}
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func totalTokensFromRawResponse(raw json.RawMessage) int {
+	if len(raw) == 0 || len(raw) > rawResponseMaxBytes {
+		return 0
+	}
+	var data map[string]interface{}
+	if err := common.Unmarshal(raw, &data); err != nil {
+		return 0
+	}
+	if usage, ok := data["usage"].(map[string]interface{}); ok {
+		return intFromAny(usage["total_tokens"])
+	}
+	return 0
+}
+
+func intFromAny(value interface{}) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		i, _ := strconv.Atoi(v.String())
+		return i
+	default:
+		return 0
+	}
 }

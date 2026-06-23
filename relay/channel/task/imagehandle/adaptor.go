@@ -56,7 +56,8 @@ type imageHandleCallback struct {
 
 type imageHandleExecutor struct {
 	Type       string `json:"type,omitempty"`
-	ExecuteURL string `json:"execute_url,omitempty"`
+	LeaseID    string `json:"lease_id,omitempty"`
+	ResolveURL string `json:"resolve_url,omitempty"`
 	SecretID   string `json:"secret_id,omitempty"`
 }
 
@@ -91,8 +92,10 @@ type imageHandleImage struct {
 }
 
 type imageHandleUsage struct {
-	TotalTokens int `json:"total_tokens,omitempty"`
-	ActualQuota int `json:"actual_quota,omitempty"`
+	TotalTokens  int `json:"total_tokens,omitempty"`
+	InputTokens  int `json:"input_tokens,omitempty"`
+	OutputTokens int `json:"output_tokens,omitempty"`
+	ActualQuota  int `json:"actual_quota,omitempty"`
 }
 
 type imageHandleError struct {
@@ -194,6 +197,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err := validateImageHandleChannelSecrets(info); err != nil {
 		return nil, err
 	}
+	leaseID := strings.TrimSpace(c.GetString("image_credential_lease_id"))
+	if leaseID == "" {
+		return nil, fmt.Errorf("image credential lease is required")
+	}
 	callbackBase := strings.TrimRight(service.ImageHandleCallbackAddress(), "/")
 	callbackSecretID := fmt.Sprintf("channel_%d", info.ChannelId)
 	payload := imageHandleSubmitRequest{
@@ -205,8 +212,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		Parameters:      parameters,
 		ProviderOptions: providerOptions,
 		Executor: imageHandleExecutor{
-			Type:       "new_api_internal",
-			ExecuteURL: service.BuildImageHandleExecuteURL(info.PublicTaskID),
+			Type:       "provider_direct_lease",
+			LeaseID:    leaseID,
+			ResolveURL: service.BuildImageHandleCredentialLeaseResolveURL(leaseID),
 			SecretID:   executorCfg.InternalSecretID,
 		},
 		Callback: imageHandleCallback{
@@ -230,7 +238,7 @@ func validateImageHandleChannelSecrets(info *relaycommon.RelayInfo) error {
 		return fmt.Errorf("callback_secret is required for image-handle callbacks; configure it in async image executor settings or image channel settings")
 	}
 	if service.GetImageHandleExecutorConfig().InternalSecret == callbackSecret {
-		return fmt.Errorf("image-handle internal execute secret and callback_secret must be different")
+		return fmt.Errorf("image-handle internal resolve secret and callback_secret must be different")
 	}
 	return nil
 }
@@ -398,7 +406,7 @@ func taskResponseToTaskInfo(item imageHandleTaskResponse) *relaycommon.TaskInfo 
 		info.Url = item.Result.Images[0].URL
 	}
 	if item.Usage != nil {
-		info.TotalTokens = item.Usage.TotalTokens
+		info.TotalTokens = firstPositiveInt(item.Usage.TotalTokens, item.Usage.InputTokens+item.Usage.OutputTokens)
 		info.CompletionTokens = item.Usage.ActualQuota
 	}
 	if item.Error != nil {
@@ -408,6 +416,15 @@ func taskResponseToTaskInfo(item imageHandleTaskResponse) *relaycommon.TaskInfo 
 		}
 	}
 	return info
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func copyMetadata(src map[string]interface{}) map[string]interface{} {

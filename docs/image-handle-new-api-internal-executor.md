@@ -1,115 +1,90 @@
-# image-handle 对接 new-api 内部执行模式
+# image-handle provider_direct_lease 对接说明
 
 ## 1. 背景
 
-new-api 里已经存在真实图片渠道，例如 `gpt-image-2`。这些渠道已经维护了真实上游的 `base_url`、`api_key`、模型映射、分组、倍率和计费规则。
+new-api 已经维护真实图片渠道，例如 OpenAI 兼容的 `gpt-image-2` 或 xAI 视频/图片渠道。这些渠道包含真实上游的 `base_url`、`api_key`、模型映射、分组、倍率和计费规则。
 
-异步生图时，我们希望继续复用这些现有渠道，而不是在 new-api 里额外创建一个 `ImageHandle` 模型渠道，也不希望在 image-handle 里再维护一套 OpenAI、xAI 或其他 provider key。
+异步图片任务不再把 image-handle 当成一个模型渠道使用。new-api 负责选择并锁定真实渠道，image-handle 只负责异步队列、worker 执行、R2 上传、任务状态和终态 callback。
 
-因此，image-handle 的定位调整为：
+真实上游凭证不放进提交任务 payload。image-handle worker 开始执行前，通过短期 lease 向 new-api resolve 本次任务锁定的真实渠道凭证。
 
-- 异步队列
-- Worker 执行调度
-- R2 上传
-- 状态库
-- 终态 callback
-
-真实上游图片模型调用由 new-api 的内部执行接口完成。
-
-## 2. 目标流程
+## 2. 总体流程
 
 ```text
 用户
   -> new-api POST /v1/image/tasks
-  -> new-api 按 model 选择已有图片渠道，例如 gpt-image-2
-  -> new-api 预扣费、创建任务、锁定 channel_id
-  -> new-api 提交异步任务到 image-handle
+  -> new-api 鉴权、分组、模型映射、选择真实图片渠道
+  -> new-api 预扣费、创建 tasks 记录、创建 credential lease
+  -> new-api 提交 provider_direct_lease 任务给 image-handle
   -> image-handle worker 消费任务
-  -> image-handle 调用 new-api internal execute
-  -> new-api 使用已锁定渠道调用真实上游
-  -> new-api 返回图片结果给 image-handle
-  -> image-handle 上传 R2
+  -> image-handle worker 调用 lease resolve 接口领取短期凭证
+  -> image-handle worker 直连真实上游生图/编辑图
+  -> image-handle 上传结果到 R2
   -> image-handle callback new-api
-  -> new-api 更新任务、结算或退款、写 assets
+  -> new-api CAS 更新任务终态、结算或退款、写 assets
 ```
 
-## 3. 核心变化
+## 3. new-api 侧职责
 
-### 原逻辑
+- 用户鉴权和权限校验。
+- 聚合分组最终选中真实子渠道。
+- 预扣费和任务记录。
+- 创建 `image_credential_leases`，只保存真实 `channel_id`，不保存明文 API key。
+- 提供 HMAC 保护的 resolve 接口。
+- 接收终态 callback，成功结算并写 assets，失败退款。
 
-```text
-image-handle 自己维护 provider key
-image-handle 自己根据 provider/model 调 OpenAI、xAI 等上游
-new-api 需要把 ImageHandle 当成一个独立模型渠道
-```
+## 4. image-handle 侧职责
 
-### 新逻辑
+- 接收 new-api 提交的异步任务。
+- 入队和 worker 调度。
+- worker resolve lease 后直连真实上游。
+- 上传 R2。
+- 写 image-handle 自己的任务状态。
+- 终态 callback new-api。
 
-```text
-new-api 继续维护真实上游渠道
-new-api 根据 model 选择已有图片渠道
-image-handle 只负责异步编排、上传和 callback
-image-handle 通过 new-api internal execute 间接完成真实生图
-```
-
-## 4. image-handle 执行模式
-
-image-handle 新模式只保留 executor 类型：
-
-```text
-new_api_internal
-```
-
-含义：
-
-```text
-该任务不由 image-handle 直接调用 provider。
-image-handle worker 需要调用 new-api 的 internal execute 接口完成真实生图。
-```
-
-执行要求：
-
-| 场景 | 行为 |
-| --- | --- |
-| `executor.type = "new_api_internal"` | 调用 new-api internal execute |
-| 请求没有 `executor` | 返回失败，标记不可重试 |
-| `executor.type` 未知 | 返回失败，标记不可重试 |
-
-provider 直连模式废弃。image-handle 不再自行选择 provider，也不再保存 OpenAI、xAI 或其他真实上游 key。
+image-handle 不应该持久化、打印或展示 resolve 得到的 `api_key`。
 
 ## 5. new-api 配置
 
-new-api 侧需要配置 image-handle 执行器地址和签名密钥。推荐在后台：
+配置入口：
 
 ```text
 异步任务管理 -> 异步图片执行器
 ```
 
-填写并保存，配置会落到 `options` 表。下面这些环境变量仍然保留为启动兜底，适合 Docker 首次启动或无后台权限的部署场景。
+配置会保存到 `options.image_handle_setting`。环境变量仍作为启动兜底：
 
-| 变量 | 必填 | 示例 | 说明 |
+| 配置 | 必填 | 示例 | 说明 |
 | --- | --- | --- | --- |
-| `IMAGE_HANDLE_BASE_URL` | 是 | `http://image-handle:8787` | new-api 提交任务到 image-handle 的内网地址 |
-| `IMAGE_HANDLE_API_KEY` | 是 | `test-api-key` | new-api 调用 image-handle submit/query 接口的 key |
-| `IMAGE_HANDLE_INTERNAL_BASE_URL` | 是 | `http://new-api:3000` | image-handle 容器访问 new-api internal execute 的内网 base URL |
-| `IMAGE_HANDLE_INTERNAL_SECRET_ID` | 是 | `image_handle_1` | internal execute 签名密钥 ID |
-| `IMAGE_HANDLE_INTERNAL_SECRET` | 是 | `internal-secret-xxx` | internal execute HMAC secret |
-| `IMAGE_HANDLE_CALLBACK_SECRET` | 否 | `callback-secret-xxx` | 旧配置兜底 callback secret；正式建议用真实图片渠道的 `settings.callback_secret` |
+| image-handle 服务地址 | 是 | `http://image-handle:8787` | new-api 提交任务到 image-handle 的地址 |
+| image-handle API Key | 是 | `test-api-key` | new-api 调 image-handle submit/query 接口的 key |
+| internal resolve 访问地址 | 是 | `http://new-api:3000` | image-handle 容器可访问的 new-api 内网地址 |
+| internal resolve Secret ID | 是 | `image_handle_1` | resolve HMAC secret id |
+| internal resolve Secret | 是 | `internal-secret-xxx` | resolve HMAC secret |
+| Callback Secret | 否 | `callback-secret-xxx` | 兜底 callback secret；正式建议配置到真实图片渠道 |
+
+对应环境变量：
+
+| 环境变量 | 说明 |
+| --- | --- |
+| `IMAGE_HANDLE_BASE_URL` | image-handle 服务地址 |
+| `IMAGE_HANDLE_API_KEY` | image-handle API Key |
+| `IMAGE_HANDLE_INTERNAL_BASE_URL` | internal resolve 访问地址 |
+| `IMAGE_HANDLE_INTERNAL_SECRET_ID` | internal resolve Secret ID |
+| `IMAGE_HANDLE_INTERNAL_SECRET` | internal resolve Secret |
+| `IMAGE_HANDLE_CALLBACK_SECRET` | callback 兜底 Secret |
 
 注意：
 
-- `IMAGE_HANDLE_INTERNAL_SECRET` 必须和真实图片渠道的 `settings.callback_secret` 分开。
-- `/v1/image/tasks` 选中的真实图片渠道必须配置 `settings.callback_secret`，new-api 会用 `channel_<channel_id>` 作为 `callback.secret_id`。
-- `IMAGE_HANDLE_INTERNAL_BASE_URL` 必须是 image-handle 容器或生产 worker 可以访问的地址，不一定是公网地址。
-- 真实上游 OpenAI/xAI key 仍然只配置在 new-api 原有图片渠道里。
+- `internal resolve Secret` 必须和 callback secret 分开。
+- 真实图片渠道建议配置 `settings.callback_secret`，new-api 会用 `channel_<channel_id>` 作为 callback secret id。
+- `internal resolve 访问地址` 必须是 image-handle worker 可访问的地址。Docker 内通常不能填只对浏览器有意义的 `localhost`。
 
-## 6. new-api 提交给 image-handle 的任务格式
-
-### 请求
+## 6. new-api 提交给 image-handle 的任务
 
 ```http
 POST /v1/image/tasks
-Authorization: Bearer <image_handle_provider_key>
+Authorization: Bearer <image_handle_api_key>
 Content-Type: application/json
 ```
 
@@ -128,79 +103,53 @@ Content-Type: application/json
     "size": "2560x1440",
     "quality": "auto",
     "n": 1,
-    "output_format": "webp",
-    "output_compression": 85
+    "output_format": "png"
   },
   "executor": {
-    "type": "new_api_internal",
-    "execute_url": "https://new-api.example.com/api/internal/image/tasks/task_xxx/execute",
+    "type": "provider_direct_lease",
+    "lease_id": "lease_xxx",
+    "resolve_url": "http://new-api:3000/api/internal/image/credential-leases/lease_xxx/resolve",
     "secret_id": "image_handle_1"
   },
   "callback": {
-    "url": "https://new-api.example.com/api/task/callback/external-image/task_xxx",
-    "batch_url": "https://new-api.example.com/api/task/callback/external-image/batch",
+    "url": "http://new-api:3000/api/task/callback/external-image/task_xxx",
+    "batch_url": "http://new-api:3000/api/task/callback/external-image/batch",
     "secret_id": "channel_123"
   },
   "metadata": {
     "tenant_id": "user_123",
-    "channel_id": "channel_123",
-    "new_api_task_id": "task_xxx"
+    "channel_id": "channel_123"
   }
 }
 ```
 
-### 字段说明
+字段说明：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `request_id` | string | 是 | new-api 请求 ID，用于链路追踪 |
+| `request_id` | string | 是 | new-api 请求 ID |
 | `client_task_id` | string | 是 | new-api 对外任务 ID |
-| `model` | string | 是 | 用户请求的模型，例如 `gpt-image-2` |
+| `model` | string | 是 | 锁定渠道后的上游模型名 |
 | `operation` | string | 是 | `generation` 或 `edit` |
 | `input.text` | string | 是 | prompt |
-| `input.images` | string[] | 否 | 图生图或编辑输入图 |
-| `input.mask` | string/null | 否 | 图片编辑 mask |
-| `parameters` | object | 否 | 生图参数 |
-| `executor.type` | string | 是 | 新模式固定为 `new_api_internal` |
-| `executor.execute_url` | string | 是 | image-handle worker 调用的 new-api 内部执行地址 |
-| `executor.secret_id` | string | 是 | internal execute 签名密钥 ID |
+| `input.images` | string[] | 否 | 编辑图输入图 URL |
+| `input.mask` | string/null | 否 | 编辑图 mask URL |
+| `parameters` | object | 否 | 图片参数，例如 size、quality、n |
+| `executor.type` | string | 是 | 固定 `provider_direct_lease` |
+| `executor.lease_id` | string | 是 | new-api 创建的短期凭证 lease |
+| `executor.resolve_url` | string | 是 | image-handle worker 领取凭证的 URL |
+| `executor.secret_id` | string | 是 | resolve HMAC Secret ID |
 | `callback.url` | string | 是 | 单任务 callback 地址 |
 | `callback.batch_url` | string | 否 | 批量 callback 地址 |
-| `callback.secret_id` | string | 是 | callback 签名密钥 ID |
+| `callback.secret_id` | string | 是 | callback HMAC Secret ID |
 | `metadata` | object | 否 | 非敏感追踪信息 |
 
-注意：
+提交任务 payload 禁止包含真实上游 `api_key`。
 
-- `new_api_internal` 模式下，image-handle 不应该根据 `model` 自己选择 provider。
-- `provider`、`provider_options` 在该模式下可以忽略。
-- 真实上游调用由 new-api 内部执行接口完成。
-- `operation=edit` 时，new-api 会保存 `input.images` 和 `input.mask` URL，并在 internal execute 中通过现有下载安全策略转成 `/v1/images/edits` multipart 请求。
-
-## 7. image-handle worker 执行逻辑
-
-```text
-if task.executor.type == "new_api_internal":
-    result = call_new_api_internal_execute(task)
-else:
-    result = call_provider_directly(task)
-
-if result.status == "succeeded":
-    upload result images to R2
-    mark task succeeded
-    callback new-api succeeded
-else if result.status == "failed" and result.error.retryable == true:
-    retry with backoff
-else:
-    mark task failed
-    callback new-api failed
-```
-
-## 8. new-api internal execute 协议
-
-### 请求
+## 7. resolve 接口
 
 ```http
-POST /api/internal/image/tasks/{task_id}/execute
+POST /api/internal/image/credential-leases/{lease_id}/resolve
 Content-Type: application/json
 X-ImageHandle-Timestamp: 1782140000
 X-ImageHandle-Signature: <signature>
@@ -208,118 +157,101 @@ X-ImageHandle-Event-Id: evt_xxx
 X-ImageHandle-Secret-Id: image_handle_1
 ```
 
+请求体：
+
 ```json
 {
   "provider_task_id": "imgtask_xxx",
-  "attempt": 1
+  "client_task_id": "task_xxx",
+  "attempt": 1,
+  "operation": "generation",
+  "model": "gpt-image-2"
 }
 ```
 
-### 请求字段说明
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `provider_task_id` | string | 是 | image-handle 内部任务 ID |
-| `attempt` | number | 是 | 当前执行次数 |
-
-### 签名规则
+签名：
 
 ```text
 signature = HMAC-SHA256(timestamp + "." + raw_body, internal_secret)
 ```
 
-要求：
+校验规则：
 
-- `timestamp` 建议 5 分钟有效期。
-- `signature` 使用 constant-time compare。
-- `secret_id` 用于 new-api 查找对应 internal secret。
-- `provider_task_id` 必须匹配 new-api 保存的 image-handle 任务 ID。
-- `event_id` 用于日志追踪；new-api 会缓存非重试执行结果，重复 execute 不会重复调用真实上游。
+- timestamp 在 5 分钟窗口内。
+- signature constant-time compare。
+- `lease_id` 存在且未过期。
+- `client_task_id` 匹配 lease 关联任务。
+- 如果 new-api 已保存 `provider_task_id`，则必须匹配。
+- 任务未进入终态。
+- 渠道仍启用且 key 可用。
+- 第一版只返回 OpenAI Images 兼容格式。
 
-## 9. new-api internal execute 响应
-
-### 成功响应
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-```
+成功响应：
 
 ```json
 {
-  "status": "succeeded",
-  "images": [
-    {
-      "url": "https://example.com/original-image.png",
-      "b64_json": null,
-      "mime_type": "image/png"
-    }
-  ],
-  "usage": {
-    "actual_quota": 1234
-  }
+  "provider": "openai_compatible",
+  "request_format": "openai_images",
+  "base_url": "https://api.xxx.com/v1",
+  "api_key": "sk-xxx",
+  "model": "gpt-image-2",
+  "channel_id": "channel_123",
+  "expires_at": "2026-06-24T12:30:00Z"
 }
 ```
 
-说明：
-
-- `images[].url` 或 `images[].b64_json` 至少有一个。
-- image-handle 拿到结果后继续上传 R2。
-- image-handle callback 给 new-api 时，返回 R2 后的最终 URL。
-
-### 失败响应
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-```
+错误响应：
 
 ```json
 {
-  "status": "failed",
   "error": {
-    "code": "upstream_error",
-    "message": "upstream provider error message",
-    "retryable": true
+    "code": "lease_expired",
+    "message": "credential lease expired",
+    "retryable": false
   }
 }
 ```
 
-### 失败字段说明
+常见错误码：
 
-| 字段 | 类型 | 说明 |
+| code | retryable | 说明 |
 | --- | --- | --- |
-| `error.code` | string | 错误码 |
-| `error.message` | string | 错误描述 |
-| `error.retryable` | boolean | image-handle 是否应该重试 |
+| `invalid_signature` | false | 签名错误 |
+| `lease_not_found` | false | lease 不存在 |
+| `lease_expired` | false | lease 过期或已失效 |
+| `task_cancelled` | false | 任务已取消 |
+| `task_already_finished` | false | 任务已终态 |
+| `channel_disabled` | false | 渠道禁用 |
+| `credential_unavailable` | true | 渠道 key 暂不可用 |
+| `model_not_supported` | false | 非 OpenAI Images 兼容格式 |
 
-## 10. internal execute HTTP 状态处理建议
+## 8. image-handle 执行要求
 
-| HTTP 状态 | image-handle 行为 |
-| --- | --- |
-| `200` 且 `status=succeeded` | 上传 R2，然后 callback 成功 |
-| `200` 且 `status=failed`，`retryable=true` | 退避重试 |
-| `200` 且 `status=failed`，`retryable=false` | callback 失败 |
-| `401` / `403` | 不可重试，internal secret 或权限错误 |
-| `404` | 不可重试，任务不存在或已失效 |
-| `409` | 通常不可重试，任务状态冲突 |
-| `5xx` / timeout | 可重试 |
+- `base_url` 去掉尾部 `/` 后拼接 `/images/generations` 或 `/images/edits`。
+- 如果 `base_url` 已经是 `.../v1`，不要重复拼 `/v1/v1`。
+- 编辑图任务中，new-api 只传图片 URL；worker 可以自行下载 URL 后转 multipart/file 调上游。
+- `api_key` 只允许在 worker 内存短暂使用，不落库、不进 Redis、不进日志。
+- 上游返回大 base64 时，不要 callback 给 new-api；应上传 R2 后 callback URL。
 
-补充：
+## 9. callback 协议
 
-- internal execute 返回 `200 + status=failed + retryable=true` 时，new-api 会释放执行占用，允许 image-handle 后续重试。
-- internal execute 返回成功或不可重试失败后，new-api 会缓存该响应；同一任务重复 execute 时直接返回缓存结果，避免重复生图。
-
-## 11. callback 协议保持不变
-
-image-handle 终态 callback new-api 的地址保持：
+callback 地址：
 
 ```http
 POST /api/task/callback/external-image/{task_id}
 POST /api/task/callback/external-image/batch
 ```
 
-### 成功 callback 示例
+签名 header：
+
+```text
+X-Callback-Timestamp
+X-Callback-Signature
+X-Callback-Secret-Id
+X-Callback-Event-Id
+```
+
+成功事件：
 
 ```json
 {
@@ -336,12 +268,22 @@ POST /api/task/callback/external-image/batch
     ]
   },
   "usage": {
-    "actual_quota": 1234
-  }
+    "total_tokens": 1234,
+    "input_tokens": 100,
+    "output_tokens": 1134,
+    "actual_quota": 0
+  },
+  "raw_response": {
+    "usage": {
+      "total_tokens": 1234
+    }
+  },
+  "raw_response_truncated": false,
+  "raw_response_omitted_fields": ["data.0.b64_json"]
 }
 ```
 
-### 失败 callback 示例
+失败事件：
 
 ```json
 {
@@ -358,52 +300,23 @@ POST /api/task/callback/external-image/batch
 }
 ```
 
-## 12. 幂等要求
+raw response 约束：
 
-image-handle 侧建议保证：
+- `raw_response` 是剔除大字段后的安全 JSON。
+- 递归删除或替换 `b64_json`、`base64`、`image_base64`、`data:image/...` 等大字段。
+- 建议 image-handle 限制 `RAW_RESPONSE_MAX_BYTES=64KB/256KB`。
+- new-api 默认按 256KB 上限处理，超过会截断并标记 `raw_response_truncated=true`。
 
-- `client_task_id` 唯一。
-- 重复提交同一个 `client_task_id` 返回同一个 `provider_task_id`。
-- `new_api_internal` 执行失败重试时，不重复创建 image-handle 任务。
-- callback 可以重复发送，new-api 会做终态 CAS，但 image-handle 也应保留 callback event 日志便于排查。
+## 10. 计费和幂等
 
-new-api internal execute 侧建议保证：
+- 提交任务时 new-api 预扣费。
+- callback 成功时，只有 CAS 首次进入 `SUCCESS` 的进程会结算和写 assets。
+- callback 失败时，只有 CAS 首次进入 `FAILURE` 的进程会退款。
+- token 计价模型使用 callback `usage` 和 new-api 价格规则重算差额。
+- 按次或固定价模型保持现有按次逻辑。
+- 重复 callback 会返回 `ignored_terminal`，不会重复结算或退款。
 
-- 同一个 `task_id` 可以被 image-handle 重试调用。
-- new-api 根据任务状态决定是否允许再次执行。
-- 如果任务已经终态，返回明确错误，避免重复调用上游。
-
-## 13. 安全要求
-
-- image-handle 不保存真实 provider key。
-- image-handle 不接收 new-api 渠道 API key。
-- internal execute 必须 HMAC 签名。
-- callback 仍然 HMAC 签名。
-- `metadata` 只保存非敏感追踪信息。
-- 不在日志里打印完整密钥、Authorization header 或 callback secret。
-
-## 14. 这样做的好处
-
-- 不需要在 new-api 里新增 `gpt-image-2-async` 这种重复模型。
-- 不需要在 image-handle 里维护 OpenAI、xAI 或其他 provider key。
-- 同步生图和异步生图复用同一套渠道配置。
-- 同步和异步复用同一套模型倍率、分组权限、模型映射。
-- 任务日志里的 `channel_id` 指向真实生图渠道，而不是 ImageHandle 壳渠道。
-- 后续 xAI、OpenAI、其他图片渠道都可以自然复用。
-
-## 15. 验收标准
-
-- new-api 调用 `/v1/image/tasks` 时，可以使用现有模型名 `gpt-image-2`。
-- image-handle 收到任务后，识别 `executor.type = "new_api_internal"`。
-- image-handle worker 调用 `executor.execute_url`，不直接调用 provider。
-- new-api internal execute 使用任务锁定的真实渠道完成上游生图。
-- image-handle 上传 R2 后 callback new-api。
-- new-api 成功更新任务状态、写入 assets。
-- 失败场景可以按 `retryable` 正确重试或失败 callback。
-
-## 16. 用户侧 new-api 调用示例
-
-最终用户只调用 new-api，不需要传 image-handle 的 `provider_task_id`，也不需要知道 image-handle 服务鉴权 key。
+## 11. 用户侧调用示例
 
 ```bash
 curl --location 'https://api.example.com/v1/image/tasks' \
@@ -437,4 +350,4 @@ curl --location 'https://api.example.com/v1/image/tasks/task_xxx' \
   -H 'Authorization: Bearer sk-xxx'
 ```
 
-注意：`IMAGE_HANDLE_API_KEY` 是 new-api 调 image-handle 的服务 key，不是最终用户的 `sk-xxx`。
+最终用户不需要传 `client_task_id`；不传时 new-api 自动生成。`IMAGE_HANDLE_API_KEY` 是 new-api 调 image-handle 的服务 key，不是用户的 `sk-xxx`。

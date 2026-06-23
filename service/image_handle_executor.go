@@ -74,9 +74,9 @@ func GetImageHandleSubmitAPIKey() string {
 	return GetImageHandleExecutorConfig().APIKey
 }
 
-func BuildImageHandleExecuteURL(taskID string) string {
+func BuildImageHandleCredentialLeaseResolveURL(leaseID string) string {
 	baseURL := strings.TrimRight(GetImageHandleExecutorConfig().InternalBaseURL, "/")
-	return baseURL + "/api/internal/image/tasks/" + taskID + "/execute"
+	return baseURL + "/api/internal/image/credential-leases/" + leaseID + "/resolve"
 }
 
 func ResolveImageHandleCallbackSecret(secretID string) (string, bool) {

@@ -49,6 +49,7 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set(common.RequestIdKey, "req_test")
+	c.Set("image_credential_lease_id", "lease_test")
 
 	info := &relaycommon.RelayInfo{
 		UserId:          11,
@@ -91,8 +92,9 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	assert.Equal(t, "https://new-api.example/api/task/callback/external-image/batch", callback["batch_url"])
 	assert.Equal(t, "channel_123", callback["secret_id"])
 	executor := payload["executor"].(map[string]any)
-	assert.Equal(t, "new_api_internal", executor["type"])
-	assert.Equal(t, "http://new-api:3000/api/internal/image/tasks/task_external_id/execute", executor["execute_url"])
+	assert.Equal(t, "provider_direct_lease", executor["type"])
+	assert.Equal(t, "lease_test", executor["lease_id"])
+	assert.Equal(t, "http://new-api:3000/api/internal/image/credential-leases/lease_test/resolve", executor["resolve_url"])
 	assert.Equal(t, "image_handle_1", executor["secret_id"])
 }
 

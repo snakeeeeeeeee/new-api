@@ -70,16 +70,16 @@ func Validate(setting ImageHandleSetting) error {
 		return fmt.Errorf("image-handle API Key 不能为空")
 	}
 	if setting.InternalBaseURL == "" {
-		return fmt.Errorf("internal execute 访问地址不能为空")
+		return fmt.Errorf("internal resolve 访问地址不能为空")
 	}
 	if setting.InternalSecretID == "" {
-		return fmt.Errorf("internal execute Secret ID 不能为空")
+		return fmt.Errorf("internal resolve Secret ID 不能为空")
 	}
 	if setting.InternalSecret == "" {
-		return fmt.Errorf("internal execute Secret 不能为空")
+		return fmt.Errorf("internal resolve Secret 不能为空")
 	}
 	if setting.CallbackSecret != "" && setting.InternalSecret == setting.CallbackSecret {
-		return fmt.Errorf("internal execute Secret 不能和 callback 兜底 Secret 相同")
+		return fmt.Errorf("internal resolve Secret 不能和 callback 兜底 Secret 相同")
 	}
 	return nil
 }

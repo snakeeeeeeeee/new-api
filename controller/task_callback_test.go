@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
-	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/gin-gonic/gin"
@@ -44,18 +42,18 @@ func makeCallbackRequest(t *testing.T, body []byte, secret string) (*gin.Context
 	return ctx, recorder
 }
 
-func makeInternalExecuteRequest(t *testing.T, taskID string, body []byte, secretID string, secret string) (*gin.Context, *httptest.ResponseRecorder) {
+func makeLeaseResolveRequest(t *testing.T, leaseID string, body []byte, secretID string, secret string) (*gin.Context, *httptest.ResponseRecorder) {
 	t.Helper()
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	timestamp := fmt.Sprintf("%d", time.Now().Unix())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/internal/image/tasks/"+taskID+"/execute", bytes.NewReader(body))
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/internal/image/credential-leases/"+leaseID+"/resolve", bytes.NewReader(body))
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	ctx.Request.Header.Set("X-ImageHandle-Timestamp", timestamp)
 	ctx.Request.Header.Set("X-ImageHandle-Signature", signCallbackTestBody(timestamp, body, secret))
 	ctx.Request.Header.Set("X-ImageHandle-Secret-Id", secretID)
-	ctx.Request.Header.Set("X-ImageHandle-Event-Id", "evt_execute_1")
-	ctx.Params = gin.Params{{Key: "task_id", Value: taskID}}
+	ctx.Request.Header.Set("X-ImageHandle-Event-Id", "evt_resolve_1")
+	ctx.Params = gin.Params{{Key: "lease_id", Value: leaseID}}
 	return ctx, recorder
 }
 
@@ -66,9 +64,9 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&model.Channel{
 		Id:            123,
-		Type:          constant.ChannelTypeImageHandle,
-		Name:          "image-handle",
-		Key:           "provider-key",
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "real-openai-image",
+		Key:           "real-upstream-key",
 		Status:        common.ChannelStatusEnabled,
 		OtherSettings: string(settings),
 	}).Error)
@@ -106,27 +104,14 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	assert.Equal(t, "https://cdn.example.com/a.webp", task.PrivateData.ResultURL)
 }
 
-func TestImageTaskInternalExecuteAccepted(t *testing.T) {
+func TestResolveImageCredentialLeaseAccepted(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	secret := "internal-secret"
 	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
 	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
 	image_handle_setting.ApplyEnvFallback()
-	upstreamCalls := 0
 
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamCalls++
-		assert.Equal(t, "/v1/images/generations", r.URL.Path)
-		assert.Equal(t, "Bearer real-upstream-key", r.Header.Get("Authorization"))
-		body, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
-		assert.JSONEq(t, `{"model":"gpt-image-2","prompt":"吃铜锣烧的机器猫","n":1,"size":"2560x1440","quality":"auto"}`, string(body))
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"created":1,"data":[{"url":"https://upstream.example/image.png"}],"usage":{"total_tokens":321},"output_format":"png"}`))
-	}))
-	defer upstream.Close()
-
-	baseURL := upstream.URL
+	baseURL := "https://real.example/v1"
 	require.NoError(t, db.Create(&model.Channel{
 		Id:          777,
 		Type:        constant.ChannelTypeOpenAI,
@@ -138,9 +123,8 @@ func TestImageTaskInternalExecuteAccepted(t *testing.T) {
 		Group:       "default",
 		CreatedTime: time.Now().Unix(),
 	}).Error)
-	imageRequest := []byte(`{"model":"gpt-image-2","prompt":"吃铜锣烧的机器猫","n":1,"size":"2560x1440","quality":"auto"}`)
 	require.NoError(t, db.Create(&model.Task{
-		TaskID:    "task_internal_execute",
+		TaskID:    "task_lease_resolve",
 		Platform:  constant.TaskPlatform("58"),
 		Action:    constant.TaskActionImageGeneration,
 		UserId:    1,
@@ -148,51 +132,181 @@ func TestImageTaskInternalExecuteAccepted(t *testing.T) {
 		Status:    model.TaskStatusQueued,
 		Progress:  "0%",
 		PrivateData: model.TaskPrivateData{
-			UpstreamTaskID: "imgtask_internal",
-			ImageRequest:   imageRequest,
+			UpstreamTaskID: "imgtask_lease",
 		},
 		Properties: model.Properties{
 			OriginModelName:   "gpt-image-2",
 			UpstreamModelName: "gpt-image-2",
 		},
 	}).Error)
+	require.NoError(t, db.Create(&model.ImageCredentialLease{
+		LeaseID:      "lease_resolve",
+		TaskID:       "task_lease_resolve",
+		TaskRecordID: 1,
+		UserID:       1,
+		ChannelID:    777,
+		Operation:    "generation",
+		Model:        "gpt-image-2",
+		Status:       model.ImageCredentialLeaseStatusActive,
+		ExpiresAt:    time.Now().Add(30 * time.Minute).Unix(),
+		CreatedAt:    time.Now().Unix(),
+		UpdatedAt:    time.Now().Unix(),
+	}).Error)
 
-	body := []byte(`{"provider_task_id":"imgtask_internal","attempt":1}`)
-	ctx, recorder := makeInternalExecuteRequest(t, "task_internal_execute", body, "image_handle_1", secret)
+	body := []byte(`{"provider_task_id":"imgtask_lease","client_task_id":"task_lease_resolve","attempt":1,"operation":"generation","model":"gpt-image-2"}`)
+	ctx, recorder := makeLeaseResolveRequest(t, "lease_resolve", body, "image_handle_1", secret)
 
-	ImageTaskInternalExecute(ctx)
+	ResolveImageCredentialLease(ctx)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.JSONEq(t, `{"status":"succeeded","images":[{"url":"https://upstream.example/image.png","mime_type":"image/png"}],"usage":{"actual_quota":321,"total_tokens":321}}`, recorder.Body.String())
-	assert.Equal(t, 1, upstreamCalls)
-	var task model.Task
-	require.NoError(t, db.Where("task_id = ?", "task_internal_execute").First(&task).Error)
-	assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), task.Status)
-	assert.Equal(t, relayconstant.RelayModeImagesGenerations, ctx.GetInt("relay_mode"))
-	assert.Equal(t, "imgtask_internal", task.PrivateData.ImageHandleProviderTask)
-	assert.Equal(t, "evt_execute_1", task.PrivateData.ExecuteEventID)
-	assert.NotEmpty(t, task.PrivateData.ImageExecuteResponse)
-
-	ctx2, recorder2 := makeInternalExecuteRequest(t, "task_internal_execute", body, "image_handle_1", secret)
-	ImageTaskInternalExecute(ctx2)
-	require.Equal(t, http.StatusOK, recorder2.Code)
-	assert.JSONEq(t, `{"status":"succeeded","images":[{"url":"https://upstream.example/image.png","mime_type":"image/png"}],"usage":{"actual_quota":321,"total_tokens":321}}`, recorder2.Body.String())
-	assert.Equal(t, 1, upstreamCalls)
+	var resolveResp imageCredentialLeaseResolveResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resolveResp))
+	assert.Equal(t, "openai_compatible", resolveResp.Provider)
+	assert.Equal(t, "openai_images", resolveResp.RequestFormat)
+	assert.Equal(t, "https://real.example/v1", resolveResp.BaseURL)
+	assert.Equal(t, "real-upstream-key", resolveResp.APIKey)
+	assert.Equal(t, "gpt-image-2", resolveResp.Model)
+	assert.Equal(t, "channel_777", resolveResp.ChannelID)
+	assert.NotEmpty(t, resolveResp.ExpiresAt)
 }
 
-func TestImageTaskInternalExecuteRejectsBadSignature(t *testing.T) {
+func TestResolveImageCredentialLeaseRejectsExpiredLease(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "internal-secret"
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_expired_lease",
+		Platform:  constant.TaskPlatform("58"),
+		Action:    constant.TaskActionImageGeneration,
+		UserId:    1,
+		ChannelId: 777,
+		Status:    model.TaskStatusQueued,
+	}).Error)
+	require.NoError(t, db.Create(&model.ImageCredentialLease{
+		LeaseID:      "lease_expired",
+		TaskID:       "task_expired_lease",
+		TaskRecordID: 1,
+		UserID:       1,
+		ChannelID:    777,
+		Operation:    "generation",
+		Model:        "gpt-image-2",
+		Status:       model.ImageCredentialLeaseStatusActive,
+		ExpiresAt:    time.Now().Add(-time.Minute).Unix(),
+		CreatedAt:    time.Now().Unix(),
+		UpdatedAt:    time.Now().Unix(),
+	}).Error)
+
+	body := []byte(`{"client_task_id":"task_expired_lease","operation":"generation","model":"gpt-image-2"}`)
+	ctx, recorder := makeLeaseResolveRequest(t, "lease_expired", body, "image_handle_1", secret)
+
+	ResolveImageCredentialLease(ctx)
+
+	require.Equal(t, http.StatusGone, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "lease_expired")
+	var lease model.ImageCredentialLease
+	require.NoError(t, db.Where("lease_id = ?", "lease_expired").First(&lease).Error)
+	assert.Equal(t, model.ImageCredentialLeaseStatusExpired, lease.Status)
+}
+
+func TestResolveImageCredentialLeaseRejectsFinishedTask(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "internal-secret"
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_finished_lease",
+		Platform:  constant.TaskPlatform("58"),
+		Action:    constant.TaskActionImageGeneration,
+		UserId:    1,
+		ChannelId: 777,
+		Status:    model.TaskStatusSuccess,
+	}).Error)
+	require.NoError(t, db.Create(&model.ImageCredentialLease{
+		LeaseID:      "lease_finished",
+		TaskID:       "task_finished_lease",
+		TaskRecordID: 1,
+		UserID:       1,
+		ChannelID:    777,
+		Operation:    "generation",
+		Model:        "gpt-image-2",
+		Status:       model.ImageCredentialLeaseStatusActive,
+		ExpiresAt:    time.Now().Add(30 * time.Minute).Unix(),
+		CreatedAt:    time.Now().Unix(),
+		UpdatedAt:    time.Now().Unix(),
+	}).Error)
+
+	body := []byte(`{"client_task_id":"task_finished_lease","operation":"generation","model":"gpt-image-2"}`)
+	ctx, recorder := makeLeaseResolveRequest(t, "lease_finished", body, "image_handle_1", secret)
+
+	ResolveImageCredentialLease(ctx)
+
+	require.Equal(t, http.StatusConflict, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "task_already_finished")
+}
+
+func TestResolveImageCredentialLeaseRejectsDisabledChannel(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "internal-secret"
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     777,
+		Type:   constant.ChannelTypeOpenAI,
+		Name:   "disabled-openai-image",
+		Key:    "real-upstream-key",
+		Status: common.ChannelStatusManuallyDisabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_disabled_channel",
+		Platform:  constant.TaskPlatform("58"),
+		Action:    constant.TaskActionImageGeneration,
+		UserId:    1,
+		ChannelId: 777,
+		Status:    model.TaskStatusQueued,
+	}).Error)
+	require.NoError(t, db.Create(&model.ImageCredentialLease{
+		LeaseID:      "lease_disabled_channel",
+		TaskID:       "task_disabled_channel",
+		TaskRecordID: 1,
+		UserID:       1,
+		ChannelID:    777,
+		Operation:    "generation",
+		Model:        "gpt-image-2",
+		Status:       model.ImageCredentialLeaseStatusActive,
+		ExpiresAt:    time.Now().Add(30 * time.Minute).Unix(),
+		CreatedAt:    time.Now().Unix(),
+		UpdatedAt:    time.Now().Unix(),
+	}).Error)
+
+	body := []byte(`{"client_task_id":"task_disabled_channel","operation":"generation","model":"gpt-image-2"}`)
+	ctx, recorder := makeLeaseResolveRequest(t, "lease_disabled_channel", body, "image_handle_1", secret)
+
+	ResolveImageCredentialLease(ctx)
+
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "channel_disabled")
+}
+
+func TestResolveImageCredentialLeaseRejectsBadSignature(t *testing.T) {
 	setupInviteCodeControllerTestDB(t)
 	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", "internal-secret")
 	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
 	image_handle_setting.ApplyEnvFallback()
 
 	body := []byte(`{"provider_task_id":"imgtask_internal","attempt":1}`)
-	ctx, recorder := makeInternalExecuteRequest(t, "task_internal_execute", body, "image_handle_1", "wrong-secret")
+	ctx, recorder := makeLeaseResolveRequest(t, "lease_resolve", body, "image_handle_1", "wrong-secret")
 
-	ImageTaskInternalExecute(ctx)
+	ResolveImageCredentialLease(ctx)
 
 	require.Equal(t, http.StatusForbidden, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "invalid execute signature")
+	assert.Contains(t, recorder.Body.String(), "invalid internal signature")
 }
 
 func TestImageTaskCallbackBatchIgnoredTerminal(t *testing.T) {
@@ -202,9 +316,9 @@ func TestImageTaskCallbackBatchIgnoredTerminal(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&model.Channel{
 		Id:            123,
-		Type:          constant.ChannelTypeImageHandle,
-		Name:          "image-handle",
-		Key:           "provider-key",
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "real-openai-image",
+		Key:           "real-upstream-key",
 		Status:        common.ChannelStatusEnabled,
 		OtherSettings: string(settings),
 	}).Error)
@@ -234,6 +348,52 @@ func TestImageTaskCallbackBatchIgnoredTerminal(t *testing.T) {
 	assert.Equal(t, "https://cdn.example.com/old.webp", task.PrivateData.ResultURL)
 }
 
+func TestImageTaskCallbackBatchAcceptsProviderTaskBeforeUpstreamIDPersisted(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "callback-secret"
+	settings, err := common.Marshal(dto.ChannelOtherSettings{CallbackSecret: secret})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            123,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "real-openai-image",
+		Key:           "real-upstream-key",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: string(settings),
+	}).Error)
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "u", Quota: 1000, Status: common.UserStatusEnabled}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:     "task_fast_callback",
+		Platform:   constant.TaskPlatform("58"),
+		Action:     constant.TaskActionImageGeneration,
+		UserId:     1,
+		ChannelId:  123,
+		Quota:      100,
+		Status:     model.TaskStatusQueued,
+		Progress:   "20%",
+		SubmitTime: time.Now().Unix(),
+		PrivateData: model.TaskPrivateData{
+			BillingSource: service.BillingSourceWallet,
+			BillingContext: &model.TaskBillingContext{
+				OriginModelName: "gpt-image-2",
+			},
+		},
+		Properties: model.Properties{OriginModelName: "gpt-image-2"},
+	}).Error)
+
+	body := []byte(`{"events":[{"event_id":"evt_fast","client_task_id":"task_fast_callback","provider_task_id":"imgtask_fast","status":"succeeded","progress":"100%","result":{"images":[{"url":"https://cdn.example.com/fast.webp"}]},"usage":{"actual_quota":100}}]}`)
+	ctx, recorder := makeCallbackRequest(t, body, secret)
+
+	ImageTaskCallbackBatch(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"status":"accepted"`)
+	var task model.Task
+	require.NoError(t, db.Where("task_id = ?", "task_fast_callback").First(&task).Error)
+	assert.EqualValues(t, model.TaskStatusSuccess, task.Status)
+	assert.Equal(t, "https://cdn.example.com/fast.webp", task.PrivateData.ResultURL)
+}
+
 func TestImageTaskCallbackBatchRejectsChannelMismatch(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	secret := "callback-secret"
@@ -241,9 +401,9 @@ func TestImageTaskCallbackBatchRejectsChannelMismatch(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&model.Channel{
 		Id:            123,
-		Type:          constant.ChannelTypeImageHandle,
-		Name:          "image-handle",
-		Key:           "provider-key",
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "real-openai-image",
+		Key:           "real-upstream-key",
 		Status:        common.ChannelStatusEnabled,
 		OtherSettings: string(settings),
 	}).Error)
@@ -271,6 +431,66 @@ func TestImageTaskCallbackBatchRejectsChannelMismatch(t *testing.T) {
 	require.NoError(t, db.Where("task_id = ?", "task_image_other_channel").First(&task).Error)
 	assert.EqualValues(t, model.TaskStatusQueued, task.Status)
 	assert.Empty(t, task.PrivateData.ResultURL)
+}
+
+func TestImageTaskCallbackBatchTruncatesOversizedRawResponse(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "callback-secret"
+	settings, err := common.Marshal(dto.ChannelOtherSettings{CallbackSecret: secret})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            123,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "real-openai-image",
+		Key:           "real-upstream-key",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: string(settings),
+	}).Error)
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "u", Quota: 1000, Status: common.UserStatusEnabled}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:     "task_raw_response",
+		Platform:   constant.TaskPlatform("58"),
+		Action:     constant.TaskActionImageGeneration,
+		UserId:     1,
+		ChannelId:  123,
+		Quota:      100,
+		Status:     model.TaskStatusQueued,
+		Progress:   "20%",
+		SubmitTime: time.Now().Unix(),
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "imgtask_raw",
+			BillingSource:  service.BillingSourceWallet,
+			BillingContext: &model.TaskBillingContext{
+				OriginModelName: "gpt-image-2",
+			},
+		},
+		Properties: model.Properties{OriginModelName: "gpt-image-2"},
+	}).Error)
+
+	oversized := bytes.Repeat([]byte("a"), rawResponseMaxBytes+1)
+	event := imageCallbackBatchRequest{Events: []imageCallbackEvent{{
+		EventID:        "evt_raw",
+		ClientTaskID:   "task_raw_response",
+		ProviderTaskID: "imgtask_raw",
+		Status:         "succeeded",
+		Progress:       "100%",
+		Result:         &imageCallbackResult{Images: []imageCallbackImage{{URL: "https://cdn.example.com/raw.webp"}}},
+		RawResponse:    append([]byte(`{"payload":"`), append(oversized, []byte(`"}`)...)...),
+	}}}
+	body, err := common.Marshal(event)
+	require.NoError(t, err)
+	ctx, recorder := makeCallbackRequest(t, body, secret)
+
+	ImageTaskCallbackBatch(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"status":"accepted"`)
+	var task model.Task
+	require.NoError(t, db.Where("task_id = ?", "task_raw_response").First(&task).Error)
+	assert.EqualValues(t, model.TaskStatusSuccess, task.Status)
+	assert.Less(t, len(task.Data), rawResponseMaxBytes/4)
+	assert.Contains(t, string(task.Data), `"raw_response_truncated":true`)
+	assert.Contains(t, string(task.Data), `"original_size_bytes"`)
 }
 
 func TestQueryImageTasksReturnsOnlyCurrentUserTasks(t *testing.T) {
@@ -381,9 +601,9 @@ func TestVerifyImageCallbackRejectsInvalidSignature(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&model.Channel{
 		Id:            123,
-		Type:          constant.ChannelTypeImageHandle,
-		Name:          "image-handle",
-		Key:           "provider-key",
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "real-openai-image",
+		Key:           "real-upstream-key",
 		Status:        common.ChannelStatusEnabled,
 		OtherSettings: string(settings),
 	}).Error)

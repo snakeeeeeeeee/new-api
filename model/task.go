@@ -102,7 +102,8 @@ type TaskPrivateData struct {
 	Key            string `json:"key,omitempty"`
 	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
 	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
-	// 异步图片 internal execute 上下文。用于 image-handle worker 回调 new-api 执行真实上游请求。
+	// 异步图片上下文。ImageRequest/ImageInputURLs/ImageMaskURL 用于任务审计和后续兜底；
+	// ImageHandleProviderTask/ExecuteEventID/ImageExecuteResponse 仅保留历史 internal execute 数据兼容。
 	ImageRequest            json.RawMessage `json:"image_request,omitempty"`
 	ImageInputURLs          []string        `json:"image_input_urls,omitempty"`
 	ImageMaskURL            string          `json:"image_mask_url,omitempty"`

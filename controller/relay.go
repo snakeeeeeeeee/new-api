@@ -833,6 +833,9 @@ func RelayTask(c *gin.Context) {
 			break
 		}
 
+		if c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/image/tasks" {
+			break
+		}
 		shouldRetryTask := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
 		isInternalRetryLog := shouldRetryTask
 		if isAggregateGroupRequest {
@@ -904,6 +907,20 @@ func RelayTask(c *gin.Context) {
 			common.SysError("settle task billing error: " + settleErr.Error())
 		}
 		service.LogTaskConsumption(c, relayInfo)
+		if result != nil && result.CreatedTask != nil {
+			result.CreatedTask.PrivateData.UpstreamTaskID = result.UpstreamTaskID
+			result.CreatedTask.Data = result.TaskData
+			if updateErr := model.DB.Model(&model.Task{}).
+				Where("id = ?", result.CreatedTask.ID).
+				Updates(map[string]any{
+					"private_data": result.CreatedTask.PrivateData,
+					"data":         result.CreatedTask.Data,
+					"updated_at":   time.Now().Unix(),
+				}).Error; updateErr != nil {
+				common.SysError("update pre-created task error: " + updateErr.Error())
+			}
+			return
+		}
 
 		task := model.InitTask(result.Platform, relayInfo)
 		perCallBilling := common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) ||

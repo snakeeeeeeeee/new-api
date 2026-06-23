@@ -498,7 +498,7 @@ const AsyncTask = () => {
               </Title>
               <Text type='tertiary'>
                 {t(
-                  '配置 new-api 提交到 image-handle 的地址，以及 image-handle 回调 internal execute 的签名密钥。',
+                  '配置 new-api 提交到 image-handle 的地址，以及 image-handle resolve lease 的签名密钥。',
                 )}
               </Text>
             </div>
@@ -526,7 +526,7 @@ const AsyncTask = () => {
               <Col xs={24} md={12}>
                 {renderImageHandleInput(
                   'internal_base_url',
-                  t('internal execute 访问地址'),
+                  t('internal resolve 访问地址'),
                   'http://new-api:3000',
                   t('必须是 image-handle 容器或 worker 能访问的 new-api 地址'),
                 )}
@@ -534,14 +534,14 @@ const AsyncTask = () => {
               <Col xs={24} md={12}>
                 {renderImageHandleInput(
                   'internal_secret_id',
-                  t('internal execute Secret ID'),
+                  t('internal resolve Secret ID'),
                   'image_handle_1',
                 )}
               </Col>
               <Col xs={24} md={12}>
                 {renderImageHandleInput(
                   'internal_secret',
-                  t('internal execute Secret'),
+                  t('internal resolve Secret'),
                   '',
                   t('和 image-handle 的 INTERNAL_EXECUTE_SECRETS_JSON 对齐'),
                 )}

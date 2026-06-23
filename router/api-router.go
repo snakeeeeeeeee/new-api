@@ -410,9 +410,9 @@ func SetApiRouter(router *gin.Engine) {
 			taskRoute.PUT("/:task_id/block", middleware.AdminAuth(), middleware.AdminMenuAuth("async_task"), controller.UpdateTaskBlockStatus)
 		}
 
-		internalImageTaskRoute := apiRouter.Group("/internal/image/tasks")
+		internalImageLeaseRoute := apiRouter.Group("/internal/image/credential-leases")
 		{
-			internalImageTaskRoute.POST("/:task_id/execute", controller.ImageTaskInternalExecute)
+			internalImageLeaseRoute.POST("/:lease_id/resolve", controller.ResolveImageCredentialLease)
 		}
 
 		assetRoute := apiRouter.Group("/assets")
