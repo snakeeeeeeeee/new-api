@@ -379,6 +379,10 @@ export const useLogsData = () => {
       logs[i].timestamp2string = timestamp2string(logs[i].created_at);
       logs[i].key = logs[i].id;
       let other = getLogOther(logs[i].other);
+      const isAsyncImageFinalBilling =
+        other?.billing_stage === 'async_image_final';
+      const shouldRenderBillingDetail =
+        logs[i].type === 2 || isAsyncImageFinalBilling;
       let expandDataLocal = [];
 
       if (isAdminUser && (logs[i].type === 0 || logs[i].type === 2 || logs[i].type === 6)) {
@@ -423,7 +427,7 @@ export const useLogsData = () => {
           value: other.cache_creation_tokens,
         });
       }
-      if (logs[i].type === 2) {
+      if (shouldRenderBillingDetail) {
         expandDataLocal.push({
           key: t('日志详情'),
           value: other?.claude
@@ -474,7 +478,7 @@ export const useLogsData = () => {
           });
         }
       }
-      if (logs[i].type === 2) {
+      if (shouldRenderBillingDetail) {
         let modelMapped =
           other?.is_model_mapped &&
           other?.upstream_model_name &&

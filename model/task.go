@@ -121,10 +121,19 @@ type TaskPrivateData struct {
 type TaskBillingContext struct {
 	ModelPrice              float64            `json:"model_price,omitempty"`                // 模型单价
 	GroupRatio              float64            `json:"group_ratio,omitempty"`                // 分组倍率
+	GroupSpecialRatio       float64            `json:"group_special_ratio,omitempty"`        // 专属倍率，用于日志展示
 	OriginalGroupRatio      float64            `json:"original_group_ratio,omitempty"`       // 覆盖前分组倍率
 	RatioOverride           float64            `json:"ratio_override,omitempty"`             // 用户聚合分组覆盖倍率
+	HasSpecialRatio         bool               `json:"has_special_ratio,omitempty"`          // 是否存在专属倍率
 	HasRatioOverride        bool               `json:"has_ratio_override,omitempty"`         // 是否使用用户聚合分组覆盖倍率
 	ModelRatio              float64            `json:"model_ratio,omitempty"`                // 模型倍率
+	CompletionRatio         float64            `json:"completion_ratio,omitempty"`           // 输出倍率
+	CacheRatio              float64            `json:"cache_ratio,omitempty"`                // 缓存读取倍率
+	CacheCreationRatio      float64            `json:"cache_creation_ratio,omitempty"`       // 缓存创建倍率
+	CacheCreation5mRatio    float64            `json:"cache_creation_5m_ratio,omitempty"`    // 5m 缓存创建倍率
+	CacheCreation1hRatio    float64            `json:"cache_creation_1h_ratio,omitempty"`    // 1h 缓存创建倍率
+	ImageRatio              float64            `json:"image_ratio,omitempty"`                // 图片输入倍率
+	UsePrice                bool               `json:"use_price,omitempty"`                  // true 表示固定按次价格
 	OtherRatios             map[string]float64 `json:"other_ratios,omitempty"`               // 附加倍率（时长、分辨率等）
 	OriginModelName         string             `json:"origin_model_name,omitempty"`          // 模型名称，必须为OriginModelName
 	PerCallBilling          bool               `json:"per_call_billing,omitempty"`           // 按次计费：跳过轮询阶段的差额结算

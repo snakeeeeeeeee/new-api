@@ -60,10 +60,21 @@ type imageCallbackImage struct {
 }
 
 type imageCallbackUsage struct {
-	TotalTokens  int `json:"total_tokens"`
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	ActualQuota  int `json:"actual_quota"`
+	TotalTokens              int `json:"total_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	PromptTokens             int `json:"prompt_tokens"`
+	CompletionTokens         int `json:"completion_tokens"`
+	CachedTokens             int `json:"cached_tokens"`
+	CacheReadTokens          int `json:"cache_read_tokens"`
+	PromptCacheHitTokens     int `json:"prompt_cache_hit_tokens"`
+	CacheCreationTokens      int `json:"cache_creation_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheCreation5mTokens    int `json:"cache_creation_5m_tokens"`
+	CacheCreation1hTokens    int `json:"cache_creation_1h_tokens"`
+	ImageTokens              int `json:"image_tokens"`
+	AudioTokens              int `json:"audio_tokens"`
+	ActualQuota              int `json:"actual_quota"`
 }
 
 type imageCallbackError struct {
@@ -331,11 +342,19 @@ func imageCallbackEventToTaskInfo(event imageCallbackEvent) *relaycommon.TaskInf
 		info.Url = event.Result.Images[0].URL
 	}
 	if event.Usage != nil {
-		info.TotalTokens = firstPositiveInt(event.Usage.TotalTokens, event.Usage.InputTokens+event.Usage.OutputTokens)
-		info.CompletionTokens = event.Usage.ActualQuota
+		info.Usage = callbackUsageToDTO(event.Usage)
+		info.TotalTokens = info.Usage.TotalTokens
+		info.CompletionTokens = info.Usage.CompletionTokens
+		info.ActualQuota = event.Usage.ActualQuota
 	}
 	if info.TotalTokens == 0 {
-		info.TotalTokens = totalTokensFromRawResponse(event.RawResponse)
+		info.Usage = usageFromRawResponse(event.RawResponse)
+		if info.Usage != nil {
+			info.TotalTokens = info.Usage.TotalTokens
+			info.CompletionTokens = info.Usage.CompletionTokens
+		}
+	} else if info.Usage != nil {
+		mergeUsageFromRawResponse(info.Usage, event.RawResponse)
 	}
 	if event.Error != nil {
 		info.Reason = event.Error.Message
@@ -344,6 +363,39 @@ func imageCallbackEventToTaskInfo(event imageCallbackEvent) *relaycommon.TaskInf
 		}
 	}
 	return info
+}
+
+func callbackUsageToDTO(usage *imageCallbackUsage) *dto.Usage {
+	if usage == nil {
+		return nil
+	}
+	inputTokens := firstPositiveInt(usage.InputTokens, usage.PromptTokens)
+	outputTokens := firstPositiveInt(usage.OutputTokens, usage.CompletionTokens)
+	totalTokens := firstPositiveInt(usage.TotalTokens, inputTokens+outputTokens)
+	cachedTokens := firstPositiveInt(usage.CachedTokens, usage.CacheReadTokens, usage.PromptCacheHitTokens)
+	cacheCreationTokens := firstPositiveInt(usage.CacheCreationTokens, usage.CacheCreationInputTokens)
+	return &dto.Usage{
+		PromptTokens:     inputTokens,
+		CompletionTokens: outputTokens,
+		TotalTokens:      totalTokens,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		UsageSource:      "image_handle_callback",
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         cachedTokens,
+			CachedCreationTokens: cacheCreationTokens,
+			ImageTokens:          usage.ImageTokens,
+			AudioTokens:          usage.AudioTokens,
+		},
+		InputTokensDetails: &dto.InputTokenDetails{
+			CachedTokens:         cachedTokens,
+			CachedCreationTokens: cacheCreationTokens,
+			ImageTokens:          usage.ImageTokens,
+			AudioTokens:          usage.AudioTokens,
+		},
+		ClaudeCacheCreation5mTokens: usage.CacheCreation5mTokens,
+		ClaudeCacheCreation1hTokens: usage.CacheCreation1hTokens,
+	}
 }
 
 func sanitizeImageCallbackEvent(event *imageCallbackEvent) {
@@ -369,16 +421,132 @@ func firstPositiveInt(values ...int) int {
 	return 0
 }
 
-func totalTokensFromRawResponse(raw json.RawMessage) int {
+func usageFromRawResponse(raw json.RawMessage) *dto.Usage {
 	if len(raw) == 0 || len(raw) > rawResponseMaxBytes {
-		return 0
+		return nil
 	}
 	var data map[string]interface{}
 	if err := common.Unmarshal(raw, &data); err != nil {
-		return 0
+		return nil
 	}
 	if usage, ok := data["usage"].(map[string]interface{}); ok {
-		return intFromAny(usage["total_tokens"])
+		return usageMapToDTO(usage)
+	}
+	return nil
+}
+
+func mergeUsageFromRawResponse(usage *dto.Usage, raw json.RawMessage) {
+	if usage == nil {
+		return
+	}
+	fromRaw := usageFromRawResponse(raw)
+	if fromRaw == nil {
+		return
+	}
+	if usage.PromptTokens == 0 {
+		usage.PromptTokens = fromRaw.PromptTokens
+		usage.InputTokens = fromRaw.InputTokens
+	}
+	if usage.CompletionTokens == 0 {
+		usage.CompletionTokens = fromRaw.CompletionTokens
+		usage.OutputTokens = fromRaw.OutputTokens
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = firstPositiveInt(fromRaw.TotalTokens, usage.PromptTokens+usage.CompletionTokens)
+	}
+	if usage.PromptTokensDetails.CachedTokens == 0 {
+		usage.PromptTokensDetails.CachedTokens = fromRaw.PromptTokensDetails.CachedTokens
+	}
+	if usage.PromptTokensDetails.CachedCreationTokens == 0 {
+		usage.PromptTokensDetails.CachedCreationTokens = fromRaw.PromptTokensDetails.CachedCreationTokens
+	}
+	if usage.PromptTokensDetails.ImageTokens == 0 {
+		usage.PromptTokensDetails.ImageTokens = fromRaw.PromptTokensDetails.ImageTokens
+	}
+	if usage.PromptTokensDetails.AudioTokens == 0 {
+		usage.PromptTokensDetails.AudioTokens = fromRaw.PromptTokensDetails.AudioTokens
+	}
+	if usage.InputTokensDetails == nil {
+		usage.InputTokensDetails = fromRaw.InputTokensDetails
+	}
+	if usage.ClaudeCacheCreation5mTokens == 0 {
+		usage.ClaudeCacheCreation5mTokens = fromRaw.ClaudeCacheCreation5mTokens
+	}
+	if usage.ClaudeCacheCreation1hTokens == 0 {
+		usage.ClaudeCacheCreation1hTokens = fromRaw.ClaudeCacheCreation1hTokens
+	}
+}
+
+func usageMapToDTO(usage map[string]interface{}) *dto.Usage {
+	inputTokens := firstPositiveInt(
+		intFromAny(usage["input_tokens"]),
+		intFromAny(usage["prompt_tokens"]),
+	)
+	outputTokens := firstPositiveInt(
+		intFromAny(usage["output_tokens"]),
+		intFromAny(usage["completion_tokens"]),
+	)
+	totalTokens := firstPositiveInt(intFromAny(usage["total_tokens"]), inputTokens+outputTokens)
+	cachedTokens := firstPositiveInt(
+		intFromAny(usage["cached_tokens"]),
+		intFromAny(usage["cache_read_tokens"]),
+		intFromAny(usage["prompt_cache_hit_tokens"]),
+	)
+	cacheCreationTokens := firstPositiveInt(
+		intFromAny(usage["cache_creation_tokens"]),
+		intFromAny(usage["cache_creation_input_tokens"]),
+	)
+	if details, ok := usage["prompt_tokens_details"].(map[string]interface{}); ok {
+		cachedTokens = firstPositiveInt(cachedTokens, intFromAny(details["cached_tokens"]))
+		cacheCreationTokens = firstPositiveInt(cacheCreationTokens, intFromAny(details["cached_creation_tokens"]))
+	}
+	if details, ok := usage["input_tokens_details"].(map[string]interface{}); ok {
+		cachedTokens = firstPositiveInt(cachedTokens, intFromAny(details["cached_tokens"]))
+		cacheCreationTokens = firstPositiveInt(cacheCreationTokens, intFromAny(details["cached_creation_tokens"]))
+	}
+	imageTokens := firstPositiveInt(
+		intFromAny(usage["image_tokens"]),
+		nestedUsageInt(usage, "prompt_tokens_details", "image_tokens"),
+		nestedUsageInt(usage, "input_tokens_details", "image_tokens"),
+	)
+	audioTokens := firstPositiveInt(
+		intFromAny(usage["audio_tokens"]),
+		nestedUsageInt(usage, "prompt_tokens_details", "audio_tokens"),
+		nestedUsageInt(usage, "input_tokens_details", "audio_tokens"),
+	)
+	return &dto.Usage{
+		PromptTokens:     inputTokens,
+		CompletionTokens: outputTokens,
+		TotalTokens:      totalTokens,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		UsageSource:      "image_handle_raw_response",
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         cachedTokens,
+			CachedCreationTokens: cacheCreationTokens,
+			ImageTokens:          imageTokens,
+			AudioTokens:          audioTokens,
+		},
+		InputTokensDetails: &dto.InputTokenDetails{
+			CachedTokens:         cachedTokens,
+			CachedCreationTokens: cacheCreationTokens,
+			ImageTokens:          imageTokens,
+			AudioTokens:          audioTokens,
+		},
+		ClaudeCacheCreation5mTokens: firstPositiveInt(
+			intFromAny(usage["cache_creation_5m_tokens"]),
+			intFromAny(usage["cache_creation_tokens_5m"]),
+		),
+		ClaudeCacheCreation1hTokens: firstPositiveInt(
+			intFromAny(usage["cache_creation_1h_tokens"]),
+			intFromAny(usage["cache_creation_tokens_1h"]),
+		),
+	}
+}
+
+func nestedUsageInt(usage map[string]interface{}, objectKey string, valueKey string) int {
+	if nested, ok := usage[objectKey].(map[string]interface{}); ok {
+		return intFromAny(nested[valueKey])
 	}
 	return 0
 }

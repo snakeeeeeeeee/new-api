@@ -667,6 +667,9 @@ func truncateBase64(s string) string {
 //  4. 都不满足 → 保持预扣额度不变
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	allowDebt := task.Platform == constant.TaskPlatform(fmt.Sprintf("%d", constant.ChannelTypeImageHandle))
+	if settleAsyncImageBillingOnComplete(ctx, task, taskResult) {
+		return
+	}
 	// 1. 优先让 adaptor 决定最终额度
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
 		RecalculateTaskQuotaWithDebtOption(ctx, task, actualQuota, "adaptor计费调整", allowDebt)

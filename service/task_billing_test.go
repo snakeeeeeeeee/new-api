@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
@@ -962,7 +963,7 @@ func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
-func TestSettle_ActualQuotaCanDriveWalletAndTokenNegative(t *testing.T) {
+func TestSettle_ImageHandlePerCallSuccessKeepsPrecharge(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
@@ -985,9 +986,77 @@ func TestSettle_ActualQuotaCanDriveWalletAndTokenNegative(t *testing.T) {
 
 	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
-	assert.Equal(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain-(actualQuota-preConsumed), getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, preConsumed, task.Quota)
+}
+
+func TestSettle_ImageHandleUsageBillingUsesCallbackUsageAndCanDriveDebt(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 34, 34, 34
+	const initQuota, preConsumed = 100, 500000
+	const tokenRemain = 30
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-async-image-usage-debt", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatform("58")
+	task.TaskID = "task_async_usage_billing"
+	task.Properties.OriginModelName = "gpt-image-2"
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		OriginModelName:    "gpt-image-2",
+		BillingMode:        "async_image_usage_billing",
+		ModelPrice:         -1,
+		ModelRatio:         2.5,
+		CompletionRatio:    6,
+		CacheRatio:         0.4,
+		GroupRatio:         1.3,
+		GroupSpecialRatio:  1.3,
+		HasSpecialRatio:    true,
+		OriginalGroupRatio: 6,
+		OtherRatios: map[string]float64{
+			"async_image_precharge_amount_per_image_usd": 1,
+			"async_image_precharge_quota_per_image":      500000,
+			"async_image_n":                              1,
+		},
+	}
+
+	taskResult := &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+		Usage: &dto.Usage{
+			PromptTokens:     19,
+			CompletionTokens: 781,
+			TotalTokens:      800,
+			PromptTokensDetails: dto.InputTokenDetails{
+				CachedTokens: 5,
+			},
+		},
+	}
+
+	settleTaskBillingOnComplete(ctx, &mockAdaptor{}, task, taskResult)
+
+	// ((19-5)*5/1M + 5*2/1M + 781*30/1M) * 1.3 * 500000 = 15282.15 -> 15282 quota
+	const actualQuota = 15282
+	delta := actualQuota - preConsumed
+	assert.Equal(t, initQuota-delta, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain-delta, getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, actualQuota, task.Quota)
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeRefund, log.Type)
+	assert.Equal(t, preConsumed-actualQuota, log.Quota)
+	assert.Equal(t, 19, log.PromptTokens)
+	assert.Equal(t, 781, log.CompletionTokens)
+	var other map[string]interface{}
+	require.NoError(t, common.Unmarshal([]byte(log.Other), &other))
+	assert.Equal(t, float64(5), other["cache_tokens"])
+	assert.Equal(t, float64(1.3), other["user_group_ratio"])
+	assert.Equal(t, float64(6), other["original_group_ratio"])
 }
 
 func TestSettle_NonPerCall_AdaptorAdjustWorks(t *testing.T) {

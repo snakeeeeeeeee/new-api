@@ -380,13 +380,16 @@ function renderCompactDetailSummary(summarySegments) {
 function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   const other = getLogOther(record.other);
 
-  if (record.type === 6) {
+  if (record.type === 6 && other?.billing_stage !== 'async_image_final') {
     return {
       segments: [{ text: t('异步任务退款'), tone: 'primary' }],
     };
   }
 
-  if (other == null || record.type !== 2) {
+  if (
+    other == null ||
+    (record.type !== 2 && other?.billing_stage !== 'async_image_final')
+  ) {
     return null;
   }
 

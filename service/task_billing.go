@@ -3,14 +3,18 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -154,6 +158,9 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		other["model_price"] = bc.ModelPrice
 		other["group_ratio"] = bc.GroupRatio
+		if bc.HasSpecialRatio {
+			other["user_group_ratio"] = bc.GroupSpecialRatio
+		}
 		if bc.OriginalGroupRatio != 0 {
 			other["original_group_ratio"] = bc.OriginalGroupRatio
 			other["original_ratio"] = bc.OriginalGroupRatio
@@ -363,4 +370,311 @@ func RecalculateTaskQuotaByTokensWithDebtOption(ctx context.Context, task *model
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f", totalTokens, modelRatio, finalGroupRatio)
 	RecalculateTaskQuotaWithDebtOption(ctx, task, actualQuota, reason, allowDebt)
+}
+
+func settleAsyncImageBillingOnComplete(ctx context.Context, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
+	if !isImageHandleTask(task) {
+		return false
+	}
+	bc := task.PrivateData.BillingContext
+	if bc == nil || bc.PerCallBilling || bc.UsePrice {
+		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，成功后保持预扣费 %s", task.TaskID, formatQuotaUSD(task.Quota)))
+		return true
+	}
+	usage := taskResult.Usage
+	if usage == nil && taskResult.TotalTokens > 0 {
+		usage = &dto.Usage{
+			PromptTokens:     taskResult.TotalTokens,
+			CompletionTokens: 0,
+			TotalTokens:      taskResult.TotalTokens,
+			UsageSource:      "image_handle_total_tokens_fallback",
+		}
+	}
+	if usage == nil || usage.TotalTokens <= 0 {
+		if taskResult.ActualQuota > 0 {
+			RecalculateTaskQuotaWithDebtOption(ctx, task, taskResult.ActualQuota, "image-handle actual_quota 兜底", true)
+			return true
+		}
+		logger.LogWarn(ctx, fmt.Sprintf("任务 %s 成功但未返回 usage，保持预扣费 %s", task.TaskID, formatQuotaUSD(task.Quota)))
+		return true
+	}
+	summary := calculateTextQuotaSummary(taskLogContext(ctx, task), taskRelayInfoForBilling(task), usage)
+	reason := "异步图片按量真实结算"
+	if summary.Quota > 0 {
+		settleTaskQuotaDeltaWithUsage(ctx, task, summary, reason, true)
+	}
+	return true
+}
+
+func isImageHandleTask(task *model.Task) bool {
+	return task != nil && task.Platform == constant.TaskPlatform(fmt.Sprintf("%d", constant.ChannelTypeImageHandle))
+}
+
+func taskRelayInfoForBilling(task *model.Task) *relaycommon.RelayInfo {
+	bc := task.PrivateData.BillingContext
+	priceData := types.PriceData{
+		ModelPrice:           -1,
+		GroupRatioInfo:       types.GroupRatioInfo{GroupRatio: 1, GroupSpecialRatio: -1, OriginalGroupRatio: 1, RatioOverride: -1},
+		CacheRatio:           1,
+		CacheCreationRatio:   1,
+		CacheCreation5mRatio: 1,
+		CacheCreation1hRatio: 1,
+		ImageRatio:           1,
+	}
+	if bc != nil {
+		priceData.ModelPrice = bc.ModelPrice
+		priceData.ModelRatio = bc.ModelRatio
+		priceData.CompletionRatio = bc.CompletionRatio
+		priceData.CacheRatio = defaultFloat(bc.CacheRatio, 1)
+		priceData.CacheCreationRatio = defaultFloat(bc.CacheCreationRatio, 1)
+		priceData.CacheCreation5mRatio = defaultFloat(bc.CacheCreation5mRatio, priceData.CacheCreationRatio)
+		priceData.CacheCreation1hRatio = defaultFloat(bc.CacheCreation1hRatio, priceData.CacheCreationRatio)
+		priceData.ImageRatio = defaultFloat(bc.ImageRatio, 1)
+		priceData.UsePrice = bc.UsePrice
+		priceData.OtherRatios = taskUsageBillingOtherRatios(bc.OtherRatios)
+		priceData.GroupRatioInfo = types.GroupRatioInfo{
+			GroupRatio:         defaultFloat(bc.GroupRatio, 1),
+			GroupSpecialRatio:  defaultFloat(bc.GroupSpecialRatio, -1),
+			HasSpecialRatio:    bc.HasSpecialRatio,
+			OriginalGroupRatio: defaultFloat(bc.OriginalGroupRatio, defaultFloat(bc.GroupRatio, 1)),
+			RatioOverride:      defaultFloat(bc.RatioOverride, -1),
+			HasRatioOverride:   bc.HasRatioOverride,
+		}
+	}
+	return &relaycommon.RelayInfo{
+		UserId:          task.UserId,
+		TokenId:         task.PrivateData.TokenId,
+		UsingGroup:      task.Group,
+		UserGroup:       task.Group,
+		OriginModelName: taskModelName(task),
+		RequestURLPath:  "/v1/image/tasks",
+		StartTime:       time.Unix(defaultInt64(task.StartTime, task.SubmitTime, task.CreatedAt, time.Now().Unix()), 0),
+		PriceData:       priceData,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: task.ChannelId},
+	}
+}
+
+func taskLogContext(ctx context.Context, task *model.Task) *gin.Context {
+	ginCtx, ok := ctx.(*gin.Context)
+	if ok && ginCtx != nil {
+		return ginCtx
+	}
+	c, _ := gin.CreateTestContext(noopResponseWriter{})
+	req, _ := http.NewRequest(http.MethodPost, "/v1/image/tasks", nil)
+	c.Request = req
+	c.Set("token_name", taskTokenName(task))
+	return c
+}
+
+type noopResponseWriter struct{}
+
+func (noopResponseWriter) Header() http.Header       { return http.Header{} }
+func (noopResponseWriter) Write([]byte) (int, error) { return 0, nil }
+func (noopResponseWriter) WriteHeader(int)           {}
+
+func taskTokenName(task *model.Task) string {
+	if task == nil || task.PrivateData.TokenId <= 0 {
+		return ""
+	}
+	if token, err := model.GetTokenById(task.PrivateData.TokenId); err == nil {
+		return token.Name
+	}
+	return ""
+}
+
+func asyncImageUsageLogOther(ctx context.Context, task *model.Task, summary textQuotaSummary, preConsumedQuota int) map[string]interface{} {
+	logCtx := taskLogContext(ctx, task)
+	relayInfo := taskRelayInfoForBilling(task)
+	other := GenerateTextOtherInfo(logCtx, relayInfo, summary.ModelRatio, summary.GroupRatio, summary.CompletionRatio, summary.CacheTokens, summary.CacheRatio, summary.ModelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
+	other["task_id"] = task.TaskID
+	other["pre_consumed_quota"] = preConsumedQuota
+	other["actual_quota"] = summary.Quota
+	other["billing_stage"] = "async_image_final"
+	if summary.ImageTokens != 0 {
+		other["image"] = true
+		other["image_ratio"] = summary.ImageRatio
+		other["image_output"] = summary.ImageTokens
+	}
+	if summary.CacheCreationTokens > 0 {
+		other["cache_creation_tokens"] = summary.CacheCreationTokens
+		other["cache_creation_ratio"] = summary.CacheCreationRatio
+	}
+	if summary.CacheCreationTokens5m > 0 {
+		other["cache_creation_tokens_5m"] = summary.CacheCreationTokens5m
+		other["cache_creation_ratio_5m"] = summary.CacheCreationRatio5m
+	}
+	if summary.CacheCreationTokens1h > 0 {
+		other["cache_creation_tokens_1h"] = summary.CacheCreationTokens1h
+		other["cache_creation_ratio_1h"] = summary.CacheCreationRatio1h
+	}
+	if cacheWriteTokens := cacheWriteTokensTotal(summary); cacheWriteTokens > 0 {
+		other["cache_write_tokens"] = cacheWriteTokens
+	}
+	return other
+}
+
+func settleTaskQuotaDelta(ctx context.Context, task *model.Task, actualQuota int, reason string, allowDebt bool, recordLog bool) {
+	if actualQuota <= 0 {
+		return
+	}
+	preConsumedQuota := task.Quota
+	quotaDelta := actualQuota - preConsumedQuota
+	if quotaDelta == 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）", task.TaskID, logger.LogQuota(actualQuota), reason))
+		return
+	}
+	logger.LogInfo(ctx, fmt.Sprintf("任务 %s 差额结算：delta=%s（实际：%s，预扣：%s，%s）",
+		task.TaskID,
+		logger.LogQuota(quotaDelta),
+		logger.LogQuota(actualQuota),
+		logger.LogQuota(preConsumedQuota),
+		reason,
+	))
+	if err := taskAdjustFundingWithDebtOption(task, quotaDelta, allowDebt); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
+		return
+	}
+	taskAdjustTokenQuotaWithDebtOption(ctx, task, quotaDelta, allowDebt)
+	task.Quota = actualQuota
+	if task.ID > 0 {
+		if err := model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Update("quota", actualQuota).Error; err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("更新任务实际额度失败 task %s: %s", task.TaskID, err.Error()))
+		}
+	}
+	if quotaDelta > 0 {
+		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
+		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
+	}
+	if !recordLog {
+		return
+	}
+	var logType int
+	var logQuota int
+	if quotaDelta > 0 {
+		logType = model.LogTypeConsume
+		logQuota = quotaDelta
+	} else {
+		logType = model.LogTypeRefund
+		logQuota = -quotaDelta
+	}
+	other := taskBillingOther(task)
+	other["task_id"] = task.TaskID
+	other["pre_consumed_quota"] = preConsumedQuota
+	other["actual_quota"] = actualQuota
+	content := reason
+	if quotaDelta > 0 {
+		content = fmt.Sprintf("异步任务真实结算：实际 %s，预扣 %s，补扣 %s（%s）",
+			formatQuotaUSD(actualQuota), formatQuotaUSD(preConsumedQuota), formatQuotaUSD(quotaDelta), reason)
+	} else {
+		content = fmt.Sprintf("异步任务真实结算：实际 %s，预扣 %s，退还 %s（%s）",
+			formatQuotaUSD(actualQuota), formatQuotaUSD(preConsumedQuota), formatQuotaUSD(-quotaDelta), reason)
+	}
+	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		UserId:    task.UserId,
+		LogType:   logType,
+		Content:   content,
+		ChannelId: task.ChannelId,
+		ModelName: taskModelName(task),
+		Quota:     logQuota,
+		TokenId:   task.PrivateData.TokenId,
+		Group:     task.Group,
+		Other:     other,
+	})
+}
+
+func settleTaskQuotaDeltaWithUsage(ctx context.Context, task *model.Task, summary textQuotaSummary, reason string, allowDebt bool) {
+	actualQuota := summary.Quota
+	if actualQuota <= 0 {
+		return
+	}
+	preConsumedQuota := task.Quota
+	quotaDelta := actualQuota - preConsumedQuota
+	if quotaDelta == 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）", task.TaskID, logger.LogQuota(actualQuota), reason))
+		return
+	}
+	logger.LogInfo(ctx, fmt.Sprintf("任务 %s 差额结算：delta=%s（实际：%s，预扣：%s，%s）",
+		task.TaskID,
+		logger.LogQuota(quotaDelta),
+		logger.LogQuota(actualQuota),
+		logger.LogQuota(preConsumedQuota),
+		reason,
+	))
+	if err := taskAdjustFundingWithDebtOption(task, quotaDelta, allowDebt); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
+		return
+	}
+	taskAdjustTokenQuotaWithDebtOption(ctx, task, quotaDelta, allowDebt)
+	task.Quota = actualQuota
+	if task.ID > 0 {
+		if err := model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Update("quota", actualQuota).Error; err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("更新任务实际额度失败 task %s: %s", task.TaskID, err.Error()))
+		}
+	}
+	var logType int
+	var logQuota int
+	if quotaDelta > 0 {
+		logType = model.LogTypeConsume
+		logQuota = quotaDelta
+		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
+		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
+	} else {
+		logType = model.LogTypeRefund
+		logQuota = -quotaDelta
+	}
+	content := ""
+	if quotaDelta > 0 {
+		content = fmt.Sprintf("异步图片按量真实结算：实际 %s，预扣 %s，补扣 %s",
+			formatQuotaUSD(actualQuota), formatQuotaUSD(preConsumedQuota), formatQuotaUSD(quotaDelta))
+	} else {
+		content = fmt.Sprintf("异步图片按量真实结算：实际 %s，预扣 %s，退还 %s",
+			formatQuotaUSD(actualQuota), formatQuotaUSD(preConsumedQuota), formatQuotaUSD(-quotaDelta))
+	}
+	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		UserId:           task.UserId,
+		LogType:          logType,
+		Content:          content,
+		ChannelId:        task.ChannelId,
+		ModelName:        summary.ModelName,
+		Quota:            logQuota,
+		PromptTokens:     summary.PromptTokens,
+		CompletionTokens: summary.CompletionTokens,
+		TokenId:          task.PrivateData.TokenId,
+		Group:            task.Group,
+		UseTimeSeconds:   int(summary.UseTimeSeconds),
+		Other:            asyncImageUsageLogOther(ctx, task, summary, preConsumedQuota),
+	})
+}
+
+func defaultFloat(value float64, fallback float64) float64 {
+	if value != 0 {
+		return value
+	}
+	return fallback
+}
+
+func taskUsageBillingOtherRatios(otherRatios map[string]float64) map[string]float64 {
+	if len(otherRatios) == 0 {
+		return nil
+	}
+	filtered := make(map[string]float64)
+	for key, value := range otherRatios {
+		if strings.HasPrefix(key, "async_image_precharge_") || key == "async_image_n" {
+			continue
+		}
+		filtered[key] = value
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
+}
+
+func defaultInt64(values ...int64) int64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }

@@ -87,6 +87,7 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 			BillingContext: &model.TaskBillingContext{
 				OriginModelName: "gpt-image-2",
 				PerCallBilling:  true,
+				UsePrice:        true,
 				BillingMode:     "async_image_usage_billing",
 			},
 		},
@@ -106,14 +107,14 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	require.NoError(t, db.Where("task_id = ?", "task_image_success").First(&task).Error)
 	assert.EqualValues(t, model.TaskStatusSuccess, task.Status)
 	assert.Equal(t, "https://cdn.example.com/a.webp", task.PrivateData.ResultURL)
-	assert.Equal(t, 300, task.Quota)
+	assert.Equal(t, 100, task.Quota)
 	var user model.User
 	require.NoError(t, db.Select("quota").Where("id = ?", 1).First(&user).Error)
-	assert.Equal(t, -80, user.Quota)
+	assert.Equal(t, 120, user.Quota)
 	var token model.Token
 	require.NoError(t, db.Select("remain_quota, used_quota").Where("id = ?", 11).First(&token).Error)
-	assert.Equal(t, -150, token.RemainQuota)
-	assert.Equal(t, 200, token.UsedQuota)
+	assert.Equal(t, 50, token.RemainQuota)
+	assert.Equal(t, 0, token.UsedQuota)
 }
 
 func TestResolveImageCredentialLeaseAccepted(t *testing.T) {

@@ -202,7 +202,9 @@ func TestParseTaskResultMapsImageHandleStatusAndUsage(t *testing.T) {
 	assert.Equal(t, model.TaskStatusSuccess, info.Status)
 	assert.Equal(t, "https://cdn.example.com/a.webp", info.Url)
 	assert.Equal(t, 12, info.TotalTokens)
-	assert.Equal(t, 34, info.CompletionTokens)
+	assert.Equal(t, 34, info.ActualQuota)
+	require.NotNil(t, info.Usage)
+	assert.Equal(t, 12, info.Usage.TotalTokens)
 }
 
 func TestParseBatchTaskResultIndexesByProviderTaskID(t *testing.T) {

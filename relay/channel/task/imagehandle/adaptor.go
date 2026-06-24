@@ -92,10 +92,21 @@ type imageHandleImage struct {
 }
 
 type imageHandleUsage struct {
-	TotalTokens  int `json:"total_tokens,omitempty"`
-	InputTokens  int `json:"input_tokens,omitempty"`
-	OutputTokens int `json:"output_tokens,omitempty"`
-	ActualQuota  int `json:"actual_quota,omitempty"`
+	TotalTokens              int `json:"total_tokens,omitempty"`
+	InputTokens              int `json:"input_tokens,omitempty"`
+	OutputTokens             int `json:"output_tokens,omitempty"`
+	PromptTokens             int `json:"prompt_tokens,omitempty"`
+	CompletionTokens         int `json:"completion_tokens,omitempty"`
+	CachedTokens             int `json:"cached_tokens,omitempty"`
+	CacheReadTokens          int `json:"cache_read_tokens,omitempty"`
+	PromptCacheHitTokens     int `json:"prompt_cache_hit_tokens,omitempty"`
+	CacheCreationTokens      int `json:"cache_creation_tokens,omitempty"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheCreation5mTokens    int `json:"cache_creation_5m_tokens,omitempty"`
+	CacheCreation1hTokens    int `json:"cache_creation_1h_tokens,omitempty"`
+	ImageTokens              int `json:"image_tokens,omitempty"`
+	AudioTokens              int `json:"audio_tokens,omitempty"`
+	ActualQuota              int `json:"actual_quota,omitempty"`
 }
 
 type imageHandleError struct {
@@ -409,8 +420,10 @@ func taskResponseToTaskInfo(item imageHandleTaskResponse) *relaycommon.TaskInfo 
 		info.Url = item.Result.Images[0].URL
 	}
 	if item.Usage != nil {
-		info.TotalTokens = firstPositiveInt(item.Usage.TotalTokens, item.Usage.InputTokens+item.Usage.OutputTokens)
-		info.CompletionTokens = item.Usage.ActualQuota
+		info.Usage = imageHandleUsageToDTO(item.Usage)
+		info.TotalTokens = info.Usage.TotalTokens
+		info.CompletionTokens = info.Usage.CompletionTokens
+		info.ActualQuota = item.Usage.ActualQuota
 	}
 	if item.Error != nil {
 		info.Reason = item.Error.Message
@@ -419,6 +432,39 @@ func taskResponseToTaskInfo(item imageHandleTaskResponse) *relaycommon.TaskInfo 
 		}
 	}
 	return info
+}
+
+func imageHandleUsageToDTO(usage *imageHandleUsage) *dto.Usage {
+	if usage == nil {
+		return nil
+	}
+	inputTokens := firstPositiveInt(usage.InputTokens, usage.PromptTokens)
+	outputTokens := firstPositiveInt(usage.OutputTokens, usage.CompletionTokens)
+	totalTokens := firstPositiveInt(usage.TotalTokens, inputTokens+outputTokens)
+	cachedTokens := firstPositiveInt(usage.CachedTokens, usage.CacheReadTokens, usage.PromptCacheHitTokens)
+	cacheCreationTokens := firstPositiveInt(usage.CacheCreationTokens, usage.CacheCreationInputTokens)
+	return &dto.Usage{
+		PromptTokens:     inputTokens,
+		CompletionTokens: outputTokens,
+		TotalTokens:      totalTokens,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		UsageSource:      "image_handle_polling",
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         cachedTokens,
+			CachedCreationTokens: cacheCreationTokens,
+			ImageTokens:          usage.ImageTokens,
+			AudioTokens:          usage.AudioTokens,
+		},
+		InputTokensDetails: &dto.InputTokenDetails{
+			CachedTokens:         cachedTokens,
+			CachedCreationTokens: cacheCreationTokens,
+			ImageTokens:          usage.ImageTokens,
+			AudioTokens:          usage.AudioTokens,
+		},
+		ClaudeCacheCreation5mTokens: usage.CacheCreation5mTokens,
+		ClaudeCacheCreation1hTokens: usage.CacheCreation1hTokens,
+	}
 }
 
 func firstPositiveInt(values ...int) int {

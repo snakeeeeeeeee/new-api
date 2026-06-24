@@ -24,7 +24,6 @@ import {
   Col,
   Form,
   Input,
-  InputNumber,
   Row,
   Select,
   Spin,
@@ -152,7 +151,7 @@ const normalizeStats = (value = {}) => ({
   by_channel: value.by_channel || [],
 });
 
-const formatMoneyInput = (value) => {
+const normalizeMoneyDisplay = (value) => {
   if (value === undefined || value === null || value === '') {
     return '';
   }
@@ -160,19 +159,18 @@ const formatMoneyInput = (value) => {
   if (!Number.isFinite(numeric)) {
     return '';
   }
-  return String(numeric);
+  return String(Number(numeric.toFixed(6)));
 };
 
-const parseMoneyInput = (value) => {
-  if (!value) {
-    return 0;
-  }
+const normalizeMoneyInput = (value) => {
   const normalized = String(value).replace(/[^\d.]/g, '');
   const parts = normalized.split('.');
-  const compact =
-    parts.length > 1 ? `${parts[0]}.${parts.slice(1).join('')}` : parts[0];
-  const numeric = Number(compact);
-  return Number.isFinite(numeric) ? numeric : 0;
+  return parts.length > 1 ? `${parts[0]}.${parts.slice(1).join('')}` : parts[0];
+};
+
+const parseMoneyAmount = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
 };
 
 const AsyncTask = () => {
@@ -219,6 +217,9 @@ const AsyncTask = () => {
         setImageHandleConfig({
           ...DEFAULT_IMAGE_HANDLE_CONFIG,
           ...(imageHandleRes.data.data || {}),
+          precharge_amount_per_image: normalizeMoneyDisplay(
+            imageHandleRes.data.data?.precharge_amount_per_image || 0,
+          ),
         });
       } else {
         showError(imageHandleRes.data.message);
@@ -333,8 +334,8 @@ const AsyncTask = () => {
         usage_precharge_enabled: Boolean(
           imageHandleConfig.usage_precharge_enabled,
         ),
-        precharge_amount_per_image: Number(
-          imageHandleConfig.precharge_amount_per_image || 0,
+        precharge_amount_per_image: parseMoneyAmount(
+          imageHandleConfig.precharge_amount_per_image,
         ),
       });
       if (!res.data.success) {
@@ -344,6 +345,9 @@ const AsyncTask = () => {
       setImageHandleConfig({
         ...DEFAULT_IMAGE_HANDLE_CONFIG,
         ...(res.data.data || {}),
+        precharge_amount_per_image: normalizeMoneyDisplay(
+          res.data.data?.precharge_amount_per_image || 0,
+        ),
       });
       showSuccess(t('保存成功'));
     } catch {
@@ -604,9 +608,9 @@ const AsyncTask = () => {
               </Col>
               <Col xs={24} md={12}>
                 <Form.Slot
-                  label={t('按量预扣')}
+                  label={t('异步图片预扣估算')}
                   extraText={t(
-                    '仅影响异步图片任务。开启后提交时按每张图预扣费用乘以 n，终态按 callback 返回的汇总 usage 多退少补。',
+                    '仅影响提交阶段的预扣估算，不决定终态计费类型；按量模型按 callback usage 真实结算，按次模型成功保持预扣、失败退款。',
                   )}
                 >
                   <Switch
@@ -627,19 +631,14 @@ const AsyncTask = () => {
                     '单位为美元。填 1 表示每张图先预扣 $1；n=2 只会让预扣乘 2，终态结算不会对 callback 总 usage 再乘 n。',
                   )}
                 >
-                  <InputNumber
-                    min={0}
-                    step={0.01}
-                    formatter={formatMoneyInput}
-                    parser={parseMoneyInput}
+                  <Input
+                    placeholder='0.01'
                     style={{ width: '100%' }}
-                    value={Number(
-                      imageHandleConfig.precharge_amount_per_image || 0,
-                    )}
+                    value={imageHandleConfig.precharge_amount_per_image ?? '0'}
                     onChange={(value) =>
                       updateImageHandleConfig(
                         'precharge_amount_per_image',
-                        Number(value || 0),
+                        normalizeMoneyInput(value),
                       )
                     }
                   />

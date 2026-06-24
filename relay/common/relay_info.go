@@ -764,15 +764,17 @@ func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 }
 
 type TaskInfo struct {
-	Code             int    `json:"code"`
-	TaskID           string `json:"task_id"`
-	Status           string `json:"status"`
-	Reason           string `json:"reason,omitempty"`
-	Url              string `json:"url,omitempty"`
-	RemoteUrl        string `json:"remote_url,omitempty"`
-	Progress         string `json:"progress,omitempty"`
-	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
-	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	Code             int        `json:"code"`
+	TaskID           string     `json:"task_id"`
+	Status           string     `json:"status"`
+	Reason           string     `json:"reason,omitempty"`
+	Url              string     `json:"url,omitempty"`
+	RemoteUrl        string     `json:"remote_url,omitempty"`
+	Progress         string     `json:"progress,omitempty"`
+	CompletionTokens int        `json:"completion_tokens,omitempty"` // 用于按倍率计费
+	TotalTokens      int        `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	Usage            *dto.Usage `json:"usage,omitempty"`             // 任务终态的完整用量，用于异步真实结算
+	ActualQuota      int        `json:"actual_quota,omitempty"`      // 上游/执行器返回的额度，仅作为兜底
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

@@ -21,6 +21,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -225,6 +226,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
 	}
 	info.PriceData = priceData
+	if platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeImageHandle)) {
+		applyAsyncImageUsageBillingSnapshot(c, info)
+	}
 
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
@@ -339,6 +343,25 @@ func applyAsyncImageUsagePrecharge(c *gin.Context, info *relaycommon.RelayInfo) 
 	info.PriceData.OtherRatios["async_image_n"] = float64(n)
 }
 
+func applyAsyncImageUsageBillingSnapshot(c *gin.Context, info *relaycommon.RelayInfo) {
+	usageInfo := *info
+	usagePriceData, err := helper.ModelPriceHelper(c, &usageInfo, info.GetEstimatePromptTokens(), &types.TokenCountMeta{})
+	if err != nil {
+		return
+	}
+	info.PriceData.ModelRatio = usagePriceData.ModelRatio
+	info.PriceData.CompletionRatio = usagePriceData.CompletionRatio
+	info.PriceData.CacheRatio = usagePriceData.CacheRatio
+	info.PriceData.CacheCreationRatio = usagePriceData.CacheCreationRatio
+	info.PriceData.CacheCreation5mRatio = usagePriceData.CacheCreation5mRatio
+	info.PriceData.CacheCreation1hRatio = usagePriceData.CacheCreation1hRatio
+	info.PriceData.ImageRatio = usagePriceData.ImageRatio
+	info.PriceData.UsePrice = usagePriceData.UsePrice
+	if !usagePriceData.UsePrice {
+		info.PriceData.ModelPrice = -1
+	}
+}
+
 func asyncImagePrechargeQuotaPerImage(cfg service.ImageHandleExecutorConfig) int {
 	if cfg.PrechargeAmountPerImage > 0 && common.QuotaPerUnit > 0 {
 		quota := decimal.NewFromFloat(cfg.PrechargeAmountPerImage).
@@ -380,16 +403,26 @@ func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, p
 	task.PrivateData.SubscriptionId = info.SubscriptionId
 	task.PrivateData.TokenId = info.TokenId
 	task.PrivateData.BillingContext = &model.TaskBillingContext{
-		ModelPrice:         info.PriceData.ModelPrice,
-		GroupRatio:         info.PriceData.GroupRatioInfo.GroupRatio,
-		OriginalGroupRatio: info.PriceData.GroupRatioInfo.OriginalGroupRatio,
-		RatioOverride:      info.PriceData.GroupRatioInfo.RatioOverride,
-		HasRatioOverride:   info.PriceData.GroupRatioInfo.HasRatioOverride,
-		ModelRatio:         info.PriceData.ModelRatio,
-		OtherRatios:        info.PriceData.OtherRatios,
-		OriginModelName:    info.OriginModelName,
+		ModelPrice:           info.PriceData.ModelPrice,
+		GroupRatio:           info.PriceData.GroupRatioInfo.GroupRatio,
+		GroupSpecialRatio:    info.PriceData.GroupRatioInfo.GroupSpecialRatio,
+		OriginalGroupRatio:   info.PriceData.GroupRatioInfo.OriginalGroupRatio,
+		RatioOverride:        info.PriceData.GroupRatioInfo.RatioOverride,
+		HasSpecialRatio:      info.PriceData.GroupRatioInfo.HasSpecialRatio,
+		HasRatioOverride:     info.PriceData.GroupRatioInfo.HasRatioOverride,
+		ModelRatio:           info.PriceData.ModelRatio,
+		CompletionRatio:      info.PriceData.CompletionRatio,
+		CacheRatio:           info.PriceData.CacheRatio,
+		CacheCreationRatio:   info.PriceData.CacheCreationRatio,
+		CacheCreation5mRatio: info.PriceData.CacheCreation5mRatio,
+		CacheCreation1hRatio: info.PriceData.CacheCreation1hRatio,
+		ImageRatio:           info.PriceData.ImageRatio,
+		UsePrice:             info.PriceData.UsePrice,
+		OtherRatios:          info.PriceData.OtherRatios,
+		OriginModelName:      info.OriginModelName,
 		PerCallBilling: common.StringsContains(constant.TaskPricePatches, info.OriginModelName) ||
-			info.ChannelType == constant.ChannelTypeXai,
+			info.ChannelType == constant.ChannelTypeXai ||
+			info.PriceData.UsePrice,
 	}
 	if cfg := service.GetImageHandleExecutorConfig(); cfg.UsagePrechargeEnabled {
 		prechargeQuotaPerImage := asyncImagePrechargeQuotaPerImage(cfg)
