@@ -435,6 +435,46 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	return nil
 }
 
+// DecreaseTokenQuotaAllowNegative 仅用于异步任务终态真实结算。
+// 普通请求和提交预扣仍使用 DecreaseTokenQuota 做 remain_quota 充足校验。
+func DecreaseTokenQuotaAllowNegative(id int, key string, quota int) (err error) {
+	if quota < 0 {
+		return errors.New("quota 不能为负数！")
+	}
+	if quota == 0 {
+		return nil
+	}
+	var token Token
+	if err := DB.Model(&Token{}).Select("unlimited_quota").Where("id = ?", id).First(&token).Error; err != nil {
+		return err
+	}
+	if token.UnlimitedQuota {
+		return DB.Model(&Token{}).Where("id = ?", id).Updates(
+			map[string]interface{}{
+				"used_quota":    gorm.Expr("used_quota + ?", quota),
+				"accessed_time": common.GetTimestamp(),
+			},
+		).Error
+	}
+	if err := DB.Model(&Token{}).Where("id = ?", id).Updates(
+		map[string]interface{}{
+			"remain_quota":  gorm.Expr("remain_quota - ?", quota),
+			"used_quota":    gorm.Expr("used_quota + ?", quota),
+			"accessed_time": common.GetTimestamp(),
+		},
+	).Error; err != nil {
+		return err
+	}
+	if common.RedisEnabled {
+		gopool.Go(func() {
+			if err := cacheDecrTokenQuota(key, int64(quota)); err != nil {
+				common.SysLog("failed to decrease token quota: " + err.Error())
+			}
+		})
+	}
+	return nil
+}
+
 func decreaseTokenQuota(id int, quota int) (unlimitedQuota bool, err error) {
 	var token Token
 	if err := DB.Model(&Token{}).Select("unlimited_quota").Where("id = ?", id).First(&token).Error; err != nil {

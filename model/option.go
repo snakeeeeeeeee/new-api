@@ -723,6 +723,18 @@ func normalizeImageHandleOptionValue(configKey, value string) string {
 			return "false"
 		}
 		return strconv.FormatBool(parsed)
+	case "precharge_amount_per_image":
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil || parsed < 0 {
+			return "0"
+		}
+		return strconv.FormatFloat(parsed, 'f', -1, 64)
+	case "precharge_quota_per_image":
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || parsed < 0 {
+			return "0"
+		}
+		return strconv.Itoa(parsed)
 	default:
 		return value
 	}

@@ -14,13 +14,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func formatQuotaUSD(quota int) string {
+	if common.QuotaPerUnit <= 0 {
+		return "$0.000000"
+	}
+	return fmt.Sprintf("$%.6f", float64(quota)/common.QuotaPerUnit)
+}
+
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
+	if c != nil && c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/image/tasks" {
+		if amount, ok := info.PriceData.OtherRatios["async_image_precharge_amount_per_image_usd"]; ok && amount > 0 {
+			n := info.PriceData.OtherRatios["async_image_n"]
+			if n <= 0 {
+				n = 1
+			}
+			logContent = fmt.Sprintf("异步图片预扣费：每张 $%.6f，数量 %.0f，合计 %s", amount, n, formatQuotaUSD(info.PriceData.Quota))
+		} else {
+			logContent = fmt.Sprintf("异步图片预扣费：%s", formatQuotaUSD(info.PriceData.Quota))
+		}
+	}
 	// 支持任务仅按次计费
-	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.ChannelType == constant.ChannelTypeXai {
+	if strings.HasPrefix(logContent, "异步图片预扣费") {
+		// 已经写明预扣费和估算参数，避免再追加通用按次计费文案。
+	} else if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.ChannelType == constant.ChannelTypeXai {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else {
 		if len(info.PriceData.OtherRatios) > 0 {
@@ -83,10 +103,17 @@ func taskIsSubscription(task *model.Task) bool {
 
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
 func taskAdjustFunding(task *model.Task, delta int) error {
+	return taskAdjustFundingWithDebtOption(task, delta, false)
+}
+
+func taskAdjustFundingWithDebtOption(task *model.Task, delta int, allowDebt bool) error {
 	if taskIsSubscription(task) {
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
 	if delta > 0 {
+		if allowDebt {
+			return model.DecreaseUserQuotaAllowNegative(task.UserId, delta)
+		}
 		return model.DecreaseUserQuota(task.UserId, delta)
 	}
 	return model.IncreaseUserQuota(task.UserId, -delta, false)
@@ -95,6 +122,10 @@ func taskAdjustFunding(task *model.Task, delta int) error {
 // taskAdjustTokenQuota 调整任务的令牌额度，delta > 0 表示扣费，delta < 0 表示退还。
 // 需要通过 resolveTokenKey 运行时获取 key（不从 PrivateData 中读取）。
 func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
+	taskAdjustTokenQuotaWithDebtOption(ctx, task, delta, false)
+}
+
+func taskAdjustTokenQuotaWithDebtOption(ctx context.Context, task *model.Task, delta int, allowDebt bool) {
 	if task.PrivateData.TokenId <= 0 || delta == 0 {
 		return
 	}
@@ -104,7 +135,11 @@ func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
 	}
 	var err error
 	if delta > 0 {
-		err = model.DecreaseTokenQuota(task.PrivateData.TokenId, tokenKey, delta)
+		if allowDebt {
+			err = model.DecreaseTokenQuotaAllowNegative(task.PrivateData.TokenId, tokenKey, delta)
+		} else {
+			err = model.DecreaseTokenQuota(task.PrivateData.TokenId, tokenKey, delta)
+		}
 	} else {
 		err = model.IncreaseTokenQuota(task.PrivateData.TokenId, tokenKey, -delta)
 	}
@@ -122,6 +157,15 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 		if bc.OriginalGroupRatio != 0 {
 			other["original_group_ratio"] = bc.OriginalGroupRatio
 			other["original_ratio"] = bc.OriginalGroupRatio
+		}
+		if bc.PrechargeAmountPerImage > 0 {
+			other["precharge_amount_per_image_usd"] = bc.PrechargeAmountPerImage
+		}
+		if bc.PrechargePerImage > 0 {
+			other["precharge_quota_per_image"] = bc.PrechargePerImage
+		}
+		if bc.ImageCount > 0 {
+			other["image_count"] = bc.ImageCount
 		}
 		if bc.HasRatioOverride {
 			other["ratio_override"] = bc.RatioOverride
@@ -170,10 +214,14 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID
 	other["reason"] = reason
+	content := ""
+	if task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.BillingMode == "async_image_usage_billing" {
+		content = fmt.Sprintf("异步图片失败，退还预扣费 %s", formatQuotaUSD(quota))
+	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   model.LogTypeRefund,
-		Content:   "",
+		Content:   content,
 		ChannelId: task.ChannelId,
 		ModelName: taskModelName(task),
 		Quota:     quota,
@@ -187,6 +235,12 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 // actualQuota 是任务完成后的实际应扣额度，与预扣额度 (task.Quota) 做差额结算。
 // reason 用于日志记录（例如 "token重算" 或 "adaptor调整"）。
 func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string) {
+	RecalculateTaskQuotaWithDebtOption(ctx, task, actualQuota, reason, false)
+}
+
+// RecalculateTaskQuotaWithDebtOption 用于终态真实结算。
+// allowDebt 只应在异步任务已成功拿到真实 usage 后开启，提交预扣不能使用。
+func RecalculateTaskQuotaWithDebtOption(ctx context.Context, task *model.Task, actualQuota int, reason string, allowDebt bool) {
 	if actualQuota <= 0 {
 		return
 	}
@@ -208,15 +262,20 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	))
 
 	// 调整资金来源
-	if err := taskAdjustFunding(task, quotaDelta); err != nil {
+	if err := taskAdjustFundingWithDebtOption(task, quotaDelta, allowDebt); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
 		return
 	}
 
 	// 调整令牌额度
-	taskAdjustTokenQuota(ctx, task, quotaDelta)
+	taskAdjustTokenQuotaWithDebtOption(ctx, task, quotaDelta, allowDebt)
 
 	task.Quota = actualQuota
+	if task.ID > 0 {
+		if err := model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Update("quota", actualQuota).Error; err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("更新任务实际额度失败 task %s: %s", task.TaskID, err.Error()))
+		}
+	}
 
 	var logType int
 	var logQuota int
@@ -234,10 +293,18 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	//other["reason"] = reason
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = actualQuota
+	content := reason
+	if quotaDelta > 0 {
+		content = fmt.Sprintf("异步任务真实结算：实际 %s，预扣 %s，补扣 %s（%s）",
+			formatQuotaUSD(actualQuota), formatQuotaUSD(preConsumedQuota), formatQuotaUSD(quotaDelta), reason)
+	} else {
+		content = fmt.Sprintf("异步任务真实结算：实际 %s，预扣 %s，退还 %s（%s）",
+			formatQuotaUSD(actualQuota), formatQuotaUSD(preConsumedQuota), formatQuotaUSD(-quotaDelta), reason)
+	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   logType,
-		Content:   reason,
+		Content:   content,
 		ChannelId: task.ChannelId,
 		ModelName: taskModelName(task),
 		Quota:     logQuota,
@@ -251,6 +318,10 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 // 当任务成功且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
 // 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
 func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) {
+	RecalculateTaskQuotaByTokensWithDebtOption(ctx, task, totalTokens, false)
+}
+
+func RecalculateTaskQuotaByTokensWithDebtOption(ctx context.Context, task *model.Task, totalTokens int, allowDebt bool) {
 	if totalTokens <= 0 {
 		return
 	}
@@ -291,5 +362,5 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	actualQuota := int(float64(totalTokens) * modelRatio * finalGroupRatio)
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f", totalTokens, modelRatio, finalGroupRatio)
-	RecalculateTaskQuota(ctx, task, actualQuota, reason)
+	RecalculateTaskQuotaWithDebtOption(ctx, task, actualQuota, reason, allowDebt)
 }

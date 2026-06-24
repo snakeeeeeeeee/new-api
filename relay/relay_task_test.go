@@ -113,12 +113,14 @@ func TestRelayTaskSubmitImageHandleCreatesTaskAndLeaseBeforeSubmit(t *testing.T)
 	defer server.Close()
 
 	*image_handle_setting.GetImageHandleSetting() = image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
-		BaseURL:          server.URL,
-		APIKey:           "provider-key",
-		InternalBaseURL:  "http://new-api:3000",
-		InternalSecretID: "image_handle_1",
-		InternalSecret:   "internal-secret",
-		CallbackSecret:   "callback-secret",
+		BaseURL:                 server.URL,
+		APIKey:                  "provider-key",
+		InternalBaseURL:         "http://new-api:3000",
+		InternalSecretID:        "image_handle_1",
+		InternalSecret:          "internal-secret",
+		CallbackSecret:          "callback-secret",
+		UsagePrechargeEnabled:   true,
+		PrechargeAmountPerImage: 0.002468,
 	})
 
 	recorder := httptest.NewRecorder()
@@ -127,7 +129,8 @@ func TestRelayTaskSubmitImageHandleCreatesTaskAndLeaseBeforeSubmit(t *testing.T)
 		"client_task_id":"task_lease_submit",
 		"model":"gpt-image-2",
 		"prompt":"lease task",
-		"size":"1024x1024"
+		"size":"1024x1024",
+		"metadata":{"n":2}
 	}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set("platform", "58")
@@ -151,6 +154,14 @@ func TestRelayTaskSubmitImageHandleCreatesTaskAndLeaseBeforeSubmit(t *testing.T)
 	require.NotNil(t, result.CreatedTask)
 	assert.Equal(t, "task_lease_submit", result.CreatedTask.TaskID)
 	assert.Equal(t, "imgtask_lease", result.UpstreamTaskID)
+	assert.Equal(t, 2468, result.Quota)
+	assert.Equal(t, 2468, result.CreatedTask.Quota)
+	require.NotNil(t, result.CreatedTask.PrivateData.BillingContext)
+	assert.Equal(t, "async_image_usage_billing", result.CreatedTask.PrivateData.BillingContext.BillingMode)
+	assert.Equal(t, "per_image_x_n", result.CreatedTask.PrivateData.BillingContext.PrechargeStrategy)
+	assert.Equal(t, 1234, result.CreatedTask.PrivateData.BillingContext.PrechargePerImage)
+	assert.InDelta(t, 0.002468, result.CreatedTask.PrivateData.BillingContext.PrechargeAmountPerImage, 0.000001)
+	assert.Equal(t, 2, result.CreatedTask.PrivateData.BillingContext.ImageCount)
 	executor := upstreamPayload["executor"].(map[string]any)
 	assert.Equal(t, "provider_direct_lease", executor["type"])
 	assert.NotEmpty(t, executor["lease_id"])

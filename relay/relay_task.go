@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
 
@@ -242,6 +243,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			}
 		}
 	}
+	if platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeImageHandle)) {
+		applyAsyncImageUsagePrecharge(c, info)
+	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	if info.Billing == nil && !info.PriceData.FreeModel {
@@ -317,6 +321,48 @@ func isAsyncImageTaskPath(c *gin.Context) bool {
 	return c != nil && c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/image/tasks"
 }
 
+func applyAsyncImageUsagePrecharge(c *gin.Context, info *relaycommon.RelayInfo) {
+	cfg := service.GetImageHandleExecutorConfig()
+	prechargeQuotaPerImage := asyncImagePrechargeQuotaPerImage(cfg)
+	if !cfg.UsagePrechargeEnabled || prechargeQuotaPerImage <= 0 {
+		return
+	}
+	n := resolveAsyncImageN(c)
+	info.PriceData.Quota = prechargeQuotaPerImage * n
+	if info.PriceData.OtherRatios == nil {
+		info.PriceData.OtherRatios = map[string]float64{}
+	}
+	if cfg.PrechargeAmountPerImage > 0 {
+		info.PriceData.OtherRatios["async_image_precharge_amount_per_image_usd"] = cfg.PrechargeAmountPerImage
+	}
+	info.PriceData.OtherRatios["async_image_precharge_quota_per_image"] = float64(prechargeQuotaPerImage)
+	info.PriceData.OtherRatios["async_image_n"] = float64(n)
+}
+
+func asyncImagePrechargeQuotaPerImage(cfg service.ImageHandleExecutorConfig) int {
+	if cfg.PrechargeAmountPerImage > 0 && common.QuotaPerUnit > 0 {
+		quota := decimal.NewFromFloat(cfg.PrechargeAmountPerImage).
+			Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
+			Round(0).
+			IntPart()
+		if quota > 0 {
+			return int(quota)
+		}
+	}
+	return cfg.PrechargeQuotaPerImage
+}
+
+func resolveAsyncImageN(c *gin.Context) int {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return 1
+	}
+	if n, ok := taskNumericMetadataToInt(req.Metadata["n"]); ok && n > 0 {
+		return n
+	}
+	return 1
+}
+
 func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, platform constant.TaskPlatform, quota int) (*model.Task, *model.ImageCredentialLease, error) {
 	task := model.InitTask(platform, info)
 	task.Quota = quota
@@ -344,6 +390,14 @@ func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, p
 		OriginModelName:    info.OriginModelName,
 		PerCallBilling: common.StringsContains(constant.TaskPricePatches, info.OriginModelName) ||
 			info.ChannelType == constant.ChannelTypeXai,
+	}
+	if cfg := service.GetImageHandleExecutorConfig(); cfg.UsagePrechargeEnabled {
+		prechargeQuotaPerImage := asyncImagePrechargeQuotaPerImage(cfg)
+		task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
+		task.PrivateData.BillingContext.PrechargeStrategy = "per_image_x_n"
+		task.PrivateData.BillingContext.PrechargePerImage = prechargeQuotaPerImage
+		task.PrivateData.BillingContext.PrechargeAmountPerImage = cfg.PrechargeAmountPerImage
+		task.PrivateData.BillingContext.ImageCount = resolveAsyncImageN(c)
 	}
 	operation := "generation"
 	if info.Action == constant.TaskActionImageEdit {
@@ -462,6 +516,27 @@ func taskNumericMetadataToUint(value any) (uint, bool) {
 		i, err := strconv.ParseUint(v.String(), 10, 32)
 		if err == nil && i > 0 {
 			return uint(i), true
+		}
+	}
+	return 0, false
+}
+
+func taskNumericMetadataToInt(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, v > 0
+	case int64:
+		if v > 0 && v <= int64(^uint(0)>>1) {
+			return int(v), true
+		}
+	case float64:
+		if v > 0 {
+			return int(v), true
+		}
+	case json.Number:
+		i, err := strconv.ParseInt(v.String(), 10, 32)
+		if err == nil && i > 0 {
+			return int(i), true
 		}
 	}
 	return 0, false

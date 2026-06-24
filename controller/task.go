@@ -77,26 +77,32 @@ func GetAsyncTaskStats(c *gin.Context) {
 }
 
 type ImageHandleConfigRequest struct {
-	BaseURL          string `json:"base_url"`
-	APIKey           string `json:"api_key"`
-	InternalBaseURL  string `json:"internal_base_url"`
-	InternalSecretID string `json:"internal_secret_id"`
-	InternalSecret   string `json:"internal_secret"`
-	CallbackSecret   string `json:"callback_secret"`
-	DebugUpstream    bool   `json:"debug_upstream"`
+	BaseURL                 string  `json:"base_url"`
+	APIKey                  string  `json:"api_key"`
+	InternalBaseURL         string  `json:"internal_base_url"`
+	InternalSecretID        string  `json:"internal_secret_id"`
+	InternalSecret          string  `json:"internal_secret"`
+	CallbackSecret          string  `json:"callback_secret"`
+	DebugUpstream           bool    `json:"debug_upstream"`
+	UsagePrechargeEnabled   *bool   `json:"usage_precharge_enabled"`
+	PrechargeAmountPerImage float64 `json:"precharge_amount_per_image"`
+	PrechargeQuotaPerImage  int     `json:"precharge_quota_per_image"`
 }
 
 func imageHandleConfigResponse(setting image_handle_setting.ImageHandleSetting) gin.H {
 	setting = image_handle_setting.NormalizeSetting(setting)
 	return gin.H{
-		"base_url":           setting.BaseURL,
-		"api_key":            setting.APIKey,
-		"internal_base_url":  setting.InternalBaseURL,
-		"internal_secret_id": setting.InternalSecretID,
-		"internal_secret":    setting.InternalSecret,
-		"callback_secret":    setting.CallbackSecret,
-		"debug_upstream":     setting.DebugUpstream,
-		"configured":         image_handle_setting.Validate(setting) == nil,
+		"base_url":                   setting.BaseURL,
+		"api_key":                    setting.APIKey,
+		"internal_base_url":          setting.InternalBaseURL,
+		"internal_secret_id":         setting.InternalSecretID,
+		"internal_secret":            setting.InternalSecret,
+		"callback_secret":            setting.CallbackSecret,
+		"debug_upstream":             setting.DebugUpstream,
+		"usage_precharge_enabled":    setting.UsagePrechargeEnabled,
+		"precharge_amount_per_image": setting.PrechargeAmountPerImage,
+		"precharge_quota_per_image":  setting.PrechargeQuotaPerImage,
+		"configured":                 image_handle_setting.Validate(setting) == nil,
 	}
 }
 
@@ -113,27 +119,37 @@ func UpdateImageHandleConfig(c *gin.Context) {
 		})
 		return
 	}
+	usagePrechargeEnabled := true
+	if req.UsagePrechargeEnabled != nil {
+		usagePrechargeEnabled = *req.UsagePrechargeEnabled
+	}
 	next := image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
-		BaseURL:          req.BaseURL,
-		APIKey:           req.APIKey,
-		InternalBaseURL:  req.InternalBaseURL,
-		InternalSecretID: req.InternalSecretID,
-		InternalSecret:   req.InternalSecret,
-		CallbackSecret:   req.CallbackSecret,
-		DebugUpstream:    req.DebugUpstream,
+		BaseURL:                 req.BaseURL,
+		APIKey:                  req.APIKey,
+		InternalBaseURL:         req.InternalBaseURL,
+		InternalSecretID:        req.InternalSecretID,
+		InternalSecret:          req.InternalSecret,
+		CallbackSecret:          req.CallbackSecret,
+		DebugUpstream:           req.DebugUpstream,
+		UsagePrechargeEnabled:   usagePrechargeEnabled,
+		PrechargeAmountPerImage: req.PrechargeAmountPerImage,
+		PrechargeQuotaPerImage:  req.PrechargeQuotaPerImage,
 	})
 	if err := image_handle_setting.Validate(next); err != nil {
 		common.ApiErrorMsg(c, err.Error())
 		return
 	}
 	for key, value := range map[string]string{
-		"image_handle_setting.base_url":           next.BaseURL,
-		"image_handle_setting.api_key":            next.APIKey,
-		"image_handle_setting.internal_base_url":  next.InternalBaseURL,
-		"image_handle_setting.internal_secret_id": next.InternalSecretID,
-		"image_handle_setting.internal_secret":    next.InternalSecret,
-		"image_handle_setting.callback_secret":    strings.TrimSpace(next.CallbackSecret),
-		"image_handle_setting.debug_upstream":     strconv.FormatBool(next.DebugUpstream),
+		"image_handle_setting.base_url":                   next.BaseURL,
+		"image_handle_setting.api_key":                    next.APIKey,
+		"image_handle_setting.internal_base_url":          next.InternalBaseURL,
+		"image_handle_setting.internal_secret_id":         next.InternalSecretID,
+		"image_handle_setting.internal_secret":            next.InternalSecret,
+		"image_handle_setting.callback_secret":            strings.TrimSpace(next.CallbackSecret),
+		"image_handle_setting.debug_upstream":             strconv.FormatBool(next.DebugUpstream),
+		"image_handle_setting.usage_precharge_enabled":    strconv.FormatBool(next.UsagePrechargeEnabled),
+		"image_handle_setting.precharge_amount_per_image": strconv.FormatFloat(next.PrechargeAmountPerImage, 'f', -1, 64),
+		"image_handle_setting.precharge_quota_per_image":  strconv.Itoa(next.PrechargeQuotaPerImage),
 	} {
 		if err := model.UpdateOption(key, value); err != nil {
 			common.ApiError(c, err)

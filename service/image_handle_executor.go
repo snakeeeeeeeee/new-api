@@ -12,25 +12,31 @@ import (
 // These values are intentionally global instead of per model channel, because the real
 // upstream provider is selected and locked by new-api before the task is sent to image-handle.
 type ImageHandleExecutorConfig struct {
-	BaseURL          string
-	APIKey           string
-	InternalBaseURL  string
-	InternalSecretID string
-	InternalSecret   string
-	CallbackSecret   string
-	DebugUpstream    bool
+	BaseURL                 string
+	APIKey                  string
+	InternalBaseURL         string
+	InternalSecretID        string
+	InternalSecret          string
+	CallbackSecret          string
+	DebugUpstream           bool
+	UsagePrechargeEnabled   bool
+	PrechargeAmountPerImage float64
+	PrechargeQuotaPerImage  int
 }
 
 func GetImageHandleExecutorConfig() ImageHandleExecutorConfig {
 	setting := image_handle_setting.GetImageHandleSetting()
 	return ImageHandleExecutorConfig{
-		BaseURL:          setting.BaseURL,
-		APIKey:           setting.APIKey,
-		InternalBaseURL:  setting.InternalBaseURL,
-		InternalSecretID: setting.InternalSecretID,
-		InternalSecret:   setting.InternalSecret,
-		CallbackSecret:   setting.CallbackSecret,
-		DebugUpstream:    setting.DebugUpstream,
+		BaseURL:                 setting.BaseURL,
+		APIKey:                  setting.APIKey,
+		InternalBaseURL:         setting.InternalBaseURL,
+		InternalSecretID:        setting.InternalSecretID,
+		InternalSecret:          setting.InternalSecret,
+		CallbackSecret:          setting.CallbackSecret,
+		DebugUpstream:           setting.DebugUpstream,
+		UsagePrechargeEnabled:   setting.UsagePrechargeEnabled,
+		PrechargeAmountPerImage: setting.PrechargeAmountPerImage,
+		PrechargeQuotaPerImage:  setting.PrechargeQuotaPerImage,
 	}
 }
 

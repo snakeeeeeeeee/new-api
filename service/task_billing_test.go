@@ -300,6 +300,21 @@ func TestDecreaseTokenQuota_UnlimitedDoesNotRequireRemainQuota(t *testing.T) {
 	assert.Equal(t, 500, getTokenUsedQuota(t, tokenID))
 }
 
+func TestAllowNegativeQuotaHelpersOnlyForAsyncSettlement(t *testing.T) {
+	truncate(t)
+	const userID, tokenID = 106, 106
+	const tokenKey = "sk-token-debt"
+	seedUser(t, userID, 100)
+	seedToken(t, tokenID, userID, tokenKey, 50)
+
+	require.NoError(t, model.DecreaseUserQuotaAllowNegative(userID, 150))
+	require.NoError(t, model.DecreaseTokenQuotaAllowNegative(tokenID, tokenKey, 80))
+
+	assert.Equal(t, -50, getUserQuota(t, userID))
+	assert.Equal(t, -30, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, 80, getTokenUsedQuota(t, tokenID))
+}
+
 func TestNewBillingSession_ConcurrentWalletPreConsumeMapsInsufficientQuota(t *testing.T) {
 	truncate(t)
 	const userID, tokenID = 105, 105
@@ -893,13 +908,14 @@ func TestUpdateVideoBatchTasksRejectsNon2xxResponse(t *testing.T) {
 // PerCallBilling tests — settleTaskBillingOnComplete
 // ===========================================================================
 
-func TestSettle_PerCallBilling_SkipsAdaptorAdjust(t *testing.T) {
+func TestSettle_PerCallBilling_AppliesActualQuotaFromAdaptor(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
 	const userID, tokenID, channelID = 30, 30, 30
 	const initQuota, preConsumed = 10000, 5000
 	const tokenRemain = 8000
+	const actualQuota = 9000
 
 	seedUser(t, userID, initQuota)
 	seedToken(t, tokenID, userID, "sk-percall-adaptor", tokenRemain)
@@ -908,16 +924,15 @@ func TestSettle_PerCallBilling_SkipsAdaptorAdjust(t *testing.T) {
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.PrivateData.BillingContext.PerCallBilling = true
 
-	adaptor := &mockAdaptor{adjustReturn: 2000}
+	adaptor := &mockAdaptor{adjustReturn: actualQuota}
 	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
 
 	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
-	// Per-call: no adjustment despite adaptor returning 2000
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, preConsumed, task.Quota)
-	assert.Equal(t, int64(0), countLogs(t))
+	assert.Equal(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain-(actualQuota-preConsumed), getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, actualQuota, task.Quota)
+	assert.Equal(t, int64(1), countLogs(t))
 }
 
 func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
@@ -945,6 +960,34 @@ func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
 	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, preConsumed, task.Quota)
 	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestSettle_ActualQuotaCanDriveWalletAndTokenNegative(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 33, 33, 33
+	const initQuota, preConsumed = 100, 80
+	const actualQuota = 500
+	const tokenRemain = 30
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-async-image-debt", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatform("58")
+	task.PrivateData.BillingContext.PerCallBilling = true
+	task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
+
+	adaptor := &mockAdaptor{adjustReturn: actualQuota}
+	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
+
+	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+
+	assert.Equal(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain-(actualQuota-preConsumed), getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, actualQuota, task.Quota)
 }
 
 func TestSettle_NonPerCall_AdaptorAdjustWorks(t *testing.T) {

@@ -991,6 +991,26 @@ func DecreaseUserQuota(id int, quota int) (err error) {
 	return nil
 }
 
+// DecreaseUserQuotaAllowNegative 仅用于异步任务终态真实结算。
+// 提交预扣和同步请求必须继续使用 DecreaseUserQuota，避免入口并发超卖。
+func DecreaseUserQuotaAllowNegative(id int, quota int) (err error) {
+	if quota < 0 {
+		return errors.New("quota 不能为负数！")
+	}
+	if quota == 0 {
+		return nil
+	}
+	if err = DB.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota - ?", quota)).Error; err != nil {
+		return err
+	}
+	gopool.Go(func() {
+		if err := cacheDecrUserQuota(id, int64(quota)); err != nil {
+			common.SysLog("failed to decrease user quota: " + err.Error())
+		}
+	})
+	return nil
+}
+
 func decreaseUserQuota(id int, quota int) (err error) {
 	result := DB.Model(&User{}).Where("id = ? AND quota >= ?", id, quota).Update("quota", gorm.Expr("quota - ?", quota))
 	if result.Error != nil {

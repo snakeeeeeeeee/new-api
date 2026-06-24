@@ -83,15 +83,19 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 		PrivateData: model.TaskPrivateData{
 			UpstreamTaskID: "imgtask_success",
 			BillingSource:  service.BillingSourceWallet,
+			TokenId:        11,
 			BillingContext: &model.TaskBillingContext{
 				OriginModelName: "gpt-image-2",
+				PerCallBilling:  true,
+				BillingMode:     "async_image_usage_billing",
 			},
 		},
 		Properties: model.Properties{OriginModelName: "gpt-image-2"},
 	}).Error)
-	require.NoError(t, db.Create(&model.User{Id: 1, Username: "u", Quota: 1000, Status: common.UserStatusEnabled}).Error)
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "u", Quota: 120, Status: common.UserStatusEnabled}).Error)
+	require.NoError(t, db.Create(&model.Token{Id: 11, UserId: 1, Key: "sk-callback-bill", Name: "callback token", Status: common.TokenStatusEnabled, RemainQuota: 50}).Error)
 
-	body := []byte(`{"events":[{"event_id":"evt_1","client_task_id":"task_image_success","provider_task_id":"imgtask_success","status":"succeeded","progress":"100%","result":{"images":[{"url":"https://cdn.example.com/a.webp"}]},"usage":{"actual_quota":100}}]}`)
+	body := []byte(`{"events":[{"event_id":"evt_1","client_task_id":"task_image_success","provider_task_id":"imgtask_success","status":"succeeded","progress":"100%","result":{"images":[{"url":"https://cdn.example.com/a.webp"}]},"usage":{"actual_quota":300}}]}`)
 	ctx, recorder := makeCallbackRequest(t, body, secret)
 
 	ImageTaskCallbackBatch(ctx)
@@ -102,6 +106,14 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	require.NoError(t, db.Where("task_id = ?", "task_image_success").First(&task).Error)
 	assert.EqualValues(t, model.TaskStatusSuccess, task.Status)
 	assert.Equal(t, "https://cdn.example.com/a.webp", task.PrivateData.ResultURL)
+	assert.Equal(t, 300, task.Quota)
+	var user model.User
+	require.NoError(t, db.Select("quota").Where("id = ?", 1).First(&user).Error)
+	assert.Equal(t, -80, user.Quota)
+	var token model.Token
+	require.NoError(t, db.Select("remain_quota, used_quota").Where("id = ?", 11).First(&token).Error)
+	assert.Equal(t, -150, token.RemainQuota)
+	assert.Equal(t, 200, token.UsedQuota)
 }
 
 func TestResolveImageCredentialLeaseAccepted(t *testing.T) {
@@ -662,6 +674,7 @@ func TestQueryImageTasksReturnsOnlyCurrentUserTasks(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"task_id":"task_current_user"`)
+	assert.Contains(t, recorder.Body.String(), `"channel_id":123`)
 	assert.Contains(t, recorder.Body.String(), `"result_url":"https://cdn.example.com/current.webp"`)
 	assert.NotContains(t, recorder.Body.String(), "task_other_user")
 	assert.NotContains(t, recorder.Body.String(), "other.webp")

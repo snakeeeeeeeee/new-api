@@ -105,7 +105,9 @@ func TestUpdateImageHandleConfigPersistsAndEchoesSecrets(t *testing.T) {
 		"internal_secret_id":"image_handle_1",
 		"internal_secret":"internal-secret",
 		"callback_secret":"fallback-callback-secret",
-		"debug_upstream":true
+		"debug_upstream":true,
+		"usage_precharge_enabled":true,
+		"precharge_amount_per_image":1.25
 	}`)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -125,6 +127,9 @@ func TestUpdateImageHandleConfigPersistsAndEchoesSecrets(t *testing.T) {
 	require.Contains(t, string(resp.Data), `"internal_secret":"internal-secret"`)
 	require.Contains(t, string(resp.Data), `"callback_secret":"fallback-callback-secret"`)
 	require.Contains(t, string(resp.Data), `"debug_upstream":true`)
+	require.Contains(t, string(resp.Data), `"usage_precharge_enabled":true`)
+	require.Contains(t, string(resp.Data), `"precharge_amount_per_image":1.25`)
+	require.Contains(t, string(resp.Data), `"precharge_quota_per_image":625000`)
 
 	var option model.Option
 	require.NoError(t, db.First(&option, "key = ?", "image_handle_setting.internal_secret").Error)
@@ -132,8 +137,17 @@ func TestUpdateImageHandleConfigPersistsAndEchoesSecrets(t *testing.T) {
 	var debugOption model.Option
 	require.NoError(t, db.First(&debugOption, "key = ?", "image_handle_setting.debug_upstream").Error)
 	assert.Equal(t, "true", debugOption.Value)
+	var prechargeAmountOption model.Option
+	require.NoError(t, db.First(&prechargeAmountOption, "key = ?", "image_handle_setting.precharge_amount_per_image").Error)
+	assert.Equal(t, "1.25", prechargeAmountOption.Value)
+	var prechargeQuotaOption model.Option
+	require.NoError(t, db.First(&prechargeQuotaOption, "key = ?", "image_handle_setting.precharge_quota_per_image").Error)
+	assert.Equal(t, "625000", prechargeQuotaOption.Value)
 	assert.Equal(t, "provider-key", image_handle_setting.GetImageHandleSetting().APIKey)
 	assert.True(t, image_handle_setting.GetImageHandleSetting().DebugUpstream)
+	assert.True(t, image_handle_setting.GetImageHandleSetting().UsagePrechargeEnabled)
+	assert.InDelta(t, 1.25, image_handle_setting.GetImageHandleSetting().PrechargeAmountPerImage, 0.000001)
+	assert.Equal(t, 625000, image_handle_setting.GetImageHandleSetting().PrechargeQuotaPerImage)
 }
 
 func TestUpdateImageHandleConfigRejectsSharedSecrets(t *testing.T) {
@@ -164,4 +178,35 @@ func TestUpdateImageHandleConfigRejectsSharedSecrets(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
 	assert.False(t, resp.Success)
 	assert.Contains(t, resp.Message, "不能和 callback")
+}
+
+func TestGetImageHandleConfigBackfillsAmountFromLegacyQuota(t *testing.T) {
+	setupInviteCodeControllerTestDB(t)
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	originalQuotaPerUnit := common.QuotaPerUnit
+	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
+	common.QuotaPerUnit = 500000
+	*image_handle_setting.GetImageHandleSetting() = image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
+		BaseURL:                "http://image-handle:8787",
+		APIKey:                 "provider-key",
+		InternalBaseURL:        "http://new-api:3000",
+		InternalSecretID:       "image_handle_1",
+		InternalSecret:         "internal-secret",
+		CallbackSecret:         "callback-secret",
+		UsagePrechargeEnabled:  true,
+		PrechargeQuotaPerImage: 250000,
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/task/async/image-handle/config", nil)
+
+	GetImageHandleConfig(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"precharge_amount_per_image":0.5`)
+	assert.Contains(t, recorder.Body.String(), `"precharge_quota_per_image":250000`)
 }

@@ -53,6 +53,8 @@ const DEFAULT_IMAGE_HANDLE_CONFIG = {
   internal_secret: '',
   callback_secret: '',
   debug_upstream: false,
+  usage_precharge_enabled: true,
+  precharge_amount_per_image: 0,
   configured: false,
 };
 
@@ -149,6 +151,29 @@ const normalizeStats = (value = {}) => ({
   by_action: value.by_action || [],
   by_channel: value.by_channel || [],
 });
+
+const formatMoneyInput = (value) => {
+  if (value === undefined || value === null || value === '') {
+    return '';
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return '';
+  }
+  return String(numeric);
+};
+
+const parseMoneyInput = (value) => {
+  if (!value) {
+    return 0;
+  }
+  const normalized = String(value).replace(/[^\d.]/g, '');
+  const parts = normalized.split('.');
+  const compact =
+    parts.length > 1 ? `${parts[0]}.${parts.slice(1).join('')}` : parts[0];
+  const numeric = Number(compact);
+  return Number.isFinite(numeric) ? numeric : 0;
+};
 
 const AsyncTask = () => {
   const { t } = useTranslation();
@@ -305,6 +330,12 @@ const AsyncTask = () => {
         internal_secret: imageHandleConfig.internal_secret || '',
         callback_secret: imageHandleConfig.callback_secret || '',
         debug_upstream: Boolean(imageHandleConfig.debug_upstream),
+        usage_precharge_enabled: Boolean(
+          imageHandleConfig.usage_precharge_enabled,
+        ),
+        precharge_amount_per_image: Number(
+          imageHandleConfig.precharge_amount_per_image || 0,
+        ),
       });
       if (!res.data.success) {
         showError(res.data.message || t('保存失败，请重试'));
@@ -567,6 +598,49 @@ const AsyncTask = () => {
                     checked={Boolean(imageHandleConfig.debug_upstream)}
                     onChange={(value) =>
                       updateImageHandleConfig('debug_upstream', value)
+                    }
+                  />
+                </Form.Slot>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Slot
+                  label={t('按量预扣')}
+                  extraText={t(
+                    '仅影响异步图片任务。开启后提交时按每张图预扣费用乘以 n，终态按 callback 返回的汇总 usage 多退少补。',
+                  )}
+                >
+                  <Switch
+                    checked={Boolean(imageHandleConfig.usage_precharge_enabled)}
+                    onChange={(value) =>
+                      updateImageHandleConfig(
+                        'usage_precharge_enabled',
+                        value,
+                      )
+                    }
+                  />
+                </Form.Slot>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Slot
+                  label={t('每张图预扣费用（$）')}
+                  extraText={t(
+                    '单位为美元。填 1 表示每张图先预扣 $1；n=2 只会让预扣乘 2，终态结算不会对 callback 总 usage 再乘 n。',
+                  )}
+                >
+                  <InputNumber
+                    min={0}
+                    step={0.01}
+                    formatter={formatMoneyInput}
+                    parser={parseMoneyInput}
+                    style={{ width: '100%' }}
+                    value={Number(
+                      imageHandleConfig.precharge_amount_per_image || 0,
+                    )}
+                    onChange={(value) =>
+                      updateImageHandleConfig(
+                        'precharge_amount_per_image',
+                        Number(value || 0),
+                      )
                     }
                   />
                 </Form.Slot>

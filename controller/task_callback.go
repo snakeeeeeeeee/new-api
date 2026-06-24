@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -113,7 +114,15 @@ func QueryImageTasks(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, tasksToDto(tasks, false))
+	common.ApiSuccess(c, imageTasksToDto(tasks))
+}
+
+func imageTasksToDto(tasks []*model.Task) []*dto.TaskDto {
+	result := make([]*dto.TaskDto, len(tasks))
+	for i, task := range tasks {
+		result[i] = relay.TaskModel2Dto(task)
+	}
+	return result
 }
 
 func ImageTaskCallback(c *gin.Context) {
