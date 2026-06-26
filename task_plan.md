@@ -1,19 +1,18 @@
-# Task Plan: ImageHandle sync URL/base64 compatibility
+# Task Plan: ImageHandle edit upload compatibility
 
 ## Goal
-Support image-handle's latest `result_data_format` contract for gray-enabled synchronous image execution. `/v1/images/generations` and `/v1/images/edits` must keep old direct-upstream behavior when the switch is off, return URL results by default when image-handle sync is enabled, return `b64_json` when the client requests `response_format=b64_json`, and keep ordinary async `/v1/image/tasks` URL-only.
+Support image-handle's upload-before-edit contract for gray-enabled synchronous image edits. `/v1/images/edits` must keep old direct-upstream behavior when the switch is off; when sync image-handle execution is enabled, URL inputs should submit directly, multipart file inputs should upload through `/v1/image/uploads`, and JSON base64/data-URI inputs should upload through `/v1/image/uploads/base64` before submitting the edit task.
 
 ## Current Phase
 Complete
 
 ## Phases
-- [complete] Map current sync image-handle path, async image adaptor, and updated image-handle docs.
-- [complete] Add `result_data_format` to sync payloads and response conversion.
-- [complete] Restrict `/v1/images/edits` sync mode to URL-only input/mask and fall back otherwise.
-- [complete] Reject async `/v1/image/tasks` requests that explicitly ask for base64.
-- [complete] Add unit tests for payloads, URL/base64 response mapping, edit fallback, and async rejection.
+- [complete] Read updated image-handle docs for `/v1/image/uploads` and `/v1/image/uploads/base64`.
+- [complete] Map current new-api image edit multipart/base64 parsing and sync image-handle decision point.
+- [complete] Implement upload-to-URL normalization for sync image-handle edit requests.
+- [complete] Add unit tests for URL, multipart, base64/data-URI, and switch-off behavior.
 - [complete] Run Go/frontend regression checks.
-- [complete] Build Docker dev and联调 switch-off, URL sync, base64 sync, force_on/force_off, edit URL/non-URL, failed/202 handling as far as local image-handle permits.
+- [complete] Build Docker dev and联调 switch-off, sync URL edit, sync multipart edit, sync base64 edit, and URL/base64 output formats.
 
 ## Decisions Made
 | Decision | Rationale |
@@ -28,7 +27,7 @@ Complete
 | Callback/轮询 still use `ApplyTaskResult` | Existing CAS + DB transaction keeps task terminal update and assets creation atomic. |
 | Sync image-handle `base64` is response-only | It must not be saved to assets, callback, or resource center. |
 | Async image tasks remain URL-only | image-handle docs reject `result_data_format=base64` on `/v1/image/tasks`; new-api should fail fast with 400. |
-| Edit sync only for URL inputs | Existing multipart/base64 edit clients must keep old direct-upstream behavior. |
+| Edit sync should now normalize multipart/base64 through image-handle uploads | image-handle added upload endpoints so non-URL edit inputs can still execute in image-worker without queueing large images. |
 | Channel override lives in `channels.settings` | `channels.other` is legacy; UI and backend read/write `settings` for `image_handle_sync_mode` and `callback_secret`. |
 
 ## Errors Encountered
@@ -38,3 +37,4 @@ Complete
 | Local image-handle mock edit route returned 415 for multipart edits | Docker联调 | Verified URL edit input reached image-handle sync and new-api refunded on failed terminal status; non-URL multipart edit correctly fell back to direct upstream. The 415 is a mock-new-api multipart parser limitation, not a new-api routing issue. |
 | Channel `force_on` did not appear to work during first SQL test | Docker联调 | Test SQL wrote `image_handle_sync_mode` to legacy `channels.other`; corrected to `channels.settings`, matching frontend/backend field usage. |
 | image-handle 202 processing could not be triggered safely in Docker | Docker联调 | Current local `SYNC_TASK_TIMEOUT_MS` is 300s. Added unit coverage for HTTP 202 -> `image_handle_sync_timeout`; did not wait 300s in Docker. |
+| Local mock upstream does not support multipart `/v1/images/edits` | Docker联调 | Verified new-api upload-to-URL and image-handle sync task submission; final edit result fails in worker with 415 because mock-new-api Fastify lacks multipart content parser for edits. |

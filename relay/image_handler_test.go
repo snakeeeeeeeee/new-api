@@ -1,9 +1,13 @@
 package relay
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -94,7 +98,7 @@ func TestShouldUseImageHandleSyncHonorsGlobalAndChannelMode(t *testing.T) {
 	require.False(t, shouldUseImageHandleSync(unsupported))
 }
 
-func TestCanUseImageHandleSyncForRequestAllowsOnlyURLEdits(t *testing.T) {
+func TestCanUseImageHandleSyncForRequestAllowsEditUploads(t *testing.T) {
 	originalSetting := *image_handle_setting.GetImageHandleSetting()
 	defer func() {
 		*image_handle_setting.GetImageHandleSetting() = originalSetting
@@ -124,10 +128,10 @@ func TestCanUseImageHandleSyncForRequestAllowsOnlyURLEdits(t *testing.T) {
 		Prompt: "edit",
 		Image:  []byte(`"data:image/png;base64,AAAA"`),
 	}
-	require.False(t, canUseImageHandleSyncForRequest(info, &base64Edit))
+	require.True(t, canUseImageHandleSyncForRequest(info, &base64Edit))
 
 	multipartWithoutURL := dto.ImageRequest{Prompt: "edit"}
-	require.False(t, canUseImageHandleSyncForRequest(info, &multipartWithoutURL))
+	require.True(t, canUseImageHandleSyncForRequest(info, &multipartWithoutURL))
 }
 
 func TestImageHandleSyncToOpenAIResponseMapsUsageAndImages(t *testing.T) {
@@ -512,6 +516,198 @@ func TestBuildImageHandleSyncPayloadForEditURLInputs(t *testing.T) {
 	require.Equal(t, "edit prompt", input["text"])
 	require.Equal(t, []any{"https://cdn.example.com/input.png"}, input["images"])
 	require.Equal(t, "https://cdn.example.com/mask.png", input["mask"])
+}
+
+func TestImageHandleBase64UploadsFromRequestBuildsExplicitUploadItems(t *testing.T) {
+	t.Parallel()
+
+	request := dto.ImageRequest{
+		Prompt: "edit",
+		Image:  []byte(`["data:image/png;base64,AAAA","BBBB"]`),
+		Extra: map[string]json.RawMessage{
+			"mask": []byte(`{"b64_json":"CCCC","filename":"mask.png"}`),
+		},
+	}
+
+	uploadReq, ok, err := imageHandleBase64UploadsFromRequest(request)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, uploadReq.Uploads, 3)
+	require.Equal(t, "image", uploadReq.Uploads[0].Field)
+	require.Equal(t, "data:image/png;base64,AAAA", uploadReq.Uploads[0].B64Json)
+	require.Equal(t, "image", uploadReq.Uploads[1].Field)
+	require.Equal(t, "BBBB", uploadReq.Uploads[1].B64Json)
+	require.Equal(t, "mask", uploadReq.Uploads[2].Field)
+	require.Equal(t, "mask.png", uploadReq.Uploads[2].Filename)
+	require.Equal(t, "CCCC", uploadReq.Uploads[2].B64Json)
+}
+
+func TestApplyImageHandleUploadResponseToRequestMergesExistingURLInputs(t *testing.T) {
+	t.Parallel()
+
+	existingMask := "https://cdn.example.com/uploaded-mask.png"
+	request := dto.ImageRequest{
+		Prompt: "edit",
+		Image:  []byte(`"https://cdn.example.com/original.png"`),
+		Extra: map[string]json.RawMessage{
+			"mask": []byte(`"data:image/png;base64,AAAA"`),
+		},
+	}
+	normalized, err := applyImageHandleUploadResponseToRequest(request, imageHandleUploadResponse{
+		Images: nil,
+		Mask:   &existingMask,
+	})
+	require.NoError(t, err)
+
+	images, mask, err := imageHandleSyncInputsFromRequest(normalized)
+	require.NoError(t, err)
+	require.Equal(t, []string{"https://cdn.example.com/original.png"}, images)
+	require.NotNil(t, mask)
+	require.Equal(t, existingMask, *mask)
+}
+
+func TestNormalizeImageHandleSyncEditRequestUploadsMultipartFiles(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+
+	var receivedPath string
+	var receivedAuth string
+	var receivedContentType string
+	var receivedFields []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		receivedAuth = r.Header.Get("Authorization")
+		receivedContentType = r.Header.Get("Content-Type")
+		require.NoError(t, r.ParseMultipartForm(32<<20))
+		for field := range r.MultipartForm.File {
+			receivedFields = append(receivedFields, field)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"images":["https://img.example.com/input.png"],"mask":"https://img.example.com/mask.png"}`))
+	}))
+	defer server.Close()
+
+	image_handle_setting.GetImageHandleSetting().BaseURL = server.URL
+	image_handle_setting.GetImageHandleSetting().APIKey = "provider-key"
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	imagePart, err := writer.CreateFormFile("image", "input.png")
+	require.NoError(t, err)
+	_, err = imagePart.Write([]byte("fake-image"))
+	require.NoError(t, err)
+	maskPart, err := writer.CreateFormFile("mask", "mask.png")
+	require.NoError(t, err)
+	_, err = maskPart.Write([]byte("fake-mask"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body.Bytes()))
+	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	normalized, err := normalizeImageHandleSyncEditRequest(ctx, dto.ImageRequest{Prompt: "edit"})
+	require.NoError(t, err)
+	require.Equal(t, "/v1/image/uploads", receivedPath)
+	require.Equal(t, "Bearer provider-key", receivedAuth)
+	require.True(t, strings.HasPrefix(receivedContentType, "multipart/form-data"))
+	require.ElementsMatch(t, []string{"image", "mask"}, receivedFields)
+
+	images, mask, err := imageHandleSyncInputsFromRequest(normalized)
+	require.NoError(t, err)
+	require.Equal(t, []string{"https://img.example.com/input.png"}, images)
+	require.NotNil(t, mask)
+	require.Equal(t, "https://img.example.com/mask.png", *mask)
+}
+
+func TestNormalizeImageHandleSyncEditRequestUploadsBase64Inputs(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+
+	var receivedPath string
+	var uploadReq imageHandleBase64UploadRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, common.Unmarshal(body, &uploadReq))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"images":["https://img.example.com/input.png"],"mask":null}`))
+	}))
+	defer server.Close()
+
+	image_handle_setting.GetImageHandleSetting().BaseURL = server.URL
+	image_handle_setting.GetImageHandleSetting().APIKey = "provider-key"
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", strings.NewReader(`{}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	normalized, err := normalizeImageHandleSyncEditRequest(ctx, dto.ImageRequest{
+		Prompt: "edit",
+		Image:  []byte(`"data:image/png;base64,AAAA"`),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "/v1/image/uploads/base64", receivedPath)
+	require.Len(t, uploadReq.Uploads, 1)
+	require.Equal(t, "image", uploadReq.Uploads[0].Field)
+	require.Equal(t, "data:image/png;base64,AAAA", uploadReq.Uploads[0].B64Json)
+
+	images, mask, err := imageHandleSyncInputsFromRequest(normalized)
+	require.NoError(t, err)
+	require.Equal(t, []string{"https://img.example.com/input.png"}, images)
+	require.Nil(t, mask)
+}
+
+func TestBuildImageHandleSyncPayloadUsesNormalizedUploadedEditURLs(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+	image_handle_setting.GetImageHandleSetting().InternalBaseURL = "http://new-api.internal"
+	image_handle_setting.GetImageHandleSetting().InternalSecretID = "image_handle_1"
+
+	normalized, err := applyImageHandleUploadResponseToRequest(dto.ImageRequest{
+		Prompt: "edit prompt",
+		Image:  []byte(`"data:image/png;base64,AAAA"`),
+	}, imageHandleUploadResponse{
+		Images: []string{"https://img.example.com/input.png"},
+	})
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set(common.RequestIdKey, "req-sync-edit-uploaded-payload")
+
+	info := &relaycommon.RelayInfo{
+		UserId:          44,
+		OriginModelName: "gpt-image-2",
+		UsingGroup:      "default",
+		RelayMode:       relayconstant.RelayModeImagesEdits,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         123,
+			UpstreamModelName: "gpt-image-2",
+		},
+	}
+
+	body, err := buildImageHandleSyncPayload(ctx, info, normalized, "task_edit_sync", "lease_edit_sync", "edit")
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	input := payload["input"].(map[string]any)
+	require.Equal(t, []any{"https://img.example.com/input.png"}, input["images"])
+	require.NotContains(t, input, "mask")
+	require.NotContains(t, string(body), "data:image/png;base64")
 }
 
 func TestBuildImageHandleSyncPayloadUsesBase64ResultFormat(t *testing.T) {

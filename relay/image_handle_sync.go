@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strconv"
 	"strings"
 
@@ -143,6 +145,21 @@ type imageHandleSyncWait struct {
 	TimeoutMS int  `json:"timeout_ms"`
 }
 
+type imageHandleUploadResponse struct {
+	Images []string `json:"images,omitempty"`
+	Mask   *string  `json:"mask,omitempty"`
+}
+
+type imageHandleBase64UploadRequest struct {
+	Uploads []imageHandleBase64UploadItem `json:"uploads"`
+}
+
+type imageHandleBase64UploadItem struct {
+	Field    string `json:"field"`
+	Filename string `json:"filename,omitempty"`
+	B64Json  string `json:"b64_json"`
+}
+
 func shouldUseImageHandleSync(info *relaycommon.RelayInfo) bool {
 	if info == nil || info.ChannelMeta == nil {
 		return false
@@ -174,13 +191,7 @@ func canUseImageHandleSyncForRequest(info *relaycommon.RelayInfo, request *dto.I
 	if !shouldUseImageHandleSync(info) {
 		return false
 	}
-	if info == nil || request == nil {
-		return false
-	}
-	if info.RelayMode != relayconstant.RelayModeImagesEdits {
-		return true
-	}
-	return imageHandleSyncEditInputsAreURLs(*request)
+	return info != nil && request != nil
 }
 
 func imageHandleSyncChannelSupported(channelType int) bool {
@@ -204,6 +215,15 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 	lease.TaskRecordID = 0
 	if err := model.CreateImageCredentialLease(lease); err != nil {
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeUpdateDataError, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+	}
+
+	if info.RelayMode == relayconstant.RelayModeImagesEdits {
+		normalizedRequest, err := normalizeImageHandleSyncEditRequest(c, request)
+		if err != nil {
+			_ = model.MarkImageCredentialLeaseFailed(lease.LeaseID)
+			return nil, types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusBadGateway)
+		}
+		request = normalizedRequest
 	}
 
 	body, err := buildImageHandleSyncPayload(c, info, request, clientTaskID, lease.LeaseID, operation)
@@ -347,7 +367,322 @@ func postImageHandleSync(c *gin.Context, body []byte) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	if client == nil {
+		client = http.DefaultClient
+	}
 	return client.Do(req)
+}
+
+func normalizeImageHandleSyncEditRequest(c *gin.Context, request dto.ImageRequest) (dto.ImageRequest, error) {
+	if imageHandleSyncEditInputsAreURLs(request) {
+		return request, nil
+	}
+	if strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
+		uploadResp, err := uploadImageHandleSyncEditMultipart(c)
+		if err != nil {
+			return request, err
+		}
+		return applyImageHandleUploadResponseToRequest(request, uploadResp)
+	}
+	uploadReq, ok, err := imageHandleBase64UploadsFromRequest(request)
+	if err != nil {
+		return request, err
+	}
+	if !ok {
+		return request, fmt.Errorf("image-handle sync image edits require URL, multipart file, or base64 image input")
+	}
+	uploadResp, err := uploadImageHandleSyncEditBase64(c, uploadReq)
+	if err != nil {
+		return request, err
+	}
+	return applyImageHandleUploadResponseToRequest(request, uploadResp)
+}
+
+func uploadImageHandleSyncEditMultipart(c *gin.Context) (imageHandleUploadResponse, error) {
+	formData, err := common.ParseMultipartFormReusable(c)
+	if err != nil {
+		return imageHandleUploadResponse{}, fmt.Errorf("parse image edit multipart for image-handle upload failed: %w", err)
+	}
+	if formData == nil || len(formData.File) == 0 {
+		return imageHandleUploadResponse{}, fmt.Errorf("image-handle sync image edits require at least one multipart image file")
+	}
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	fileCount := 0
+	for fieldName, files := range formData.File {
+		normalizedField := imageHandleUploadFieldName(fieldName)
+		if normalizedField == "" {
+			continue
+		}
+		for _, fileHeader := range files {
+			if fileHeader == nil {
+				continue
+			}
+			file, err := fileHeader.Open()
+			if err != nil {
+				_ = writer.Close()
+				return imageHandleUploadResponse{}, fmt.Errorf("open image-handle upload file %s failed: %w", fileHeader.Filename, err)
+			}
+			header := make(textproto.MIMEHeader)
+			header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, normalizedField, fileHeader.Filename))
+			contentType := strings.TrimSpace(fileHeader.Header.Get("Content-Type"))
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+			header.Set("Content-Type", contentType)
+			part, err := writer.CreatePart(header)
+			if err != nil {
+				_ = file.Close()
+				_ = writer.Close()
+				return imageHandleUploadResponse{}, fmt.Errorf("create image-handle upload part failed: %w", err)
+			}
+			if _, err := io.Copy(part, file); err != nil {
+				_ = file.Close()
+				_ = writer.Close()
+				return imageHandleUploadResponse{}, fmt.Errorf("copy image-handle upload file failed: %w", err)
+			}
+			_ = file.Close()
+			fileCount++
+		}
+	}
+	if fileCount == 0 {
+		_ = writer.Close()
+		return imageHandleUploadResponse{}, fmt.Errorf("image-handle sync image edits require image or mask multipart files")
+	}
+	if err := writer.Close(); err != nil {
+		return imageHandleUploadResponse{}, fmt.Errorf("close image-handle upload multipart body failed: %w", err)
+	}
+	return postImageHandleUpload(c, "/v1/image/uploads", writer.FormDataContentType(), requestBody.Bytes())
+}
+
+func uploadImageHandleSyncEditBase64(c *gin.Context, uploadReq imageHandleBase64UploadRequest) (imageHandleUploadResponse, error) {
+	body, err := common.Marshal(uploadReq)
+	if err != nil {
+		return imageHandleUploadResponse{}, err
+	}
+	return postImageHandleUpload(c, "/v1/image/uploads/base64", "application/json", body)
+}
+
+func postImageHandleUpload(c *gin.Context, path string, contentType string, body []byte) (imageHandleUploadResponse, error) {
+	cfg := service.GetImageHandleExecutorConfig()
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, strings.TrimRight(cfg.BaseURL, "/")+path, bytes.NewReader(body))
+	if err != nil {
+		return imageHandleUploadResponse{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	req.Header.Set("Content-Type", contentType)
+	client, err := service.GetHttpClientWithProxy(c.GetString("channel_proxy"))
+	if err != nil {
+		return imageHandleUploadResponse{}, err
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return imageHandleUploadResponse{}, err
+	}
+	defer service.CloseResponseBodyGracefully(resp)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return imageHandleUploadResponse{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		recordImageHandleUploadErrorDetail(c, resp.StatusCode, respBody)
+		return imageHandleUploadResponse{}, fmt.Errorf("image-handle upload failed: status_code=%d, body=%s", resp.StatusCode, common.MaskSensitiveInfo(string(respBody)))
+	}
+	var uploadResp imageHandleUploadResponse
+	if err := common.Unmarshal(respBody, &uploadResp); err != nil {
+		return imageHandleUploadResponse{}, fmt.Errorf("unmarshal image-handle upload response failed: %w", err)
+	}
+	if len(uploadResp.Images) == 0 && (uploadResp.Mask == nil || strings.TrimSpace(*uploadResp.Mask) == "") {
+		return imageHandleUploadResponse{}, fmt.Errorf("image-handle upload returned empty result")
+	}
+	return uploadResp, nil
+}
+
+func imageHandleBase64UploadsFromRequest(request dto.ImageRequest) (imageHandleBase64UploadRequest, bool, error) {
+	uploads := make([]imageHandleBase64UploadItem, 0)
+	if len(request.Image) > 0 {
+		items, err := imageHandleBase64UploadItemsFromRaw(request.Image, "image")
+		if err != nil {
+			return imageHandleBase64UploadRequest{}, false, err
+		}
+		uploads = append(uploads, items...)
+	}
+	if len(request.Extra) > 0 {
+		if raw, ok := request.Extra["images"]; ok && len(raw) > 0 {
+			items, err := imageHandleBase64UploadItemsFromRaw(raw, "image")
+			if err != nil {
+				return imageHandleBase64UploadRequest{}, false, err
+			}
+			uploads = append(uploads, items...)
+		}
+		if raw, ok := request.Extra["mask"]; ok && len(raw) > 0 {
+			items, err := imageHandleBase64UploadItemsFromRaw(raw, "mask")
+			if err != nil {
+				return imageHandleBase64UploadRequest{}, false, err
+			}
+			uploads = append(uploads, items...)
+		}
+	}
+	if len(uploads) == 0 {
+		return imageHandleBase64UploadRequest{}, false, nil
+	}
+	return imageHandleBase64UploadRequest{Uploads: uploads}, true, nil
+}
+
+func imageHandleBase64UploadItemsFromRaw(raw json.RawMessage, fallbackField string) ([]imageHandleBase64UploadItem, error) {
+	var value any
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("parse image edit base64 input failed: %w", err)
+	}
+	return imageHandleBase64UploadItemsFromValue(value, fallbackField, fallbackField)
+}
+
+func imageHandleBase64UploadItemsFromValue(value any, fallbackField string, fallbackFilenamePrefix string) ([]imageHandleBase64UploadItem, error) {
+	switch typed := value.(type) {
+	case string:
+		if strings.TrimSpace(typed) == "" || isImageHandleSyncURL(typed) {
+			return nil, nil
+		}
+		return []imageHandleBase64UploadItem{{
+			Field:    fallbackField,
+			Filename: imageHandleBase64UploadFilename(fallbackFilenamePrefix, 1),
+			B64Json:  strings.TrimSpace(typed),
+		}}, nil
+	case []any:
+		items := make([]imageHandleBase64UploadItem, 0, len(typed))
+		for idx, item := range typed {
+			nestedItems, err := imageHandleBase64UploadItemsFromValue(item, fallbackField, fmt.Sprintf("%s-%d", fallbackFilenamePrefix, idx+1))
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, nestedItems...)
+		}
+		return items, nil
+	case map[string]any:
+		if url := imageHandleStringMapValue(typed, "url"); isImageHandleSyncURL(url) {
+			return nil, nil
+		}
+		data := firstNonEmpty(
+			imageHandleStringMapValue(typed, "b64_json"),
+			imageHandleStringMapValue(typed, "base64"),
+			imageHandleStringMapValue(typed, "data"),
+			imageHandleStringMapValue(typed, "image"),
+			imageHandleStringMapValue(typed, "url"),
+		)
+		if data == "" {
+			return nil, fmt.Errorf("image edit base64 upload item must include b64_json, base64, data, or image")
+		}
+		field := firstNonEmpty(imageHandleStringMapValue(typed, "field"), fallbackField)
+		return []imageHandleBase64UploadItem{{
+			Field:    imageHandleUploadFieldName(field),
+			Filename: firstNonEmpty(imageHandleStringMapValue(typed, "filename"), imageHandleBase64UploadFilename(fallbackFilenamePrefix, 1)),
+			B64Json:  data,
+		}}, nil
+	default:
+		return nil, fmt.Errorf("unsupported image edit base64 input type")
+	}
+}
+
+func imageHandleStringMapValue(payload map[string]any, key string) string {
+	if payload == nil {
+		return ""
+	}
+	value, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	if str, ok := value.(string); ok {
+		return strings.TrimSpace(str)
+	}
+	return ""
+}
+
+func imageHandleBase64UploadFilename(prefix string, index int) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		prefix = "image"
+	}
+	return fmt.Sprintf("%s-%d.png", prefix, index)
+}
+
+func imageHandleUploadFieldName(fieldName string) string {
+	fieldName = strings.TrimSpace(fieldName)
+	switch {
+	case fieldName == "mask":
+		return "mask"
+	case fieldName == "", fieldName == "image", fieldName == "image[]", strings.HasPrefix(fieldName, "image["):
+		return "image"
+	default:
+		return fieldName
+	}
+}
+
+func applyImageHandleUploadResponseToRequest(request dto.ImageRequest, uploadResp imageHandleUploadResponse) (dto.ImageRequest, error) {
+	existingImages, existingMask, _ := imageHandleSyncInputsFromRequest(request)
+	cleanImages := make([]string, 0, len(existingImages)+len(uploadResp.Images))
+	for _, image := range existingImages {
+		if !isImageHandleSyncURL(image) {
+			continue
+		}
+		cleanImages = append(cleanImages, strings.TrimSpace(image))
+	}
+	for _, image := range uploadResp.Images {
+		image = strings.TrimSpace(image)
+		if image != "" {
+			cleanImages = append(cleanImages, image)
+		}
+	}
+	if len(cleanImages) == 0 {
+		return request, fmt.Errorf("image-handle upload returned blank image URLs")
+	}
+	imageBytes, err := common.Marshal(cleanImages)
+	if err != nil {
+		return request, err
+	}
+	request.Image = imageBytes
+	if request.Extra == nil {
+		request.Extra = map[string]json.RawMessage{}
+	}
+	delete(request.Extra, "images")
+	maskValue := ""
+	if existingMask != nil && isImageHandleSyncURL(*existingMask) {
+		maskValue = strings.TrimSpace(*existingMask)
+	}
+	if uploadResp.Mask != nil && strings.TrimSpace(*uploadResp.Mask) != "" {
+		maskValue = strings.TrimSpace(*uploadResp.Mask)
+	}
+	if maskValue != "" {
+		maskBytes, err := common.Marshal(maskValue)
+		if err != nil {
+			return request, err
+		}
+		request.Extra["mask"] = maskBytes
+	} else {
+		delete(request.Extra, "mask")
+	}
+	return request, nil
+}
+
+func recordImageHandleUploadErrorDetail(c *gin.Context, statusCode int, responseBody []byte) {
+	if len(responseBody) == 0 {
+		return
+	}
+	var body any
+	if err := common.Unmarshal(responseBody, &body); err != nil {
+		body = string(responseBody)
+	}
+	detail := map[string]any{
+		"code":            "image_handle_upload_failed",
+		"upstream_status": statusCode,
+		"upstream_error":  body,
+	}
+	common.SetContextKey(c, constant.ContextKeyImageHandleSyncErrorDetail, detail)
+	if detailBytes, err := common.Marshal(detail); err == nil {
+		logger.LogError(c, "image-handle upload error detail: "+common.MaskSensitiveInfo(string(detailBytes)))
+	}
 }
 
 func imageHandleSyncInputsFromRequest(request dto.ImageRequest) ([]string, *string, error) {
