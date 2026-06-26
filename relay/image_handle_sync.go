@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -291,7 +292,7 @@ func buildImageHandleSyncPayload(c *gin.Context, info *relaycommon.RelayInfo, re
 	if err != nil {
 		return nil, err
 	}
-	parameters := imageHandleSyncParameters(request)
+	parameters := imageHandleSyncParameters(request, info.UpstreamModelName)
 	cfg := service.GetImageHandleExecutorConfig()
 	payload := imageHandleSyncRequest{
 		RequestID:        c.GetString(common.RequestIdKey),
@@ -411,7 +412,7 @@ func isImageHandleSyncURL(value string) bool {
 	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://")
 }
 
-func imageHandleSyncParameters(request dto.ImageRequest) map[string]any {
+func imageHandleSyncParameters(request dto.ImageRequest, upstreamModelName string) map[string]any {
 	params := map[string]any{}
 	if request.Size != "" {
 		params["size"] = request.Size
@@ -422,18 +423,24 @@ func imageHandleSyncParameters(request dto.ImageRequest) map[string]any {
 	if request.N != nil {
 		params["n"] = *request.N
 	}
-	addRawImageParam(params, "response_format", request.ResponseFormat)
 	addRawImageParam(params, "output_format", request.OutputFormat)
 	addRawImageParam(params, "output_compression", request.OutputCompression)
 	addRawImageParam(params, "background", request.Background)
 	addRawImageParam(params, "moderation", request.Moderation)
-	switch imageHandleSyncResultDataFormat(request) {
-	case imageHandleResultFormatBase64:
-		params["response_format"] = "b64_json"
-	case imageHandleResultFormatURL:
-		params["response_format"] = "url"
+	if imageHandleSyncShouldForwardResponseFormat(request, upstreamModelName) {
+		switch imageHandleSyncResultDataFormat(request) {
+		case imageHandleResultFormatBase64:
+			params["response_format"] = "b64_json"
+		case imageHandleResultFormatURL:
+			params["response_format"] = "url"
+		}
 	}
 	return params
+}
+
+func imageHandleSyncShouldForwardResponseFormat(request dto.ImageRequest, upstreamModelName string) bool {
+	modelName := firstNonEmpty(upstreamModelName, request.Model)
+	return !strings.HasPrefix(strings.ToLower(modelName), "gpt-image-")
 }
 
 func imageHandleSyncProviderOptions(request dto.ImageRequest) map[string]any {
@@ -503,13 +510,133 @@ func imageHandleSyncToOpenAIResponse(syncResp imageHandleSyncResponse, info *rel
 		Created: common.GetTimestamp(),
 		Data:    data,
 		Usage:   imageHandleSyncUsageToDTO(imageHandleSyncUsageFromResponse(syncResp)),
-		Quality: request.Quality,
-		Size:    request.Size,
 	}
 	if info != nil && !info.StartTime.IsZero() {
 		resp.Created = info.StartTime.Unix()
 	}
+	topFields := imageHandleSyncOpenAITopFieldsFromResponse(syncResp)
+	if topFields.Created > 0 {
+		resp.Created = topFields.Created
+	}
+	resp.Background = firstNonEmpty(topFields.Background, imageHandleSyncStringFromRaw(request.Background))
+	resp.OutputFormat = firstNonEmpty(topFields.OutputFormat, imageHandleSyncStringFromRaw(request.OutputFormat))
+	resp.Quality = firstNonEmpty(topFields.Quality, request.Quality)
+	resp.Size = firstNonEmpty(topFields.Size, request.Size)
 	return resp
+}
+
+type imageHandleSyncOpenAITopFields struct {
+	Created      int64
+	Background   string
+	OutputFormat string
+	Quality      string
+	Size         string
+}
+
+func imageHandleSyncOpenAITopFieldsFromResponse(syncResp imageHandleSyncResponse) imageHandleSyncOpenAITopFields {
+	fields := imageHandleSyncOpenAITopFields{}
+	if syncResp.Result != nil {
+		mergeImageHandleSyncOpenAITopFields(&fields, imageHandleSyncOpenAITopFieldsFromRaw(syncResp.Result.RawResponse))
+	}
+	mergeImageHandleSyncOpenAITopFields(&fields, imageHandleSyncOpenAITopFieldsFromRaw(syncResp.RawResponse))
+	return fields
+}
+
+func imageHandleSyncOpenAITopFieldsFromRaw(raw any) imageHandleSyncOpenAITopFields {
+	fields := imageHandleSyncOpenAITopFields{}
+	if raw == nil {
+		return fields
+	}
+	data, err := common.Marshal(raw)
+	if err != nil || len(data) == 0 {
+		return fields
+	}
+	var payload map[string]any
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return fields
+	}
+	fields.Created = imageHandleSyncInt64Field(payload, "created")
+	fields.Background = imageHandleSyncStringField(payload, "background")
+	fields.OutputFormat = imageHandleSyncStringField(payload, "output_format")
+	fields.Quality = imageHandleSyncStringField(payload, "quality")
+	fields.Size = imageHandleSyncStringField(payload, "size")
+	return fields
+}
+
+func mergeImageHandleSyncOpenAITopFields(target *imageHandleSyncOpenAITopFields, source imageHandleSyncOpenAITopFields) {
+	if target == nil {
+		return
+	}
+	if target.Created == 0 && source.Created > 0 {
+		target.Created = source.Created
+	}
+	if target.Background == "" {
+		target.Background = source.Background
+	}
+	if target.OutputFormat == "" {
+		target.OutputFormat = source.OutputFormat
+	}
+	if target.Quality == "" {
+		target.Quality = source.Quality
+	}
+	if target.Size == "" {
+		target.Size = source.Size
+	}
+}
+
+func imageHandleSyncStringField(payload map[string]any, key string) string {
+	if payload == nil {
+		return ""
+	}
+	value, ok := payload[key]
+	if !ok {
+		return ""
+	}
+	if str, ok := value.(string); ok {
+		return strings.TrimSpace(str)
+	}
+	return ""
+}
+
+func imageHandleSyncInt64Field(payload map[string]any, key string) int64 {
+	if payload == nil {
+		return 0
+	}
+	value, ok := payload[key]
+	if !ok {
+		return 0
+	}
+	switch typed := value.(type) {
+	case float64:
+		if typed > 0 {
+			return int64(typed)
+		}
+	case int64:
+		if typed > 0 {
+			return typed
+		}
+	case int:
+		if typed > 0 {
+			return int64(typed)
+		}
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		if err == nil && parsed > 0 {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func imageHandleSyncStringFromRaw(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value string
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
 }
 
 func imageHandleSyncResponseHasURL(syncResp imageHandleSyncResponse) bool {
