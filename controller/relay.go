@@ -653,6 +653,18 @@ func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError, internalRetry b
 		other["channel_id"] = channelId
 		other["channel_name"] = c.GetString("channel_name")
 		other["channel_type"] = c.GetInt("channel_type")
+		if executionMode := common.GetContextKeyString(c, constant.ContextKeyExecutionMode); executionMode != "" {
+			other["execution_mode"] = executionMode
+		}
+		if detail, ok := common.GetContextKey(c, constant.ContextKeyImageHandleSyncErrorDetail); ok && detail != nil {
+			other["image_handle_sync_error"] = detail
+		}
+		if len(err.Metadata) > 0 {
+			var metadata map[string]interface{}
+			if unmarshalErr := common.Unmarshal(err.Metadata, &metadata); unmarshalErr == nil && len(metadata) > 0 {
+				other["error_metadata"] = metadata
+			}
+		}
 		if internalRetry {
 			other["internal_retry"] = true
 		} else {

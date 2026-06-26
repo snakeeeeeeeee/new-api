@@ -29,17 +29,18 @@ type TaskAdaptor struct {
 var clientTaskIDPattern = regexp.MustCompile(`^task_[A-Za-z0-9_-]{1,186}$`)
 
 type imageHandleSubmitRequest struct {
-	RequestID       string                 `json:"request_id"`
-	ClientTaskID    string                 `json:"client_task_id"`
-	Provider        string                 `json:"provider,omitempty"`
-	Model           string                 `json:"model"`
-	Operation       string                 `json:"operation"`
-	Input           imageHandleInput       `json:"input"`
-	Parameters      map[string]any         `json:"parameters,omitempty"`
-	ProviderOptions map[string]any         `json:"provider_options,omitempty"`
-	Executor        imageHandleExecutor    `json:"executor,omitempty"`
-	Callback        imageHandleCallback    `json:"callback,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	RequestID        string                 `json:"request_id"`
+	ClientTaskID     string                 `json:"client_task_id"`
+	Provider         string                 `json:"provider,omitempty"`
+	Model            string                 `json:"model"`
+	Operation        string                 `json:"operation"`
+	ResultDataFormat string                 `json:"result_data_format,omitempty"`
+	Input            imageHandleInput       `json:"input"`
+	Parameters       map[string]any         `json:"parameters,omitempty"`
+	ProviderOptions  map[string]any         `json:"provider_options,omitempty"`
+	Executor         imageHandleExecutor    `json:"executor,omitempty"`
+	Callback         imageHandleCallback    `json:"callback,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type imageHandleInput struct {
@@ -135,6 +136,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			info.UpstreamModelName = info.OriginModelName
 		}
 	}
+	if strings.EqualFold(metadataString(req.Metadata, "result_data_format", "url"), "base64") {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("result_data_format=base64 is only supported by synchronous image-handle execution"), "unsupported_result_data_format", http.StatusBadRequest)
+	}
 	if strings.TrimSpace(req.ClientTaskID) != "" {
 		clientTaskID := strings.TrimSpace(req.ClientTaskID)
 		if !clientTaskIDPattern.MatchString(clientTaskID) {
@@ -218,13 +222,14 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	callbackBase := strings.TrimRight(service.ImageHandleCallbackAddress(), "/")
 	callbackSecretID := fmt.Sprintf("channel_%d", info.ChannelId)
 	payload := imageHandleSubmitRequest{
-		RequestID:       c.GetString(common.RequestIdKey),
-		ClientTaskID:    info.PublicTaskID,
-		Model:           info.UpstreamModelName,
-		Operation:       operation,
-		Input:           imageHandleInput{Text: taskReq.Prompt, Images: images, Mask: mask},
-		Parameters:      parameters,
-		ProviderOptions: providerOptions,
+		RequestID:        c.GetString(common.RequestIdKey),
+		ClientTaskID:     info.PublicTaskID,
+		Model:            info.UpstreamModelName,
+		Operation:        operation,
+		ResultDataFormat: "url",
+		Input:            imageHandleInput{Text: taskReq.Prompt, Images: images, Mask: mask},
+		Parameters:       parameters,
+		ProviderOptions:  providerOptions,
 		Executor: imageHandleExecutor{
 			Type:       "provider_direct_lease",
 			LeaseID:    leaseID,

@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -58,6 +60,482 @@ func TestImageLogQualityUsesRequestValue(t *testing.T) {
 	require.Equal(t, "auto", imageLogQuality("auto"))
 	require.Equal(t, "hd", imageLogQuality("hd"))
 	require.Equal(t, "standard", imageLogQuality(""))
+}
+
+func TestShouldUseImageHandleSyncHonorsGlobalAndChannelMode(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+
+	baseInfo := func(mode string) *relaycommon.RelayInfo {
+		return &relaycommon.RelayInfo{
+			RelayMode: relayconstant.RelayModeImagesGenerations,
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelType: constant.ChannelTypeOpenAI,
+				ChannelOtherSettings: dto.ChannelOtherSettings{
+					ImageHandleSyncMode: mode,
+				},
+			},
+		}
+	}
+
+	image_handle_setting.GetImageHandleSetting().SyncImageEnabled = false
+	require.False(t, shouldUseImageHandleSync(baseInfo("inherit")))
+	require.True(t, shouldUseImageHandleSync(baseInfo("force_on")))
+
+	image_handle_setting.GetImageHandleSetting().SyncImageEnabled = true
+	require.True(t, shouldUseImageHandleSync(baseInfo("inherit")))
+	require.False(t, shouldUseImageHandleSync(baseInfo("force_off")))
+
+	unsupported := baseInfo("force_on")
+	unsupported.ChannelType = constant.ChannelTypeGemini
+	unsupported.ChannelMeta.ChannelType = constant.ChannelTypeGemini
+	require.False(t, shouldUseImageHandleSync(unsupported))
+}
+
+func TestCanUseImageHandleSyncForRequestAllowsOnlyURLEdits(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+	image_handle_setting.GetImageHandleSetting().SyncImageEnabled = true
+
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeImagesEdits,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeOpenAI,
+			ChannelOtherSettings: dto.ChannelOtherSettings{
+				ImageHandleSyncMode: "inherit",
+			},
+		},
+	}
+
+	urlEdit := dto.ImageRequest{
+		Prompt: "edit",
+		Image:  []byte(`"https://cdn.example.com/input.png"`),
+		Extra: map[string]json.RawMessage{
+			"mask": []byte(`"https://cdn.example.com/mask.png"`),
+		},
+	}
+	require.True(t, canUseImageHandleSyncForRequest(info, &urlEdit))
+
+	base64Edit := dto.ImageRequest{
+		Prompt: "edit",
+		Image:  []byte(`"data:image/png;base64,AAAA"`),
+	}
+	require.False(t, canUseImageHandleSyncForRequest(info, &base64Edit))
+
+	multipartWithoutURL := dto.ImageRequest{Prompt: "edit"}
+	require.False(t, canUseImageHandleSyncForRequest(info, &multipartWithoutURL))
+}
+
+func TestImageHandleSyncToOpenAIResponseMapsUsageAndImages(t *testing.T) {
+	t.Parallel()
+
+	response := imageHandleSyncResponse{
+		Status: "succeeded",
+		Result: &imageHandleSyncResult{Images: []imageHandleSyncImage{
+			{URL: "https://example.com/a.png", MimeType: "image/png", RevisedPrompt: "prompt-a"},
+			{URL: "https://example.com/b.png", MimeType: "image/png"},
+		}},
+		Usage: &imageHandleSyncUsage{
+			InputTokens:              19,
+			OutputTokens:             781,
+			TotalTokens:              800,
+			CacheCreationInputTokens: 5,
+			CacheReadTokens:          7,
+		},
+	}
+
+	imageResp := imageHandleSyncToOpenAIResponse(response, &relaycommon.RelayInfo{}, dto.ImageRequest{Quality: "auto", Size: "1024x1024"})
+
+	require.Len(t, imageResp.Data, 2)
+	require.Equal(t, "https://example.com/a.png", imageResp.Data[0].Url)
+	require.Equal(t, "prompt-a", imageResp.Data[0].RevisedPrompt)
+	require.NotNil(t, imageResp.Usage)
+	require.Equal(t, 19, imageResp.Usage.PromptTokens)
+	require.Equal(t, 781, imageResp.Usage.CompletionTokens)
+	require.Equal(t, 800, imageResp.Usage.TotalTokens)
+	require.Equal(t, 7, imageResp.Usage.PromptTokensDetails.CachedTokens)
+	require.Equal(t, 5, imageResp.Usage.PromptTokensDetails.CachedCreationTokens)
+	require.Equal(t, "image_handle_sync", imageResp.Usage.UsageSource)
+}
+
+func TestImageHandleSyncToOpenAIResponseMapsBase64Images(t *testing.T) {
+	t.Parallel()
+
+	response := imageHandleSyncResponse{
+		Status:           "succeeded",
+		ResultDataFormat: "base64",
+		Result: &imageHandleSyncResult{Images: []imageHandleSyncImage{
+			{B64Json: "iVBORw0KGgo=", MimeType: "image/png", RevisedPrompt: "prompt-a"},
+		}},
+		Usage: &imageHandleSyncUsage{
+			InputTokens:  19,
+			OutputTokens: 781,
+			TotalTokens:  800,
+		},
+	}
+
+	imageResp := imageHandleSyncToOpenAIResponse(response, &relaycommon.RelayInfo{}, dto.ImageRequest{ResponseFormat: "b64_json"})
+
+	require.Len(t, imageResp.Data, 1)
+	require.Empty(t, imageResp.Data[0].Url)
+	require.Equal(t, "iVBORw0KGgo=", imageResp.Data[0].B64Json)
+	require.Equal(t, "prompt-a", imageResp.Data[0].RevisedPrompt)
+	require.NotNil(t, imageResp.Usage)
+	require.Equal(t, 19, imageResp.Usage.PromptTokens)
+	require.Equal(t, 781, imageResp.Usage.CompletionTokens)
+	require.Equal(t, 800, imageResp.Usage.TotalTokens)
+}
+
+func TestImageHandleSyncToOpenAIResponseRequiresBase64WhenRequested(t *testing.T) {
+	t.Parallel()
+
+	response := imageHandleSyncResponse{
+		Status:           "succeeded",
+		ResultDataFormat: "url",
+		Result: &imageHandleSyncResult{Images: []imageHandleSyncImage{
+			{URL: "https://example.com/a.png"},
+		}},
+	}
+
+	imageResp := imageHandleSyncToOpenAIResponse(response, &relaycommon.RelayInfo{}, dto.ImageRequest{ResponseFormat: "b64_json"})
+
+	require.Empty(t, imageResp.Data)
+}
+
+func TestImageHandleSyncStatusErrorTreatsAcceptedAsTimeout(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+
+	err := imageHandleSyncStatusError(ctx, http.StatusAccepted, []byte(`{"status":"processing"}`))
+
+	require.NotNil(t, err)
+	require.Equal(t, http.StatusGatewayTimeout, err.StatusCode)
+	require.Equal(t, "image_handle_sync_timeout", string(err.GetErrorCode()))
+}
+
+func TestImageHandleSyncFailedErrorKeepsProviderErrorMetadata(t *testing.T) {
+	t.Parallel()
+
+	response := imageHandleSyncResponse{
+		TaskID:           "imgtask_123",
+		ProviderTaskID:   "imgtask_123",
+		ClientTaskID:     "task_123",
+		Status:           "failed",
+		ResultDataFormat: "url",
+		Error: &imageHandleSyncError{
+			Code:                 "upstream_error",
+			Message:              "upstream returned an error",
+			Retryable:            false,
+			UpstreamStatus:       400,
+			ProviderErrorCode:    "unsupported_size",
+			ProviderErrorType:    "invalid_request_error",
+			ProviderErrorMessage: "size is not supported by this channel",
+			ProviderErrorParam:   "size",
+			UpstreamError: map[string]any{
+				"code": "unsupported_size",
+			},
+		},
+		RawResponse: map[string]any{
+			"error": map[string]any{
+				"message": "size is not supported by this channel",
+				"type":    "invalid_request_error",
+				"param":   "size",
+				"code":    "unsupported_size",
+			},
+		},
+		RawResponseTruncated:     false,
+		RawResponseOmittedFields: []string{"data[].b64_json"},
+	}
+
+	err := imageHandleSyncFailedError(response)
+
+	require.NotNil(t, err)
+	require.Equal(t, http.StatusBadGateway, err.StatusCode)
+	require.Equal(t, "upstream_error", string(err.GetErrorCode()))
+	openAIError := err.ToOpenAIError()
+	require.Equal(t, "size is not supported by this channel", openAIError.Message)
+	require.Equal(t, "invalid_request_error", openAIError.Type)
+	require.Equal(t, "size", openAIError.Param)
+
+	var metadata map[string]any
+	require.NoError(t, common.Unmarshal(err.Metadata, &metadata))
+	require.Equal(t, float64(400), metadata["upstream_status"])
+	require.Equal(t, "unsupported_size", metadata["provider_error_code"])
+	require.Equal(t, "invalid_request_error", metadata["provider_error_type"])
+	require.Equal(t, "size is not supported by this channel", metadata["provider_error_message"])
+	require.Equal(t, "size", metadata["provider_error_param"])
+	require.Equal(t, "task_123", metadata["client_task_id"])
+	require.Contains(t, metadata, "raw_response_summary")
+}
+
+func TestRecordImageHandleSyncErrorDetailStoresContextMap(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+
+	recordImageHandleSyncErrorDetail(ctx, imageHandleSyncResponse{
+		TaskID:           "imgtask_ctx",
+		ClientTaskID:     "task_ctx",
+		ResultDataFormat: "url",
+		Error: &imageHandleSyncError{
+			Code:                 "upstream_error",
+			Message:              "upstream returned an error",
+			UpstreamStatus:       400,
+			ProviderErrorMessage: "bad size",
+		},
+	})
+
+	value, ok := common.GetContextKey(ctx, constant.ContextKeyImageHandleSyncErrorDetail)
+	require.True(t, ok)
+	detail, ok := value.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "upstream_error", detail["code"])
+	require.Equal(t, "bad size", detail["provider_error_message"])
+	require.Equal(t, float64(400), detail["upstream_status"])
+}
+
+func TestImageHandleSyncToOpenAIResponseFallsBackToRawResponseUsage(t *testing.T) {
+	t.Parallel()
+
+	response := imageHandleSyncResponse{
+		Status: "succeeded",
+		Result: &imageHandleSyncResult{
+			Images: []imageHandleSyncImage{{URL: "https://example.com/a.png"}},
+			RawResponse: map[string]any{
+				"usage": map[string]any{
+					"input_tokens":  19,
+					"output_tokens": 781,
+					"total_tokens":  800,
+					"input_tokens_details": map[string]any{
+						"text_tokens":  19,
+						"image_tokens": 2,
+					},
+				},
+			},
+		},
+		Usage: &imageHandleSyncUsage{TotalTokens: 0},
+	}
+
+	imageResp := imageHandleSyncToOpenAIResponse(response, &relaycommon.RelayInfo{}, dto.ImageRequest{})
+
+	require.NotNil(t, imageResp.Usage)
+	require.Equal(t, 19, imageResp.Usage.PromptTokens)
+	require.Equal(t, 781, imageResp.Usage.CompletionTokens)
+	require.Equal(t, 800, imageResp.Usage.TotalTokens)
+	require.Equal(t, 19, imageResp.Usage.InputTokens)
+	require.Equal(t, 781, imageResp.Usage.OutputTokens)
+	require.Equal(t, 19, imageResp.Usage.PromptTokensDetails.TextTokens)
+	require.Equal(t, 2, imageResp.Usage.PromptTokensDetails.ImageTokens)
+}
+
+func TestImageHandleSyncToOpenAIResponseMergesIncompleteTopLevelUsage(t *testing.T) {
+	t.Parallel()
+
+	response := imageHandleSyncResponse{
+		Status: "succeeded",
+		Result: &imageHandleSyncResult{
+			Images: []imageHandleSyncImage{{URL: "https://example.com/a.png"}},
+			RawResponse: map[string]any{
+				"usage": map[string]any{
+					"input_tokens":  19,
+					"output_tokens": 781,
+					"total_tokens":  800,
+					"input_tokens_details": map[string]any{
+						"cached_tokens": 2,
+					},
+				},
+			},
+		},
+		Usage: &imageHandleSyncUsage{TotalTokens: 800},
+	}
+
+	imageResp := imageHandleSyncToOpenAIResponse(response, &relaycommon.RelayInfo{}, dto.ImageRequest{})
+
+	require.NotNil(t, imageResp.Usage)
+	require.Equal(t, 19, imageResp.Usage.PromptTokens)
+	require.Equal(t, 781, imageResp.Usage.CompletionTokens)
+	require.Equal(t, 800, imageResp.Usage.TotalTokens)
+	require.Equal(t, 2, imageResp.Usage.PromptTokensDetails.CachedTokens)
+}
+
+func TestBuildImageHandleSyncPayloadUsesLeaseAndKeepsImageParams(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+	image_handle_setting.GetImageHandleSetting().InternalBaseURL = "http://new-api.internal"
+	image_handle_setting.GetImageHandleSetting().InternalSecretID = "image_handle_1"
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set(common.RequestIdKey, "req-sync-payload")
+
+	n := uint(2)
+	request := dto.ImageRequest{
+		Prompt:            "test prompt",
+		N:                 &n,
+		Size:              "1024x1024",
+		Quality:           "auto",
+		OutputFormat:      []byte(`"png"`),
+		OutputCompression: []byte(`0`),
+		Background:        []byte(`"transparent"`),
+		ExtraFields:       []byte(`{"seed":123}`),
+	}
+	info := &relaycommon.RelayInfo{
+		UserId:          44,
+		OriginModelName: "gpt-image-2",
+		UsingGroup:      "default",
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         123,
+			UpstreamModelName: "gpt-image-2",
+		},
+	}
+
+	body, err := buildImageHandleSyncPayload(ctx, info, request, "task_sync", "lease_sync", "generation")
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.NotContains(t, payload, "callback")
+	require.NotContains(t, string(body), "api_key")
+	require.Equal(t, "task_sync", payload["client_task_id"])
+	require.Equal(t, "gpt-image-2", payload["model"])
+	require.Equal(t, "url", payload["result_data_format"])
+
+	executor := payload["executor"].(map[string]any)
+	require.Equal(t, "provider_direct_lease", executor["type"])
+	require.Equal(t, "lease_sync", executor["lease_id"])
+	require.Equal(t, "http://new-api.internal/api/internal/image/credential-leases/lease_sync/resolve", executor["resolve_url"])
+	require.Equal(t, "image_handle_1", executor["secret_id"])
+
+	params := payload["parameters"].(map[string]any)
+	require.Equal(t, "1024x1024", params["size"])
+	require.Equal(t, "auto", params["quality"])
+	require.Equal(t, float64(2), params["n"])
+	require.Equal(t, "png", params["output_format"])
+	require.Equal(t, float64(0), params["output_compression"])
+	require.Equal(t, "transparent", params["background"])
+
+	providerOptions := payload["provider_options"].(map[string]any)
+	require.Equal(t, float64(123), providerOptions["seed"])
+}
+
+func TestBuildImageHandleSyncPayloadUsesBase64ResultFormat(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+	image_handle_setting.GetImageHandleSetting().InternalBaseURL = "http://new-api.internal"
+	image_handle_setting.GetImageHandleSetting().InternalSecretID = "image_handle_1"
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set(common.RequestIdKey, "req-sync-base64")
+
+	request := dto.ImageRequest{
+		Prompt:         "test prompt",
+		ResponseFormat: "b64_json",
+	}
+	info := &relaycommon.RelayInfo{
+		UserId:          44,
+		OriginModelName: "gpt-image-2",
+		UsingGroup:      "default",
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         123,
+			UpstreamModelName: "gpt-image-2",
+		},
+	}
+
+	body, err := buildImageHandleSyncPayload(ctx, info, request, "task_sync", "lease_sync", "generation")
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, "base64", payload["result_data_format"])
+	params := payload["parameters"].(map[string]any)
+	require.Equal(t, "b64_json", params["response_format"])
+}
+
+func TestImageHandleSyncResultDataFormatUsesConfiguredDefault(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+
+	*image_handle_setting.GetImageHandleSetting() = image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
+		SyncImageResultPolicy:  image_handle_setting.SyncImageResultFormatPolicyFollowRequest,
+		SyncImageDefaultFormat: image_handle_setting.SyncImageDefaultResultFormatBase64,
+	})
+
+	require.Equal(t, imageHandleResultFormatBase64, imageHandleSyncResultDataFormat(dto.ImageRequest{}))
+	require.Equal(t, imageHandleResultFormatURL, imageHandleSyncResultDataFormat(dto.ImageRequest{ResponseFormat: "url"}))
+}
+
+func TestImageHandleSyncResultDataFormatForceModesOverrideRequest(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+
+	*image_handle_setting.GetImageHandleSetting() = image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
+		SyncImageResultPolicy:  image_handle_setting.SyncImageResultFormatPolicyForceURL,
+		SyncImageDefaultFormat: image_handle_setting.SyncImageDefaultResultFormatBase64,
+	})
+	require.Equal(t, imageHandleResultFormatURL, imageHandleSyncResultDataFormat(dto.ImageRequest{ResponseFormat: "b64_json"}))
+
+	image_handle_setting.GetImageHandleSetting().SyncImageResultPolicy = image_handle_setting.SyncImageResultFormatPolicyForceBase64
+	require.Equal(t, imageHandleResultFormatBase64, imageHandleSyncResultDataFormat(dto.ImageRequest{ResponseFormat: "url"}))
+}
+
+func TestBuildImageHandleSyncPayloadForceURLOverridesRequestResponseFormat(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+	*image_handle_setting.GetImageHandleSetting() = image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
+		InternalBaseURL:        "http://new-api.internal",
+		InternalSecretID:       "image_handle_1",
+		SyncImageResultPolicy:  image_handle_setting.SyncImageResultFormatPolicyForceURL,
+		SyncImageDefaultFormat: image_handle_setting.SyncImageDefaultResultFormatURL,
+	})
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set(common.RequestIdKey, "req-sync-force-url")
+
+	info := &relaycommon.RelayInfo{
+		UserId:          44,
+		OriginModelName: "gpt-image-2",
+		UsingGroup:      "default",
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         123,
+			UpstreamModelName: "gpt-image-2",
+		},
+	}
+
+	body, err := buildImageHandleSyncPayload(ctx, info, dto.ImageRequest{Prompt: "test", ResponseFormat: "b64_json"}, "task_sync", "lease_sync", "generation")
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, "url", payload["result_data_format"])
+	params := payload["parameters"].(map[string]any)
+	require.Equal(t, "url", params["response_format"])
 }
 
 func TestImageHelperForwardsXAIResolutionAndAspectRatio(t *testing.T) {

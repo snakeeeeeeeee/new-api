@@ -83,6 +83,7 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	assert.Equal(t, "task_external_id", payload["client_task_id"])
 	assert.Equal(t, "gpt-image-2", payload["model"])
 	assert.Equal(t, "generation", payload["operation"])
+	assert.Equal(t, "url", payload["result_data_format"])
 	input := payload["input"].(map[string]any)
 	assert.Equal(t, "a clean product photo", input["text"])
 	parameters := payload["parameters"].(map[string]any)
@@ -99,6 +100,24 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	assert.Equal(t, "image_handle_1", executor["secret_id"])
 	metadata := payload["metadata"].(map[string]any)
 	assert.Equal(t, true, metadata["debug_upstream"])
+}
+
+func TestValidateRequestRejectsAsyncBase64ResultFormat(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", strings.NewReader(`{
+		"model":"gpt-image-2",
+		"prompt":"a clean product photo",
+		"metadata":{"result_data_format":"base64"}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Equal(t, "unsupported_result_data_format", taskErr.Code)
 }
 
 func TestValidateExecutorConfigUsesGlobalCallbackSecretFallback(t *testing.T) {

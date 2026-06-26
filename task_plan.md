@@ -1,20 +1,19 @@
-# Task Plan: ImageHandle provider_direct_lease
+# Task Plan: ImageHandle sync URL/base64 compatibility
 
 ## Goal
-Change async image tasks so new-api selects and locks the real image channel, creates a short-lived credential lease, and submits a `provider_direct_lease` job to image-handle. image-handle resolves the lease before execution, directly calls the real upstream in its worker, uploads R2, and callbacks new-api for billing/assets.
+Support image-handle's latest `result_data_format` contract for gray-enabled synchronous image execution. `/v1/images/generations` and `/v1/images/edits` must keep old direct-upstream behavior when the switch is off, return URL results by default when image-handle sync is enabled, return `b64_json` when the client requests `response_format=b64_json`, and keep ordinary async `/v1/image/tasks` URL-only.
 
 ## Current Phase
-Implementation and regression testing
+Complete
 
 ## Phases
-- [complete] Map current ImageHandle task submission, task persistence, billing, polling, callback, asset creation, and async task config paths.
-- [complete] Replace old internal execute contract with `provider_direct_lease` and lease resolve.
-- [complete] Add `image_credential_leases` model and migration entry.
-- [complete] Refactor `/v1/image/tasks` to create local task + lease before submitting to image-handle.
-- [complete] Add signed resolve endpoint returning the locked real channel `base_url/api_key/model`.
-- [complete] Extend callback parsing for `usage`, `raw_response`, truncation flags, and safe result URLs.
-- [in_progress] Add targeted unit tests and run backend/frontend regression checks.
-- [pending] Run live联调 after image-handle finishes its matching worker changes.
+- [complete] Map current sync image-handle path, async image adaptor, and updated image-handle docs.
+- [complete] Add `result_data_format` to sync payloads and response conversion.
+- [complete] Restrict `/v1/images/edits` sync mode to URL-only input/mask and fall back otherwise.
+- [complete] Reject async `/v1/image/tasks` requests that explicitly ask for base64.
+- [complete] Add unit tests for payloads, URL/base64 response mapping, edit fallback, and async rejection.
+- [complete] Run Go/frontend regression checks.
+- [complete] Build Docker dev and联调 switch-off, URL sync, base64 sync, force_on/force_off, edit URL/non-URL, failed/202 handling as far as local image-handle permits.
 
 ## Decisions Made
 | Decision | Rationale |
@@ -27,8 +26,15 @@ Implementation and regression testing
 | Keep config in Async Task Management | User explicitly wants image-handle executor config there, not in operation settings. |
 | Callback secret remains separate from internal resolve secret | Keeps inbound terminal notification trust separate from credential resolve trust. |
 | Callback/轮询 still use `ApplyTaskResult` | Existing CAS + DB transaction keeps task terminal update and assets creation atomic. |
+| Sync image-handle `base64` is response-only | It must not be saved to assets, callback, or resource center. |
+| Async image tasks remain URL-only | image-handle docs reject `result_data_format=base64` on `/v1/image/tasks`; new-api should fail fast with 400. |
+| Edit sync only for URL inputs | Existing multipart/base64 edit clients must keep old direct-upstream behavior. |
+| Channel override lives in `channels.settings` | `channels.other` is legacy; UI and backend read/write `settings` for `image_handle_sync_mode` and `callback_secret`. |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
 | --- | --- | --- |
 | Old docs and plan still described `new_api_internal execute` | Code review | Rewrote the integration doc and plan to `provider_direct_lease`. |
+| Local image-handle mock edit route returned 415 for multipart edits | Docker联调 | Verified URL edit input reached image-handle sync and new-api refunded on failed terminal status; non-URL multipart edit correctly fell back to direct upstream. The 415 is a mock-new-api multipart parser limitation, not a new-api routing issue. |
+| Channel `force_on` did not appear to work during first SQL test | Docker联调 | Test SQL wrote `image_handle_sync_mode` to legacy `channels.other`; corrected to `channels.settings`, matching frontend/backend field usage. |
+| image-handle 202 processing could not be triggered safely in Docker | Docker联调 | Current local `SYNC_TASK_TIMEOUT_MS` is 300s. Added unit coverage for HTTP 202 -> `image_handle_sync_timeout`; did not wait 300s in Docker. |

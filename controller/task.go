@@ -84,6 +84,9 @@ type ImageHandleConfigRequest struct {
 	InternalSecret          string  `json:"internal_secret"`
 	CallbackSecret          string  `json:"callback_secret"`
 	DebugUpstream           bool    `json:"debug_upstream"`
+	SyncImageEnabled        bool    `json:"sync_image_enabled"`
+	SyncImageResultPolicy   string  `json:"sync_image_result_policy"`
+	SyncImageDefaultFormat  string  `json:"sync_image_default_format"`
 	UsagePrechargeEnabled   *bool   `json:"usage_precharge_enabled"`
 	PrechargeAmountPerImage float64 `json:"precharge_amount_per_image"`
 	PrechargeQuotaPerImage  int     `json:"precharge_quota_per_image"`
@@ -99,6 +102,9 @@ func imageHandleConfigResponse(setting image_handle_setting.ImageHandleSetting) 
 		"internal_secret":            setting.InternalSecret,
 		"callback_secret":            setting.CallbackSecret,
 		"debug_upstream":             setting.DebugUpstream,
+		"sync_image_enabled":         setting.SyncImageEnabled,
+		"sync_image_result_policy":   setting.SyncImageResultPolicy,
+		"sync_image_default_format":  setting.SyncImageDefaultFormat,
 		"usage_precharge_enabled":    setting.UsagePrechargeEnabled,
 		"precharge_amount_per_image": setting.PrechargeAmountPerImage,
 		"precharge_quota_per_image":  setting.PrechargeQuotaPerImage,
@@ -131,6 +137,9 @@ func UpdateImageHandleConfig(c *gin.Context) {
 		InternalSecret:          req.InternalSecret,
 		CallbackSecret:          req.CallbackSecret,
 		DebugUpstream:           req.DebugUpstream,
+		SyncImageEnabled:        req.SyncImageEnabled,
+		SyncImageResultPolicy:   req.SyncImageResultPolicy,
+		SyncImageDefaultFormat:  req.SyncImageDefaultFormat,
 		UsagePrechargeEnabled:   usagePrechargeEnabled,
 		PrechargeAmountPerImage: req.PrechargeAmountPerImage,
 		PrechargeQuotaPerImage:  req.PrechargeQuotaPerImage,
@@ -147,6 +156,9 @@ func UpdateImageHandleConfig(c *gin.Context) {
 		"image_handle_setting.internal_secret":            next.InternalSecret,
 		"image_handle_setting.callback_secret":            strings.TrimSpace(next.CallbackSecret),
 		"image_handle_setting.debug_upstream":             strconv.FormatBool(next.DebugUpstream),
+		"image_handle_setting.sync_image_enabled":         strconv.FormatBool(next.SyncImageEnabled),
+		"image_handle_setting.sync_image_result_policy":   next.SyncImageResultPolicy,
+		"image_handle_setting.sync_image_default_format":  next.SyncImageDefaultFormat,
 		"image_handle_setting.usage_precharge_enabled":    strconv.FormatBool(next.UsagePrechargeEnabled),
 		"image_handle_setting.precharge_amount_per_image": strconv.FormatFloat(next.PrechargeAmountPerImage, 'f', -1, 64),
 		"image_handle_setting.precharge_quota_per_image":  strconv.Itoa(next.PrechargeQuotaPerImage),

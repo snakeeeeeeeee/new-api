@@ -74,37 +74,44 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		writeImageCredentialLeaseError(c, http.StatusGone, "lease_expired", "credential lease is not active", false)
 		return
 	}
-	task, exists, err := model.GetByOnlyTaskId(lease.TaskID)
-	if err != nil {
-		writeImageCredentialLeaseError(c, http.StatusInternalServerError, "task_query_failed", err.Error(), true)
-		return
-	}
-	if !exists || task == nil || task.Platform != imageHandleTaskPlatform() {
-		writeImageCredentialLeaseError(c, http.StatusNotFound, "task_not_found", "task not found", false)
-		return
-	}
-	if req.ClientTaskID != "" && req.ClientTaskID != task.TaskID {
+	var task *model.Task
+	if lease.TaskRecordID > 0 {
+		var exists bool
+		task, exists, err = model.GetByOnlyTaskId(lease.TaskID)
+		if err != nil {
+			writeImageCredentialLeaseError(c, http.StatusInternalServerError, "task_query_failed", err.Error(), true)
+			return
+		}
+		if !exists || task == nil || task.Platform != imageHandleTaskPlatform() {
+			writeImageCredentialLeaseError(c, http.StatusNotFound, "task_not_found", "task not found", false)
+			return
+		}
+		if req.ClientTaskID != "" && req.ClientTaskID != task.TaskID {
+			writeImageCredentialLeaseError(c, http.StatusConflict, "task_mismatch", "client_task_id does not match lease", false)
+			return
+		}
+		if req.ProviderTaskID != "" && task.PrivateData.UpstreamTaskID != "" && req.ProviderTaskID != task.PrivateData.UpstreamTaskID {
+			writeImageCredentialLeaseError(c, http.StatusConflict, "task_mismatch", "provider_task_id does not match task", false)
+			return
+		}
+		if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
+			writeImageCredentialLeaseError(c, http.StatusConflict, "task_already_finished", "task already finished", false)
+			return
+		}
+		if task.ID != lease.TaskRecordID {
+			writeImageCredentialLeaseError(c, http.StatusConflict, "task_mismatch", "task record does not match lease", false)
+			return
+		}
+		if task.ChannelId != lease.ChannelID {
+			writeImageCredentialLeaseError(c, http.StatusConflict, "channel_mismatch", "task channel does not match lease", false)
+			return
+		}
+	} else if req.ClientTaskID != "" && lease.TaskID != "" && req.ClientTaskID != lease.TaskID {
 		writeImageCredentialLeaseError(c, http.StatusConflict, "task_mismatch", "client_task_id does not match lease", false)
-		return
-	}
-	if req.ProviderTaskID != "" && task.PrivateData.UpstreamTaskID != "" && req.ProviderTaskID != task.PrivateData.UpstreamTaskID {
-		writeImageCredentialLeaseError(c, http.StatusConflict, "task_mismatch", "provider_task_id does not match task", false)
 		return
 	}
 	if req.Operation != "" && lease.Operation != "" && req.Operation != lease.Operation {
 		writeImageCredentialLeaseError(c, http.StatusConflict, "model_not_supported", "request operation does not match lease", false)
-		return
-	}
-	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
-		writeImageCredentialLeaseError(c, http.StatusConflict, "task_already_finished", "task already finished", false)
-		return
-	}
-	if lease.TaskRecordID > 0 && task.ID != lease.TaskRecordID {
-		writeImageCredentialLeaseError(c, http.StatusConflict, "task_mismatch", "task record does not match lease", false)
-		return
-	}
-	if task.ChannelId != lease.ChannelID {
-		writeImageCredentialLeaseError(c, http.StatusConflict, "channel_mismatch", "task channel does not match lease", false)
 		return
 	}
 	channel, err := model.GetChannelById(lease.ChannelID, true)
@@ -130,10 +137,10 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		return
 	}
 	modelName := lease.Model
-	if modelName == "" {
+	if modelName == "" && task != nil {
 		modelName = task.Properties.UpstreamModelName
 	}
-	if modelName == "" {
+	if modelName == "" && task != nil {
 		modelName = task.Properties.OriginModelName
 	}
 	if req.Model != "" && modelName != "" && req.Model != modelName {
@@ -144,7 +151,7 @@ func ResolveImageCredentialLease(c *gin.Context) {
 	baseURL := resolveChannelBaseURL(channel)
 	if service.GetImageHandleExecutorConfig().DebugUpstream {
 		imageRequest := ""
-		if task.PrivateData.ImageRequest != nil {
+		if task != nil && task.PrivateData.ImageRequest != nil {
 			imageRequest = string(task.PrivateData.ImageRequest)
 		}
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf(

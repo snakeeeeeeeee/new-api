@@ -19,6 +19,9 @@ type ImageHandleExecutorConfig struct {
 	InternalSecret          string
 	CallbackSecret          string
 	DebugUpstream           bool
+	SyncImageEnabled        bool
+	SyncImageResultPolicy   string
+	SyncImageDefaultFormat  string
 	UsagePrechargeEnabled   bool
 	PrechargeAmountPerImage float64
 	PrechargeQuotaPerImage  int
@@ -34,6 +37,9 @@ func GetImageHandleExecutorConfig() ImageHandleExecutorConfig {
 		InternalSecret:          setting.InternalSecret,
 		CallbackSecret:          setting.CallbackSecret,
 		DebugUpstream:           setting.DebugUpstream,
+		SyncImageEnabled:        setting.SyncImageEnabled,
+		SyncImageResultPolicy:   setting.SyncImageResultPolicy,
+		SyncImageDefaultFormat:  setting.SyncImageDefaultFormat,
 		UsagePrechargeEnabled:   setting.UsagePrechargeEnabled,
 		PrechargeAmountPerImage: setting.PrechargeAmountPerImage,
 		PrechargeQuotaPerImage:  setting.PrechargeQuotaPerImage,

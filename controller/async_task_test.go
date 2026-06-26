@@ -106,6 +106,9 @@ func TestUpdateImageHandleConfigPersistsAndEchoesSecrets(t *testing.T) {
 		"internal_secret":"internal-secret",
 		"callback_secret":"fallback-callback-secret",
 		"debug_upstream":true,
+		"sync_image_enabled":true,
+		"sync_image_result_policy":"force_base64",
+		"sync_image_default_format":"base64",
 		"usage_precharge_enabled":true,
 		"precharge_amount_per_image":1.25
 	}`)
@@ -127,6 +130,9 @@ func TestUpdateImageHandleConfigPersistsAndEchoesSecrets(t *testing.T) {
 	require.Contains(t, string(resp.Data), `"internal_secret":"internal-secret"`)
 	require.Contains(t, string(resp.Data), `"callback_secret":"fallback-callback-secret"`)
 	require.Contains(t, string(resp.Data), `"debug_upstream":true`)
+	require.Contains(t, string(resp.Data), `"sync_image_enabled":true`)
+	require.Contains(t, string(resp.Data), `"sync_image_result_policy":"force_base64"`)
+	require.Contains(t, string(resp.Data), `"sync_image_default_format":"base64"`)
 	require.Contains(t, string(resp.Data), `"usage_precharge_enabled":true`)
 	require.Contains(t, string(resp.Data), `"precharge_amount_per_image":1.25`)
 	require.Contains(t, string(resp.Data), `"precharge_quota_per_image":625000`)
@@ -137,6 +143,15 @@ func TestUpdateImageHandleConfigPersistsAndEchoesSecrets(t *testing.T) {
 	var debugOption model.Option
 	require.NoError(t, db.First(&debugOption, "key = ?", "image_handle_setting.debug_upstream").Error)
 	assert.Equal(t, "true", debugOption.Value)
+	var syncOption model.Option
+	require.NoError(t, db.First(&syncOption, "key = ?", "image_handle_setting.sync_image_enabled").Error)
+	assert.Equal(t, "true", syncOption.Value)
+	var syncPolicyOption model.Option
+	require.NoError(t, db.First(&syncPolicyOption, "key = ?", "image_handle_setting.sync_image_result_policy").Error)
+	assert.Equal(t, "force_base64", syncPolicyOption.Value)
+	var syncDefaultFormatOption model.Option
+	require.NoError(t, db.First(&syncDefaultFormatOption, "key = ?", "image_handle_setting.sync_image_default_format").Error)
+	assert.Equal(t, "base64", syncDefaultFormatOption.Value)
 	var prechargeAmountOption model.Option
 	require.NoError(t, db.First(&prechargeAmountOption, "key = ?", "image_handle_setting.precharge_amount_per_image").Error)
 	assert.Equal(t, "1.25", prechargeAmountOption.Value)
@@ -145,6 +160,9 @@ func TestUpdateImageHandleConfigPersistsAndEchoesSecrets(t *testing.T) {
 	assert.Equal(t, "625000", prechargeQuotaOption.Value)
 	assert.Equal(t, "provider-key", image_handle_setting.GetImageHandleSetting().APIKey)
 	assert.True(t, image_handle_setting.GetImageHandleSetting().DebugUpstream)
+	assert.True(t, image_handle_setting.GetImageHandleSetting().SyncImageEnabled)
+	assert.Equal(t, "force_base64", image_handle_setting.GetImageHandleSetting().SyncImageResultPolicy)
+	assert.Equal(t, "base64", image_handle_setting.GetImageHandleSetting().SyncImageDefaultFormat)
 	assert.True(t, image_handle_setting.GetImageHandleSetting().UsagePrechargeEnabled)
 	assert.InDelta(t, 1.25, image_handle_setting.GetImageHandleSetting().PrechargeAmountPerImage, 0.000001)
 	assert.Equal(t, 625000, image_handle_setting.GetImageHandleSetting().PrechargeQuotaPerImage)
@@ -178,6 +196,38 @@ func TestUpdateImageHandleConfigRejectsSharedSecrets(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
 	assert.False(t, resp.Success)
 	assert.Contains(t, resp.Message, "不能和 callback")
+}
+
+func TestUpdateImageHandleConfigRequiresPrechargeAmountWhenEnabled(t *testing.T) {
+	setupInviteCodeControllerTestDB(t)
+	resetOptionMapForConfigControllerTest(t)
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	})
+
+	body := []byte(`{
+		"base_url":"http://image-handle:8787",
+		"api_key":"provider-key",
+		"internal_base_url":"http://new-api:3000",
+		"internal_secret_id":"image_handle_1",
+		"internal_secret":"internal-secret",
+		"callback_secret":"callback-secret",
+		"usage_precharge_enabled":true,
+		"precharge_amount_per_image":0
+	}`)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/task/async/image-handle/config", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateImageHandleConfig(ctx)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	assert.False(t, resp.Success)
+	assert.Contains(t, resp.Message, "每张图预扣费用必须大于 0")
 }
 
 func TestGetImageHandleConfigBackfillsAmountFromLegacyQuota(t *testing.T) {

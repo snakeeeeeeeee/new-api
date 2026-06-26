@@ -61,6 +61,11 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = relayInfo.UpstreamModelName
 	}
+	if executionMode := common.GetContextKeyString(ctx, constant.ContextKeyExecutionMode); executionMode != "" {
+		other["execution_mode"] = executionMode
+	} else {
+		other["execution_mode"] = "direct_upstream"
+	}
 
 	isSystemPromptOverwritten := common.GetContextKeyBool(ctx, constant.ContextKeySystemPromptOverride)
 	if isSystemPromptOverwritten {

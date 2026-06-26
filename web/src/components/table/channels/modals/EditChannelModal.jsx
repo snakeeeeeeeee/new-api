@@ -243,6 +243,7 @@ const EditChannelModal = (props) => {
     // 企业账户设置
     is_enterprise_account: false,
     image_response_adapter: '',
+    image_handle_sync_mode: 'inherit',
     callback_secret: '',
     // 字段透传控制默认值
     allow_service_tier: false,
@@ -892,6 +893,8 @@ const EditChannelModal = (props) => {
             parsedSettings.azure_responses_version || '';
           data.image_response_adapter =
             parsedSettings.image_response_adapter || '';
+          data.image_handle_sync_mode =
+            parsedSettings.image_handle_sync_mode || 'inherit';
           data.callback_secret = parsedSettings.callback_secret || '';
           // 读取 Vertex 密钥格式
           data.vertex_key_type = parsedSettings.vertex_key_type || 'json';
@@ -936,6 +939,7 @@ const EditChannelModal = (props) => {
           console.error('解析其他设置失败:', error);
           data.azure_responses_version = '';
           data.image_response_adapter = '';
+          data.image_handle_sync_mode = 'inherit';
           data.callback_secret = '';
           data.region = '';
           data.vertex_key_type = 'json';
@@ -958,6 +962,7 @@ const EditChannelModal = (props) => {
       } else {
         // 兼容历史数据：老渠道没有 settings 时，默认按 json 展示
         data.image_response_adapter = '';
+        data.image_handle_sync_mode = 'inherit';
         data.callback_secret = '';
         data.vertex_key_type = 'json';
         data.aws_key_type = 'ak_sk';
@@ -1810,6 +1815,14 @@ const EditChannelModal = (props) => {
       delete settings.image_response_adapter;
     }
 
+    const imageHandleSyncMode =
+      localInputs.image_handle_sync_mode || 'inherit';
+    if (imageHandleSyncMode && imageHandleSyncMode !== 'inherit') {
+      settings.image_handle_sync_mode = imageHandleSyncMode;
+    } else if ('image_handle_sync_mode' in settings) {
+      delete settings.image_handle_sync_mode;
+    }
+
     if (localInputs.callback_secret && localInputs.callback_secret.trim()) {
       settings.callback_secret = localInputs.callback_secret.trim();
     } else if ('callback_secret' in settings) {
@@ -1887,6 +1900,7 @@ const EditChannelModal = (props) => {
     delete localInputs.system_prompt_override;
     delete localInputs.is_enterprise_account;
     delete localInputs.image_response_adapter;
+    delete localInputs.image_handle_sync_mode;
     delete localInputs.callback_secret;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
@@ -2570,6 +2584,27 @@ const EditChannelModal = (props) => {
                   {inputs.type === 1 && (
                     <Form.Switch field='force_format' label={t('强制格式化')} initValue={inputs.force_format === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelSettingsChange('force_format', value)} extraText={t('强制将响应格式化为 OpenAI 标准格式（只适用于OpenAI渠道类型）')} />
                   )}
+
+                  <Form.Select
+                    field='image_handle_sync_mode'
+                    label={t('image-handle 同步图片执行')}
+                    placeholder={t('继承全局')}
+                    value={inputs.image_handle_sync_mode || 'inherit'}
+                    optionList={[
+                      { label: t('继承全局'), value: 'inherit' },
+                      { label: t('强制开启'), value: 'force_on' },
+                      { label: t('强制关闭'), value: 'force_off' },
+                    ]}
+                    onChange={(value) =>
+                      handleChannelOtherSettingsChange(
+                        'image_handle_sync_mode',
+                        value || 'inherit',
+                      )
+                    }
+                    extraText={t(
+                      '仅影响同步图片接口。强制开启会让该真实渠道经 image-handle /v1/image/tasks/sync 执行；强制关闭会保持老直连逻辑。',
+                    )}
+                  />
 
                   {inputs.type === 1 && (
                     <Form.Select

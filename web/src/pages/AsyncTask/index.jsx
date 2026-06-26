@@ -24,6 +24,7 @@ import {
   Col,
   Form,
   Input,
+  InputNumber,
   Row,
   Select,
   Spin,
@@ -52,10 +53,24 @@ const DEFAULT_IMAGE_HANDLE_CONFIG = {
   internal_secret: '',
   callback_secret: '',
   debug_upstream: false,
+  sync_image_enabled: false,
+  sync_image_result_policy: 'follow_request',
+  sync_image_default_format: 'url',
   usage_precharge_enabled: true,
   precharge_amount_per_image: 0,
   configured: false,
 };
+
+const SYNC_IMAGE_RESULT_POLICY_OPTIONS = [
+  { value: 'follow_request', label: '跟随请求参数' },
+  { value: 'force_url', label: '强制 URL' },
+  { value: 'force_base64', label: '强制 Base64' },
+];
+
+const SYNC_IMAGE_DEFAULT_FORMAT_OPTIONS = [
+  { value: 'url', label: 'URL' },
+  { value: 'base64', label: 'Base64' },
+];
 
 const PLATFORM_LABELS = {
   24: 'Gemini',
@@ -307,6 +322,17 @@ const AsyncTask = () => {
     setImageHandleConfig((prev) => ({ ...prev, [key]: value }));
   };
 
+  const validateImageHandleConfig = () => {
+    if (
+      Boolean(imageHandleConfig.usage_precharge_enabled) &&
+      parseMoneyAmount(imageHandleConfig.precharge_amount_per_image) <= 0
+    ) {
+      showError(t('开启异步图片预扣估算时，请填写大于 0 的每张图预扣费用'));
+      return false;
+    }
+    return true;
+  };
+
   const renderImageHandleInput = (key, label, placeholder, extraText) => (
     <Form.Slot label={label} extraText={extraText}>
       <Input
@@ -320,6 +346,9 @@ const AsyncTask = () => {
   );
 
   const saveImageHandleConfig = async () => {
+    if (!validateImageHandleConfig()) {
+      return;
+    }
     setSavingImageHandle(true);
     try {
       const res = await API.put('/api/task/async/image-handle/config', {
@@ -331,6 +360,11 @@ const AsyncTask = () => {
         internal_secret: imageHandleConfig.internal_secret || '',
         callback_secret: imageHandleConfig.callback_secret || '',
         debug_upstream: Boolean(imageHandleConfig.debug_upstream),
+        sync_image_enabled: Boolean(imageHandleConfig.sync_image_enabled),
+        sync_image_result_policy:
+          imageHandleConfig.sync_image_result_policy || 'follow_request',
+        sync_image_default_format:
+          imageHandleConfig.sync_image_default_format || 'url',
         usage_precharge_enabled: Boolean(
           imageHandleConfig.usage_precharge_enabled,
         ),
@@ -606,43 +640,150 @@ const AsyncTask = () => {
                   />
                 </Form.Slot>
               </Col>
-              <Col xs={24} md={12}>
-                <Form.Slot
-                  label={t('异步图片预扣估算')}
-                  extraText={t(
-                    '仅影响提交阶段的预扣估算，不决定终态计费类型；按量模型按 callback usage 真实结算，按次模型成功保持预扣、失败退款。',
-                  )}
+              <Col xs={24}>
+                <div
+                  style={{
+                    border: '1px solid var(--semi-color-border)',
+                    borderRadius: 8,
+                    padding: 16,
+                    marginBottom: 12,
+                  }}
                 >
-                  <Switch
-                    checked={Boolean(imageHandleConfig.usage_precharge_enabled)}
-                    onChange={(value) =>
-                      updateImageHandleConfig(
-                        'usage_precharge_enabled',
-                        value,
-                      )
-                    }
-                  />
-                </Form.Slot>
+                  <Text strong>{t('同步图片执行')}</Text>
+                  <div style={{ marginTop: 4, marginBottom: 12 }}>
+                    <Text type='tertiary'>
+                      {t(
+                        '开启后，仅对继承全局或强制开启的渠道，将 /v1/images/generations 和 /v1/images/edits 交给 image-handle 同步等待执行。',
+                      )}
+                    </Text>
+                  </div>
+                  <Row gutter={[16, 12]}>
+                    <Col xs={24} md={8}>
+                      <Form.Slot label={t('经 image-handle 执行')}>
+                        <Switch
+                          checked={Boolean(imageHandleConfig.sync_image_enabled)}
+                          onChange={(value) =>
+                            updateImageHandleConfig('sync_image_enabled', value)
+                          }
+                        />
+                      </Form.Slot>
+                    </Col>
+                    <Col xs={24} md={8}>
+                      <Form.Slot
+                        label={t('返回格式策略')}
+                        extraText={t(
+                          '跟随请求参数时，response_format=b64_json 返回 Base64，否则使用默认格式。',
+                        )}
+                      >
+                        <Select
+                          style={{ width: '100%' }}
+                          value={
+                            imageHandleConfig.sync_image_result_policy ||
+                            'follow_request'
+                          }
+                          optionList={SYNC_IMAGE_RESULT_POLICY_OPTIONS.map(
+                            (item) => ({ ...item, label: t(item.label) }),
+                          )}
+                          onChange={(value) =>
+                            updateImageHandleConfig(
+                              'sync_image_result_policy',
+                              value,
+                            )
+                          }
+                        />
+                      </Form.Slot>
+                    </Col>
+                    <Col xs={24} md={8}>
+                      <Form.Slot
+                        label={t('未指定时默认格式')}
+                        extraText={t(
+                          '仅在返回格式策略为跟随请求参数时生效。',
+                        )}
+                      >
+                        <Select
+                          style={{ width: '100%' }}
+                          disabled={
+                            (imageHandleConfig.sync_image_result_policy ||
+                              'follow_request') !== 'follow_request'
+                          }
+                          value={
+                            imageHandleConfig.sync_image_default_format || 'url'
+                          }
+                          optionList={SYNC_IMAGE_DEFAULT_FORMAT_OPTIONS.map(
+                            (item) => ({ ...item, label: t(item.label) }),
+                          )}
+                          onChange={(value) =>
+                            updateImageHandleConfig(
+                              'sync_image_default_format',
+                              value,
+                            )
+                          }
+                        />
+                      </Form.Slot>
+                    </Col>
+                  </Row>
+                </div>
               </Col>
-              <Col xs={24} md={12}>
-                <Form.Slot
-                  label={t('每张图预扣费用（$）')}
-                  extraText={t(
-                    '单位为美元。填 1 表示每张图先预扣 $1；n=2 只会让预扣乘 2，终态结算不会对 callback 总 usage 再乘 n。',
-                  )}
+              <Col xs={24}>
+                <div
+                  style={{
+                    border: '1px solid var(--semi-color-border)',
+                    borderRadius: 8,
+                    padding: 16,
+                    marginBottom: 12,
+                  }}
                 >
-                  <Input
-                    placeholder='0.01'
-                    style={{ width: '100%' }}
-                    value={imageHandleConfig.precharge_amount_per_image ?? '0'}
-                    onChange={(value) =>
-                      updateImageHandleConfig(
-                        'precharge_amount_per_image',
-                        normalizeMoneyInput(value),
-                      )
-                    }
-                  />
-                </Form.Slot>
+                  <Text strong>{t('异步图片预扣估算')}</Text>
+                  <div style={{ marginTop: 4, marginBottom: 12 }}>
+                    <Text type='tertiary'>
+                      {t(
+                        '仅影响提交阶段的预扣估算，不决定终态计费类型；按量模型按 callback usage 真实结算，按次模型成功保持预扣、失败退款。',
+                      )}
+                    </Text>
+                  </div>
+                  <Row gutter={[16, 12]}>
+                    <Col xs={24} md={8}>
+                      <Form.Slot label={t('启用预扣估算')}>
+                        <Switch
+                          checked={Boolean(
+                            imageHandleConfig.usage_precharge_enabled,
+                          )}
+                          onChange={(value) =>
+                            updateImageHandleConfig(
+                              'usage_precharge_enabled',
+                              value,
+                            )
+                          }
+                        />
+                      </Form.Slot>
+                    </Col>
+                    <Col xs={24} md={16}>
+                      <Form.Slot
+                        label={t('每张图预扣费用（$）')}
+                        extraText={t(
+                          '单位为美元。开启预扣估算时必填且必须大于 0；n=2 只会让预扣乘 2，终态结算不会对 callback 总 usage 再乘 n。',
+                        )}
+                      >
+                        <Input
+                          placeholder='0.01'
+                          style={{ width: '100%' }}
+                          disabled={
+                            !Boolean(imageHandleConfig.usage_precharge_enabled)
+                          }
+                          value={
+                            imageHandleConfig.precharge_amount_per_image ?? '0'
+                          }
+                          onChange={(value) =>
+                            updateImageHandleConfig(
+                              'precharge_amount_per_image',
+                              normalizeMoneyInput(value),
+                            )
+                          }
+                        />
+                      </Form.Slot>
+                    </Col>
+                  </Row>
+                </div>
               </Col>
             </Row>
             <Button

@@ -13,6 +13,15 @@ import (
 
 const DefaultInternalSecretID = "image_handle_1"
 
+const (
+	SyncImageResultFormatPolicyFollowRequest = "follow_request"
+	SyncImageResultFormatPolicyForceURL      = "force_url"
+	SyncImageResultFormatPolicyForceBase64   = "force_base64"
+
+	SyncImageDefaultResultFormatURL    = "url"
+	SyncImageDefaultResultFormatBase64 = "base64"
+)
+
 type ImageHandleSetting struct {
 	BaseURL                 string  `json:"base_url"`
 	APIKey                  string  `json:"api_key"`
@@ -21,6 +30,9 @@ type ImageHandleSetting struct {
 	InternalSecret          string  `json:"internal_secret"`
 	CallbackSecret          string  `json:"callback_secret"`
 	DebugUpstream           bool    `json:"debug_upstream"`
+	SyncImageEnabled        bool    `json:"sync_image_enabled"`
+	SyncImageResultPolicy   string  `json:"sync_image_result_policy"`
+	SyncImageDefaultFormat  string  `json:"sync_image_default_format"`
 	UsagePrechargeEnabled   bool    `json:"usage_precharge_enabled"`
 	PrechargeAmountPerImage float64 `json:"precharge_amount_per_image"`
 	PrechargeQuotaPerImage  int     `json:"precharge_quota_per_image"`
@@ -41,6 +53,9 @@ func envFallbackSetting() ImageHandleSetting {
 		InternalSecret:          common.GetEnvOrDefaultString("IMAGE_HANDLE_INTERNAL_SECRET", ""),
 		CallbackSecret:          common.GetEnvOrDefaultString("IMAGE_HANDLE_CALLBACK_SECRET", ""),
 		DebugUpstream:           false,
+		SyncImageEnabled:        common.GetEnvOrDefaultBool("IMAGE_HANDLE_SYNC_IMAGE_ENABLED", false),
+		SyncImageResultPolicy:   common.GetEnvOrDefaultString("IMAGE_HANDLE_SYNC_IMAGE_RESULT_POLICY", SyncImageResultFormatPolicyFollowRequest),
+		SyncImageDefaultFormat:  common.GetEnvOrDefaultString("IMAGE_HANDLE_SYNC_IMAGE_DEFAULT_FORMAT", SyncImageDefaultResultFormatURL),
 		UsagePrechargeEnabled:   common.GetEnvOrDefaultBool("IMAGE_HANDLE_USAGE_PRECHARGE_ENABLED", true),
 		PrechargeAmountPerImage: getEnvOrDefaultFloat64("IMAGE_HANDLE_PRECHARGE_AMOUNT_PER_IMAGE", 0),
 		PrechargeQuotaPerImage:  common.GetEnvOrDefault("IMAGE_HANDLE_PRECHARGE_QUOTA_PER_IMAGE", 0),
@@ -71,6 +86,8 @@ func NormalizeSetting(setting ImageHandleSetting) ImageHandleSetting {
 	if setting.InternalSecretID == "" {
 		setting.InternalSecretID = DefaultInternalSecretID
 	}
+	setting.SyncImageResultPolicy = NormalizeSyncImageResultPolicy(setting.SyncImageResultPolicy)
+	setting.SyncImageDefaultFormat = NormalizeSyncImageDefaultFormat(setting.SyncImageDefaultFormat)
 	setting.InternalSecret = strings.TrimSpace(setting.InternalSecret)
 	setting.CallbackSecret = strings.TrimSpace(setting.CallbackSecret)
 	if setting.PrechargeQuotaPerImage < 0 {
@@ -92,6 +109,30 @@ func NormalizeSetting(setting ImageHandleSetting) ImageHandleSetting {
 		setting.PrechargeAmountPerImage = float64(setting.PrechargeQuotaPerImage) / common.QuotaPerUnit
 	}
 	return setting
+}
+
+func NormalizeSyncImageResultPolicy(value string) string {
+	switch strings.TrimSpace(value) {
+	case SyncImageResultFormatPolicyForceURL:
+		return SyncImageResultFormatPolicyForceURL
+	case SyncImageResultFormatPolicyForceBase64:
+		return SyncImageResultFormatPolicyForceBase64
+	case SyncImageResultFormatPolicyFollowRequest, "":
+		return SyncImageResultFormatPolicyFollowRequest
+	default:
+		return SyncImageResultFormatPolicyFollowRequest
+	}
+}
+
+func NormalizeSyncImageDefaultFormat(value string) string {
+	switch strings.TrimSpace(value) {
+	case SyncImageDefaultResultFormatBase64:
+		return SyncImageDefaultResultFormatBase64
+	case SyncImageDefaultResultFormatURL, "":
+		return SyncImageDefaultResultFormatURL
+	default:
+		return SyncImageDefaultResultFormatURL
+	}
 }
 
 func ApplyEnvFallback() {
@@ -127,6 +168,9 @@ func Validate(setting ImageHandleSetting) error {
 	}
 	if setting.PrechargeAmountPerImage < 0 {
 		return fmt.Errorf("每张图预扣费用不能为负数")
+	}
+	if setting.UsagePrechargeEnabled && setting.PrechargeAmountPerImage <= 0 && setting.PrechargeQuotaPerImage <= 0 {
+		return fmt.Errorf("开启异步图片预扣估算时，每张图预扣费用必须大于 0")
 	}
 	return nil
 }

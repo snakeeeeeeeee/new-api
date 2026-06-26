@@ -37,6 +37,20 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
+	if canUseImageHandleSyncForRequest(info, request) {
+		usage, syncErr := relayImageHandleSync(c, info, *request)
+		if syncErr != nil {
+			return syncErr
+		}
+		imageN := uint(1)
+		if request.N != nil {
+			imageN = *request.N
+		}
+		normalizeImageUsage(usage, imageN)
+		service.PostTextConsumeQuota(c, info, usage, imageLogContent(request, imageN))
+		return nil
+	}
+	common.SetContextKey(c, constant.ContextKeyExecutionMode, "direct_upstream")
 
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
@@ -120,21 +134,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 	normalizeImageUsage(usage.(*dto.Usage), imageN)
 
-	quality := imageLogQuality(request.Quality)
-
-	var logContent []string
-
-	if len(request.Size) > 0 {
-		logContent = append(logContent, fmt.Sprintf("大小 %s", request.Size))
-	}
-	if len(quality) > 0 {
-		logContent = append(logContent, fmt.Sprintf("品质 %s", quality))
-	}
-	if imageN > 0 {
-		logContent = append(logContent, fmt.Sprintf("生成数量 %d", imageN))
-	}
-
-	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
+	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), imageLogContent(request, imageN))
 	return nil
 }
 
@@ -144,6 +144,24 @@ func imageLogQuality(quality string) string {
 		return "standard"
 	}
 	return quality
+}
+
+func imageLogContent(request *dto.ImageRequest, imageN uint) []string {
+	if request == nil {
+		return nil
+	}
+	quality := imageLogQuality(request.Quality)
+	var logContent []string
+	if len(request.Size) > 0 {
+		logContent = append(logContent, fmt.Sprintf("大小 %s", request.Size))
+	}
+	if len(quality) > 0 {
+		logContent = append(logContent, fmt.Sprintf("品质 %s", quality))
+	}
+	if imageN > 0 {
+		logContent = append(logContent, fmt.Sprintf("生成数量 %d", imageN))
+	}
+	return logContent
 }
 
 func normalizeImageUsage(usage *dto.Usage, imageN uint) {
