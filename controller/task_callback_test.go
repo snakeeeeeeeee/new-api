@@ -183,6 +183,58 @@ func TestResolveImageCredentialLeaseAccepted(t *testing.T) {
 	assert.NotEmpty(t, resolveResp.ExpiresAt)
 }
 
+func TestResolveImageCredentialLeaseSyncLeaseDebugWithoutTaskRecord(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "internal-secret"
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+	image_handle_setting.GetImageHandleSetting().DebugUpstream = true
+	t.Cleanup(func() {
+		image_handle_setting.GetImageHandleSetting().DebugUpstream = false
+	})
+
+	baseURL := "https://real.example/v1"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:          787,
+		Type:        constant.ChannelTypeOpenAI,
+		Name:        "sync-openai-image",
+		Key:         "real-upstream-key",
+		BaseURL:     &baseURL,
+		Status:      common.ChannelStatusEnabled,
+		Models:      "gpt-image-2",
+		Group:       "default",
+		CreatedTime: time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ImageCredentialLease{
+		LeaseID:      "lease_sync_debug",
+		TaskID:       "task_sync_debug",
+		TaskRecordID: 0,
+		UserID:       1,
+		ChannelID:    787,
+		Operation:    "generation",
+		Model:        "gpt-image-2",
+		Status:       model.ImageCredentialLeaseStatusActive,
+		ExpiresAt:    time.Now().Add(30 * time.Minute).Unix(),
+		CreatedAt:    time.Now().Unix(),
+		UpdatedAt:    time.Now().Unix(),
+	}).Error)
+
+	body := []byte(`{"provider_task_id":"imgtask_sync_debug","client_task_id":"task_sync_debug","attempt":1,"operation":"generation","model":"gpt-image-2"}`)
+	ctx, recorder := makeLeaseResolveRequest(t, "lease_sync_debug", body, "image_handle_1", secret)
+
+	require.NotPanics(t, func() {
+		ResolveImageCredentialLease(ctx)
+	})
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var resolveResp imageCredentialLeaseResolveResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resolveResp))
+	assert.Equal(t, "openai_compatible", resolveResp.Provider)
+	assert.Equal(t, "openai_images", resolveResp.RequestFormat)
+	assert.Equal(t, "real-upstream-key", resolveResp.APIKey)
+}
+
 func TestResolveImageCredentialLeaseNormalizesImagesEndpointBaseURL(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	secret := "internal-secret"

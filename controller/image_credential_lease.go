@@ -150,13 +150,15 @@ func ResolveImageCredentialLease(c *gin.Context) {
 	_ = model.MarkImageCredentialLeaseResolved(lease)
 	baseURL := resolveChannelBaseURL(channel)
 	if service.GetImageHandleExecutorConfig().DebugUpstream {
+		taskID := lease.TaskID
 		imageRequest := ""
 		if task != nil && task.PrivateData.ImageRequest != nil {
+			taskID = task.TaskID
 			imageRequest = string(task.PrivateData.ImageRequest)
 		}
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf(
 			"image-handle resolve lease debug: task_id=%s provider_task_id=%s lease_id=%s channel_id=%d channel_type=%d model=%s operation=%s base_url=%s request=%s",
-			task.TaskID,
+			taskID,
 			req.ProviderTaskID,
 			lease.LeaseID,
 			channel.Id,
