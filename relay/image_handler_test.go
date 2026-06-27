@@ -18,6 +18,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -261,6 +262,28 @@ func TestImageHandleSyncStatusErrorTreatsAcceptedAsTimeout(t *testing.T) {
 	require.Equal(t, "image_handle_sync_timeout", string(err.GetErrorCode()))
 }
 
+func TestImageHandleSyncStatusErrorUsesImageHandleHTTPErrorBody(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	body := []byte(`{"error":{"message":"Unknown parameter: 'seed'.","type":"invalid_request_error","code":"unknown_parameter","param":"seed"}}`)
+
+	apiErr := imageHandleSyncStatusError(ctx, http.StatusBadRequest, body)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	require.Equal(t, types.ErrorCode("unknown_parameter"), apiErr.GetErrorCode())
+
+	openAIError, ok := apiErr.RelayError.(types.OpenAIError)
+	require.True(t, ok)
+	require.Equal(t, "Unknown parameter: 'seed'.", openAIError.Message)
+	require.Equal(t, "invalid_request_error", openAIError.Type)
+	require.Equal(t, "seed", openAIError.Param)
+	require.NotEmpty(t, apiErr.Metadata)
+	require.Contains(t, string(apiErr.Metadata), "Unknown parameter")
+}
+
 func TestImageHandleSyncFailedErrorKeepsProviderErrorMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -468,6 +491,43 @@ func TestBuildImageHandleSyncPayloadUsesLeaseAndKeepsImageParams(t *testing.T) {
 	require.Equal(t, float64(0), params["output_compression"])
 	require.Equal(t, "transparent", params["background"])
 
+	require.NotContains(t, payload, "provider_options")
+}
+
+func TestBuildImageHandleSyncPayloadKeepsProviderOptionsForNonGPTImage(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+	image_handle_setting.GetImageHandleSetting().InternalBaseURL = "http://new-api.internal"
+	image_handle_setting.GetImageHandleSetting().InternalSecretID = "image_handle_1"
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set(common.RequestIdKey, "req-sync-payload-seed")
+
+	request := dto.ImageRequest{
+		Model:       "custom-image-model",
+		Prompt:      "test prompt",
+		ExtraFields: []byte(`{"seed":123}`),
+	}
+	info := &relaycommon.RelayInfo{
+		UserId:          44,
+		OriginModelName: "custom-image-model",
+		UsingGroup:      "default",
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         123,
+			UpstreamModelName: "custom-image-model",
+		},
+	}
+
+	body, err := buildImageHandleSyncPayload(ctx, info, request, "task_sync", "lease_sync", "generation")
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
 	providerOptions := payload["provider_options"].(map[string]any)
 	require.Equal(t, float64(123), providerOptions["seed"])
 }

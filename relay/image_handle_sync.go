@@ -112,6 +112,8 @@ type imageHandleSyncUsage struct {
 type imageHandleSyncError struct {
 	Code                 string `json:"code,omitempty"`
 	Message              string `json:"message,omitempty"`
+	Type                 string `json:"type,omitempty"`
+	Param                string `json:"param,omitempty"`
 	Retryable            bool   `json:"retryable,omitempty"`
 	UpstreamStatus       int    `json:"upstream_status,omitempty"`
 	ProviderErrorCode    string `json:"provider_error_code,omitempty"`
@@ -322,7 +324,7 @@ func buildImageHandleSyncPayload(c *gin.Context, info *relaycommon.RelayInfo, re
 		ResultDataFormat: imageHandleSyncResultDataFormat(request),
 		Input:            imageHandleSyncInput{Text: request.Prompt, Images: images, Mask: mask},
 		Parameters:       parameters,
-		ProviderOptions:  imageHandleSyncProviderOptions(request),
+		ProviderOptions:  imageHandleSyncProviderOptions(request, info.UpstreamModelName),
 		Executor: imageHandleSyncExecutor{
 			Type:       "provider_direct_lease",
 			LeaseID:    leaseID,
@@ -778,7 +780,7 @@ func imageHandleSyncShouldForwardResponseFormat(request dto.ImageRequest, upstre
 	return !strings.HasPrefix(strings.ToLower(modelName), "gpt-image-")
 }
 
-func imageHandleSyncProviderOptions(request dto.ImageRequest) map[string]any {
+func imageHandleSyncProviderOptions(request dto.ImageRequest, upstreamModelName string) map[string]any {
 	if len(request.ExtraFields) == 0 {
 		return nil
 	}
@@ -786,7 +788,17 @@ func imageHandleSyncProviderOptions(request dto.ImageRequest) map[string]any {
 	if err := common.Unmarshal(request.ExtraFields, &options); err != nil {
 		return nil
 	}
+	if imageHandleSyncIsGPTImageModel(firstNonEmpty(upstreamModelName, request.Model)) {
+		delete(options, "seed")
+	}
+	if len(options) == 0 {
+		return nil
+	}
 	return options
+}
+
+func imageHandleSyncIsGPTImageModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-image-")
 }
 
 func addRawImageParam(params map[string]any, key string, raw any) {
@@ -1287,8 +1299,10 @@ func imageHandleSyncFailedError(syncResp imageHandleSyncResponse) *types.NewAPIE
 		}
 		if errBody.ProviderErrorType != "" {
 			errorType = errBody.ProviderErrorType
+		} else if errBody.Type != "" {
+			errorType = errBody.Type
 		}
-		param = errBody.ProviderErrorParam
+		param = firstNonEmpty(errBody.ProviderErrorParam, errBody.Param)
 	}
 	openAIError := types.OpenAIError{
 		Message: message,
@@ -1317,9 +1331,57 @@ func imageHandleSyncStatusError(c *gin.Context, statusCode int, responseBody []b
 	}
 	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
 		recordImageHandleSyncErrorDetailFromBody(c, responseBody)
+		if apiErr := imageHandleSyncOpenAIErrorFromHTTPBody(statusCode, responseBody); apiErr != nil {
+			return apiErr
+		}
 		return types.NewOpenAIError(fmt.Errorf("image-handle sync returned %d: %s", statusCode, string(responseBody)), types.ErrorCodeBadResponseStatusCode, statusCode)
 	}
 	return nil
+}
+
+func imageHandleSyncOpenAIErrorFromHTTPBody(statusCode int, responseBody []byte) *types.NewAPIError {
+	if len(responseBody) == 0 {
+		return nil
+	}
+	var body struct {
+		Error *imageHandleSyncError `json:"error"`
+	}
+	if err := common.Unmarshal(responseBody, &body); err != nil || body.Error == nil {
+		return nil
+	}
+	errBody := body.Error
+	message := imageHandleSyncBestErrorMessage(errBody)
+	if message == "" {
+		message = fmt.Sprintf("image-handle sync returned %d", statusCode)
+	}
+	code := firstNonEmpty(errBody.ProviderErrorCode, errBody.Code, string(types.ErrorCodeBadResponseStatusCode))
+	errorType := firstNonEmpty(errBody.ProviderErrorType, errBody.Type, string(types.ErrorTypeUpstreamError))
+	openAIError := types.OpenAIError{
+		Message: message,
+		Type:    errorType,
+		Param:   firstNonEmpty(errBody.ProviderErrorParam, errBody.Param),
+		Code:    code,
+	}
+	apiErr := types.WithOpenAIError(openAIError, statusCode, types.ErrOptionWithSkipRetry())
+	if metadata := imageHandleSyncHTTPErrorMetadata(statusCode, responseBody); len(metadata) > 0 {
+		apiErr.Metadata = metadata
+	}
+	return apiErr
+}
+
+func imageHandleSyncHTTPErrorMetadata(statusCode int, responseBody []byte) json.RawMessage {
+	var body any
+	if err := common.Unmarshal(responseBody, &body); err != nil {
+		body = string(responseBody)
+	}
+	metadata, err := common.Marshal(map[string]any{
+		"image_handle_status": statusCode,
+		"image_handle_body":   body,
+	})
+	if err != nil {
+		return nil
+	}
+	return metadata
 }
 
 func imageHandleSyncBestErrorMessage(errBody *imageHandleSyncError) string {
