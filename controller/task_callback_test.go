@@ -96,7 +96,7 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	require.NoError(t, db.Create(&model.User{Id: 1, Username: "u", Quota: 120, Status: common.UserStatusEnabled}).Error)
 	require.NoError(t, db.Create(&model.Token{Id: 11, UserId: 1, Key: "sk-callback-bill", Name: "callback token", Status: common.TokenStatusEnabled, RemainQuota: 50}).Error)
 
-	body := []byte(`{"events":[{"event_id":"evt_1","client_task_id":"task_image_success","provider_task_id":"imgtask_success","status":"succeeded","progress":"100%","result":{"images":[{"url":"https://cdn.example.com/a.webp"}]},"usage":{"actual_quota":300}}]}`)
+	body := []byte(`{"events":[{"event_id":"evt_1","client_task_id":"task_image_success","provider_task_id":"imgtask_success","status":"succeeded","progress":"100%","result":{"images":[{"url":"https://cdn.example.com/a.webp","mime_type":"image/webp","format":"webp","width":1024,"height":768,"size_bytes":123456,"filename":"a.webp","revised_prompt":"revised prompt"}],"output":{"quality":"high","output_format":"webp","size":"1024x768"},"metadata":{"image_count":1,"input_image_count":0,"mask_used":false}},"usage":{"actual_quota":300}}]}`)
 	ctx, recorder := makeCallbackRequest(t, body, secret)
 
 	ImageTaskCallbackBatch(ctx)
@@ -115,6 +115,18 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	require.NoError(t, db.Select("remain_quota, used_quota").Where("id = ?", 11).First(&token).Error)
 	assert.Equal(t, 50, token.RemainQuota)
 	assert.Equal(t, 0, token.UsedQuota)
+	assert.Contains(t, string(task.Data), `"format":"webp"`)
+	assert.Contains(t, string(task.Data), `"output_format":"webp"`)
+	var asset model.Asset
+	require.NoError(t, db.Where("task_id = ?", "task_image_success").First(&asset).Error)
+	assert.Equal(t, "https://cdn.example.com/a.webp", asset.URL)
+	assert.Equal(t, "image/webp", asset.MimeType)
+	assert.Equal(t, "a.webp", asset.Filename)
+	assert.EqualValues(t, 123456, asset.SizeBytes)
+	assert.Equal(t, 1024, asset.Width)
+	assert.Equal(t, 768, asset.Height)
+	assert.Equal(t, "webp", asset.Metadata["format"])
+	assert.Equal(t, "revised prompt", asset.Metadata["revised_prompt"])
 }
 
 func TestResolveImageCredentialLeaseAccepted(t *testing.T) {

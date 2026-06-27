@@ -213,7 +213,7 @@ func TestParseTaskResultMapsImageHandleStatusAndUsage(t *testing.T) {
 		"client_task_id":"task_1",
 		"status":"succeeded",
 		"progress":"100%",
-		"result":{"images":[{"url":"https://cdn.example.com/a.webp"}]},
+		"result":{"images":[{"url":"https://cdn.example.com/a.webp","mime_type":"image/webp","format":"webp","width":1024,"height":768,"size_bytes":123456}],"output":{"quality":"high"},"metadata":{"image_count":1}},
 		"usage":{"total_tokens":12,"actual_quota":34}
 	}`))
 	require.NoError(t, err)
@@ -224,6 +224,15 @@ func TestParseTaskResultMapsImageHandleStatusAndUsage(t *testing.T) {
 	assert.Equal(t, 34, info.ActualQuota)
 	require.NotNil(t, info.Usage)
 	assert.Equal(t, 12, info.Usage.TotalTokens)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(info.Data, &payload))
+	result := payload["result"].(map[string]any)
+	images := result["images"].([]any)
+	image := images[0].(map[string]any)
+	assert.Equal(t, "webp", image["format"])
+	assert.Equal(t, float64(123456), image["size_bytes"])
+	assert.Equal(t, map[string]any{"quality": "high"}, result["output"])
+	assert.Equal(t, map[string]any{"image_count": float64(1)}, result["metadata"])
 }
 
 func TestParseBatchTaskResultIndexesByProviderTaskID(t *testing.T) {

@@ -204,6 +204,33 @@ func TestImageHandleSyncToOpenAIResponseBackfillsOpenAITopFieldsFromRawResponse(
 	require.Equal(t, 210, imageResp.Usage.TotalTokens)
 }
 
+func TestImageHandleSyncToOpenAIResponseBackfillsOpenAITopFieldsFromResultOutput(t *testing.T) {
+	t.Parallel()
+
+	response := imageHandleSyncResponse{
+		Status: "succeeded",
+		Result: &imageHandleSyncResult{
+			Images: []imageHandleSyncImage{{URL: "https://example.com/a.png"}},
+			Output: map[string]any{
+				"created":       float64(1782581166),
+				"background":    "opaque",
+				"output_format": "png",
+				"quality":       "high",
+				"size":          "1024x1024",
+			},
+		},
+	}
+
+	imageResp := imageHandleSyncToOpenAIResponse(response, &relaycommon.RelayInfo{}, dto.ImageRequest{Quality: "auto", Size: "auto"})
+
+	require.Len(t, imageResp.Data, 1)
+	require.Equal(t, int64(1782581166), imageResp.Created)
+	require.Equal(t, "opaque", imageResp.Background)
+	require.Equal(t, "png", imageResp.OutputFormat)
+	require.Equal(t, "high", imageResp.Quality)
+	require.Equal(t, "1024x1024", imageResp.Size)
+}
+
 func TestImageHandleSyncToOpenAIResponseMapsBase64Images(t *testing.T) {
 	t.Parallel()
 
@@ -230,6 +257,84 @@ func TestImageHandleSyncToOpenAIResponseMapsBase64Images(t *testing.T) {
 	require.Equal(t, 19, imageResp.Usage.PromptTokens)
 	require.Equal(t, 781, imageResp.Usage.CompletionTokens)
 	require.Equal(t, 800, imageResp.Usage.TotalTokens)
+}
+
+func TestImageHandleSyncTaskDataKeepsExtendedResultFields(t *testing.T) {
+	t.Parallel()
+
+	data := imageHandleSyncTaskData(imageHandleSyncResponse{
+		TaskID:           "imgtask_123",
+		ProviderTaskID:   "imgtask_123",
+		ClientTaskID:     "task_123",
+		Status:           "succeeded",
+		ResultDataFormat: "url",
+		Result: &imageHandleSyncResult{
+			Images: []imageHandleSyncImage{{
+				URL:           "https://example.com/a.png",
+				MimeType:      "image/png",
+				Format:        "png",
+				Filename:      "a.png",
+				SizeBytes:     1234,
+				Width:         1024,
+				Height:        768,
+				RevisedPrompt: "prompt-a",
+			}},
+			Output: map[string]any{
+				"quality":       "high",
+				"output_format": "png",
+				"size":          "1024x768",
+			},
+			Metadata: map[string]any{
+				"image_count":       float64(1),
+				"input_image_count": float64(1),
+				"mask_used":         true,
+			},
+		},
+	})
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	result := payload["result"].(map[string]any)
+	images := result["images"].([]any)
+	image := images[0].(map[string]any)
+	require.Equal(t, "https://example.com/a.png", image["url"])
+	require.Equal(t, "image/png", image["mime_type"])
+	require.Equal(t, "png", image["format"])
+	require.Equal(t, "a.png", image["filename"])
+	require.Equal(t, float64(1234), image["size_bytes"])
+	require.Equal(t, float64(1024), image["width"])
+	require.Equal(t, float64(768), image["height"])
+	output := result["output"].(map[string]any)
+	require.Equal(t, "high", output["quality"])
+	metadata := result["metadata"].(map[string]any)
+	require.Equal(t, true, metadata["mask_used"])
+}
+
+func TestImageHandleSyncAssetMetadataKeepsExtendedResultFields(t *testing.T) {
+	t.Parallel()
+
+	metadata := imageHandleSyncAssetMetadata(imageHandleSyncResponse{
+		TaskID:         "imgtask_123",
+		ProviderTaskID: "imgtask_123",
+		ClientTaskID:   "task_123",
+		Result: &imageHandleSyncResult{
+			Output: map[string]any{
+				"quality": "high",
+			},
+			Metadata: map[string]any{
+				"mask_used": true,
+			},
+		},
+	}, imageHandleSyncImage{
+		Format:        "png",
+		RevisedPrompt: "prompt-a",
+	})
+
+	require.Equal(t, "image_handle_sync", metadata["source"])
+	require.Equal(t, "png", metadata["format"])
+	require.Equal(t, "prompt-a", metadata["revised_prompt"])
+	require.Equal(t, map[string]any{"quality": "high"}, metadata["output"])
+	require.Equal(t, map[string]any{"mask_used": true}, metadata["execution"])
 }
 
 func TestImageHandleSyncToOpenAIResponseRequiresBase64WhenRequested(t *testing.T) {

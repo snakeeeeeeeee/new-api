@@ -43,6 +43,58 @@ func TestBuildAssetCreateInputsMultipleImages(t *testing.T) {
 	assert.Equal(t, "https://cdn.example.com/2.webp", inputs[1].URL)
 }
 
+func TestBuildAssetCreateInputsKeepsImageHandleMetadata(t *testing.T) {
+	task := &model.Task{
+		TaskID:    "task_image_metadata",
+		Status:    model.TaskStatusSuccess,
+		Action:    constant.TaskActionImageGeneration,
+		Platform:  constant.TaskPlatform("58"),
+		ChannelId: 1,
+		UserId:    1,
+		Properties: model.Properties{
+			OriginModelName: "gpt-image-2",
+		},
+	}
+	task.SetData(map[string]any{
+		"result": map[string]any{
+			"images": []map[string]any{{
+				"url":            "https://cdn.example.com/1.png",
+				"mime_type":      "image/png",
+				"format":         "png",
+				"filename":       "1.png",
+				"size_bytes":     123456,
+				"width":          1024,
+				"height":         768,
+				"revised_prompt": "revised",
+			}},
+			"output": map[string]any{
+				"quality":       "high",
+				"output_format": "png",
+				"size":          "1024x768",
+			},
+			"metadata": map[string]any{
+				"image_count":       1,
+				"input_image_count": 1,
+				"mask_used":         true,
+			},
+		},
+	})
+
+	inputs := BuildAssetCreateInputs(task)
+
+	require.Len(t, inputs, 1)
+	assert.Equal(t, "https://cdn.example.com/1.png", inputs[0].URL)
+	assert.Equal(t, "image/png", inputs[0].MimeType)
+	assert.Equal(t, "1.png", inputs[0].Filename)
+	assert.EqualValues(t, 123456, inputs[0].SizeBytes)
+	assert.Equal(t, 1024, inputs[0].Width)
+	assert.Equal(t, 768, inputs[0].Height)
+	assert.Equal(t, "png", inputs[0].Metadata["format"])
+	assert.Equal(t, "revised", inputs[0].Metadata["revised_prompt"])
+	assert.Equal(t, map[string]any{"quality": "high", "output_format": "png", "size": "1024x768"}, inputs[0].Metadata["output"])
+	assert.Equal(t, map[string]any{"image_count": float64(1), "input_image_count": float64(1), "mask_used": true}, inputs[0].Metadata["execution"])
+}
+
 func TestApplyTaskResultCreatesAssetsOnce(t *testing.T) {
 	truncate(t)
 	require.NoError(t, model.DB.AutoMigrate(&model.Asset{}))

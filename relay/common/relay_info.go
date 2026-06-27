@@ -775,6 +775,7 @@ type TaskInfo struct {
 	TotalTokens      int        `json:"total_tokens,omitempty"`      // 用于按倍率计费
 	Usage            *dto.Usage `json:"usage,omitempty"`             // 任务终态的完整用量，用于异步真实结算
 	ActualQuota      int        `json:"actual_quota,omitempty"`      // 上游/执行器返回的额度，仅作为兜底
+	Data             []byte     `json:"-"`                           // 任务结果原始小 JSON，用于终态写回 tasks.data
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

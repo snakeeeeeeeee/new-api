@@ -77,6 +77,8 @@ type imageHandleSyncResponse struct {
 
 type imageHandleSyncResult struct {
 	Images      []imageHandleSyncImage `json:"images,omitempty"`
+	Output      map[string]any         `json:"output,omitempty"`
+	Metadata    map[string]any         `json:"metadata,omitempty"`
 	RawResponse any                    `json:"raw_response,omitempty"`
 }
 
@@ -84,8 +86,10 @@ type imageHandleSyncImage struct {
 	URL           string `json:"url"`
 	B64Json       string `json:"b64_json,omitempty"`
 	MimeType      string `json:"mime_type,omitempty"`
+	Format        string `json:"format,omitempty"`
 	RevisedPrompt string `json:"revised_prompt,omitempty"`
 	Filename      string `json:"filename,omitempty"`
+	SizeBytes     int64  `json:"size_bytes,omitempty"`
 	Width         int    `json:"width,omitempty"`
 	Height        int    `json:"height,omitempty"`
 }
@@ -883,9 +887,23 @@ type imageHandleSyncOpenAITopFields struct {
 func imageHandleSyncOpenAITopFieldsFromResponse(syncResp imageHandleSyncResponse) imageHandleSyncOpenAITopFields {
 	fields := imageHandleSyncOpenAITopFields{}
 	if syncResp.Result != nil {
+		mergeImageHandleSyncOpenAITopFields(&fields, imageHandleSyncOpenAITopFieldsFromMap(syncResp.Result.Output))
 		mergeImageHandleSyncOpenAITopFields(&fields, imageHandleSyncOpenAITopFieldsFromRaw(syncResp.Result.RawResponse))
 	}
 	mergeImageHandleSyncOpenAITopFields(&fields, imageHandleSyncOpenAITopFieldsFromRaw(syncResp.RawResponse))
+	return fields
+}
+
+func imageHandleSyncOpenAITopFieldsFromMap(payload map[string]any) imageHandleSyncOpenAITopFields {
+	fields := imageHandleSyncOpenAITopFields{}
+	if payload == nil {
+		return fields
+	}
+	fields.Created = imageHandleSyncInt64Field(payload, "created")
+	fields.Background = imageHandleSyncStringField(payload, "background")
+	fields.OutputFormat = imageHandleSyncStringField(payload, "output_format")
+	fields.Quality = imageHandleSyncStringField(payload, "quality")
+	fields.Size = imageHandleSyncStringField(payload, "size")
 	return fields
 }
 
@@ -1218,7 +1236,9 @@ func initImageHandleSyncTask(info *relaycommon.RelayInfo, request dto.ImageReque
 func imageHandleSyncTaskData(syncResp imageHandleSyncResponse) []byte {
 	payload := map[string]any{
 		"result": map[string]any{
-			"images": syncResp.ResultImagesForData(),
+			"images":   syncResp.ResultImagesForData(),
+			"output":   syncResp.ResultOutputForData(),
+			"metadata": syncResp.ResultMetadataForData(),
 		},
 		"provider_task_id":   syncResp.ProviderTaskID,
 		"status":             syncResp.Status,
@@ -1241,8 +1261,14 @@ func (r imageHandleSyncResponse) ResultImagesForData() []map[string]any {
 		if image.MimeType != "" {
 			item["mime_type"] = image.MimeType
 		}
+		if image.Format != "" {
+			item["format"] = image.Format
+		}
 		if image.Filename != "" {
 			item["filename"] = image.Filename
+		}
+		if image.SizeBytes > 0 {
+			item["size_bytes"] = image.SizeBytes
 		}
 		if image.Width > 0 {
 			item["width"] = image.Width
@@ -1250,9 +1276,26 @@ func (r imageHandleSyncResponse) ResultImagesForData() []map[string]any {
 		if image.Height > 0 {
 			item["height"] = image.Height
 		}
+		if image.RevisedPrompt != "" {
+			item["revised_prompt"] = image.RevisedPrompt
+		}
 		images = append(images, item)
 	}
 	return images
+}
+
+func (r imageHandleSyncResponse) ResultOutputForData() map[string]any {
+	if r.Result == nil || len(r.Result.Output) == 0 {
+		return nil
+	}
+	return r.Result.Output
+}
+
+func (r imageHandleSyncResponse) ResultMetadataForData() map[string]any {
+	if r.Result == nil || len(r.Result.Metadata) == 0 {
+		return nil
+	}
+	return r.Result.Metadata
 }
 
 func createImageHandleSyncAssets(ctx *gin.Context, task *model.Task, syncResp imageHandleSyncResponse) error {
@@ -1271,17 +1314,37 @@ func createImageHandleSyncAssets(ctx *gin.Context, task *model.Task, syncResp im
 			URL:        image.URL,
 			MimeType:   image.MimeType,
 			Filename:   image.Filename,
+			SizeBytes:  image.SizeBytes,
 			Width:      image.Width,
 			Height:     image.Height,
-			Metadata: model.AssetMetadata{
-				"source":           "image_handle_sync",
-				"provider_task_id": firstNonEmpty(syncResp.ProviderTaskID, syncResp.TaskID),
-				"client_task_id":   syncResp.ClientTaskID,
-				"execution_mode":   "image_handle_sync",
-			},
+			Metadata:   imageHandleSyncAssetMetadata(syncResp, image),
 		})
 	}
 	return model.CreateAssetsForTask(inputs)
+}
+
+func imageHandleSyncAssetMetadata(syncResp imageHandleSyncResponse, image imageHandleSyncImage) model.AssetMetadata {
+	metadata := model.AssetMetadata{
+		"source":           "image_handle_sync",
+		"provider_task_id": firstNonEmpty(syncResp.ProviderTaskID, syncResp.TaskID),
+		"client_task_id":   syncResp.ClientTaskID,
+		"execution_mode":   "image_handle_sync",
+	}
+	if image.Format != "" {
+		metadata["format"] = image.Format
+	}
+	if image.RevisedPrompt != "" {
+		metadata["revised_prompt"] = image.RevisedPrompt
+	}
+	if syncResp.Result != nil {
+		if len(syncResp.Result.Output) > 0 {
+			metadata["output"] = syncResp.Result.Output
+		}
+		if len(syncResp.Result.Metadata) > 0 {
+			metadata["execution"] = syncResp.Result.Metadata
+		}
+	}
+	return metadata
 }
 
 func imageHandleSyncFailedError(syncResp imageHandleSyncResponse) *types.NewAPIError {

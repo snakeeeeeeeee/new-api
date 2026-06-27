@@ -52,11 +52,20 @@ type imageCallbackEvent struct {
 }
 
 type imageCallbackResult struct {
-	Images []imageCallbackImage `json:"images"`
+	Images   []imageCallbackImage `json:"images"`
+	Output   map[string]any       `json:"output,omitempty"`
+	Metadata map[string]any       `json:"metadata,omitempty"`
 }
 
 type imageCallbackImage struct {
-	URL string `json:"url"`
+	URL           string `json:"url"`
+	MimeType      string `json:"mime_type,omitempty"`
+	Format        string `json:"format,omitempty"`
+	Width         int    `json:"width,omitempty"`
+	Height        int    `json:"height,omitempty"`
+	SizeBytes     int64  `json:"size_bytes,omitempty"`
+	Filename      string `json:"filename,omitempty"`
+	RevisedPrompt string `json:"revised_prompt,omitempty"`
 }
 
 type imageCallbackUsage struct {

@@ -69,15 +69,16 @@ type imageHandleSubmitResponse struct {
 }
 
 type imageHandleTaskResponse struct {
-	TaskID         string                 `json:"task_id"`
-	ProviderTaskID string                 `json:"provider_task_id"`
-	ClientTaskID   string                 `json:"client_task_id"`
-	Status         string                 `json:"status"`
-	Progress       string                 `json:"progress"`
-	Result         *imageHandleResult     `json:"result,omitempty"`
-	Usage          *imageHandleUsage      `json:"usage,omitempty"`
-	Error          *imageHandleError      `json:"error,omitempty"`
-	Data           map[string]interface{} `json:"data,omitempty"`
+	TaskID           string                 `json:"task_id"`
+	ProviderTaskID   string                 `json:"provider_task_id"`
+	ClientTaskID     string                 `json:"client_task_id"`
+	Status           string                 `json:"status"`
+	Progress         string                 `json:"progress"`
+	ResultDataFormat string                 `json:"result_data_format,omitempty"`
+	Result           *imageHandleResult     `json:"result,omitempty"`
+	Usage            *imageHandleUsage      `json:"usage,omitempty"`
+	Error            *imageHandleError      `json:"error,omitempty"`
+	Data             map[string]interface{} `json:"data,omitempty"`
 }
 
 type imageHandleBatchQueryResponse struct {
@@ -85,11 +86,20 @@ type imageHandleBatchQueryResponse struct {
 }
 
 type imageHandleResult struct {
-	Images []imageHandleImage `json:"images,omitempty"`
+	Images   []imageHandleImage `json:"images,omitempty"`
+	Output   map[string]any     `json:"output,omitempty"`
+	Metadata map[string]any     `json:"metadata,omitempty"`
 }
 
 type imageHandleImage struct {
-	URL string `json:"url"`
+	URL           string `json:"url"`
+	MimeType      string `json:"mime_type,omitempty"`
+	Format        string `json:"format,omitempty"`
+	Width         int    `json:"width,omitempty"`
+	Height        int    `json:"height,omitempty"`
+	SizeBytes     int64  `json:"size_bytes,omitempty"`
+	Filename      string `json:"filename,omitempty"`
+	RevisedPrompt string `json:"revised_prompt,omitempty"`
 }
 
 type imageHandleUsage struct {
@@ -393,6 +403,9 @@ func taskResponseToTaskInfo(item imageHandleTaskResponse) *relaycommon.TaskInfo 
 	info := &relaycommon.TaskInfo{
 		TaskID:   item.ProviderTaskID,
 		Progress: item.Progress,
+	}
+	if data, err := common.Marshal(item); err == nil {
+		info.Data = data
 	}
 	if info.TaskID == "" {
 		info.TaskID = item.TaskID

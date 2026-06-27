@@ -531,11 +531,11 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 		task.Progress = taskcommon.ProgressSubmitted
 	case model.TaskStatusQueued:
 		task.Progress = taskcommon.ProgressQueued
-	case model.TaskStatusInProgress:
-		task.Progress = taskcommon.ProgressInProgress
-		if task.StartTime == 0 {
-			task.StartTime = now
-		}
+		case model.TaskStatusInProgress:
+			task.Progress = taskcommon.ProgressInProgress
+			if task.StartTime == 0 {
+				task.StartTime = now
+			}
 	case model.TaskStatusSuccess:
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {
@@ -568,6 +568,9 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 	default:
 		logger.LogError(ctx, fmt.Sprintf("unknown task status %s for task %s", taskResult.Status, task.TaskID))
 		return false, false
+	}
+	if len(taskResult.Data) > 0 {
+		task.Data = taskResult.Data
 	}
 	if taskResult.Progress != "" {
 		task.Progress = taskResult.Progress
