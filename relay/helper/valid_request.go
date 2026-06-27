@@ -2,6 +2,7 @@ package helper
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -158,8 +159,29 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			imageRequest.N = common.GetPointer(uint(common.String2Int(formData.Get("n"))))
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
+			imageRequest.ResponseFormat = formData.Get("response_format")
 			if imageValue := formData.Get("image"); imageValue != "" {
 				imageRequest.Image, _ = common.Marshal(imageValue)
+			}
+			setImageRawFormValue := func(target *json.RawMessage, key string) {
+				value := strings.TrimSpace(formData.Get(key))
+				if value == "" {
+					return
+				}
+				data, err := common.Marshal(value)
+				if err != nil {
+					return
+				}
+				*target = data
+			}
+			setImageRawFormValue(&imageRequest.OutputFormat, "output_format")
+			setImageRawFormValue(&imageRequest.OutputCompression, "output_compression")
+			setImageRawFormValue(&imageRequest.Background, "background")
+			setImageRawFormValue(&imageRequest.Moderation, "moderation")
+			if inputFidelity := strings.TrimSpace(formData.Get("input_fidelity")); inputFidelity != "" {
+				imageRequest.Extra = map[string]json.RawMessage{}
+				data, _ := common.Marshal(inputFidelity)
+				imageRequest.Extra["input_fidelity"] = data
 			}
 
 			if imageRequest.Model == "gpt-image-1" {

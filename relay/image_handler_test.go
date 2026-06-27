@@ -651,13 +651,15 @@ func TestBuildImageHandleSyncPayloadForEditURLInputs(t *testing.T) {
 	ctx.Set(common.RequestIdKey, "req-sync-edit-payload")
 
 	request := dto.ImageRequest{
-		Prompt: "edit prompt",
-		Image:  []byte(`"https://cdn.example.com/input.png"`),
+		Prompt:       "edit prompt",
+		Image:        []byte(`"https://cdn.example.com/input.png"`),
+		Size:         "1024x1024",
+		Quality:      "auto",
+		OutputFormat: []byte(`"png"`),
 		Extra: map[string]json.RawMessage{
-			"mask": []byte(`"https://cdn.example.com/mask.png"`),
+			"mask":           []byte(`"https://cdn.example.com/mask.png"`),
+			"input_fidelity": []byte(`"high"`),
 		},
-		Size:    "1024x1024",
-		Quality: "auto",
 	}
 	info := &relaycommon.RelayInfo{
 		UserId:          44,
@@ -681,6 +683,50 @@ func TestBuildImageHandleSyncPayloadForEditURLInputs(t *testing.T) {
 	require.Equal(t, "edit prompt", input["text"])
 	require.Equal(t, []any{"https://cdn.example.com/input.png"}, input["images"])
 	require.Equal(t, "https://cdn.example.com/mask.png", input["mask"])
+	params := payload["parameters"].(map[string]any)
+	require.Equal(t, "1024x1024", params["size"])
+	require.Equal(t, "auto", params["quality"])
+	require.Equal(t, "png", params["output_format"])
+	require.Equal(t, "high", params["input_fidelity"])
+}
+
+func TestImageEditMultipartRequestKeepsImageParameters(t *testing.T) {
+	t.Parallel()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+	require.NoError(t, writer.WriteField("prompt", "edit prompt"))
+	require.NoError(t, writer.WriteField("n", "2"))
+	require.NoError(t, writer.WriteField("size", "2560x1440"))
+	require.NoError(t, writer.WriteField("quality", "auto"))
+	require.NoError(t, writer.WriteField("response_format", "url"))
+	require.NoError(t, writer.WriteField("output_format", "png"))
+	require.NoError(t, writer.WriteField("output_compression", "85"))
+	require.NoError(t, writer.WriteField("input_fidelity", "high"))
+	imagePart, err := writer.CreateFormFile("image", "input.png")
+	require.NoError(t, err)
+	_, err = imagePart.Write([]byte("fake-image"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body.Bytes()))
+	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	request, err := helper.GetAndValidOpenAIImageRequest(ctx, relayconstant.RelayModeImagesEdits)
+	require.NoError(t, err)
+	require.Equal(t, "gpt-image-2", request.Model)
+	require.Equal(t, "edit prompt", request.Prompt)
+	require.Equal(t, uint(2), *request.N)
+	require.Equal(t, "2560x1440", request.Size)
+	require.Equal(t, "auto", request.Quality)
+	require.Equal(t, "url", request.ResponseFormat)
+	require.JSONEq(t, `"png"`, string(request.OutputFormat))
+	require.JSONEq(t, `"85"`, string(request.OutputCompression))
+	require.JSONEq(t, `"high"`, string(request.Extra["input_fidelity"]))
 }
 
 func TestImageHandleBase64UploadsFromRequestBuildsExplicitUploadItems(t *testing.T) {

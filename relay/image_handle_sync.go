@@ -768,6 +768,9 @@ func imageHandleSyncParameters(request dto.ImageRequest, upstreamModelName strin
 	addRawImageParam(params, "output_compression", request.OutputCompression)
 	addRawImageParam(params, "background", request.Background)
 	addRawImageParam(params, "moderation", request.Moderation)
+	if len(request.Extra) > 0 {
+		addRawImageParam(params, "input_fidelity", request.Extra["input_fidelity"])
+	}
 	if imageHandleSyncShouldForwardResponseFormat(request, upstreamModelName) {
 		switch imageHandleSyncResultDataFormat(request) {
 		case imageHandleResultFormatBase64:
