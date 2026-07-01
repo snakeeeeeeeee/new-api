@@ -125,6 +125,42 @@ func TestDoResponseWithoutImageAdapterKeepsOpenAIImageResponse(t *testing.T) {
 	require.Equal(t, body, recorder.Body.String())
 }
 
+func TestDoResponseWithoutImageAdapterDoesNotDoubleCountUsageAliases(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+
+	body := `{"created":1782935561,"data":[{"url":"https://example.com/a.png"}],"usage":{"prompt_tokens":14,"completion_tokens":196,"total_tokens":210,"input_tokens":14,"output_tokens":196,"prompt_tokens_details":{"text_tokens":14},"input_tokens_details":{"text_tokens":14}}}`
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:          constant.ChannelTypeOpenAI,
+			ChannelOtherSettings: dto.ChannelOtherSettings{},
+		},
+	}
+
+	usageAny, err := adaptor.DoResponse(ctx, resp, info)
+	require.Nil(t, err)
+
+	usage, ok := usageAny.(*dto.Usage)
+	require.True(t, ok)
+	require.Equal(t, 14, usage.PromptTokens)
+	require.Equal(t, 196, usage.CompletionTokens)
+	require.Equal(t, 210, usage.TotalTokens)
+	require.Equal(t, 14, usage.InputTokens)
+	require.Equal(t, 196, usage.OutputTokens)
+	require.Equal(t, 14, usage.PromptTokensDetails.TextTokens)
+	require.Equal(t, body, recorder.Body.String())
+}
+
 func TestDoResponseWithoutImageAdapterTreatsOpenAIErrorBodyAsFailure(t *testing.T) {
 	t.Parallel()
 

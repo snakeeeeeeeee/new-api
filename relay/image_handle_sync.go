@@ -279,7 +279,7 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 		imageN = *request.N
 	}
 	normalizeImageUsage(imageResp.Usage, imageN)
-	jsonResponse, err := common.Marshal(imageResp)
+	jsonResponse, err := common.Marshal(imageHandleSyncClientImageResponse(imageResp))
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
 	}
@@ -885,6 +885,66 @@ type imageHandleSyncOpenAITopFields struct {
 	OutputFormat string
 	Quality      string
 	Size         string
+}
+
+type imageHandleSyncOpenAIImageResponse struct {
+	Data         []dto.ImageData                       `json:"data"`
+	Created      int64                                 `json:"created"`
+	Background   string                                `json:"background,omitempty"`
+	OutputFormat string                                `json:"output_format,omitempty"`
+	Quality      string                                `json:"quality,omitempty"`
+	Size         string                                `json:"size,omitempty"`
+	Usage        *imageHandleSyncOpenAICompatibleUsage `json:"usage,omitempty"`
+	Metadata     json.RawMessage                       `json:"metadata,omitempty"`
+}
+
+type imageHandleSyncOpenAICompatibleUsage struct {
+	TotalTokens                 int                    `json:"total_tokens,omitempty"`
+	InputTokens                 int                    `json:"input_tokens,omitempty"`
+	OutputTokens                int                    `json:"output_tokens,omitempty"`
+	UsageSource                 string                 `json:"usage_source,omitempty"`
+	InputTokensDetails          *dto.InputTokenDetails `json:"input_tokens_details,omitempty"`
+	ClaudeCacheCreation5mTokens int                    `json:"claude_cache_creation_5_m_tokens,omitempty"`
+	ClaudeCacheCreation1hTokens int                    `json:"claude_cache_creation_1_h_tokens,omitempty"`
+}
+
+func imageHandleSyncClientImageResponse(resp *dto.ImageResponse) imageHandleSyncOpenAIImageResponse {
+	if resp == nil {
+		return imageHandleSyncOpenAIImageResponse{}
+	}
+	return imageHandleSyncOpenAIImageResponse{
+		Data:         resp.Data,
+		Created:      resp.Created,
+		Background:   resp.Background,
+		OutputFormat: resp.OutputFormat,
+		Quality:      resp.Quality,
+		Size:         resp.Size,
+		Usage:        imageHandleSyncClientUsage(resp.Usage),
+		Metadata:     resp.Metadata,
+	}
+}
+
+func imageHandleSyncClientUsage(usage *dto.Usage) *imageHandleSyncOpenAICompatibleUsage {
+	if usage == nil {
+		return nil
+	}
+	inputTokens := firstPositiveSyncInt(usage.InputTokens, usage.PromptTokens)
+	outputTokens := firstPositiveSyncInt(usage.OutputTokens, usage.CompletionTokens)
+	totalTokens := firstPositiveSyncInt(usage.TotalTokens, inputTokens+outputTokens)
+	details := usage.InputTokensDetails
+	if details == nil && inputTokenDetailsHasUsage(usage.PromptTokensDetails) {
+		promptDetails := usage.PromptTokensDetails
+		details = &promptDetails
+	}
+	return &imageHandleSyncOpenAICompatibleUsage{
+		TotalTokens:                 totalTokens,
+		InputTokens:                 inputTokens,
+		OutputTokens:                outputTokens,
+		UsageSource:                 usage.UsageSource,
+		InputTokensDetails:          details,
+		ClaudeCacheCreation5mTokens: usage.ClaudeCacheCreation5mTokens,
+		ClaudeCacheCreation1hTokens: usage.ClaudeCacheCreation1hTokens,
+	}
 }
 
 func imageHandleSyncOpenAITopFieldsFromResponse(syncResp imageHandleSyncResponse) imageHandleSyncOpenAITopFields {

@@ -167,6 +167,47 @@ func TestImageHandleSyncToOpenAIResponseMapsUsageAndImages(t *testing.T) {
 	require.Equal(t, "image_handle_sync", imageResp.Usage.UsageSource)
 }
 
+func TestImageHandleSyncClientImageResponseUsesSingleImageUsageVocabulary(t *testing.T) {
+	t.Parallel()
+
+	imageResp := &dto.ImageResponse{
+		Created: 1782935561,
+		Data:    []dto.ImageData{{Url: "https://example.com/a.png"}},
+		Usage: &dto.Usage{
+			PromptTokens:     14,
+			CompletionTokens: 196,
+			TotalTokens:      210,
+			InputTokens:      14,
+			OutputTokens:     196,
+			UsageSource:      "image_handle_sync",
+			PromptTokensDetails: dto.InputTokenDetails{
+				TextTokens: 14,
+			},
+			InputTokensDetails: &dto.InputTokenDetails{
+				TextTokens: 14,
+			},
+		},
+	}
+
+	data, err := common.Marshal(imageHandleSyncClientImageResponse(imageResp))
+	require.NoError(t, err)
+
+	var body map[string]any
+	require.NoError(t, common.Unmarshal(data, &body))
+	usage, ok := body["usage"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(14), usage["input_tokens"])
+	require.Equal(t, float64(196), usage["output_tokens"])
+	require.Equal(t, float64(210), usage["total_tokens"])
+	require.Equal(t, "image_handle_sync", usage["usage_source"])
+	require.NotContains(t, usage, "prompt_tokens")
+	require.NotContains(t, usage, "completion_tokens")
+	require.NotContains(t, usage, "prompt_tokens_details")
+	details, ok := usage["input_tokens_details"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(14), details["text_tokens"])
+}
+
 func TestImageHandleSyncToOpenAIResponseBackfillsOpenAITopFieldsFromRawResponse(t *testing.T) {
 	t.Parallel()
 

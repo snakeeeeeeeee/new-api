@@ -590,15 +590,19 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	// because the upstream has already consumed resources and returned content
 	// We should still perform billing even if parsing fails
 	// format
-	if usageResp.InputTokens > 0 {
-		usageResp.PromptTokens += usageResp.InputTokens
+	if usageResp.PromptTokens == 0 && usageResp.InputTokens > 0 {
+		usageResp.PromptTokens = usageResp.InputTokens
 	}
-	if usageResp.OutputTokens > 0 {
-		usageResp.CompletionTokens += usageResp.OutputTokens
+	if usageResp.CompletionTokens == 0 && usageResp.OutputTokens > 0 {
+		usageResp.CompletionTokens = usageResp.OutputTokens
 	}
 	if usageResp.InputTokensDetails != nil {
-		usageResp.PromptTokensDetails.ImageTokens += usageResp.InputTokensDetails.ImageTokens
-		usageResp.PromptTokensDetails.TextTokens += usageResp.InputTokensDetails.TextTokens
+		if usageResp.PromptTokensDetails.ImageTokens == 0 {
+			usageResp.PromptTokensDetails.ImageTokens = usageResp.InputTokensDetails.ImageTokens
+		}
+		if usageResp.PromptTokensDetails.TextTokens == 0 {
+			usageResp.PromptTokensDetails.TextTokens = usageResp.InputTokensDetails.TextTokens
+		}
 	}
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
 	return &usageResp.Usage, nil
