@@ -162,7 +162,9 @@ export const useLogsData = () => {
   };
 
   // Column visibility state
-  const [visibleColumns, setVisibleColumns] = useState(getInitialVisibleColumns);
+  const [visibleColumns, setVisibleColumns] = useState(
+    getInitialVisibleColumns,
+  );
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const [billingDisplayMode, setBillingDisplayMode] = useState(
     getInitialBillingDisplayMode,
@@ -385,7 +387,10 @@ export const useLogsData = () => {
         logs[i].type === 2 || isAsyncImageFinalBilling;
       let expandDataLocal = [];
 
-      if (isAdminUser && (logs[i].type === 0 || logs[i].type === 2 || logs[i].type === 6)) {
+      if (
+        isAdminUser &&
+        (logs[i].type === 0 || logs[i].type === 2 || logs[i].type === 6)
+      ) {
         expandDataLocal.push({
           key: t('渠道信息'),
           value: `${logs[i].channel} - ${logs[i].channel_name || '[未知]'}`,
@@ -396,6 +401,51 @@ export const useLogsData = () => {
           key: t('Request ID'),
           value: logs[i].request_id,
         });
+      }
+      if (logs[i].type === 5) {
+        if (
+          other?.client_response_status_code ||
+          other?.client_response_message
+        ) {
+          const clientResponseLines = [
+            other?.client_response_status_code
+              ? `status_code=${other.client_response_status_code}`
+              : '',
+            other?.client_response_message || '',
+          ].filter(Boolean);
+          expandDataLocal.push({
+            key: t('下游响应'),
+            value: (
+              <div
+                style={{
+                  maxWidth: 720,
+                  whiteSpace: 'normal',
+                  wordBreak: 'break-word',
+                  lineHeight: 1.6,
+                }}
+              >
+                {clientResponseLines.join(', ')}
+              </div>
+            ),
+          });
+        }
+        if (logs[i]?.content) {
+          expandDataLocal.push({
+            key: t('上游错误'),
+            value: (
+              <div
+                style={{
+                  maxWidth: 720,
+                  whiteSpace: 'normal',
+                  wordBreak: 'break-word',
+                  lineHeight: 1.6,
+                }}
+              >
+                {logs[i].content}
+              </div>
+            ),
+          });
+        }
       }
       if (other?.ws || other?.audio) {
         expandDataLocal.push({
@@ -592,7 +642,14 @@ export const useLogsData = () => {
           expandDataLocal.push({
             key: t('失败原因'),
             value: (
-              <div style={{ maxWidth: 600, whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.6 }}>
+              <div
+                style={{
+                  maxWidth: 600,
+                  whiteSpace: 'normal',
+                  wordBreak: 'break-word',
+                  lineHeight: 1.6,
+                }}
+              >
                 {other.reason}
               </div>
             ),

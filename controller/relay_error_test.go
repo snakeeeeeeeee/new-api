@@ -234,6 +234,40 @@ func TestBuildClientFacingRelayErrorHonorsMaskSensitiveSetting(t *testing.T) {
 	require.Equal(t, "upstream https://api.vendor.example/v1 failed", buildClientFacingRelayOpenAIError(apiErr).Message)
 }
 
+func TestRelayClientResponseLogFieldsRecordsWrappedResponse(t *testing.T) {
+	withRelayErrorSetting(t, false, "400,422", "", true)
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "prompt is too long",
+		Type:    "invalid_request_error",
+		Code:    "invalid_request",
+	}, http.StatusBadRequest)
+
+	fields := relayClientResponseLogFields(apiErr)
+
+	require.Equal(t, true, fields["client_response_wrapped"])
+	require.Equal(t, http.StatusInternalServerError, fields["client_response_status_code"])
+	require.Equal(t, clientFacingRelayErrorMessage, fields["client_response_message"])
+	require.Equal(t, clientFacingRelayErrorType, fields["client_response_error_type"])
+	require.Equal(t, clientFacingRelayErrorCode, fields["client_response_error_code"])
+}
+
+func TestRelayClientResponseLogFieldsRecordsPassthroughResponse(t *testing.T) {
+	withRelayErrorSetting(t, true, "400,422", "", true)
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "prompt is too long",
+		Type:    "invalid_request_error",
+		Code:    "invalid_request",
+	}, http.StatusBadRequest)
+
+	fields := relayClientResponseLogFields(apiErr)
+
+	require.Equal(t, false, fields["client_response_wrapped"])
+	require.Equal(t, http.StatusBadRequest, fields["client_response_status_code"])
+	require.Equal(t, "prompt is too long", fields["client_response_message"])
+	require.Equal(t, "invalid_request_error", fields["client_response_error_type"])
+	require.Equal(t, "invalid_request", fields["client_response_error_code"])
+}
+
 func TestProcessChannelErrorRecordsStreamState(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	originalErrorLogEnabled := constant.ErrorLogEnabled
@@ -268,6 +302,11 @@ func TestProcessChannelErrorRecordsStreamState(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, other["user_safe"].(bool))
 	require.NotContains(t, other, "internal_retry")
+	require.Equal(t, float64(http.StatusInternalServerError), other["client_response_status_code"])
+	require.Equal(t, clientFacingRelayErrorMessage, other["client_response_message"])
+	require.Equal(t, true, other["client_response_wrapped"])
+	require.Equal(t, float64(http.StatusTooManyRequests), other["upstream_status_code"])
+	require.Equal(t, "upstream capacity exceeded", other["upstream_error_message"])
 }
 
 func TestProcessChannelErrorMarksInternalRetryLog(t *testing.T) {

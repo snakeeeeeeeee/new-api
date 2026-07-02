@@ -380,6 +380,25 @@ function renderCompactDetailSummary(summarySegments) {
 function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   const other = getLogOther(record.other);
 
+  if (record.type === 5) {
+    const clientStatusCode = other?.client_response_status_code;
+    const clientMessage = other?.client_response_message;
+    if (clientStatusCode || clientMessage) {
+      return {
+        segments: [
+          clientStatusCode
+            ? {
+                text: `${t('下游')} status_code=${clientStatusCode}`,
+                tone: 'primary',
+              }
+            : null,
+          clientMessage ? { text: clientMessage, tone: 'secondary' } : null,
+        ].filter(Boolean),
+      };
+    }
+    return null;
+  }
+
   if (record.type === 6 && other?.billing_stage !== 'async_image_final') {
     return {
       segments: [{ text: t('异步任务退款'), tone: 'primary' }],

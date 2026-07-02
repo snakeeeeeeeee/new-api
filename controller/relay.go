@@ -441,6 +441,29 @@ func buildClientFacingClaudeError(_ *types.NewAPIError) types.ClaudeError {
 	}
 }
 
+func relayClientResponseLogFields(err *types.NewAPIError) map[string]interface{} {
+	fields := make(map[string]interface{})
+	if err == nil {
+		return fields
+	}
+	wrapped := shouldWrapClientFacingRelayError(err)
+	fields["client_response_wrapped"] = wrapped
+	if wrapped {
+		fields["client_response_status_code"] = http.StatusInternalServerError
+		fields["client_response_message"] = clientFacingRelayErrorMessage
+		fields["client_response_error_type"] = clientFacingRelayErrorType
+		fields["client_response_error_code"] = clientFacingRelayErrorCode
+		return fields
+	}
+	fields["client_response_status_code"] = err.StatusCode
+	fields["client_response_message"] = relayErrorMessageForClient(err)
+	if openAIError := err.ToOpenAIError(); openAIError.Type != "" || openAIError.Code != nil {
+		fields["client_response_error_type"] = openAIError.Type
+		fields["client_response_error_code"] = common.Interface2String(openAIError.Code)
+	}
+	return fields
+}
+
 func addUsedChannel(c *gin.Context, channelId int) {
 	useChannel := c.GetStringSlice("use_channel")
 	useChannel = append(useChannel, fmt.Sprintf("%d", channelId))
@@ -650,9 +673,14 @@ func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError, internalRetry b
 		other["error_type"] = err.GetErrorType()
 		other["error_code"] = err.GetErrorCode()
 		other["status_code"] = err.StatusCode
+		other["upstream_status_code"] = err.StatusCode
+		other["upstream_error_message"] = err.MaskSensitiveError()
 		other["channel_id"] = channelId
 		other["channel_name"] = c.GetString("channel_name")
 		other["channel_type"] = c.GetInt("channel_type")
+		for key, value := range relayClientResponseLogFields(err) {
+			other[key] = value
+		}
 		if executionMode := common.GetContextKeyString(c, constant.ContextKeyExecutionMode); executionMode != "" {
 			other["execution_mode"] = executionMode
 		}
