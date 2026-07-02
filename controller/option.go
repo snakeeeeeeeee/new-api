@@ -634,7 +634,8 @@ func UpdateOption(c *gin.Context) {
 		"claude.prompt_cache_validation_mode",
 		"claude.stop_sequences_validation_mode",
 		"claude.service_tier_validation_mode",
-		"claude.metadata_user_id_validation_mode":
+		"claude.metadata_user_id_validation_mode",
+		"claude.assistant_prefill_validation_mode":
 		if err = model_setting.ValidateClaudeValidationMode(option.Value.(string)); err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,

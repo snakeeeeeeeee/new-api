@@ -58,6 +58,7 @@ const ModelSetting = () => {
     'claude.stop_sequences_validation_mode': 'reject',
     'claude.service_tier_validation_mode': 'reject',
     'claude.metadata_user_id_validation_mode': 'log',
+    'claude.assistant_prefill_validation_mode': 'log',
     'claude.request_size_limit_bytes': '33554432',
     'global.pass_through_request_enabled': false,
     'global.thinking_model_blacklist': '[]',

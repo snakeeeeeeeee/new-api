@@ -71,6 +71,7 @@ const DEFAULT_OPTIONS = {
   'claude.stop_sequences_validation_mode': 'reject',
   'claude.service_tier_validation_mode': 'reject',
   'claude.metadata_user_id_validation_mode': 'log',
+  'claude.assistant_prefill_validation_mode': 'log',
   'claude.request_size_limit_bytes': '33554432',
   'global.chat_completions_to_responses_policy': '{}',
 };
@@ -202,7 +203,8 @@ export default function CompatibilityPage() {
       {
         key: 'relay_error_setting.log_upstream_error_detail_enabled',
         label: '记录上游错误详情',
-        extra: '记录 status、request_id、type、message、code、param，不记录完整请求内容。',
+        extra:
+          '记录 status、request_id、type、message、code、param，不记录完整请求内容。',
       },
       {
         key: 'relay_error_setting.passthrough_enabled',
@@ -238,7 +240,8 @@ export default function CompatibilityPage() {
       {
         key: 'claude.drop_default_sampling_for_opus_enabled',
         label: 'Opus 默认采样参数清理',
-        extra: 'Opus 4.7/4.8 删除 temperature、top_p、top_k 后转发，避免采样参数导致上游 400。',
+        extra:
+          'Opus 4.7/4.8 删除 temperature、top_p、top_k 后转发，避免采样参数导致上游 400。',
       },
       {
         key: 'claude.validate_output_effort_enabled',
@@ -248,7 +251,8 @@ export default function CompatibilityPage() {
       {
         key: 'claude.normalize_simple_message_content_enabled',
         label: '简单 content 自动兼容',
-        extra: '将 messages[].content 的 null、缺失、空数组、数字、布尔值转换为 Claude 可接受的文本内容；对象类型仍返回 400。',
+        extra:
+          '将 messages[].content 的 null、缺失、空数组、数字、布尔值转换为 Claude 可接受的文本内容；对象类型仍返回 400。',
       },
       {
         key: 'claude.promote_leading_system_role_enabled',
@@ -268,7 +272,8 @@ export default function CompatibilityPage() {
       {
         key: 'claude.openai_tool_call_compat_enabled',
         label: 'OpenAI 工具调用转 Claude 兼容',
-        extra: '开启后会修复 OpenAI 历史消息中的 tool_calls/tool_call_id 到 Claude tool_use/tool_result 的协议结构，兼容 Codex Desktop 等客户端的历史工具调用格式。',
+        extra:
+          '开启后会修复 OpenAI 历史消息中的 tool_calls/tool_call_id 到 Claude tool_use/tool_result 的协议结构，兼容 Codex Desktop 等客户端的历史工具调用格式。',
       },
     ],
     [],
@@ -325,6 +330,12 @@ export default function CompatibilityPage() {
         key: 'claude.metadata_user_id_validation_mode',
         label: 'metadata.user_id 校验',
         extra: '默认仅记录明显 PII 风险。',
+      },
+      {
+        key: 'claude.assistant_prefill_validation_mode',
+        label: 'Assistant 预填校验',
+        extra:
+          '默认仅记录已知不支持 assistant message prefill 的模型，例如 Claude Haiku 4.5。',
       },
     ],
     [],
@@ -439,7 +450,9 @@ export default function CompatibilityPage() {
                 <TabPane itemKey='general' tab={t('通用兼容')}>
                   <SectionHeader
                     title={t('通用兼容')}
-                    description={t('控制上游错误详情、错误透出和透传请求的兼容处理。')}
+                    description={t(
+                      '控制上游错误详情、错误透出和透传请求的兼容处理。',
+                    )}
                   />
                   <SwitchGrid
                     fields={generalSwitches}
@@ -452,7 +465,9 @@ export default function CompatibilityPage() {
                       <HttpStatusCodeRulesInput
                         label={t('错误透传状态码')}
                         placeholder={t('例如：400, 422')}
-                        extraText={t('支持单个状态码或范围。建议仅透传调用方可修复的请求错误。')}
+                        extraText={t(
+                          '支持单个状态码或范围。建议仅透传调用方可修复的请求错误。',
+                        )}
                         field={'relay_error_setting.passthrough_status_codes'}
                         onChange={(value) =>
                           setInputs((current) => ({
@@ -470,7 +485,9 @@ export default function CompatibilityPage() {
                 <TabPane itemKey='claude' tab={t('Claude 兼容')}>
                   <SectionHeader
                     title={t('Claude 兼容')}
-                    description={t('处理 Claude 高频 400、max_tokens=0、采样参数、effort、role 和 tool_result。')}
+                    description={t(
+                      '处理 Claude 高频 400、max_tokens=0、采样参数、effort、role 和 tool_result。',
+                    )}
                   />
                   <SwitchGrid
                     fields={claudeSwitches}
@@ -481,7 +498,9 @@ export default function CompatibilityPage() {
                   <div className='mt-6'>
                     <SectionHeader
                       title={t('Claude 前置校验模式')}
-                      description={t('保守默认：硬错误直接拒绝，存在误伤风险的规则默认仅记录。')}
+                      description={t(
+                        '保守默认：硬错误直接拒绝，存在误伤风险的规则默认仅记录。',
+                      )}
                     />
                     <ModeGrid
                       fields={claudeValidationModes}
@@ -515,7 +534,9 @@ export default function CompatibilityPage() {
                           null,
                           2,
                         )}
-                        extraText={t('仅字段缺失时使用；显式 max_tokens=0 不会被覆盖。')}
+                        extraText={t(
+                          '仅字段缺失时使用；显式 max_tokens=0 不会被覆盖。',
+                        )}
                         autosize={{ minRows: 6, maxRows: 12 }}
                         trigger='blur'
                         stopValidateWithError
@@ -538,7 +559,9 @@ export default function CompatibilityPage() {
                 <TabPane itemKey='openai' tab={t('OpenAI 兼容')}>
                   <SectionHeader
                     title={t('OpenAI 兼容')}
-                    description={t('承接现有全局转换配置，并为后续 OpenAI 兼容策略预留入口。')}
+                    description={t(
+                      '承接现有全局转换配置，并为后续 OpenAI 兼容策略预留入口。',
+                    )}
                   />
                   <Row gutter={[16, 12]}>
                     <Col xs={24} lg={14}>
@@ -546,7 +569,9 @@ export default function CompatibilityPage() {
                         label={t('ChatCompletions→Responses 兼容配置')}
                         field={'global.chat_completions_to_responses_policy'}
                         placeholder={JSON.stringify({})}
-                        extraText={t('复用现有全局配置，仍可在模型相关设置中管理。')}
+                        extraText={t(
+                          '复用现有全局配置，仍可在模型相关设置中管理。',
+                        )}
                         autosize={{ minRows: 8, maxRows: 16 }}
                         trigger='blur'
                         stopValidateWithError
@@ -570,7 +595,9 @@ export default function CompatibilityPage() {
                 <TabPane itemKey='channel' tab={t('渠道兼容')}>
                   <SectionHeader
                     title={t('渠道兼容')}
-                    description={t('渠道级差异继续在渠道配置内保存，兼容管理只提供统一说明和入口预留。')}
+                    description={t(
+                      '渠道级差异继续在渠道配置内保存，兼容管理只提供统一说明和入口预留。',
+                    )}
                   />
                   <Banner
                     type='info'

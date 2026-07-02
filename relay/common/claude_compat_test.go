@@ -275,11 +275,45 @@ func TestNormalizeClaudeRequestCompatEffortValidation(t *testing.T) {
 	fableXHighReq.OutputConfig = []byte(`{"effort":"xhigh"}`)
 	require.Nil(t, NormalizeClaudeRequestCompat(fableXHighReq, nil))
 
+	sonnet5XHighReq := baseClaudeCompatRequest("claude-sonnet-5")
+	sonnet5XHighReq.OutputConfig = []byte(`{"effort":"xhigh"}`)
+	require.Nil(t, NormalizeClaudeRequestCompat(sonnet5XHighReq, nil))
+
+	sonnet5MaxReq := baseClaudeCompatRequest("claude-sonnet-5")
+	sonnet5MaxReq.OutputConfig = []byte(`{"effort":"max"}`)
+	require.Nil(t, NormalizeClaudeRequestCompat(sonnet5MaxReq, nil))
+
+	minimalReq := baseClaudeCompatRequest("claude-sonnet-5")
+	minimalReq.OutputConfig = []byte(`{"effort":"minimal"}`)
+	require.Nil(t, NormalizeClaudeRequestCompat(minimalReq, nil))
+
 	unknownReq := baseClaudeCompatRequest("claude-opus-4-7")
 	unknownReq.OutputConfig = []byte(`{"effort":"extreme"}`)
 	err = NormalizeClaudeRequestCompat(unknownReq, nil)
 	require.NotNil(t, err)
 	require.Equal(t, ClaudeCompatCodeInvalidOutputEffort, err.ToOpenAIError().Code)
+}
+
+func TestNormalizeClaudeRequestCompatAssistantPrefillValidation(t *testing.T) {
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.AssistantPrefillValidationMode = model_setting.ClaudeValidationModeLog
+	})
+	req := baseClaudeCompatRequest("claude-haiku-4-5-20251001")
+	req.Messages = append(req.Messages, dto.ClaudeMessage{Role: "assistant", Content: "prefill"})
+	require.Nil(t, NormalizeClaudeRequestCompat(req, nil))
+
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.AssistantPrefillValidationMode = model_setting.ClaudeValidationModeReject
+	})
+	rejectReq := baseClaudeCompatRequest("claude-haiku-4-5-20251001")
+	rejectReq.Messages = append(rejectReq.Messages, dto.ClaudeMessage{Role: "assistant", Content: "prefill"})
+	err := NormalizeClaudeRequestCompat(rejectReq, nil)
+	require.NotNil(t, err)
+	require.Equal(t, ClaudeCompatCodeAssistantPrefill, err.ToOpenAIError().Code)
+
+	sonnetReq := baseClaudeCompatRequest("claude-sonnet-4-6")
+	sonnetReq.Messages = append(sonnetReq.Messages, dto.ClaudeMessage{Role: "assistant", Content: "prefill"})
+	require.Nil(t, NormalizeClaudeRequestCompat(sonnetReq, nil))
 }
 
 func TestNormalizeClaudeRequestCompatToolResultReorderAndMismatch(t *testing.T) {

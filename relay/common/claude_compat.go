@@ -45,6 +45,7 @@ const (
 	ClaudeCompatCodeInvalidStopSequences      = "claude_invalid_stop_sequences"
 	ClaudeCompatCodeInvalidServiceTier        = "claude_invalid_service_tier"
 	ClaudeCompatCodeMetadataUserIDPII         = "claude_metadata_user_id_pii"
+	ClaudeCompatCodeAssistantPrefill          = "claude_assistant_prefill_unsupported"
 )
 
 var claudeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -809,6 +810,9 @@ func normalizeClaudeRequestCompat(request *dto.ClaudeRequest, info *RelayInfo) *
 	if err := applyClaudeCompatValidation(settings.ThinkingValidationMode, "thinking", info, validateClaudeThinking(request, modelName)); err != nil {
 		return err
 	}
+	if err := applyClaudeCompatValidation(settings.AssistantPrefillValidationMode, "assistant_prefill", info, validateClaudeAssistantPrefill(request, modelName)); err != nil {
+		return err
+	}
 	if err := applyClaudeCompatValidation(settings.ImageLimitsValidationMode, "image_limits", info, validateClaudeImageLimits(request, info)); err != nil {
 		return err
 	}
@@ -1014,6 +1018,22 @@ func hasClaudeAssistantPrefill(request *dto.ClaudeRequest) bool {
 	}
 	contents := contentToClaudeMediaMessages(last.Content)
 	return len(contents) > 0
+}
+
+func validateClaudeAssistantPrefill(request *dto.ClaudeRequest, modelName string) *claudeCompatViolation {
+	if !hasClaudeAssistantPrefill(request) || supportsClaudeAssistantPrefill(modelName) {
+		return nil
+	}
+	return mediumRiskClaudeViolation(
+		"messages",
+		ClaudeCompatCodeAssistantPrefill,
+		fmt.Sprintf("Invalid request for Claude: model %q does not support assistant message prefill; the conversation must end with a user message.", modelName),
+	)
+}
+
+func supportsClaudeAssistantPrefill(model string) bool {
+	model = strings.ToLower(model)
+	return !strings.Contains(model, "claude-haiku-4-5")
 }
 
 func claudeRawThinkingEnabled(value any) bool {
@@ -1265,7 +1285,7 @@ func validateClaudeOutputEffort(request *dto.ClaudeRequest, modelName string) *c
 		return nil
 	}
 	switch effort {
-	case "low", "medium", "high":
+	case "minimal", "low", "medium", "high":
 		return nil
 	case "xhigh":
 		if supportsClaudeXHighEffort(modelName) {
@@ -1280,7 +1300,7 @@ func validateClaudeOutputEffort(request *dto.ClaudeRequest, modelName string) *c
 			param: "output_config.effort",
 			code:  ClaudeCompatCodeInvalidOutputEffort,
 			message: fmt.Sprintf(
-				"Invalid request for Claude: output_config.effort=%q is unsupported; allowed values are low, medium, high, xhigh, and max.",
+				"Invalid request for Claude: output_config.effort=%q is unsupported; allowed values are minimal, low, medium, high, xhigh, and max.",
 				effort,
 			),
 		}
@@ -1300,6 +1320,7 @@ func supportsClaudeXHighEffort(model string) bool {
 	model = strings.ToLower(model)
 	return strings.Contains(model, "claude-opus-4-7") ||
 		strings.Contains(model, "claude-opus-4-8") ||
+		strings.Contains(model, "claude-sonnet-5") ||
 		strings.Contains(model, "claude-fable-5")
 }
 
@@ -1314,6 +1335,7 @@ func supportsClaudeMaxEffort(model string) bool {
 		strings.Contains(model, "claude-opus-4-8") ||
 		strings.Contains(model, "claude-sonnet-4-6") ||
 		strings.Contains(model, "claude-sonnet-4-7") ||
+		strings.Contains(model, "claude-sonnet-5") ||
 		strings.Contains(model, "claude-fable-5")
 }
 

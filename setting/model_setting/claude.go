@@ -40,6 +40,7 @@ type ClaudeSettings struct {
 	StopSequencesValidationMode           string                         `json:"stop_sequences_validation_mode"`
 	ServiceTierValidationMode             string                         `json:"service_tier_validation_mode"`
 	MetadataUserIDValidationMode          string                         `json:"metadata_user_id_validation_mode"`
+	AssistantPrefillValidationMode        string                         `json:"assistant_prefill_validation_mode"`
 	RequestSizeLimitBytes                 int64                          `json:"request_size_limit_bytes"`
 }
 
@@ -67,6 +68,7 @@ var defaultClaudeSettings = ClaudeSettings{
 	StopSequencesValidationMode:          "reject",
 	ServiceTierValidationMode:            "reject",
 	MetadataUserIDValidationMode:         "log",
+	AssistantPrefillValidationMode:       "log",
 	RequestSizeLimitBytes:                32 << 20,
 	DefaultMaxTokens: map[string]int{
 		"default": 8192,
@@ -126,6 +128,7 @@ func (c *ClaudeSettings) NormalizeValidationModes() {
 	c.StopSequencesValidationMode = normalizeClaudeValidationMode(c.StopSequencesValidationMode, defaultClaudeSettings.StopSequencesValidationMode)
 	c.ServiceTierValidationMode = normalizeClaudeValidationMode(c.ServiceTierValidationMode, defaultClaudeSettings.ServiceTierValidationMode)
 	c.MetadataUserIDValidationMode = normalizeClaudeValidationMode(c.MetadataUserIDValidationMode, defaultClaudeSettings.MetadataUserIDValidationMode)
+	c.AssistantPrefillValidationMode = normalizeClaudeValidationMode(c.AssistantPrefillValidationMode, defaultClaudeSettings.AssistantPrefillValidationMode)
 	if c.RequestSizeLimitBytes <= 0 {
 		c.RequestSizeLimitBytes = defaultClaudeSettings.RequestSizeLimitBytes
 	}

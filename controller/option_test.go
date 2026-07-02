@@ -364,6 +364,7 @@ func TestClaudeCompatibilityOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.Contains(t, data, `"key":"claude.stop_sequences_validation_mode","value":"reject"`)
 	require.Contains(t, data, `"key":"claude.service_tier_validation_mode","value":"reject"`)
 	require.Contains(t, data, `"key":"claude.metadata_user_id_validation_mode","value":"log"`)
+	require.Contains(t, data, `"key":"claude.assistant_prefill_validation_mode","value":"log"`)
 	require.Contains(t, data, `"key":"claude.request_size_limit_bytes","value":"33554432"`)
 
 	updatePayload := []byte(`{"key":"claude.reorder_tool_result_blocks_enabled","value":true}`)
@@ -413,6 +414,18 @@ func TestClaudeCompatibilityOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.NoError(t, common.Unmarshal(modeRecorder.Body.Bytes(), &modeResp))
 	require.True(t, modeResp.Success, modeResp.Message)
 	require.Equal(t, "reject", model_setting.GetClaudeSettings().ThinkingValidationMode)
+
+	prefillModePayload := []byte(`{"key":"claude.assistant_prefill_validation_mode","value":"reject"}`)
+	prefillModeRecorder := httptest.NewRecorder()
+	prefillModeCtx, _ := gin.CreateTestContext(prefillModeRecorder)
+	prefillModeCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(prefillModePayload))
+	prefillModeCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(prefillModeCtx)
+
+	var prefillModeResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(prefillModeRecorder.Body.Bytes(), &prefillModeResp))
+	require.True(t, prefillModeResp.Success, prefillModeResp.Message)
+	require.Equal(t, "reject", model_setting.GetClaudeSettings().AssistantPrefillValidationMode)
 
 	invalidPayload := []byte(`{"key":"claude.thinking_validation_mode","value":"strict"}`)
 	invalidRecorder := httptest.NewRecorder()
