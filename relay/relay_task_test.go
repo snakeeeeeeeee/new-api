@@ -2,6 +2,7 @@ package relay
 
 import (
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,8 +14,10 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -38,6 +41,27 @@ func TestTaskModel2DtoOnlyReturnsResultURLForSuccessfulTask(t *testing.T) {
 		FailReason: "Generated video rejected by content moderation.",
 	}
 	assert.Empty(t, TaskModel2Dto(failure).ResultURL)
+}
+
+func TestRecalcQuotaFromRatiosSaturatesHugeRatio(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		PriceData: types.PriceData{
+			Quota:       1,
+			OtherRatios: map[string]float64{"old": 1},
+		},
+	}
+
+	quota := recalcQuotaFromRatios(info, map[string]float64{"huge": math.MaxFloat64})
+
+	require.Equal(t, common.MaxQuota, quota)
+}
+
+func TestAsyncImagePrechargeQuotaPerImageSaturatesHugeAmount(t *testing.T) {
+	quota := asyncImagePrechargeQuotaPerImage(service.ImageHandleExecutorConfig{
+		PrechargeAmountPerImage: math.MaxFloat64,
+	})
+
+	require.Equal(t, common.MaxQuota, quota)
 }
 
 func setupRelayTaskTestDB(t *testing.T) *gorm.DB {

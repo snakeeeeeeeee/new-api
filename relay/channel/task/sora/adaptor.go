@@ -82,6 +82,15 @@ func validateRemixRequest(c *gin.Context) *dto.TaskError {
 	if strings.TrimSpace(req.Prompt) == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("field prompt is required"), "invalid_request", http.StatusBadRequest)
 	}
+	if req.Duration < 0 || req.Duration > relaycommon.MaxTaskDurationSeconds {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("seconds must be between 1 and %d", relaycommon.MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest)
+	}
+	if seconds := strings.TrimSpace(req.Seconds); seconds != "" {
+		value, err := strconv.Atoi(seconds)
+		if err != nil || value < 0 || value > relaycommon.MaxTaskDurationSeconds {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("seconds must be between 1 and %d", relaycommon.MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest)
+		}
+	}
 	// 存储原始请求到 context，与 ValidateMultipartDirect 路径保持一致
 	c.Set("task_request", req)
 	return nil

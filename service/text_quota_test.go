@@ -1,10 +1,12 @@
 package service
 
 import (
+	"math"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -230,6 +232,42 @@ func TestCalculateTextQuotaSummaryDoesNotMultiplyImageRequestCountForTokenBilled
 	// (420 input tokens * $5 / 1M + 31706 output tokens * $30 / 1M) * group 1.3
 	// = $1.239264, i.e. 619632 quota when QuotaPerUnit is 500000.
 	require.Equal(t, 619632, summary.Quota)
+}
+
+func TestCalculateTextQuotaSummarySaturatesHugeOtherRatio(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-test",
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+			OtherRatios:     map[string]float64{"n": math.MaxFloat64},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{PromptTokens: 1}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, common.MaxQuota, summary.Quota)
+}
+
+func TestCalcViolationFeeQuotaSaturatesHugeAmount(t *testing.T) {
+	require.Equal(t, common.MaxQuota, calcViolationFeeQuota(math.MaxFloat64, 1))
+}
+
+func TestCalculateAudioQuotaSaturatesHugePrice(t *testing.T) {
+	quota := calculateAudioQuota(QuotaInfo{
+		UsePrice:   true,
+		ModelPrice: math.MaxFloat64,
+		GroupRatio: 1,
+	})
+
+	require.Equal(t, common.MaxQuota, quota)
 }
 
 func TestCalculateTextQuotaSummaryUsesAnthropicUsageSemanticFromUpstreamUsage(t *testing.T) {

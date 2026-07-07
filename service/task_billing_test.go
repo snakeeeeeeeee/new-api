@@ -342,6 +342,69 @@ func TestNewBillingSession_ConcurrentWalletPreConsumeMapsInsufficientQuota(t *te
 	assert.Equal(t, 10000, getTokenRemainQuota(t, tokenID))
 }
 
+func TestPreConsumeBillingRejectsNegativeQuota(t *testing.T) {
+	truncate(t)
+	const userID, tokenID = 107, 107
+	const tokenKey = "sk-negative-preconsume"
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, tokenKey, 500)
+
+	relayInfo := &relaycommon.RelayInfo{UserId: userID, TokenId: tokenID, TokenKey: tokenKey, UsingGroup: "default"}
+	apiErr := PreConsumeBilling(testGinContext(), -1, relayInfo)
+
+	require.NotNil(t, apiErr)
+	assert.Equal(t, 1000, getUserQuota(t, userID))
+	assert.Equal(t, 500, getTokenRemainQuota(t, tokenID))
+}
+
+func TestSettleBillingRejectsNegativeActualQuota(t *testing.T) {
+	truncate(t)
+	const userID, tokenID = 108, 108
+	const tokenKey = "sk-negative-settle"
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, tokenKey, 500)
+
+	relayInfo := &relaycommon.RelayInfo{UserId: userID, TokenId: tokenID, TokenKey: tokenKey, UsingGroup: "default"}
+	err := SettleBilling(testGinContext(), relayInfo, -1)
+
+	require.Error(t, err)
+	assert.Equal(t, 1000, getUserQuota(t, userID))
+	assert.Equal(t, 500, getTokenRemainQuota(t, tokenID))
+}
+
+func TestBillingSessionSettleRejectsNegativeActualQuota(t *testing.T) {
+	truncate(t)
+	const userID, tokenID = 109, 109
+	const tokenKey = "sk-negative-session-settle"
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, tokenKey, 500)
+
+	session := &BillingSession{
+		relayInfo: &relaycommon.RelayInfo{UserId: userID, TokenId: tokenID, TokenKey: tokenKey},
+		funding:   &WalletFunding{userId: userID},
+	}
+
+	require.Error(t, session.Settle(-1))
+	assert.Equal(t, 1000, getUserQuota(t, userID))
+	assert.Equal(t, 500, getTokenRemainQuota(t, tokenID))
+}
+
+func TestBillingSessionSettleAllowsLegitimateRefundDelta(t *testing.T) {
+	truncate(t)
+	const userID, tokenID = 110, 110
+	const tokenKey = "sk-legitimate-refund-delta"
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, tokenKey, 500)
+
+	relayInfo := &relaycommon.RelayInfo{UserId: userID, TokenId: tokenID, TokenKey: tokenKey, UsingGroup: "default"}
+	session, apiErr := NewBillingSession(testGinContext(), relayInfo, 100)
+	require.Nil(t, apiErr)
+	require.NoError(t, session.Settle(60))
+
+	assert.Equal(t, 940, getUserQuota(t, userID))
+	assert.Equal(t, 440, getTokenRemainQuota(t, tokenID))
+}
+
 // ===========================================================================
 // RefundTaskQuota tests
 // ===========================================================================

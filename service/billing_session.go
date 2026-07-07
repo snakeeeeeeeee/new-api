@@ -40,6 +40,9 @@ type BillingSession struct {
 func (s *BillingSession) Settle(actualQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if actualQuota < 0 {
+		return fmt.Errorf("actual quota cannot be negative")
+	}
 	if s.settled {
 		return nil
 	}

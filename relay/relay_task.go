@@ -134,10 +134,10 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 			if info.PriceData.OtherRatios == nil {
 				info.PriceData.OtherRatios = map[string]float64{}
 			}
-			info.PriceData.OtherRatios["seconds"] = float64(seconds)
-			info.PriceData.OtherRatios["size"] = 1
+			info.PriceData.AddOtherRatio("seconds", float64(seconds))
+			info.PriceData.AddOtherRatio("size", 1)
 			if sizeStr == "1792x1024" || sizeStr == "1024x1792" {
-				info.PriceData.OtherRatios["size"] = 1.666667
+				info.PriceData.AddOtherRatio("size", 1.666667)
 			}
 		}
 	}
@@ -241,11 +241,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 6. 将 OtherRatios 应用到基础额度
 	if !common.StringsContains(constant.TaskPricePatches, modelName) {
+		quotaWithRatios := float64(info.PriceData.Quota)
 		for _, ra := range info.PriceData.OtherRatios {
 			if ra != 1.0 {
-				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
+				quotaWithRatios *= ra
 			}
 		}
+		info.PriceData.Quota = common.QuotaFromFloat(quotaWithRatios)
 	}
 	if platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeImageHandle)) {
 		applyAsyncImageUsagePrecharge(c, info)
@@ -332,7 +334,7 @@ func applyAsyncImageUsagePrecharge(c *gin.Context, info *relaycommon.RelayInfo) 
 		return
 	}
 	n := resolveAsyncImageN(c)
-	info.PriceData.Quota = prechargeQuotaPerImage * n
+	info.PriceData.Quota = common.QuotaFromFloat(float64(prechargeQuotaPerImage) * float64(n))
 	if info.PriceData.OtherRatios == nil {
 		info.PriceData.OtherRatios = map[string]float64{}
 	}
@@ -365,11 +367,9 @@ func applyAsyncImageUsageBillingSnapshot(c *gin.Context, info *relaycommon.Relay
 func asyncImagePrechargeQuotaPerImage(cfg service.ImageHandleExecutorConfig) int {
 	if cfg.PrechargeAmountPerImage > 0 && common.QuotaPerUnit > 0 {
 		quota := decimal.NewFromFloat(cfg.PrechargeAmountPerImage).
-			Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
-			Round(0).
-			IntPart()
-		if quota > 0 {
-			return int(quota)
+			Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+		if quotaPerImage := common.QuotaFromDecimalRound(quota); quotaPerImage > 0 {
+			return quotaPerImage
 		}
 	}
 	return cfg.PrechargeQuotaPerImage
@@ -594,7 +594,7 @@ func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float6
 	// 先除掉原有的 OtherRatios 恢复基础额度
 	for _, ra := range info.PriceData.OtherRatios {
 		if ra != 1.0 && ra > 0 {
-			baseQuota = int(float64(baseQuota) / ra)
+			baseQuota = common.QuotaFromFloat(float64(baseQuota) / ra)
 		}
 	}
 	// 应用新的 ratios
@@ -604,7 +604,7 @@ func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float6
 			result *= ra
 		}
 	}
-	return int(result)
+	return common.QuotaFromFloat(result)
 }
 
 var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp *dto.TaskError){
