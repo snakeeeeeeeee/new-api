@@ -19,38 +19,44 @@ import (
 )
 
 type textQuotaSummary struct {
-	PromptTokens             int
-	CompletionTokens         int
-	TotalTokens              int
-	CacheTokens              int
-	CacheCreationTokens      int
-	CacheCreationTokens5m    int
-	CacheCreationTokens1h    int
-	ImageTokens              int
-	AudioTokens              int
-	ModelName                string
-	TokenName                string
-	UseTimeSeconds           int64
-	CompletionRatio          float64
-	CacheRatio               float64
-	ImageRatio               float64
-	ModelRatio               float64
-	GroupRatio               float64
-	ModelPrice               float64
-	CacheCreationRatio       float64
-	CacheCreationRatio5m     float64
-	CacheCreationRatio1h     float64
-	Quota                    int
-	IsClaudeUsageSemantic    bool
-	UsageSemantic            string
-	WebSearchPrice           float64
-	WebSearchCallCount       int
-	ClaudeWebSearchPrice     float64
-	ClaudeWebSearchCallCount int
-	FileSearchPrice          float64
-	FileSearchCallCount      int
-	AudioInputPrice          float64
-	ImageGenerationCallPrice float64
+	PromptTokens                                int
+	CompletionTokens                            int
+	TotalTokens                                 int
+	CacheTokens                                 int
+	CacheCreationTokens                         int
+	CacheCreationTokens5m                       int
+	CacheCreationTokens1h                       int
+	ImageTokens                                 int
+	AudioTokens                                 int
+	ModelName                                   string
+	TokenName                                   string
+	UseTimeSeconds                              int64
+	CompletionRatio                             float64
+	CacheRatio                                  float64
+	ImageRatio                                  float64
+	ModelRatio                                  float64
+	GroupRatio                                  float64
+	ModelPrice                                  float64
+	CacheCreationRatio                          float64
+	CacheCreationRatio5m                        float64
+	CacheCreationRatio1h                        float64
+	Quota                                       int
+	IsClaudeUsageSemantic                       bool
+	UsageSemantic                               string
+	ClaudeCacheTTLBillingCompat                 bool
+	ClaudeCacheTTLRepricedTokens                int
+	ClaudeCacheTTLSubsidyQuota                  int
+	ClaudeCacheTTLSubsidyRatioDelta             float64
+	ClaudeCacheTTLUpstreamCacheCreation1hTokens int
+	ClaudeCacheTTLBilledCacheCreation5mTokens   int
+	WebSearchPrice                              float64
+	WebSearchCallCount                          int
+	ClaudeWebSearchPrice                        float64
+	ClaudeWebSearchCallCount                    int
+	FileSearchPrice                             float64
+	FileSearchCallCount                         int
+	AudioInputPrice                             float64
+	ImageGenerationCallPrice                    float64
 }
 
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
@@ -75,6 +81,58 @@ func isLegacyClaudeDerivedOpenAIUsage(relayInfo *relaycommon.RelayInfo, usage *d
 		return false
 	}
 	return usage.ClaudeCacheCreation5mTokens > 0 || usage.ClaudeCacheCreation1hTokens > 0
+}
+
+func applyClaudeCacheTTLBillingCompat(relayInfo *relaycommon.RelayInfo, summary *textQuotaSummary) {
+	if relayInfo == nil || summary == nil || relayInfo.PriceData.UsePrice {
+		return
+	}
+	compat := relayInfo.ClaudeCacheTTLBillingCompat
+	if compat == nil || compat.RequestedTTL != relaycommon.ClaudeCacheTTL5m {
+		return
+	}
+	if !summary.IsClaudeUsageSemantic || summary.CacheCreationTokens1h <= 0 {
+		return
+	}
+	repricedTokens := summary.CacheCreationTokens1h
+	ratioDelta := summary.CacheCreationRatio1h - summary.CacheCreationRatio5m
+	subsidyQuota := 0
+	if ratioDelta > 0 {
+		subsidyDecimal := decimal.NewFromInt(int64(repricedTokens)).
+			Mul(decimal.NewFromFloat(ratioDelta)).
+			Mul(decimal.NewFromFloat(summary.ModelRatio)).
+			Mul(decimal.NewFromFloat(summary.GroupRatio))
+		subsidyQuota = int(subsidyDecimal.Round(0).IntPart())
+	}
+
+	summary.ClaudeCacheTTLBillingCompat = true
+	summary.ClaudeCacheTTLRepricedTokens = repricedTokens
+	summary.ClaudeCacheTTLSubsidyQuota = subsidyQuota
+	summary.ClaudeCacheTTLSubsidyRatioDelta = ratioDelta
+	summary.ClaudeCacheTTLUpstreamCacheCreation1hTokens = repricedTokens
+	summary.CacheCreationTokens5m += repricedTokens
+	summary.CacheCreationTokens1h = 0
+	summary.ClaudeCacheTTLBilledCacheCreation5mTokens = summary.CacheCreationTokens5m
+
+	compat.RepricedTokens = repricedTokens
+	compat.SubsidyQuota = subsidyQuota
+	compat.SubsidyRatioDelta = ratioDelta
+	compat.UpstreamCacheCreation1hTokens = repricedTokens
+	compat.BilledCacheCreation5mTokens = summary.CacheCreationTokens5m
+}
+
+func appendClaudeCacheTTLBillingCompatOther(other map[string]interface{}, summary textQuotaSummary) {
+	if other == nil || !summary.ClaudeCacheTTLBillingCompat {
+		return
+	}
+	other["claude_cache_ttl_billing_compat"] = true
+	other["claude_cache_ttl_requested"] = relaycommon.ClaudeCacheTTL5m
+	other["claude_cache_ttl_upstream_reported"] = relaycommon.ClaudeCacheTTL1h
+	other["claude_cache_ttl_repriced_tokens"] = summary.ClaudeCacheTTLRepricedTokens
+	other["claude_cache_ttl_subsidy_quota"] = summary.ClaudeCacheTTLSubsidyQuota
+	other["claude_cache_ttl_subsidy_ratio_delta"] = summary.ClaudeCacheTTLSubsidyRatioDelta
+	other["claude_cache_ttl_upstream_cache_creation_tokens_1h"] = summary.ClaudeCacheTTLUpstreamCacheCreation1hTokens
+	other["claude_cache_ttl_billed_cache_creation_tokens_5m"] = summary.ClaudeCacheTTLBilledCacheCreation5mTokens
 }
 
 func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage) textQuotaSummary {
@@ -128,6 +186,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		}
 		summary.PromptTokens -= summary.CacheCreationTokens
 	}
+	applyClaudeCacheTTLBillingCompat(relayInfo, &summary)
 
 	dPromptTokens := decimal.NewFromInt(int64(summary.PromptTokens))
 	dCacheTokens := decimal.NewFromInt(int64(summary.CacheTokens))
@@ -318,6 +377,12 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.ImageGenerationCallPrice > 0 {
 		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
+	if summary.ClaudeCacheTTLBillingCompat {
+		extraContent = append(extraContent, fmt.Sprintf("Claude cache TTL 计费兼容：上游按 1h 返回 %d tokens，本地按客户端声明 5m 计费，平台补贴 %d quota",
+			summary.ClaudeCacheTTLRepricedTokens,
+			summary.ClaudeCacheTTLSubsidyQuota,
+		))
+	}
 
 	if summary.TotalTokens == 0 {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
@@ -358,6 +423,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if adminRejectReason != "" {
 		other["reject_reason"] = adminRejectReason
 	}
+	appendClaudeCacheTTLBillingCompatOther(other, summary)
 	if summary.ImageTokens != 0 {
 		other["image"] = true
 		other["image_ratio"] = summary.ImageRatio

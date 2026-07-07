@@ -254,6 +254,7 @@ const EditChannelModal = (props) => {
     claude_beta_query: false,
     claude_tool_schema_compat_enabled: false,
     claude_tool_schema_compat_user_ids: '',
+    claude_cache_ttl_billing_compat_enabled: false,
     upstream_model_update_check_enabled: false,
     upstream_model_update_auto_sync_enabled: false,
     upstream_model_update_last_check_time: 0,
@@ -919,6 +920,8 @@ const EditChannelModal = (props) => {
             formatClaudeToolSchemaCompatUserIDs(
               parsedSettings.claude_tool_schema_compat_user_ids,
             );
+          data.claude_cache_ttl_billing_compat_enabled =
+            parsedSettings.claude_cache_ttl_billing_compat_enabled || false;
           data.upstream_model_update_check_enabled =
             parsedSettings.upstream_model_update_check_enabled === true;
           data.upstream_model_update_auto_sync_enabled =
@@ -953,6 +956,7 @@ const EditChannelModal = (props) => {
           data.claude_beta_query = false;
           data.claude_tool_schema_compat_enabled = false;
           data.claude_tool_schema_compat_user_ids = '';
+          data.claude_cache_ttl_billing_compat_enabled = false;
           data.upstream_model_update_check_enabled = false;
           data.upstream_model_update_auto_sync_enabled = false;
           data.upstream_model_update_last_check_time = 0;
@@ -975,6 +979,7 @@ const EditChannelModal = (props) => {
         data.claude_beta_query = false;
         data.claude_tool_schema_compat_enabled = false;
         data.claude_tool_schema_compat_user_ids = '';
+        data.claude_cache_ttl_billing_compat_enabled = false;
         data.upstream_model_update_check_enabled = false;
         data.upstream_model_update_auto_sync_enabled = false;
         data.upstream_model_update_last_check_time = 0;
@@ -1059,6 +1064,7 @@ const EditChannelModal = (props) => {
         data.claude_tool_schema_compat_enabled ||
         (data.claude_tool_schema_compat_user_ids &&
           data.claude_tool_schema_compat_user_ids.trim()) ||
+        data.claude_cache_ttl_billing_compat_enabled ||
         data.system_prompt_override ||
         data.upstream_model_update_check_enabled ||
         data.upstream_model_update_auto_sync_enabled;
@@ -1848,6 +1854,8 @@ const EditChannelModal = (props) => {
     // type === 1 (OpenAI) 或 type === 14 (Claude): 设置字段透传控制（显式保存布尔值）
     if (localInputs.type === 1 || localInputs.type === 14) {
       settings.allow_service_tier = localInputs.allow_service_tier === true;
+      settings.claude_cache_ttl_billing_compat_enabled =
+        localInputs.claude_cache_ttl_billing_compat_enabled === true;
       // 仅 OpenAI 渠道需要 store / safety_identifier / include_obfuscation
       if (localInputs.type === 1) {
         settings.disable_store = localInputs.disable_store === true;
@@ -1864,6 +1872,8 @@ const EditChannelModal = (props) => {
         settings.claude_tool_schema_compat_user_ids =
           claudeToolSchemaCompatUserIDs;
       }
+    } else if ('claude_cache_ttl_billing_compat_enabled' in settings) {
+      delete settings.claude_cache_ttl_billing_compat_enabled;
     }
 
     settings.upstream_model_update_check_enabled =
@@ -1915,6 +1925,7 @@ const EditChannelModal = (props) => {
     delete localInputs.claude_beta_query;
     delete localInputs.claude_tool_schema_compat_enabled;
     delete localInputs.claude_tool_schema_compat_user_ids;
+    delete localInputs.claude_cache_ttl_billing_compat_enabled;
     delete localInputs.upstream_model_update_check_enabled;
     delete localInputs.upstream_model_update_auto_sync_enabled;
     delete localInputs.upstream_model_update_last_check_time;
@@ -2572,6 +2583,10 @@ const EditChannelModal = (props) => {
 
                   {inputs.type === 14 && (
                     <Form.Switch field='claude_beta_query' label={t('Claude 强制 beta=true')} initValue={inputs.claude_beta_query === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_beta_query', value)} extraText={t('开启后，该渠道请求 Claude 时将强制追加 ?beta=true（无需客户端手动传参）')} />
+                  )}
+
+                  {(inputs.type === 1 || inputs.type === 14) && (
+                    <Form.Switch field='claude_cache_ttl_billing_compat_enabled' label={t('Claude 缓存 TTL 计费兼容')} initValue={inputs.claude_cache_ttl_billing_compat_enabled === true} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_cache_ttl_billing_compat_enabled', value)} extraText={t('客户端显式声明 cache_control.ttl=5m 但上游按 1h 返回或计费时，本平台按 5m 向用户计费，差价由平台承担。默认关闭。')} />
                   )}
 
                   {inputs.type === 14 && (

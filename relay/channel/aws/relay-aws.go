@@ -208,7 +208,12 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 			delete(data, "stream")
 			ensureAwsClaudeAnthropicVersion(data, awsClaudeReq)
 			relaycommon.CaptureClaudeToolSchemaCompatFinalSchemas(data["tools"], info)
-			return common.Marshal(data)
+			finalBody, err := common.Marshal(data)
+			if err != nil {
+				return nil, err
+			}
+			relaycommon.CaptureClaudeCacheTTLBillingCompat(info, finalBody)
+			return finalBody, nil
 		}
 		delete(data, "model")
 		delete(data, "stream")
@@ -238,7 +243,12 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 			}
 		}
 		relaycommon.CaptureClaudeToolSchemaCompatFinalSchemas(data["tools"], info)
-		return common.Marshal(data)
+		finalBody, err := common.Marshal(data)
+		if err != nil {
+			return nil, err
+		}
+		relaycommon.CaptureClaudeCacheTTLBillingCompat(info, finalBody)
+		return finalBody, nil
 	}
 	if req, ok := awsClaudeReq.(*dto.ClaudeRequest); ok {
 		if compatErr := relaycommon.NormalizeClaudeRequestCompat(req, info); compatErr != nil {
@@ -249,7 +259,12 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 		relaycommon.NormalizeClaudeToolsValue(req.Tools, info)
 		relaycommon.CaptureClaudeToolSchemaCompatFinalSchemas(req.Tools, info)
 	}
-	return common.Marshal(awsClaudeReq)
+	finalBody, err := common.Marshal(awsClaudeReq)
+	if err != nil {
+		return nil, err
+	}
+	relaycommon.CaptureClaudeCacheTTLBillingCompat(info, finalBody)
+	return finalBody, nil
 }
 
 func ensureAwsClaudeAnthropicVersion(data map[string]any, awsClaudeReq any) {

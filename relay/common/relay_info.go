@@ -59,6 +59,16 @@ type ResponsesUsageInfo struct {
 	BuiltInTools map[string]*BuildInToolInfo
 }
 
+type ClaudeCacheTTLBillingCompatInfo struct {
+	RequestedTTL                  string
+	UpstreamReportedTTL           string
+	RepricedTokens                int
+	SubsidyQuota                  int
+	SubsidyRatioDelta             float64
+	UpstreamCacheCreation1hTokens int
+	BilledCacheCreation5mTokens   int
+}
+
 type ChannelMeta struct {
 	ChannelType          int
 	ChannelId            int
@@ -172,6 +182,9 @@ type RelayInfo struct {
 	// It is used only for diagnostic logging when a strict upstream still rejects a tool schema.
 	ClaudeToolSchemaCompatFinalSchemas []ClaudeToolSchemaCompatOriginalSchema
 	claudeToolSchemaCompatFinalLogged  bool
+	// ClaudeCacheTTLBillingCompat records that the final upstream Claude request
+	// explicitly asked for 5m cache TTL and is eligible for user-side billing repricing.
+	ClaudeCacheTTLBillingCompat *ClaudeCacheTTLBillingCompatInfo
 
 	ThinkingContentInfo
 	TokenCountMeta

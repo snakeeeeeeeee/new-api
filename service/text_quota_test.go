@@ -106,6 +106,102 @@ func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.
 	require.Equal(t, 118, summary.Quota)
 }
 
+func TestCalculateTextQuotaSummaryClaudeCacheTTLBillingCompat(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	baseRelayInfo := func() *relaycommon.RelayInfo {
+		return &relaycommon.RelayInfo{
+			RelayFormat:             types.RelayFormatClaude,
+			FinalRequestRelayFormat: types.RelayFormatClaude,
+			OriginModelName:         "claude-sonnet-4-6",
+			PriceData: types.PriceData{
+				ModelRatio:           1,
+				CompletionRatio:      1,
+				CacheRatio:           0,
+				CacheCreationRatio:   1,
+				CacheCreation5mRatio: 2,
+				CacheCreation1hRatio: 3,
+				GroupRatioInfo: types.GroupRatioInfo{
+					GroupRatio: 2,
+				},
+			},
+			StartTime: time.Now(),
+		}
+	}
+	usage := func() *dto.Usage {
+		return &dto.Usage{
+			PromptTokens:     100,
+			CompletionTokens: 0,
+			PromptTokensDetails: dto.InputTokenDetails{
+				CachedCreationTokens: 10,
+			},
+			ClaudeCacheCreation1hTokens: 10,
+		}
+	}
+
+	t.Run("switch off keeps upstream one hour billing", func(t *testing.T) {
+		relayInfo := baseRelayInfo()
+
+		summary := calculateTextQuotaSummary(ctx, relayInfo, usage())
+
+		require.False(t, summary.ClaudeCacheTTLBillingCompat)
+		require.Equal(t, 10, summary.CacheCreationTokens1h)
+		require.Equal(t, 0, summary.CacheCreationTokens5m)
+		// (100 + 10*3) * group 2 = 260
+		require.Equal(t, 260, summary.Quota)
+	})
+
+	t.Run("switch on reprices explicit five minute request", func(t *testing.T) {
+		relayInfo := baseRelayInfo()
+		relayInfo.ClaudeCacheTTLBillingCompat = &relaycommon.ClaudeCacheTTLBillingCompatInfo{
+			RequestedTTL:        relaycommon.ClaudeCacheTTL5m,
+			UpstreamReportedTTL: relaycommon.ClaudeCacheTTL1h,
+		}
+
+		summary := calculateTextQuotaSummary(ctx, relayInfo, usage())
+
+		require.True(t, summary.ClaudeCacheTTLBillingCompat)
+		require.Equal(t, 0, summary.CacheCreationTokens1h)
+		require.Equal(t, 10, summary.CacheCreationTokens5m)
+		require.Equal(t, 10, summary.ClaudeCacheTTLRepricedTokens)
+		require.Equal(t, 20, summary.ClaudeCacheTTLSubsidyQuota)
+		require.Equal(t, 1.0, summary.ClaudeCacheTTLSubsidyRatioDelta)
+		// (100 + 10*2) * group 2 = 240
+		require.Equal(t, 240, summary.Quota)
+
+		other := map[string]interface{}{}
+		appendClaudeCacheTTLBillingCompatOther(other, summary)
+		require.Equal(t, true, other["claude_cache_ttl_billing_compat"])
+		require.Equal(t, relaycommon.ClaudeCacheTTL5m, other["claude_cache_ttl_requested"])
+		require.Equal(t, relaycommon.ClaudeCacheTTL1h, other["claude_cache_ttl_upstream_reported"])
+		require.Equal(t, 10, other["claude_cache_ttl_repriced_tokens"])
+		require.Equal(t, 20, other["claude_cache_ttl_subsidy_quota"])
+		require.Equal(t, 1.0, other["claude_cache_ttl_subsidy_ratio_delta"])
+		require.Equal(t, 10, other["claude_cache_ttl_upstream_cache_creation_tokens_1h"])
+		require.Equal(t, 10, other["claude_cache_ttl_billed_cache_creation_tokens_5m"])
+	})
+
+	t.Run("upstream five minute does not reprice", func(t *testing.T) {
+		relayInfo := baseRelayInfo()
+		relayInfo.ClaudeCacheTTLBillingCompat = &relaycommon.ClaudeCacheTTLBillingCompatInfo{
+			RequestedTTL:        relaycommon.ClaudeCacheTTL5m,
+			UpstreamReportedTTL: relaycommon.ClaudeCacheTTL1h,
+		}
+		upstream5mUsage := usage()
+		upstream5mUsage.ClaudeCacheCreation1hTokens = 0
+		upstream5mUsage.ClaudeCacheCreation5mTokens = 10
+
+		summary := calculateTextQuotaSummary(ctx, relayInfo, upstream5mUsage)
+
+		require.False(t, summary.ClaudeCacheTTLBillingCompat)
+		require.Equal(t, 10, summary.CacheCreationTokens5m)
+		require.Equal(t, 0, summary.CacheCreationTokens1h)
+		require.Equal(t, 240, summary.Quota)
+	})
+}
+
 func TestCalculateTextQuotaSummaryDoesNotMultiplyImageRequestCountForTokenBilledImage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

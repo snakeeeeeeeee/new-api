@@ -156,9 +156,15 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
 				relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)
 			}
+			relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
 			service.DumpUpstreamRequestIfNeeded(c, jsonData)
 			requestBody = bytes.NewBuffer(jsonData)
 		} else {
+			if info.ChannelOtherSettings.ClaudeCacheTTLBillingCompatEnabled {
+				if jsonData, err := storage.Bytes(); err == nil {
+					relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
+				}
+			}
 			requestBody = common.ReaderOnly(storage)
 		}
 	} else {
@@ -201,6 +207,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 
 		relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)
+		relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
 		if common.DebugEnabled {
 			println("requestBody: ", string(jsonData))
 		}
