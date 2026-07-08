@@ -19,10 +19,14 @@ import (
 )
 
 func formatQuotaUSD(quota int) string {
+	return fmt.Sprintf("$%.6f", quotaUSDValue(quota))
+}
+
+func quotaUSDValue(quota int) float64 {
 	if common.QuotaPerUnit <= 0 {
-		return "$0.000000"
+		return 0
 	}
-	return fmt.Sprintf("$%.6f", float64(quota)/common.QuotaPerUnit)
+	return float64(quota) / common.QuotaPerUnit
 }
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。

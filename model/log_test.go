@@ -233,6 +233,9 @@ func sumUsageStatsTrend(trend []UsageStatsTrendPoint) UsageStatsTrendPoint {
 		total.PromptTokens += point.PromptTokens
 		total.CompletionTokens += point.CompletionTokens
 		total.TotalTokens += point.TotalTokens
+		total.ClaudeCacheTTLSubsidyQuota += point.ClaudeCacheTTLSubsidyQuota
+		total.ClaudeCacheTTLSubsidyRequestCount += point.ClaudeCacheTTLSubsidyRequestCount
+		total.ClaudeCacheTTLRepricedTokens += point.ClaudeCacheTTLRepricedTokens
 	}
 	return total
 }
@@ -391,7 +394,7 @@ func TestGetUsageStatsNormalizesCacheTokenBreakdown(t *testing.T) {
 		Quota:            3000,
 		PromptTokens:     39,
 		CompletionTokens: 32,
-		Other:            `{"claude":true,"cache_tokens":100,"cache_creation_tokens_5m":50,"cache_creation_tokens_1h":31}`,
+		Other:            `{"claude":true,"cache_tokens":100,"cache_creation_tokens_5m":50,"cache_creation_tokens_1h":31,"claude_cache_ttl_billing_compat":true,"claude_cache_ttl_subsidy_quota":86959,"claude_cache_ttl_repriced_tokens":23189,"claude_cache_ttl_upstream_cache_creation_tokens_1h":23189,"claude_cache_ttl_billed_cache_creation_tokens_5m":23189}`,
 	})
 
 	stats, err := GetUsageStats(UsageStatsQuery{
@@ -406,6 +409,11 @@ func TestGetUsageStatsNormalizesCacheTokenBreakdown(t *testing.T) {
 	require.Equal(t, int64(24164), stats.Summary.CacheTokens)
 	require.Equal(t, int64(1310), stats.Summary.CompletionTokens)
 	require.Equal(t, int64(31470), stats.Summary.TotalTokens)
+	require.Equal(t, int64(86959), stats.Summary.ClaudeCacheTTLSubsidyQuota)
+	require.Equal(t, int64(1), stats.Summary.ClaudeCacheTTLSubsidyRequestCount)
+	require.Equal(t, int64(23189), stats.Summary.ClaudeCacheTTLRepricedTokens)
+	require.Equal(t, int64(23189), stats.Summary.ClaudeCacheTTLUpstream1hTokens)
+	require.Equal(t, int64(23189), stats.Summary.ClaudeCacheTTLBilled5mTokens)
 
 	byUser := make(map[string]UsageStatsRankItem)
 	for _, item := range stats.Ranking {
@@ -428,6 +436,9 @@ func TestGetUsageStatsNormalizesCacheTokenBreakdown(t *testing.T) {
 
 	trendTotal := sumUsageStatsTrend(stats.Trend)
 	require.Equal(t, stats.Summary.InputTokens, trendTotal.InputTokens)
+	require.Equal(t, stats.Summary.ClaudeCacheTTLSubsidyQuota, trendTotal.ClaudeCacheTTLSubsidyQuota)
+	require.Equal(t, stats.Summary.ClaudeCacheTTLSubsidyRequestCount, trendTotal.ClaudeCacheTTLSubsidyRequestCount)
+	require.Equal(t, stats.Summary.ClaudeCacheTTLRepricedTokens, trendTotal.ClaudeCacheTTLRepricedTokens)
 	require.Equal(t, stats.Summary.CacheTokens, trendTotal.CacheTokens)
 	require.Equal(t, stats.Summary.CompletionTokens, trendTotal.CompletionTokens)
 	require.Equal(t, stats.Summary.TotalTokens, trendTotal.TotalTokens)

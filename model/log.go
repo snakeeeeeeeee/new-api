@@ -529,14 +529,19 @@ type UsageStatsQuery struct {
 }
 
 type UsageStatsSummary struct {
-	Quota            int64 `json:"quota"`
-	RequestCount     int64 `json:"request_count"`
-	ActiveUserCount  int64 `json:"active_user_count"`
-	InputTokens      int64 `json:"input_tokens"`
-	CacheTokens      int64 `json:"cache_tokens"`
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	TotalTokens      int64 `json:"total_tokens"`
+	Quota                             int64 `json:"quota"`
+	RequestCount                      int64 `json:"request_count"`
+	ActiveUserCount                   int64 `json:"active_user_count"`
+	InputTokens                       int64 `json:"input_tokens"`
+	CacheTokens                       int64 `json:"cache_tokens"`
+	PromptTokens                      int64 `json:"prompt_tokens"`
+	CompletionTokens                  int64 `json:"completion_tokens"`
+	TotalTokens                       int64 `json:"total_tokens"`
+	ClaudeCacheTTLSubsidyQuota        int64 `json:"claude_cache_ttl_subsidy_quota"`
+	ClaudeCacheTTLSubsidyRequestCount int64 `json:"claude_cache_ttl_subsidy_request_count"`
+	ClaudeCacheTTLRepricedTokens      int64 `json:"claude_cache_ttl_repriced_tokens"`
+	ClaudeCacheTTLUpstream1hTokens    int64 `json:"claude_cache_ttl_upstream_1h_tokens"`
+	ClaudeCacheTTLBilled5mTokens      int64 `json:"claude_cache_ttl_billed_5m_tokens"`
 }
 
 type UsageStatsRankItem struct {
@@ -554,15 +559,18 @@ type UsageStatsRankItem struct {
 }
 
 type UsageStatsTrendPoint struct {
-	BucketStart      int64  `json:"bucket_start"`
-	Label            string `json:"label"`
-	Quota            int64  `json:"quota"`
-	RequestCount     int64  `json:"request_count"`
-	InputTokens      int64  `json:"input_tokens"`
-	CacheTokens      int64  `json:"cache_tokens"`
-	PromptTokens     int64  `json:"prompt_tokens"`
-	CompletionTokens int64  `json:"completion_tokens"`
-	TotalTokens      int64  `json:"total_tokens"`
+	BucketStart                       int64  `json:"bucket_start"`
+	Label                             string `json:"label"`
+	Quota                             int64  `json:"quota"`
+	RequestCount                      int64  `json:"request_count"`
+	InputTokens                       int64  `json:"input_tokens"`
+	CacheTokens                       int64  `json:"cache_tokens"`
+	PromptTokens                      int64  `json:"prompt_tokens"`
+	CompletionTokens                  int64  `json:"completion_tokens"`
+	TotalTokens                       int64  `json:"total_tokens"`
+	ClaudeCacheTTLSubsidyQuota        int64  `json:"claude_cache_ttl_subsidy_quota"`
+	ClaudeCacheTTLSubsidyRequestCount int64  `json:"claude_cache_ttl_subsidy_request_count"`
+	ClaudeCacheTTLRepricedTokens      int64  `json:"claude_cache_ttl_repriced_tokens"`
 }
 
 type UsageStatsModelItem struct {
@@ -718,14 +726,17 @@ type usageStatsBaseRow struct {
 }
 
 type usageStatsTrendRow struct {
-	BucketStart      int64
-	Quota            int64
-	RequestCount     int64
-	InputTokens      int64
-	CacheTokens      int64
-	PromptTokens     int64
-	CompletionTokens int64
-	TotalTokens      int64
+	BucketStart                       int64
+	Quota                             int64
+	RequestCount                      int64
+	InputTokens                       int64
+	CacheTokens                       int64
+	PromptTokens                      int64
+	CompletionTokens                  int64
+	TotalTokens                       int64
+	ClaudeCacheTTLSubsidyQuota        int64
+	ClaudeCacheTTLSubsidyRequestCount int64
+	ClaudeCacheTTLRepricedTokens      int64
 }
 
 type usageStatsLogRow struct {
@@ -807,6 +818,14 @@ type usageStatsTokenBreakdown struct {
 	CacheTokens      int64
 	CompletionTokens int64
 	TotalTokens      int64
+}
+
+type usageStatsClaudeCacheTTLSubsidy struct {
+	Quota            int64
+	RequestCount     int64
+	RepricedTokens   int64
+	Upstream1hTokens int64
+	Billed5mTokens   int64
 }
 
 func normalizeUsageStatsQuery(query UsageStatsQuery) (UsageStatsQuery, error) {
@@ -994,13 +1013,21 @@ func usageStatsCacheWriteTokens(other map[string]interface{}) int64 {
 	return cacheCreationTokens
 }
 
-func usageStatsTokenBreakdownFromLog(row usageStatsLogRow) usageStatsTokenBreakdown {
-	promptTokens := row.PromptTokens
-	completionTokens := row.CompletionTokens
+func usageStatsOtherFromLog(row usageStatsLogRow) map[string]interface{} {
 	var other map[string]interface{}
 	if row.Other != "" {
 		_ = common.UnmarshalJsonStr(row.Other, &other)
 	}
+	return other
+}
+
+func usageStatsTokenBreakdownFromLog(row usageStatsLogRow) usageStatsTokenBreakdown {
+	return usageStatsTokenBreakdownFromOther(row, usageStatsOtherFromLog(row))
+}
+
+func usageStatsTokenBreakdownFromOther(row usageStatsLogRow, other map[string]interface{}) usageStatsTokenBreakdown {
+	promptTokens := row.PromptTokens
+	completionTokens := row.CompletionTokens
 
 	cacheReadTokens := usageStatsOtherInt64(other, "cache_tokens")
 	cacheWriteTokens := usageStatsCacheWriteTokens(other)
@@ -1031,6 +1058,22 @@ func usageStatsTokenBreakdownFromLog(row usageStatsLogRow) usageStatsTokenBreakd
 		CompletionTokens: completionTokens,
 		TotalTokens:      totalTokens,
 	}
+}
+
+func usageStatsClaudeCacheTTLSubsidyFromOther(other map[string]interface{}) usageStatsClaudeCacheTTLSubsidy {
+	if !usageStatsOtherBool(other, "claude_cache_ttl_billing_compat") {
+		return usageStatsClaudeCacheTTLSubsidy{}
+	}
+	subsidy := usageStatsClaudeCacheTTLSubsidy{
+		Quota:            usageStatsOtherInt64(other, "claude_cache_ttl_subsidy_quota"),
+		RepricedTokens:   usageStatsOtherInt64(other, "claude_cache_ttl_repriced_tokens"),
+		Upstream1hTokens: usageStatsOtherInt64(other, "claude_cache_ttl_upstream_cache_creation_tokens_1h"),
+		Billed5mTokens:   usageStatsOtherInt64(other, "claude_cache_ttl_billed_cache_creation_tokens_5m"),
+	}
+	if subsidy.Quota > 0 || subsidy.RepricedTokens > 0 || subsidy.Upstream1hTokens > 0 || subsidy.Billed5mTokens > 0 {
+		subsidy.RequestCount = 1
+	}
+	return subsidy
 }
 
 func usageStatsBucketStart(ts int64, granularity string) int64 {
@@ -1084,6 +1127,9 @@ func buildUsageStatsTrend(rows []usageStatsTrendRow, query UsageStatsQuery) []Us
 		point.PromptTokens += row.InputTokens
 		point.CompletionTokens += row.CompletionTokens
 		point.TotalTokens += row.TotalTokens
+		point.ClaudeCacheTTLSubsidyQuota += row.ClaudeCacheTTLSubsidyQuota
+		point.ClaudeCacheTTLSubsidyRequestCount += row.ClaudeCacheTTLSubsidyRequestCount
+		point.ClaudeCacheTTLRepricedTokens += row.ClaudeCacheTTLRepricedTokens
 	}
 	buckets := make([]int64, 0, len(trendMap))
 	for bucket := range trendMap {
@@ -1524,7 +1570,9 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 	trendMap := make(map[int64]*usageStatsTrendRow)
 
 	for _, row := range logRows {
-		tokens := usageStatsTokenBreakdownFromLog(row)
+		other := usageStatsOtherFromLog(row)
+		tokens := usageStatsTokenBreakdownFromOther(row, other)
+		claudeCacheTTLSubsidy := usageStatsClaudeCacheTTLSubsidyFromOther(other)
 		data.Summary.Quota += row.Quota
 		data.Summary.RequestCount++
 		data.Summary.InputTokens += tokens.InputTokens
@@ -1532,6 +1580,11 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 		data.Summary.PromptTokens += tokens.InputTokens
 		data.Summary.CompletionTokens += tokens.CompletionTokens
 		data.Summary.TotalTokens += tokens.TotalTokens
+		data.Summary.ClaudeCacheTTLSubsidyQuota += claudeCacheTTLSubsidy.Quota
+		data.Summary.ClaudeCacheTTLSubsidyRequestCount += claudeCacheTTLSubsidy.RequestCount
+		data.Summary.ClaudeCacheTTLRepricedTokens += claudeCacheTTLSubsidy.RepricedTokens
+		data.Summary.ClaudeCacheTTLUpstream1hTokens += claudeCacheTTLSubsidy.Upstream1hTokens
+		data.Summary.ClaudeCacheTTLBilled5mTokens += claudeCacheTTLSubsidy.Billed5mTokens
 		activeUsers[row.UserId] = struct{}{}
 
 		rankingRow, ok := rankingMap[row.UserId]
@@ -1581,6 +1634,9 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 		trendRow.PromptTokens = trendRow.InputTokens
 		trendRow.CompletionTokens += tokens.CompletionTokens
 		trendRow.TotalTokens += tokens.TotalTokens
+		trendRow.ClaudeCacheTTLSubsidyQuota += claudeCacheTTLSubsidy.Quota
+		trendRow.ClaudeCacheTTLSubsidyRequestCount += claudeCacheTTLSubsidy.RequestCount
+		trendRow.ClaudeCacheTTLRepricedTokens += claudeCacheTTLSubsidy.RepricedTokens
 	}
 	data.Summary.ActiveUserCount = int64(len(activeUsers))
 

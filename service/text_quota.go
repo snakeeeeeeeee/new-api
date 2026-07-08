@@ -130,6 +130,8 @@ func appendClaudeCacheTTLBillingCompatOther(other map[string]interface{}, summar
 	other["claude_cache_ttl_upstream_reported"] = relaycommon.ClaudeCacheTTL1h
 	other["claude_cache_ttl_repriced_tokens"] = summary.ClaudeCacheTTLRepricedTokens
 	other["claude_cache_ttl_subsidy_quota"] = summary.ClaudeCacheTTLSubsidyQuota
+	other["claude_cache_ttl_subsidy_usd"] = quotaUSDValue(summary.ClaudeCacheTTLSubsidyQuota)
+	other["claude_cache_ttl_subsidy_amount"] = formatQuotaUSD(summary.ClaudeCacheTTLSubsidyQuota)
 	other["claude_cache_ttl_subsidy_ratio_delta"] = summary.ClaudeCacheTTLSubsidyRatioDelta
 	other["claude_cache_ttl_upstream_cache_creation_tokens_1h"] = summary.ClaudeCacheTTLUpstreamCacheCreation1hTokens
 	other["claude_cache_ttl_billed_cache_creation_tokens_5m"] = summary.ClaudeCacheTTLBilledCacheCreation5mTokens
@@ -378,9 +380,10 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
 	if summary.ClaudeCacheTTLBillingCompat {
-		extraContent = append(extraContent, fmt.Sprintf("Claude cache TTL 计费兼容：上游按 1h 返回 %d tokens，本地按客户端声明 5m 计费，平台补贴 %d quota",
+		extraContent = append(extraContent, fmt.Sprintf("Claude cache TTL 计费兼容：上游按 1h 返回 %d tokens，本地按客户端声明 5m 计费，本次补贴 %d quota（约 %s）",
 			summary.ClaudeCacheTTLRepricedTokens,
 			summary.ClaudeCacheTTLSubsidyQuota,
+			formatQuotaUSD(summary.ClaudeCacheTTLSubsidyQuota),
 		))
 	}
 

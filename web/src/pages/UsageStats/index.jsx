@@ -529,8 +529,15 @@ const UsageStatsPage = () => {
           values: trend.map((item) => ({
             label: item.label,
             amount_usd: quotaToUSD(item.quota),
+            cache_ttl_subsidy_usd: quotaToUSD(
+              item.claude_cache_ttl_subsidy_quota,
+            ),
             quota: item.quota || 0,
             request_count: item.request_count || 0,
+            cache_ttl_subsidy_request_count:
+              item.claude_cache_ttl_subsidy_request_count || 0,
+            cache_ttl_repriced_tokens:
+              item.claude_cache_ttl_repriced_tokens || 0,
             input_tokens: item.input_tokens ?? item.prompt_tokens ?? 0,
             cache_tokens: item.cache_tokens || 0,
             completion_tokens: item.completion_tokens || 0,
@@ -565,12 +572,27 @@ const UsageStatsPage = () => {
               value: (datum) => formatUSDValue(datum.amount_usd || 0),
             },
             {
+              key: t('1h缓存补贴 ($)'),
+              value: (datum) =>
+                formatUSDValue(datum.cache_ttl_subsidy_usd || 0),
+            },
+            {
               key: t('请求数'),
               value: (datum) => renderNumber(datum.request_count || 0),
             },
             {
+              key: t('补贴触发次数'),
+              value: (datum) =>
+                renderNumber(datum.cache_ttl_subsidy_request_count || 0),
+            },
+            {
               key: t('Token 消耗 (M)'),
               value: (datum) => formatTokensMillion(datum.total_tokens || 0),
+            },
+            {
+              key: t('重算 Tokens'),
+              value: (datum) =>
+                renderNumber(datum.cache_ttl_repriced_tokens || 0),
             },
             {
               key: t('输入(含缓存写) (M)'),
@@ -749,8 +771,13 @@ const UsageStatsPage = () => {
           values: selectedUserTrend.map((item) => ({
             label: item.label,
             amount_usd: quotaToUSD(item.quota),
+            cache_ttl_subsidy_usd: quotaToUSD(
+              item.claude_cache_ttl_subsidy_quota,
+            ),
             quota: item.quota || 0,
             request_count: item.request_count || 0,
+            cache_ttl_subsidy_request_count:
+              item.claude_cache_ttl_subsidy_request_count || 0,
           })),
         },
       ],
@@ -782,8 +809,18 @@ const UsageStatsPage = () => {
               value: (datum) => formatUSDValue(datum.amount_usd || 0),
             },
             {
+              key: t('1h缓存补贴 ($)'),
+              value: (datum) =>
+                formatUSDValue(datum.cache_ttl_subsidy_usd || 0),
+            },
+            {
               key: t('请求数'),
               value: (datum) => renderNumber(datum.request_count || 0),
+            },
+            {
+              key: t('补贴触发次数'),
+              value: (datum) =>
+                renderNumber(datum.cache_ttl_subsidy_request_count || 0),
             },
           ],
         },
@@ -1309,6 +1346,12 @@ const UsageStatsPage = () => {
             icon={<Sparkles size={20} />}
           />
           <SummaryCard
+            title={t('1h缓存补贴')}
+            value={formatQuotaUSD(summary.claude_cache_ttl_subsidy_quota || 0)}
+            hint={`${t('补贴触发次数')} ${renderNumber(summary.claude_cache_ttl_subsidy_request_count || 0)} / ${t('重算 Tokens')} ${renderNumber(summary.claude_cache_ttl_repriced_tokens || 0)}`}
+            icon={<WalletCards size={20} />}
+          />
+          <SummaryCard
             title={t('模型数量')}
             value={renderNumber(models.length || 0)}
             hint={
@@ -1583,7 +1626,7 @@ const UsageStatsPage = () => {
       >
         {selectedUser && (
           <div className='flex flex-col gap-4'>
-            <div className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
+            <div className='grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4'>
               <SummaryCard
                 title={t('消耗额度 ($)')}
                 value={formatQuotaUSD(
@@ -1611,6 +1654,14 @@ const UsageStatsPage = () => {
                 )}
                 hint={`${t('平均耗时')} ${formatUseTime(selectedUserRank.average_use_time)}`}
                 icon={<Clock3 size={18} />}
+              />
+              <SummaryCard
+                title={t('1h缓存补贴')}
+                value={formatQuotaUSD(
+                  selectedUserSummary.claude_cache_ttl_subsidy_quota || 0,
+                )}
+                hint={`${t('补贴触发次数')} ${renderNumber(selectedUserSummary.claude_cache_ttl_subsidy_request_count || 0)}`}
+                icon={<WalletCards size={18} />}
               />
             </div>
             <Card className='!rounded-lg' bodyStyle={{ padding: 8 }}>

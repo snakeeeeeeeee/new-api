@@ -180,6 +180,8 @@ func TestCalculateTextQuotaSummaryClaudeCacheTTLBillingCompat(t *testing.T) {
 		require.Equal(t, relaycommon.ClaudeCacheTTL1h, other["claude_cache_ttl_upstream_reported"])
 		require.Equal(t, 10, other["claude_cache_ttl_repriced_tokens"])
 		require.Equal(t, 20, other["claude_cache_ttl_subsidy_quota"])
+		require.InDelta(t, 0.00004, other["claude_cache_ttl_subsidy_usd"].(float64), 0.000001)
+		require.Equal(t, "$0.000040", other["claude_cache_ttl_subsidy_amount"])
 		require.Equal(t, 1.0, other["claude_cache_ttl_subsidy_ratio_delta"])
 		require.Equal(t, 10, other["claude_cache_ttl_upstream_cache_creation_tokens_1h"])
 		require.Equal(t, 10, other["claude_cache_ttl_billed_cache_creation_tokens_5m"])
