@@ -76,3 +76,44 @@ returned non-user instruction text, but it does not prove the exact internal
 request body of an upstream provider. To prove what this gateway sends, capture
 the final outbound request body before it leaves new-api or use mitmproxy on the
 new-api outbound connection.
+
+## Codex Deferred Tool Diagnose
+
+Use `codex_tool_diagnose.py` when Codex says it will use Chrome/Node tools but
+then stops without doing work. The script can start request dump, run a Codex CLI
+repro, collect events, and report whether `tool_search` was lost by the gateway,
+kept upstream but skipped by the model, or never sent by the client.
+
+Live capture:
+
+```bash
+export CODEX_API_KEY='sk-test'
+
+python3 2dev/scripts/codex_tool_diagnose.py live \
+  --admin-base-url http://localhost:3001 \
+  --admin-header 'Authorization: Bearer <admin-token>' \
+  --admin-user-id 1 \
+  --api-base-url https://your-new-api.example.com/v1 \
+  --model gpt-5.5 \
+  --dump-user-ids 14 \
+  --dump-token-names lyc-codex
+```
+
+The live mode writes artifacts under `tmp/codex-tool-diagnose-*`, including
+`dump-events.json`, `codex-events.jsonl`, `report.json`, and `report.md`. It
+uses a temporary `CODEX_HOME`, so the target API key does not overwrite the
+current Codex config.
+
+Analyze existing dump/Codex files:
+
+```bash
+python3 2dev/scripts/codex_tool_diagnose.py analyze \
+  --events-file ./tmp/dump-events.json \
+  --codex-jsonl ./tmp/codex-events.jsonl
+```
+
+Quick analyzer test:
+
+```bash
+python3 2dev/scripts/codex_tool_diagnose.py self-test
+```

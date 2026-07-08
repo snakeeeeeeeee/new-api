@@ -59,9 +59,15 @@ func writeResponsesCompletedEvent(t *testing.T, pw *io.PipeWriter) {
 	t.Helper()
 
 	event := `data: {"type":"response.completed","response":{"id":"resp_test","created_at":123,"model":"gpt-test","usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}}` + "\n"
+	writeResponsesStreamData(t, pw, event)
+}
+
+func writeResponsesStreamData(t *testing.T, pw *io.PipeWriter, data string) {
+	t.Helper()
+
 	writeDone := make(chan error, 1)
 	go func() {
-		_, err := fmt.Fprint(pw, event)
+		_, err := fmt.Fprint(pw, data)
 		writeDone <- err
 	}()
 
@@ -71,6 +77,39 @@ func writeResponsesCompletedEvent(t *testing.T, pw *io.PipeWriter) {
 	case <-time.After(500 * time.Millisecond):
 		_ = pw.Close()
 		t.Fatal("timed out writing response.completed event")
+	}
+}
+
+func TestOaiResponsesStreamHandlerForwardsToolSearchCallWithObjectArguments(t *testing.T) {
+	c, recorder, info, pr, pw := setupOpenAIStreamTerminalTest(t)
+	resp := &http.Response{Body: pr}
+
+	done := make(chan error, 1)
+	go func() {
+		_, apiErr := OaiResponsesStreamHandler(c, info, resp)
+		if apiErr != nil {
+			done <- apiErr
+			return
+		}
+		done <- nil
+	}()
+
+	toolSearchEvent := `data: {"type":"response.output_item.added","item":{"id":"tsc_1","type":"tool_search_call","status":"in_progress","arguments":{},"call_id":"call_1","execution":"client"},"output_index":0,"sequence_number":2}` + "\n"
+	writeResponsesStreamData(t, pw, toolSearchEvent)
+	writeResponsesCompletedEvent(t, pw)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+		body := recorder.Body.String()
+		require.Contains(t, body, "response.output_item.added")
+		require.Contains(t, body, "tool_search_call")
+		require.Contains(t, body, `"arguments":{}`)
+		require.Contains(t, body, "response.completed")
+	case <-time.After(500 * time.Millisecond):
+		_ = pr.Close()
+		_ = pw.Close()
+		t.Fatal("OaiResponsesStreamHandler did not return after response.completed")
 	}
 }
 
@@ -214,6 +253,21 @@ func TestBuildResponsesStreamDumpMetaIncludesToolDetails(t *testing.T) {
 	require.Equal(t, "tool_search", meta.ToolName)
 	require.Equal(t, `{"query":"chrome tabs"}`, meta.Arguments)
 	require.Equal(t, len(`{"query":"chrome tabs"}`), meta.ArgumentsSize)
+	require.Equal(t, "item.arguments", meta.Details["arguments_source"])
+}
+
+func TestBuildResponsesStreamDumpMetaIncludesObjectArguments(t *testing.T) {
+	data := `{"type":"response.output_item.added","item":{"type":"tool_search_call","id":"tsc_1","call_id":"call_1","arguments":{},"execution":"client"}}`
+	var streamResp dto.ResponsesStreamResponse
+	require.NoError(t, common.UnmarshalJsonStr(data, &streamResp))
+
+	meta := buildResponsesStreamDumpMeta(data, streamResp)
+
+	require.Equal(t, "tool_search_call", meta.ItemType)
+	require.Equal(t, "tsc_1", meta.ItemID)
+	require.Equal(t, "call_1", meta.CallID)
+	require.Equal(t, `{}`, meta.Arguments)
+	require.Equal(t, len(`{}`), meta.ArgumentsSize)
 	require.Equal(t, "item.arguments", meta.Details["arguments_source"])
 }
 

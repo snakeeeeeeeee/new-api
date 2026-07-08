@@ -1,9 +1,11 @@
 package dto
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/types"
 )
 
@@ -349,6 +351,35 @@ type ResponsesOutput struct {
 	CallId    string                   `json:"call_id,omitempty"`
 	Name      string                   `json:"name,omitempty"`
 	Arguments string                   `json:"arguments,omitempty"`
+}
+
+func (r *ResponsesOutput) UnmarshalJSON(data []byte) error {
+	type responsesOutputAlias ResponsesOutput
+	aux := struct {
+		Arguments json.RawMessage `json:"arguments,omitempty"`
+		*responsesOutputAlias
+	}{
+		responsesOutputAlias: (*responsesOutputAlias)(r),
+	}
+	if err := common.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	r.Arguments = responsesArgumentsToString(aux.Arguments)
+	return nil
+}
+
+func responsesArgumentsToString(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return ""
+	}
+	if common.GetJsonType(trimmed) == "string" {
+		var decoded string
+		if err := common.Unmarshal(trimmed, &decoded); err == nil {
+			return decoded
+		}
+	}
+	return string(trimmed)
 }
 
 type ResponsesOutputContent struct {
