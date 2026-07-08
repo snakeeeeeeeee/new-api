@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
@@ -196,4 +198,37 @@ func TestOaiResponsesStreamHandlerDumpsResponsesStreamTrace(t *testing.T) {
 	require.Equal(t, service.RequestDumpStageResponsesStreamSummary, events[1].Stage)
 	require.Equal(t, "response.completed", events[1].StreamStopReason)
 	require.Equal(t, 1, events[1].StreamReceivedCount)
+}
+
+func TestBuildResponsesStreamDumpMetaIncludesToolDetails(t *testing.T) {
+	data := `{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"tool_search","arguments":"{\"query\":\"chrome tabs\"}"}}`
+	var streamResp dto.ResponsesStreamResponse
+	require.NoError(t, common.UnmarshalJsonStr(data, &streamResp))
+
+	meta := buildResponsesStreamDumpMeta(data, streamResp)
+
+	require.Equal(t, "response.output_item.done", meta.EventType)
+	require.Equal(t, "function_call", meta.ItemType)
+	require.Equal(t, "fc_1", meta.ItemID)
+	require.Equal(t, "call_1", meta.CallID)
+	require.Equal(t, "tool_search", meta.ToolName)
+	require.Equal(t, `{"query":"chrome tabs"}`, meta.Arguments)
+	require.Equal(t, len(`{"query":"chrome tabs"}`), meta.ArgumentsSize)
+	require.Equal(t, "item.arguments", meta.Details["arguments_source"])
+}
+
+func TestBuildResponsesStreamDumpMetaIncludesCustomToolInput(t *testing.T) {
+	data := `{"type":"response.output_item.added","item":{"type":"custom_tool_call","id":"ctc_1","call_id":"call_c","name":"mcp__chrome__tabs","input":{"action":"list"}}}`
+	var streamResp dto.ResponsesStreamResponse
+	require.NoError(t, common.UnmarshalJsonStr(data, &streamResp))
+
+	meta := buildResponsesStreamDumpMeta(data, streamResp)
+
+	require.Equal(t, "custom_tool_call", meta.ItemType)
+	require.Equal(t, "ctc_1", meta.ItemID)
+	require.Equal(t, "call_c", meta.CallID)
+	require.Equal(t, "mcp__chrome__tabs", meta.ToolName)
+	require.Equal(t, `{"action":"list"}`, meta.Arguments)
+	require.Equal(t, len(`{"action":"list"}`), meta.ArgumentsSize)
+	require.Equal(t, "item.input", meta.Details["arguments_source"])
 }

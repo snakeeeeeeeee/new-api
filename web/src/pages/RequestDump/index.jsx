@@ -489,7 +489,7 @@ const RequestDumpPage = () => {
                     />
                   </div>
                   <Text size='small' type='tertiary'>
-                    {t('用于排查 Codex / Responses 工具调用卡住。只记录事件类型、工具项类型、错误摘要和结束原因，不记录完整响应正文。建议路径填写 /v1/responses。')}
+                    {t('用于排查 Codex / Responses 工具调用卡住。记录事件类型、工具名、调用 ID、参数截断摘要、请求 tools 摘要和结束原因，不记录完整响应正文。建议路径填写 /v1/responses。')}
                   </Text>
                 </div>
               </div>

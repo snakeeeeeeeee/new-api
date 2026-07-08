@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -215,6 +216,94 @@ func TestRequestDumpResponsesStreamKeyEventsOnly(t *testing.T) {
 	require.Equal(t, "response.output_item.done", events[0].StreamEventType)
 	require.Equal(t, "function_call", events[0].StreamItemType)
 	require.Equal(t, "response.completed", events[1].StreamEventType)
+}
+
+func TestRequestDumpResponsesStreamToolDetails(t *testing.T) {
+	c := newRequestDumpTestContext(t, `{"model":"gpt-test"}`, "application/json")
+	startRequestDumpForTest(t, RequestDumpRule{
+		UserIDs:                   []int{123},
+		Keywords:                  []string{"tool_search"},
+		DurationSeconds:           60,
+		MaxCount:                  10,
+		PrintOn:                   RequestDumpPrintOnAll,
+		TraceResponsesStream:      true,
+		MaxStreamEventsPerRequest: 10,
+	})
+	DumpResponsesStreamEventIfNeeded(c, ResponsesStreamDumpMeta{
+		EventType:     "response.output_item.done",
+		ItemType:      "function_call",
+		ItemID:        "fc_1",
+		CallID:        "call_1",
+		ToolName:      "tool_search",
+		ArgumentsSize: 2048,
+		Arguments:     strings.Repeat("x", 1200),
+		Sequence:      2,
+		Details: map[string]any{
+			"arguments_source": "item.arguments",
+		},
+	})
+	DumpResponsesStreamSummaryIfNeeded(c, ResponsesStreamDumpMeta{
+		StopReason: "response.completed",
+	})
+
+	events := GetRequestDumpEvents(0, 10)
+	require.Len(t, events, 2)
+	require.Equal(t, "fc_1", events[0].StreamItemID)
+	require.Equal(t, "call_1", events[0].StreamCallID)
+	require.Equal(t, "tool_search", events[0].StreamToolName)
+	require.Equal(t, 2048, events[0].StreamArgumentsSize)
+	require.Contains(t, events[0].StreamArguments, "(truncated)")
+	require.Equal(t, "item.arguments", events[0].StreamDetails["arguments_source"])
+	require.Equal(t, "response.completed", events[1].StreamStopReason)
+}
+
+func TestRequestDumpRawRequestSummaryForResponsesTools(t *testing.T) {
+	body := `{
+		"model":"gpt-test",
+		"stream":true,
+		"tool_choice":"auto",
+		"parallel_tool_calls":true,
+		"tools":[
+			{"type":"function","name":"shell_command"},
+			{"type":"tool_search","name":"tool_search"},
+			{"type":"namespace","name":"codex_app"}
+		],
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"请你查看我的 Chrome 页面"}]},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"我会连接 Chrome。"}]},
+			{"type":"function_call","name":"shell_command","call_id":"call_shell","arguments":"{\"command\":\"Get-Content\"}"},
+			{"type":"function_call_output","call_id":"call_shell","output":"ok"}
+		]
+	}`
+	c := newRequestDumpTestContext(t, body, "application/json")
+	startRequestDumpForTest(t, RequestDumpRule{
+		UserIDs:              []int{123},
+		DurationSeconds:      60,
+		MaxCount:             10,
+		PrintOn:              RequestDumpPrintOnAll,
+		PrintBody:            false,
+		TraceResponsesStream: true,
+	})
+
+	DumpRawRequestIfNeeded(c)
+	events := GetRequestDumpEvents(0, 10)
+	require.Len(t, events, 1)
+	summary := events[0].RequestSummary
+	require.Equal(t, "gpt-test", summary["model"])
+	require.Equal(t, true, summary["stream"])
+	require.Equal(t, "auto", summary["tool_choice"])
+	require.Equal(t, 3, summary["tool_count"])
+	require.Equal(t, true, summary["tool_search_available"])
+	require.Equal(t, true, summary["chrome_mentioned"])
+	require.Equal(t, 4, summary["input_count"])
+	require.Contains(t, summary["tool_names"], "function:shell_command")
+	require.Contains(t, summary["tool_names"], "tool_search:tool_search")
+	require.Contains(t, summary["last_user_text"], "Chrome")
+	require.Contains(t, summary["last_assistant_text"], "连接 Chrome")
+	recentFunctionCalls := summary["recent_function_calls"].([]string)
+	require.Len(t, recentFunctionCalls, 1)
+	require.Contains(t, recentFunctionCalls[0], "shell_command call_id=call_shell")
+	require.Empty(t, events[0].RawBody, "request summary should work without printing the full body")
 }
 
 func TestRequestDumpKeywordMissDoesNotCaptureOrCount(t *testing.T) {

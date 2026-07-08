@@ -113,16 +113,28 @@ type RequestDumpEvent struct {
 	RetryIndex          int               `json:"retry_index,omitempty"`
 	StreamEventType     string            `json:"stream_event_type,omitempty"`
 	StreamItemType      string            `json:"stream_item_type,omitempty"`
+	StreamItemID        string            `json:"stream_item_id,omitempty"`
+	StreamCallID        string            `json:"stream_call_id,omitempty"`
+	StreamToolName      string            `json:"stream_tool_name,omitempty"`
+	StreamArgumentsSize int               `json:"stream_arguments_size,omitempty"`
+	StreamArguments     string            `json:"stream_arguments,omitempty"`
 	StreamSequence      int               `json:"stream_sequence,omitempty"`
 	StreamStopReason    string            `json:"stream_stop_reason,omitempty"`
 	StreamElapsedMs     int64             `json:"stream_elapsed_ms,omitempty"`
 	StreamReceivedCount int               `json:"stream_received_count,omitempty"`
 	StreamNote          string            `json:"stream_note,omitempty"`
+	StreamDetails       map[string]any    `json:"stream_details,omitempty"`
+	RequestSummary      map[string]any    `json:"request_summary,omitempty"`
 }
 
 type ResponsesStreamDumpMeta struct {
 	EventType     string
 	ItemType      string
+	ItemID        string
+	CallID        string
+	ToolName      string
+	ArgumentsSize int
+	Arguments     string
 	Sequence      int
 	StopReason    string
 	ElapsedMs     int64
@@ -131,6 +143,7 @@ type ResponsesStreamDumpMeta struct {
 	ErrorCode     string
 	ErrorMessage  string
 	Note          string
+	Details       map[string]any
 }
 
 type requestDumpState struct {
@@ -297,6 +310,7 @@ func DumpRawRequestIfNeeded(c *gin.Context) {
 			return
 		}
 		event := buildBaseRequestDumpEvent(c, RequestDumpStageRawRequest, rule)
+		fillRequestBodySummary(c, rule, &event)
 		fillRawBody(c, rule, &event)
 		if appendMatchedRequestDumpEvent(c, event, rule, generation) {
 			c.Set(requestDumpRawRecordedKey, true)
@@ -340,6 +354,7 @@ func DumpRelayErrorIfNeeded(c *gin.Context, err *types.NewAPIError) {
 		event.ErrorMessage = err.MaskSensitiveError()
 		event.RetryIndex = c.GetInt("request_dump_retry_index")
 		if !c.GetBool(requestDumpRawRecordedKey) {
+			fillRequestBodySummary(c, rule, &event)
 			fillRawBody(c, rule, &event)
 		}
 		if appendMatchedRequestDumpEvent(c, event, rule, generation) {
@@ -395,6 +410,11 @@ func fillResponsesStreamDumpFields(event *RequestDumpEvent, meta ResponsesStream
 	}
 	event.StreamEventType = strings.TrimSpace(meta.EventType)
 	event.StreamItemType = strings.TrimSpace(meta.ItemType)
+	event.StreamItemID = strings.TrimSpace(meta.ItemID)
+	event.StreamCallID = strings.TrimSpace(meta.CallID)
+	event.StreamToolName = strings.TrimSpace(meta.ToolName)
+	event.StreamArgumentsSize = meta.ArgumentsSize
+	event.StreamArguments = limitRequestDumpString(strings.TrimSpace(meta.Arguments), 1000)
 	event.StreamSequence = meta.Sequence
 	event.StreamStopReason = strings.TrimSpace(meta.StopReason)
 	event.StreamElapsedMs = meta.ElapsedMs
@@ -403,6 +423,7 @@ func fillResponsesStreamDumpFields(event *RequestDumpEvent, meta ResponsesStream
 	event.ErrorType = strings.TrimSpace(meta.ErrorType)
 	event.ErrorCode = strings.TrimSpace(meta.ErrorCode)
 	event.ErrorMessage = limitRequestDumpString(strings.TrimSpace(meta.ErrorMessage), 500)
+	event.StreamDetails = limitRequestDumpDetails(meta.Details)
 }
 
 func isKeyResponsesStreamDumpEvent(meta ResponsesStreamDumpMeta) bool {
@@ -509,6 +530,251 @@ func fillRawBody(c *gin.Context, rule RequestDumpRule, event *RequestDumpEvent) 
 		return
 	}
 	event.RawBody = string(body)
+}
+
+func fillRequestBodySummary(c *gin.Context, rule RequestDumpRule, event *RequestDumpEvent) {
+	if !rule.TraceResponsesStream || c == nil || event == nil {
+		return
+	}
+	if isUnsupportedRequestDumpContentType(event.ContentType) {
+		return
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		event.RequestSummary = map[string]any{
+			"skip_reason": "read_body_failed:" + err.Error(),
+		}
+		return
+	}
+	if event.BodySize == 0 {
+		event.BodySize = storage.Size()
+	}
+	if storage.Size() > maxRequestDumpMaxBodyBytes*4 {
+		event.RequestSummary = map[string]any{
+			"skip_reason": "summary_body_too_large",
+			"body_size":   storage.Size(),
+		}
+		return
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		event.RequestSummary = map[string]any{
+			"skip_reason": "read_body_failed:" + err.Error(),
+		}
+		return
+	}
+	summary := buildRequestDumpBodySummary(body)
+	if len(summary) > 0 {
+		event.RequestSummary = summary
+	}
+}
+
+func buildRequestDumpBodySummary(body []byte) map[string]any {
+	var root map[string]any
+	if err := common.Unmarshal(body, &root); err != nil {
+		return map[string]any{
+			"skip_reason": "json_parse_failed:" + err.Error(),
+		}
+	}
+	summary := map[string]any{}
+	if model := requestDumpStringValue(root["model"]); model != "" {
+		summary["model"] = limitRequestDumpString(model, 200)
+	}
+	if stream, ok := root["stream"].(bool); ok {
+		summary["stream"] = stream
+	}
+	if toolChoice, ok := root["tool_choice"]; ok {
+		summary["tool_choice"] = requestDumpPreviewValue(toolChoice, 300)
+	}
+	if parallelToolCalls, ok := root["parallel_tool_calls"].(bool); ok {
+		summary["parallel_tool_calls"] = parallelToolCalls
+	}
+	if tools, ok := root["tools"].([]any); ok {
+		toolNames := summarizeRequestDumpTools(tools)
+		summary["tool_count"] = len(tools)
+		if len(toolNames) > 0 {
+			summary["tool_names"] = toolNames
+			summary["tool_search_available"] = containsRequestDumpSummaryValue(toolNames, "tool_search")
+		}
+	}
+	if input, ok := root["input"].([]any); ok {
+		fillRequestDumpInputSummary(summary, input)
+	} else if messages, ok := root["messages"].([]any); ok {
+		fillRequestDumpInputSummary(summary, messages)
+	}
+	return summary
+}
+
+func summarizeRequestDumpTools(tools []any) []string {
+	names := make([]string, 0, min(len(tools), 80))
+	for _, tool := range tools {
+		toolMap, ok := tool.(map[string]any)
+		if !ok {
+			continue
+		}
+		toolType := requestDumpStringValue(toolMap["type"])
+		name := requestDumpStringValue(toolMap["name"])
+		if name == "" {
+			if functionMap, ok := toolMap["function"].(map[string]any); ok {
+				name = requestDumpStringValue(functionMap["name"])
+			}
+		}
+		if name == "" {
+			name = toolType
+		} else if toolType != "" {
+			name = toolType + ":" + name
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		names = append(names, limitRequestDumpString(name, 160))
+		if len(names) >= 80 {
+			break
+		}
+	}
+	return names
+}
+
+func fillRequestDumpInputSummary(summary map[string]any, input []any) {
+	summary["input_count"] = len(input)
+	typeCounts := map[string]int{}
+	recentTypes := make([]string, 0, 12)
+	recentFunctionCalls := make([]string, 0, 20)
+	functionCallCount := 0
+	functionCallOutputCount := 0
+	messageCount := 0
+	reasoningCount := 0
+	lastUserText := ""
+	lastAssistantText := ""
+	chromeMentioned := false
+
+	start := len(input) - 12
+	if start < 0 {
+		start = 0
+	}
+	for idx, rawItem := range input {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := requestDumpStringValue(item["type"])
+		role := requestDumpStringValue(item["role"])
+		if itemType == "" {
+			itemType = role
+		}
+		if itemType == "" {
+			itemType = "unknown"
+		}
+		typeCounts[itemType]++
+		if idx >= start {
+			recentTypes = append(recentTypes, itemType)
+		}
+		text := requestDumpMessageText(item)
+		if strings.Contains(strings.ToLower(text), "chrome") {
+			chromeMentioned = true
+		}
+		switch itemType {
+		case "message":
+			messageCount++
+			if role == "user" && text != "" {
+				lastUserText = text
+			}
+			if role == "assistant" && text != "" {
+				lastAssistantText = text
+			}
+		case "function_call":
+			functionCallCount++
+			callSummary := requestDumpFunctionCallSummary(item)
+			if callSummary != "" {
+				recentFunctionCalls = append(recentFunctionCalls, callSummary)
+				if len(recentFunctionCalls) > 20 {
+					recentFunctionCalls = recentFunctionCalls[len(recentFunctionCalls)-20:]
+				}
+			}
+		case "function_call_output":
+			functionCallOutputCount++
+		case "reasoning":
+			reasoningCount++
+		}
+	}
+	summary["input_type_counts"] = typeCounts
+	if len(recentTypes) > 0 {
+		summary["recent_input_types"] = recentTypes
+	}
+	if functionCallCount > 0 {
+		summary["function_call_count"] = functionCallCount
+	}
+	if functionCallOutputCount > 0 {
+		summary["function_call_output_count"] = functionCallOutputCount
+	}
+	if messageCount > 0 {
+		summary["message_count"] = messageCount
+	}
+	if reasoningCount > 0 {
+		summary["reasoning_count"] = reasoningCount
+	}
+	if len(recentFunctionCalls) > 0 {
+		summary["recent_function_calls"] = recentFunctionCalls
+	}
+	if lastUserText != "" {
+		summary["last_user_text"] = limitRequestDumpString(lastUserText, 500)
+	}
+	if lastAssistantText != "" {
+		summary["last_assistant_text"] = limitRequestDumpString(lastAssistantText, 500)
+	}
+	if chromeMentioned {
+		summary["chrome_mentioned"] = true
+	}
+}
+
+func requestDumpFunctionCallSummary(item map[string]any) string {
+	name := requestDumpStringValue(item["name"])
+	callID := requestDumpStringValue(item["call_id"])
+	arguments := requestDumpStringValue(item["arguments"])
+	parts := make([]string, 0, 3)
+	if name != "" {
+		parts = append(parts, name)
+	}
+	if callID != "" {
+		parts = append(parts, "call_id="+callID)
+	}
+	if arguments != "" {
+		parts = append(parts, fmt.Sprintf("args_bytes=%d", len(arguments)))
+	}
+	return limitRequestDumpString(strings.Join(parts, " "), 300)
+}
+
+func requestDumpMessageText(item map[string]any) string {
+	content, ok := item["content"]
+	if !ok {
+		return ""
+	}
+	switch value := content.(type) {
+	case string:
+		return value
+	case []any:
+		parts := make([]string, 0, len(value))
+		for _, part := range value {
+			partMap, ok := part.(map[string]any)
+			if !ok {
+				continue
+			}
+			text := requestDumpStringValue(partMap["text"])
+			if text == "" {
+				text = requestDumpStringValue(partMap["input_text"])
+			}
+			if text == "" {
+				text = requestDumpStringValue(partMap["output_text"])
+			}
+			if text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return requestDumpPreviewValue(content, 500)
+	}
 }
 
 func appendMatchedRequestDumpEvent(c *gin.Context, event RequestDumpEvent, rule RequestDumpRule, generation int64) bool {
@@ -685,6 +951,14 @@ func buildRequestDumpKeywordHaystack(event *RequestDumpEvent) string {
 			appendKeywordPart(strconv.Itoa(value))
 		}
 	}
+	appendKeywordMap := func(value map[string]any) {
+		if len(value) == 0 {
+			return
+		}
+		if data, err := common.Marshal(value); err == nil {
+			appendKeywordPart(string(data))
+		}
+	}
 	appendKeywordPart(event.Stage)
 	appendKeywordPart(event.RequestID)
 	appendKeywordInt(event.UserID)
@@ -707,8 +981,14 @@ func buildRequestDumpKeywordHaystack(event *RequestDumpEvent) string {
 	appendKeywordInt(event.RetryIndex)
 	appendKeywordPart(event.StreamEventType)
 	appendKeywordPart(event.StreamItemType)
+	appendKeywordPart(event.StreamItemID)
+	appendKeywordPart(event.StreamCallID)
+	appendKeywordPart(event.StreamToolName)
+	appendKeywordPart(event.StreamArguments)
 	appendKeywordPart(event.StreamStopReason)
 	appendKeywordPart(event.StreamNote)
+	appendKeywordMap(event.StreamDetails)
+	appendKeywordMap(event.RequestSummary)
 	appendKeywordPart(event.RawBody)
 	appendKeywordPart(event.UpstreamBody)
 	if len(event.Headers) > 0 {
@@ -816,6 +1096,91 @@ func limitRequestDumpString(value string, limit int) string {
 		return value
 	}
 	return value[:limit] + "...(truncated)"
+}
+
+func requestDumpStringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	default:
+		return ""
+	}
+}
+
+func requestDumpPreviewValue(value any, limit int) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return limitRequestDumpString(typed, limit)
+	default:
+		data, err := common.Marshal(typed)
+		if err != nil {
+			return limitRequestDumpString(fmt.Sprintf("%v", typed), limit)
+		}
+		return limitRequestDumpString(string(data), limit)
+	}
+}
+
+func limitRequestDumpDetails(details map[string]any) map[string]any {
+	if len(details) == 0 {
+		return nil
+	}
+	limited := make(map[string]any, len(details))
+	for key, value := range details {
+		limitedKey := limitRequestDumpString(strings.TrimSpace(key), 120)
+		if limitedKey == "" {
+			continue
+		}
+		limited[limitedKey] = limitRequestDumpDetailValue(value)
+	}
+	if len(limited) == 0 {
+		return nil
+	}
+	return limited
+}
+
+func limitRequestDumpDetailValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return limitRequestDumpString(typed, 1000)
+	case []string:
+		if len(typed) > 80 {
+			typed = typed[len(typed)-80:]
+		}
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, limitRequestDumpString(item, 300))
+		}
+		return result
+	case []any:
+		if len(typed) > 80 {
+			typed = typed[len(typed)-80:]
+		}
+		result := make([]any, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, limitRequestDumpDetailValue(item))
+		}
+		return result
+	case map[string]int:
+		return typed
+	case map[string]any:
+		return limitRequestDumpDetails(typed)
+	default:
+		return typed
+	}
+}
+
+func containsRequestDumpSummaryValue(values []string, target string) bool {
+	for _, value := range values {
+		normalized := strings.ToLower(value)
+		if normalized == target || strings.Contains(normalized, ":"+target) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsInt(values []int, target int) bool {
