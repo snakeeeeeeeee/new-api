@@ -45,6 +45,78 @@ func TestPatchClaudeMessageDeltaUsageDataZeroValueChecks(t *testing.T) {
 	assert.False(t, gjson.Get(patchedData, "usage.cache_creation_input_tokens").Exists())
 }
 
+func TestPatchClaudeCacheTTLBillingCompatUsageData(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		ClaudeCacheTTLBillingCompat: &relaycommon.ClaudeCacheTTLBillingCompatInfo{
+			RequestedTTL: relaycommon.ClaudeCacheTTL5m,
+		},
+	}
+	usage := &dto.ClaudeUsage{
+		CacheCreation: &dto.ClaudeCacheCreationUsage{
+			Ephemeral5mInputTokens: 2,
+			Ephemeral1hInputTokens: 3,
+		},
+	}
+
+	t.Run("message_delta", func(t *testing.T) {
+		originalData := `{"type":"message_delta","usage":{"cache_creation_input_tokens":5,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3}},"vendor_meta":{"trace_id":"trace_001"}}`
+
+		patchedData := patchClaudeCacheTTLBillingCompatUsageData(originalData, info, "usage", usage)
+
+		require.EqualValues(t, 5, gjson.Get(patchedData, "usage.cache_creation_input_tokens").Int())
+		require.EqualValues(t, 5, gjson.Get(patchedData, "usage.cache_creation.ephemeral_5m_input_tokens").Int())
+		require.EqualValues(t, 0, gjson.Get(patchedData, "usage.cache_creation.ephemeral_1h_input_tokens").Int())
+		require.Equal(t, "trace_001", gjson.Get(patchedData, "vendor_meta.trace_id").String())
+	})
+
+	t.Run("message_start", func(t *testing.T) {
+		originalData := `{"type":"message_start","message":{"usage":{"cache_creation_input_tokens":5,"cache_creation":{"ephemeral_1h_input_tokens":3}}}}`
+
+		patchedData := patchClaudeCacheTTLBillingCompatUsageData(originalData, info, "message.usage", usage)
+
+		require.EqualValues(t, 5, gjson.Get(patchedData, "message.usage.cache_creation.ephemeral_5m_input_tokens").Int())
+		require.EqualValues(t, 0, gjson.Get(patchedData, "message.usage.cache_creation.ephemeral_1h_input_tokens").Int())
+	})
+}
+
+func TestPatchClaudeCacheTTLBillingCompatUsageDataSkipsIneligibleUsage(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		ClaudeCacheTTLBillingCompat: &relaycommon.ClaudeCacheTTLBillingCompatInfo{
+			RequestedTTL: relaycommon.ClaudeCacheTTL5m,
+		},
+	}
+	originalData := `{"type":"message_delta","usage":{"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":3}}}`
+
+	tests := []struct {
+		name  string
+		info  *relaycommon.RelayInfo
+		usage *dto.ClaudeUsage
+	}{
+		{
+			name: "switch not captured",
+			info: &relaycommon.RelayInfo{},
+			usage: &dto.ClaudeUsage{CacheCreation: &dto.ClaudeCacheCreationUsage{
+				Ephemeral5mInputTokens: 2,
+				Ephemeral1hInputTokens: 3,
+			}},
+		},
+		{
+			name: "upstream already 5m",
+			info: info,
+			usage: &dto.ClaudeUsage{CacheCreation: &dto.ClaudeCacheCreationUsage{
+				Ephemeral5mInputTokens: 5,
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			patchedData := patchClaudeCacheTTLBillingCompatUsageData(originalData, tt.info, "usage", tt.usage)
+			require.Equal(t, originalData, patchedData)
+		})
+	}
+}
+
 func TestShouldSkipClaudeMessageDeltaUsagePatch(t *testing.T) {
 	originGlobalPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
 	t.Cleanup(func() {

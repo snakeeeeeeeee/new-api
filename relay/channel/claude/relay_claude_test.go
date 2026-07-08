@@ -329,3 +329,31 @@ func TestBuildOpenAIStyleUsageFromClaudeUsagePreservesCacheCreationRemainder(t *
 		})
 	}
 }
+
+func TestBuildDownstreamOpenAIStyleUsageFromClaudeUsageClaudeCacheTTLCompat(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		ClaudeCacheTTLBillingCompat: &relaycommon.ClaudeCacheTTLBillingCompatInfo{
+			RequestedTTL: relaycommon.ClaudeCacheTTL5m,
+		},
+	}
+	usage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 20,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         30,
+			CachedCreationTokens: 5,
+		},
+		ClaudeCacheCreation5mTokens: 2,
+		ClaudeCacheCreation1hTokens: 3,
+		UsageSemantic:               "anthropic",
+	}
+
+	openAIUsage := buildDownstreamOpenAIStyleUsageFromClaudeUsage(info, usage)
+
+	require.EqualValues(t, 5, openAIUsage.ClaudeCacheCreation5mTokens)
+	require.EqualValues(t, 0, openAIUsage.ClaudeCacheCreation1hTokens)
+	require.EqualValues(t, 135, openAIUsage.PromptTokens)
+	require.EqualValues(t, 155, openAIUsage.TotalTokens)
+	require.EqualValues(t, 2, usage.ClaudeCacheCreation5mTokens)
+	require.EqualValues(t, 3, usage.ClaudeCacheCreation1hTokens)
+}

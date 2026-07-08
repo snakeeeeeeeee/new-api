@@ -837,6 +837,26 @@ func buildOpenAIStyleUsageFromClaudeUsage(usage *dto.Usage) dto.Usage {
 	return clone
 }
 
+func shouldApplyClaudeCacheTTLBillingCompatUsageRewrite(info *relaycommon.RelayInfo, upstreamCacheCreation1hTokens int) bool {
+	if info == nil || upstreamCacheCreation1hTokens <= 0 {
+		return false
+	}
+	compat := info.ClaudeCacheTTLBillingCompat
+	return compat != nil && compat.RequestedTTL == relaycommon.ClaudeCacheTTL5m
+}
+
+func buildDownstreamOpenAIStyleUsageFromClaudeUsage(info *relaycommon.RelayInfo, usage *dto.Usage) dto.Usage {
+	if usage == nil {
+		return dto.Usage{}
+	}
+	downstreamUsage := *usage
+	if shouldApplyClaudeCacheTTLBillingCompatUsageRewrite(info, downstreamUsage.ClaudeCacheCreation1hTokens) {
+		downstreamUsage.ClaudeCacheCreation5mTokens += downstreamUsage.ClaudeCacheCreation1hTokens
+		downstreamUsage.ClaudeCacheCreation1hTokens = 0
+	}
+	return buildOpenAIStyleUsageFromClaudeUsage(&downstreamUsage)
+}
+
 func buildMessageDeltaPatchUsage(claudeResponse *dto.ClaudeResponse, claudeInfo *ClaudeResponseInfo) *dto.ClaudeUsage {
 	usage := &dto.ClaudeUsage{}
 	if claudeResponse != nil && claudeResponse.Usage != nil {
@@ -903,6 +923,28 @@ func setMessageDeltaUsageInt(data string, path string, localValue int) string {
 	}
 
 	patchedData, err := sjson.Set(data, path, localValue)
+	if err != nil {
+		return data
+	}
+	return patchedData
+}
+
+func patchClaudeCacheTTLBillingCompatUsageData(data string, info *relaycommon.RelayInfo, usagePath string, usage *dto.ClaudeUsage) string {
+	if data == "" || usagePath == "" || usage == nil {
+		return data
+	}
+	upstreamCacheCreation1hTokens := usage.GetCacheCreation1hTokens()
+	if !shouldApplyClaudeCacheTTLBillingCompatUsageRewrite(info, upstreamCacheCreation1hTokens) {
+		return data
+	}
+	downstreamCacheCreation5mTokens := usage.GetCacheCreation5mTokens() + upstreamCacheCreation1hTokens
+	data = setClaudeUsageInt(data, usagePath+".cache_creation.ephemeral_5m_input_tokens", downstreamCacheCreation5mTokens)
+	data = setClaudeUsageInt(data, usagePath+".cache_creation.ephemeral_1h_input_tokens", 0)
+	return data
+}
+
+func setClaudeUsageInt(data string, path string, value int) string {
+	patchedData, err := sjson.Set(data, path, value)
 	if err != nil {
 		return data
 	}
@@ -1004,13 +1046,16 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			// message_start, 获取usage
 			if claudeResponse.Message != nil {
 				info.UpstreamModelName = claudeResponse.Message.Model
+				data = patchClaudeCacheTTLBillingCompatUsageData(data, info, "message.usage", claudeResponse.Message.Usage)
 			}
 		} else if claudeResponse.Type == "message_delta" {
+			patchUsage := buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo)
 			// 确保 message_delta 的 usage 包含完整的 input_tokens 和 cache 相关字段
 			// 解决 AWS Bedrock 等上游返回的 message_delta 缺少这些字段的问题
 			if !shouldSkipClaudeMessageDeltaUsagePatch(info) {
-				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
+				data = patchClaudeMessageDeltaUsageData(data, patchUsage)
 			}
+			data = patchClaudeCacheTTLBillingCompatUsageData(data, info, "usage", patchUsage)
 		}
 		helper.ClaudeChunkData(c, claudeResponse, data)
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
@@ -1046,7 +1091,7 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 		//
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		if info.ShouldIncludeUsage {
-			openAIUsage := buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
+			openAIUsage := buildDownstreamOpenAIStyleUsageFromClaudeUsage(info, claudeInfo.Usage)
 			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, openAIUsage)
 			err := helper.ObjectData(c, response)
 			if err != nil {
@@ -1112,13 +1157,13 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		openaiResponse := ResponseClaude2OpenAI(&claudeResponse)
-		openaiResponse.Usage = buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
+		openaiResponse.Usage = buildDownstreamOpenAIStyleUsageFromClaudeUsage(info, claudeInfo.Usage)
 		responseData, err = common.Marshal(openaiResponse)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
-		responseData = data
+		responseData = []byte(patchClaudeCacheTTLBillingCompatUsageData(string(data), info, "usage", claudeResponse.Usage))
 	}
 
 	if claudeResponse.Usage != nil && claudeResponse.Usage.ServerToolUse != nil && claudeResponse.Usage.ServerToolUse.WebSearchRequests > 0 {
