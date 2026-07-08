@@ -25,9 +25,11 @@ const (
 	RequestDumpLogLevelWarn  = "warn"
 	RequestDumpLogLevelError = "error"
 
-	RequestDumpStageRawRequest      = "raw_request"
-	RequestDumpStageUpstreamRequest = "upstream_request"
-	RequestDumpStageRelayError      = "relay_error"
+	RequestDumpStageRawRequest             = "raw_request"
+	RequestDumpStageUpstreamRequest        = "upstream_request"
+	RequestDumpStageRelayError             = "relay_error"
+	RequestDumpStageResponsesStreamEvent   = "responses_stream_event"
+	RequestDumpStageResponsesStreamSummary = "responses_stream_summary"
 
 	defaultRequestDumpDurationSeconds = 300
 	maxRequestDumpDurationSeconds     = 1800
@@ -36,29 +38,36 @@ const (
 	defaultRequestDumpMaxBodyBytes    = 256 * 1024
 	maxRequestDumpMaxBodyBytes        = 1024 * 1024
 	defaultRequestDumpBufferSize      = 200
+	defaultRequestDumpMaxStreamEvents = 200
+	maxRequestDumpMaxStreamEvents     = 1000
 )
 
 const requestDumpRawRecordedKey = "_request_dump_raw_recorded"
 const requestDumpErrorCountedKey = "_request_dump_error_counted"
 const requestDumpMatchedCountedKey = "_request_dump_matched_counted"
+const requestDumpResponsesStreamEventCountKey = "_request_dump_responses_stream_event_count"
 
 type RequestDumpRule struct {
-	UserIDs           []int    `json:"user_ids"`
-	TokenIDs          []int    `json:"token_ids,omitempty"`
-	Models            []string `json:"models,omitempty"`
-	Paths             []string `json:"paths,omitempty"`
-	AggregateGroups   []string `json:"aggregate_groups,omitempty"`
-	Keywords          []string `json:"keywords,omitempty"`
-	CaseSensitive     bool     `json:"case_sensitive,omitempty"`
-	DurationSeconds   int      `json:"duration_seconds"`
-	MaxCount          int      `json:"max_count"`
-	PrintOn           string   `json:"print_on"`
-	LogLevel          string   `json:"log_level"`
-	PrintURL          bool     `json:"print_url"`
-	PrintHeaders      bool     `json:"print_headers"`
-	PrintBody         bool     `json:"print_body"`
-	PrintUpstreamBody bool     `json:"print_upstream_body"`
-	MaxBodyBytes      int64    `json:"max_body_bytes"`
+	UserIDs                           []int    `json:"user_ids"`
+	TokenIDs                          []int    `json:"token_ids,omitempty"`
+	TokenNames                        []string `json:"token_names,omitempty"`
+	Models                            []string `json:"models,omitempty"`
+	Paths                             []string `json:"paths,omitempty"`
+	AggregateGroups                   []string `json:"aggregate_groups,omitempty"`
+	Keywords                          []string `json:"keywords,omitempty"`
+	CaseSensitive                     bool     `json:"case_sensitive,omitempty"`
+	DurationSeconds                   int      `json:"duration_seconds"`
+	MaxCount                          int      `json:"max_count"`
+	PrintOn                           string   `json:"print_on"`
+	LogLevel                          string   `json:"log_level"`
+	PrintURL                          bool     `json:"print_url"`
+	PrintHeaders                      bool     `json:"print_headers"`
+	PrintBody                         bool     `json:"print_body"`
+	PrintUpstreamBody                 bool     `json:"print_upstream_body"`
+	MaxBodyBytes                      int64    `json:"max_body_bytes"`
+	TraceResponsesStream              bool     `json:"trace_responses_stream,omitempty"`
+	TraceResponsesStreamKeyEventsOnly bool     `json:"trace_responses_stream_key_events_only,omitempty"`
+	MaxStreamEventsPerRequest         int      `json:"max_stream_events_per_request,omitempty"`
 }
 
 type RequestDumpStatus struct {
@@ -75,33 +84,53 @@ type RequestDumpStatus struct {
 }
 
 type RequestDumpEvent struct {
-	ID             int64             `json:"id"`
-	CreatedAt      int64             `json:"created_at"`
-	Stage          string            `json:"stage"`
-	LogLevel       string            `json:"log_level,omitempty"`
-	RequestID      string            `json:"request_id,omitempty"`
-	UserID         int               `json:"user_id,omitempty"`
-	TokenID        int               `json:"token_id,omitempty"`
-	TokenName      string            `json:"token_name,omitempty"`
-	Method         string            `json:"method,omitempty"`
-	Host           string            `json:"host,omitempty"`
-	Path           string            `json:"path,omitempty"`
-	RawURL         string            `json:"raw_url,omitempty"`
-	Model          string            `json:"model,omitempty"`
-	AggregateGroup string            `json:"aggregate_group,omitempty"`
-	ChannelID      int               `json:"channel_id,omitempty"`
-	ChannelName    string            `json:"channel_name,omitempty"`
-	Headers        map[string]string `json:"headers,omitempty"`
-	RawBody        string            `json:"raw_body,omitempty"`
-	UpstreamBody   string            `json:"upstream_body,omitempty"`
-	ContentType    string            `json:"content_type,omitempty"`
-	BodySize       int64             `json:"body_size,omitempty"`
-	SkipReason     string            `json:"skip_reason,omitempty"`
-	StatusCode     int               `json:"status_code,omitempty"`
-	ErrorType      string            `json:"error_type,omitempty"`
-	ErrorCode      string            `json:"error_code,omitempty"`
-	ErrorMessage   string            `json:"error_message,omitempty"`
-	RetryIndex     int               `json:"retry_index,omitempty"`
+	ID                  int64             `json:"id"`
+	CreatedAt           int64             `json:"created_at"`
+	Stage               string            `json:"stage"`
+	LogLevel            string            `json:"log_level,omitempty"`
+	RequestID           string            `json:"request_id,omitempty"`
+	UserID              int               `json:"user_id,omitempty"`
+	TokenID             int               `json:"token_id,omitempty"`
+	TokenName           string            `json:"token_name,omitempty"`
+	Method              string            `json:"method,omitempty"`
+	Host                string            `json:"host,omitempty"`
+	Path                string            `json:"path,omitempty"`
+	RawURL              string            `json:"raw_url,omitempty"`
+	Model               string            `json:"model,omitempty"`
+	AggregateGroup      string            `json:"aggregate_group,omitempty"`
+	ChannelID           int               `json:"channel_id,omitempty"`
+	ChannelName         string            `json:"channel_name,omitempty"`
+	Headers             map[string]string `json:"headers,omitempty"`
+	RawBody             string            `json:"raw_body,omitempty"`
+	UpstreamBody        string            `json:"upstream_body,omitempty"`
+	ContentType         string            `json:"content_type,omitempty"`
+	BodySize            int64             `json:"body_size,omitempty"`
+	SkipReason          string            `json:"skip_reason,omitempty"`
+	StatusCode          int               `json:"status_code,omitempty"`
+	ErrorType           string            `json:"error_type,omitempty"`
+	ErrorCode           string            `json:"error_code,omitempty"`
+	ErrorMessage        string            `json:"error_message,omitempty"`
+	RetryIndex          int               `json:"retry_index,omitempty"`
+	StreamEventType     string            `json:"stream_event_type,omitempty"`
+	StreamItemType      string            `json:"stream_item_type,omitempty"`
+	StreamSequence      int               `json:"stream_sequence,omitempty"`
+	StreamStopReason    string            `json:"stream_stop_reason,omitempty"`
+	StreamElapsedMs     int64             `json:"stream_elapsed_ms,omitempty"`
+	StreamReceivedCount int               `json:"stream_received_count,omitempty"`
+	StreamNote          string            `json:"stream_note,omitempty"`
+}
+
+type ResponsesStreamDumpMeta struct {
+	EventType     string
+	ItemType      string
+	Sequence      int
+	StopReason    string
+	ElapsedMs     int64
+	ReceivedCount int
+	ErrorType     string
+	ErrorCode     string
+	ErrorMessage  string
+	Note          string
 }
 
 type requestDumpState struct {
@@ -122,6 +151,7 @@ var requestDump = struct {
 func NormalizeRequestDumpRule(rule RequestDumpRule) (RequestDumpRule, error) {
 	rule.UserIDs = normalizePositiveInts(rule.UserIDs)
 	rule.TokenIDs = normalizePositiveInts(rule.TokenIDs)
+	rule.TokenNames = normalizeStrings(rule.TokenNames)
 	rule.Models = normalizeStrings(rule.Models)
 	rule.Paths = normalizeStrings(rule.Paths)
 	rule.AggregateGroups = normalizeStrings(rule.AggregateGroups)
@@ -165,19 +195,26 @@ func NormalizeRequestDumpRule(rule RequestDumpRule) (RequestDumpRule, error) {
 	if rule.MaxBodyBytes > maxRequestDumpMaxBodyBytes {
 		rule.MaxBodyBytes = maxRequestDumpMaxBodyBytes
 	}
+	if rule.MaxStreamEventsPerRequest <= 0 {
+		rule.MaxStreamEventsPerRequest = defaultRequestDumpMaxStreamEvents
+	}
+	if rule.MaxStreamEventsPerRequest > maxRequestDumpMaxStreamEvents {
+		rule.MaxStreamEventsPerRequest = maxRequestDumpMaxStreamEvents
+	}
 	return rule, nil
 }
 
 func DefaultRequestDumpRule() RequestDumpRule {
 	return RequestDumpRule{
-		DurationSeconds: defaultRequestDumpDurationSeconds,
-		MaxCount:        defaultRequestDumpMaxCount,
-		PrintOn:         RequestDumpPrintOnAll,
-		LogLevel:        RequestDumpLogLevelInfo,
-		PrintURL:        true,
-		PrintHeaders:    true,
-		PrintBody:       true,
-		MaxBodyBytes:    defaultRequestDumpMaxBodyBytes,
+		DurationSeconds:           defaultRequestDumpDurationSeconds,
+		MaxCount:                  defaultRequestDumpMaxCount,
+		PrintOn:                   RequestDumpPrintOnAll,
+		LogLevel:                  RequestDumpLogLevelInfo,
+		PrintURL:                  true,
+		PrintHeaders:              true,
+		PrintBody:                 true,
+		MaxBodyBytes:              defaultRequestDumpMaxBodyBytes,
+		MaxStreamEventsPerRequest: defaultRequestDumpMaxStreamEvents,
 	}
 }
 
@@ -311,6 +348,80 @@ func DumpRelayErrorIfNeeded(c *gin.Context, err *types.NewAPIError) {
 	})
 }
 
+func DumpResponsesStreamEventIfNeeded(c *gin.Context, meta ResponsesStreamDumpMeta) {
+	safeDump(func() {
+		if c == nil {
+			return
+		}
+		rule, generation, matched := getActiveRequestDumpRule(c)
+		if !matched || !rule.TraceResponsesStream || rule.PrintOn == RequestDumpPrintOnErrorOnly {
+			return
+		}
+		if rule.TraceResponsesStreamKeyEventsOnly && !isKeyResponsesStreamDumpEvent(meta) {
+			return
+		}
+		count := c.GetInt(requestDumpResponsesStreamEventCountKey)
+		if count >= rule.MaxStreamEventsPerRequest {
+			return
+		}
+		c.Set(requestDumpResponsesStreamEventCountKey, count+1)
+		event := buildBaseRequestDumpEvent(c, RequestDumpStageResponsesStreamEvent, rule)
+		fillResponsesStreamDumpFields(&event, meta)
+		if event.StreamSequence == 0 {
+			event.StreamSequence = count + 1
+		}
+		appendMatchedRequestDumpEvent(c, event, rule, generation)
+	})
+}
+
+func DumpResponsesStreamSummaryIfNeeded(c *gin.Context, meta ResponsesStreamDumpMeta) {
+	safeDump(func() {
+		if c == nil {
+			return
+		}
+		rule, generation, matched := getActiveRequestDumpRule(c)
+		if !matched || !rule.TraceResponsesStream {
+			return
+		}
+		event := buildBaseRequestDumpEvent(c, RequestDumpStageResponsesStreamSummary, rule)
+		fillResponsesStreamDumpFields(&event, meta)
+		appendMatchedRequestDumpEvent(c, event, rule, generation)
+	})
+}
+
+func fillResponsesStreamDumpFields(event *RequestDumpEvent, meta ResponsesStreamDumpMeta) {
+	if event == nil {
+		return
+	}
+	event.StreamEventType = strings.TrimSpace(meta.EventType)
+	event.StreamItemType = strings.TrimSpace(meta.ItemType)
+	event.StreamSequence = meta.Sequence
+	event.StreamStopReason = strings.TrimSpace(meta.StopReason)
+	event.StreamElapsedMs = meta.ElapsedMs
+	event.StreamReceivedCount = meta.ReceivedCount
+	event.StreamNote = limitRequestDumpString(strings.TrimSpace(meta.Note), 500)
+	event.ErrorType = strings.TrimSpace(meta.ErrorType)
+	event.ErrorCode = strings.TrimSpace(meta.ErrorCode)
+	event.ErrorMessage = limitRequestDumpString(strings.TrimSpace(meta.ErrorMessage), 500)
+}
+
+func isKeyResponsesStreamDumpEvent(meta ResponsesStreamDumpMeta) bool {
+	if strings.TrimSpace(meta.StopReason) != "" || strings.TrimSpace(meta.ErrorMessage) != "" {
+		return true
+	}
+	eventType := strings.TrimSpace(meta.EventType)
+	switch eventType {
+	case "response.completed", "response.failed", "response.error", "response.incomplete", "response.cancelled":
+		return true
+	case "response.output_item.added", "response.output_item.done":
+		return strings.TrimSpace(meta.ItemType) != ""
+	}
+	if strings.Contains(eventType, "function_call") {
+		return true
+	}
+	return false
+}
+
 func getActiveRequestDumpRule(c *gin.Context) (RequestDumpRule, int64, bool) {
 	now := time.Now()
 	requestDump.mu.Lock()
@@ -338,7 +449,9 @@ func shouldCountRequestDumpMatch(c *gin.Context, stage string, printOn string) b
 	}
 	return stage == RequestDumpStageRawRequest ||
 		stage == RequestDumpStageUpstreamRequest ||
-		stage == RequestDumpStageRelayError
+		stage == RequestDumpStageRelayError ||
+		stage == RequestDumpStageResponsesStreamEvent ||
+		stage == RequestDumpStageResponsesStreamSummary
 }
 
 func buildBaseRequestDumpEvent(c *gin.Context, stage string, rule RequestDumpRule) RequestDumpEvent {
@@ -399,7 +512,7 @@ func fillRawBody(c *gin.Context, rule RequestDumpRule, event *RequestDumpEvent) 
 }
 
 func appendMatchedRequestDumpEvent(c *gin.Context, event RequestDumpEvent, rule RequestDumpRule, generation int64) bool {
-	if !matchesRequestDumpKeywords(&rule, &event) {
+	if (c == nil || !c.GetBool(requestDumpMatchedCountedKey)) && !matchesRequestDumpKeywords(&rule, &event) {
 		return false
 	}
 
@@ -518,6 +631,9 @@ func matchesRequestDumpRule(c *gin.Context, rule *RequestDumpRule) bool {
 	if len(rule.TokenIDs) > 0 && !containsInt(rule.TokenIDs, c.GetInt("token_id")) {
 		return false
 	}
+	if len(rule.TokenNames) > 0 && !containsString(rule.TokenNames, c.GetString("token_name")) {
+		return false
+	}
 	model := c.GetString("original_model")
 	if len(rule.Models) > 0 && !containsString(rule.Models, model) {
 		return false
@@ -589,6 +705,10 @@ func buildRequestDumpKeywordHaystack(event *RequestDumpEvent) string {
 	appendKeywordPart(event.ErrorCode)
 	appendKeywordPart(event.ErrorMessage)
 	appendKeywordInt(event.RetryIndex)
+	appendKeywordPart(event.StreamEventType)
+	appendKeywordPart(event.StreamItemType)
+	appendKeywordPart(event.StreamStopReason)
+	appendKeywordPart(event.StreamNote)
 	appendKeywordPart(event.RawBody)
 	appendKeywordPart(event.UpstreamBody)
 	if len(event.Headers) > 0 {
@@ -689,6 +809,13 @@ func normalizeStrings(values []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func limitRequestDumpString(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...(truncated)"
 }
 
 func containsInt(values []int, target int) bool {

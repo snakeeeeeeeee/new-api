@@ -55,6 +55,7 @@ const MAX_LOCAL_EVENTS = 500;
 const defaultForm = {
   user_ids: '',
   token_ids: '',
+  token_names: '',
   models: '',
   paths: '/v1/chat/completions',
   aggregate_groups: '',
@@ -69,6 +70,9 @@ const defaultForm = {
   print_body: true,
   print_upstream_body: false,
   max_body_kb: 256,
+  trace_responses_stream: false,
+  trace_responses_stream_key_events_only: false,
+  max_stream_events_per_request: 200,
 };
 
 const splitList = (value) =>
@@ -199,6 +203,7 @@ const RequestDumpPage = () => {
     const payload = {
       user_ids: userIds,
       token_ids: parseIdList(formValues.token_ids),
+      token_names: splitList(formValues.token_names),
       models: splitList(formValues.models),
       paths: splitList(formValues.paths),
       aggregate_groups: splitList(formValues.aggregate_groups),
@@ -213,6 +218,9 @@ const RequestDumpPage = () => {
       print_body: formValues.print_body === true,
       print_upstream_body: formValues.print_upstream_body === true,
       max_body_bytes: Math.max(1, Number(formValues.max_body_kb) || 256) * 1024,
+      trace_responses_stream: formValues.trace_responses_stream === true,
+      trace_responses_stream_key_events_only: formValues.trace_responses_stream_key_events_only === true,
+      max_stream_events_per_request: Number(formValues.max_stream_events_per_request) || 200,
     };
 
     setLoading(true);
@@ -370,6 +378,14 @@ const RequestDumpPage = () => {
                   onChange={(value) => updateField('token_ids', value)}
                   extraText={t('Token ID 是系统内部 API Token 记录 ID，仅用于精确限定某些令牌')}
                 />
+                <Form.Input
+                  field='token_names'
+                  label={t('令牌名称')}
+                  placeholder={t('例如 test-codex，多个用逗号分隔')}
+                  value={formValues.token_names}
+                  onChange={(value) => updateField('token_names', value)}
+                  extraText={t('客户创建令牌时填写的名称，不是 API Key，也不是数据库 ID；建议配合用户 ID 使用')}
+                />
                 <Checkbox checked={formValues.case_sensitive} onChange={(event) => updateField('case_sensitive', event.target.checked)}>
                   {t('关键词区分大小写')}
                 </Checkbox>
@@ -448,6 +464,34 @@ const RequestDumpPage = () => {
                 <Checkbox checked={formValues.print_upstream_body} onChange={(event) => updateField('print_upstream_body', event.target.checked)}>
                   {t('上游 Body')}
                 </Checkbox>
+              </div>
+
+              <div className='mt-4 rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] p-3'>
+                <div className='mb-3 flex items-center justify-between'>
+                  <Text size='small' strong>{t('流式诊断')}</Text>
+                  <Text size='small' type='tertiary'>{t('Responses')}</Text>
+                </div>
+                <div className='flex flex-col gap-2'>
+                  <Checkbox checked={formValues.trace_responses_stream} onChange={(event) => updateField('trace_responses_stream', event.target.checked)}>
+                    {t('Responses 流事件追踪')}
+                  </Checkbox>
+                  <Checkbox checked={formValues.trace_responses_stream_key_events_only} onChange={(event) => updateField('trace_responses_stream_key_events_only', event.target.checked)}>
+                    {t('只记录关键事件')}
+                  </Checkbox>
+                  <div>
+                    <Text size='small'>{t('单请求最大流事件')}</Text>
+                    <InputNumber
+                      className='mt-1 w-full'
+                      min={1}
+                      max={1000}
+                      value={formValues.max_stream_events_per_request}
+                      onChange={(value) => updateField('max_stream_events_per_request', value)}
+                    />
+                  </div>
+                  <Text size='small' type='tertiary'>
+                    {t('用于排查 Codex / Responses 工具调用卡住。只记录事件类型、工具项类型、错误摘要和结束原因，不记录完整响应正文。建议路径填写 /v1/responses。')}
+                  </Text>
+                </div>
               </div>
 
               <Space className='mt-5'>

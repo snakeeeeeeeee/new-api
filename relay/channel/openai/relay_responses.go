@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -87,16 +88,21 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
+	streamStartedAt := time.Now()
+	streamSequence := 0
 
 	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
 
 		// 检查当前数据是否包含 completed 状态和 usage 信息
 		var streamResponse dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResponse); err == nil {
+			streamSequence++
+			dumpResponsesStreamEvent(c, streamSequence, data, streamResponse)
 			sendResponsesStreamData(c, streamResponse, data)
 			terminal := isResponsesTerminalStreamType(streamResponse.Type)
 			switch streamResponse.Type {
 			case "response.completed":
+				markResponsesStreamStopReason(c, streamResponse.Type)
 				if streamResponse.Response != nil {
 					if streamResponse.Response.Usage != nil {
 						if streamResponse.Response.Usage.InputTokens != 0 {
@@ -136,13 +142,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				}
 			}
 			if terminal {
+				markResponsesStreamStopReason(c, streamResponse.Type)
 				return false
 			}
 		} else {
+			streamSequence++
+			dumpResponsesStreamParseError(c, streamSequence, err)
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
 		}
 		return true
 	})
+	dumpResponsesStreamSummary(c, streamStartedAt, streamSequence, info.ReceivedResponseCount)
 
 	if usage.CompletionTokens == 0 {
 		// 计算输出文本的 token 数量

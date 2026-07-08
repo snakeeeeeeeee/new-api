@@ -98,17 +98,19 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	defer service.CloseResponseBodyGracefully(resp)
 
 	responseId := helper.GetResponseID(c)
+	streamStartedAt := time.Now()
 	createAt := time.Now().Unix()
 	model := info.UpstreamModelName
 
 	var (
-		usage       = &dto.Usage{}
-		outputText  strings.Builder
-		usageText   strings.Builder
-		sentStart   bool
-		sentStop    bool
-		sawToolCall bool
-		streamErr   *types.NewAPIError
+		usage          = &dto.Usage{}
+		outputText     strings.Builder
+		usageText      strings.Builder
+		sentStart      bool
+		sentStop       bool
+		sawToolCall    bool
+		streamErr      *types.NewAPIError
+		streamSequence int
 	)
 
 	toolCallIndexByID := make(map[string]int)
@@ -303,9 +305,13 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 
 		var streamResp dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResp); err != nil {
+			streamSequence++
+			dumpResponsesStreamParseError(c, streamSequence, err)
 			logger.LogError(c, "failed to unmarshal responses stream event: "+err.Error())
 			return true
 		}
+		streamSequence++
+		dumpResponsesStreamEvent(c, streamSequence, data, streamResp)
 
 		switch streamResp.Type {
 		case "response.created":
@@ -434,6 +440,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		case "response.function_call_arguments.done":
 
 		case "response.completed":
+			markResponsesStreamStopReason(c, streamResp.Type)
 			if streamResp.Response != nil {
 				if streamResp.Response.Model != "" {
 					model = streamResp.Response.Model
@@ -486,6 +493,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			return false
 
 		case "response.error", "response.failed":
+			markResponsesStreamStopReason(c, streamResp.Type)
 			if streamResp.Response != nil {
 				if oaiErr := streamResp.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
 					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
@@ -496,6 +504,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			return false
 
 		case "response.incomplete", "response.cancelled":
+			markResponsesStreamStopReason(c, streamResp.Type)
 			return false
 
 		default:
@@ -503,6 +512,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 
 		return true
 	})
+	dumpResponsesStreamSummary(c, streamStartedAt, streamSequence, info.ReceivedResponseCount)
 
 	if streamErr != nil {
 		return nil, streamErr

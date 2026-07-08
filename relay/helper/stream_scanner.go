@@ -203,6 +203,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			success := dataHandler(data)
 			writeMutex.Unlock()
 			if !success {
+				c.Set("stream_scanner_stop_reason", "handler_stop")
 				cancel()
 				closeResponseBody()
 				return
@@ -270,6 +271,7 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				if common.DebugEnabled {
 					println("received [DONE], stopping scanner")
 				}
+				c.Set("stream_scanner_stop_reason", "done_marker")
 				return
 			}
 		}
@@ -279,8 +281,11 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				if bodyClosedByHandler.Load() {
 					return
 				}
+				c.Set("stream_scanner_stop_reason", "scanner_error")
 				logger.LogError(c, "scanner error: "+err.Error())
 			}
+		} else if c.GetString("stream_scanner_stop_reason") == "" {
+			c.Set("stream_scanner_stop_reason", "eof")
 		}
 	})
 
@@ -289,16 +294,21 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	case <-ticker.C:
 		// 超时处理逻辑
 		logger.LogError(c, "streaming timeout")
+		c.Set("stream_scanner_stop_reason", "timeout")
 		cancel()
 		closeResponseBody()
 	case <-stopChan:
 		// 正常结束
 		logger.LogInfo(c, "streaming finished")
+		if c.GetString("stream_scanner_stop_reason") == "" {
+			c.Set("stream_scanner_stop_reason", "stop_signal")
+		}
 		cancel()
 		closeResponseBody()
 	case <-c.Request.Context().Done():
 		// 客户端断开连接
 		logger.LogInfo(c, "client disconnected")
+		c.Set("stream_scanner_stop_reason", "client_disconnected")
 		cancel()
 		closeResponseBody()
 	}

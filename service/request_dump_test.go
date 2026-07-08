@@ -111,6 +111,112 @@ func TestRequestDumpFilterMissDoesNotCapture(t *testing.T) {
 	require.Empty(t, GetRequestDumpEvents(0, 10))
 }
 
+func TestRequestDumpFiltersByTokenName(t *testing.T) {
+	c := newRequestDumpTestContext(t, `{"model":"gpt-test"}`, "application/json")
+	startRequestDumpForTest(t, RequestDumpRule{
+		UserIDs:         []int{123},
+		TokenNames:      []string{"other-token"},
+		DurationSeconds: 60,
+		MaxCount:        10,
+		PrintOn:         RequestDumpPrintOnAll,
+		PrintBody:       true,
+	})
+	DumpRawRequestIfNeeded(c)
+	require.Empty(t, GetRequestDumpEvents(0, 10))
+
+	startRequestDumpForTest(t, RequestDumpRule{
+		UserIDs:         []int{123},
+		TokenNames:      []string{"dump-token"},
+		DurationSeconds: 60,
+		MaxCount:        10,
+		PrintOn:         RequestDumpPrintOnAll,
+		PrintBody:       true,
+	})
+	DumpRawRequestIfNeeded(c)
+	events := GetRequestDumpEvents(0, 10)
+	require.Len(t, events, 1)
+	require.Equal(t, "dump-token", events[0].TokenName)
+}
+
+func TestRequestDumpResponsesStreamTrace(t *testing.T) {
+	c := newRequestDumpTestContext(t, `{"model":"gpt-test"}`, "application/json")
+	startRequestDumpForTest(t, RequestDumpRule{
+		UserIDs:         []int{123},
+		DurationSeconds: 60,
+		MaxCount:        10,
+		PrintOn:         RequestDumpPrintOnAll,
+	})
+	DumpResponsesStreamEventIfNeeded(c, ResponsesStreamDumpMeta{
+		EventType: "response.completed",
+		Sequence:  1,
+	})
+	require.Empty(t, GetRequestDumpEvents(0, 10))
+
+	startRequestDumpForTest(t, RequestDumpRule{
+		UserIDs:                   []int{123},
+		DurationSeconds:           60,
+		MaxCount:                  10,
+		PrintOn:                   RequestDumpPrintOnAll,
+		TraceResponsesStream:      true,
+		MaxStreamEventsPerRequest: 1,
+	})
+	DumpResponsesStreamEventIfNeeded(c, ResponsesStreamDumpMeta{
+		EventType: "response.output_text.delta",
+		Sequence:  1,
+	})
+	DumpResponsesStreamEventIfNeeded(c, ResponsesStreamDumpMeta{
+		EventType: "response.completed",
+		Sequence:  2,
+	})
+	DumpResponsesStreamSummaryIfNeeded(c, ResponsesStreamDumpMeta{
+		StopReason:    "response.completed",
+		ElapsedMs:     15,
+		ReceivedCount: 2,
+	})
+
+	events := GetRequestDumpEvents(0, 10)
+	require.Len(t, events, 2)
+	require.Equal(t, RequestDumpStageResponsesStreamEvent, events[0].Stage)
+	require.Equal(t, "response.output_text.delta", events[0].StreamEventType)
+	require.Equal(t, 1, events[0].StreamSequence)
+	require.Equal(t, RequestDumpStageResponsesStreamSummary, events[1].Stage)
+	require.Equal(t, "response.completed", events[1].StreamStopReason)
+	require.Equal(t, int64(15), events[1].StreamElapsedMs)
+	require.Equal(t, 2, events[1].StreamReceivedCount)
+}
+
+func TestRequestDumpResponsesStreamKeyEventsOnly(t *testing.T) {
+	c := newRequestDumpTestContext(t, `{"model":"gpt-test"}`, "application/json")
+	startRequestDumpForTest(t, RequestDumpRule{
+		UserIDs:                           []int{123},
+		DurationSeconds:                   60,
+		MaxCount:                          10,
+		PrintOn:                           RequestDumpPrintOnAll,
+		TraceResponsesStream:              true,
+		TraceResponsesStreamKeyEventsOnly: true,
+		MaxStreamEventsPerRequest:         10,
+	})
+	DumpResponsesStreamEventIfNeeded(c, ResponsesStreamDumpMeta{
+		EventType: "response.output_text.delta",
+		Sequence:  1,
+	})
+	DumpResponsesStreamEventIfNeeded(c, ResponsesStreamDumpMeta{
+		EventType: "response.output_item.done",
+		ItemType:  "function_call",
+		Sequence:  2,
+	})
+	DumpResponsesStreamEventIfNeeded(c, ResponsesStreamDumpMeta{
+		EventType: "response.completed",
+		Sequence:  3,
+	})
+
+	events := GetRequestDumpEvents(0, 10)
+	require.Len(t, events, 2)
+	require.Equal(t, "response.output_item.done", events[0].StreamEventType)
+	require.Equal(t, "function_call", events[0].StreamItemType)
+	require.Equal(t, "response.completed", events[1].StreamEventType)
+}
+
 func TestRequestDumpKeywordMissDoesNotCaptureOrCount(t *testing.T) {
 	c := newRequestDumpTestContext(t, `{"model":"gpt-test","messages":[{"role":"user","content":"ordinary"}]}`, "application/json")
 	startRequestDumpForTest(t, RequestDumpRule{

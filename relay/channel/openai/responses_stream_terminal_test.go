@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +25,10 @@ func setupOpenAIStreamTerminalTest(t *testing.T) (*gin.Context, *httptest.Respon
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Set("id", 123)
+	c.Set("token_id", 456)
+	c.Set("token_name", "test-codex")
+	c.Set("original_model", "gpt-test")
 
 	oldTimeout := constant.StreamingTimeout
 	constant.StreamingTimeout = 30
@@ -137,4 +142,58 @@ func TestOaiResponsesToChatStreamHandlerCompletedOpenUpstreamReturns(t *testing.
 		_ = pw.Close()
 		t.Fatal("OaiResponsesToChatStreamHandler did not return after response.completed")
 	}
+}
+
+func TestOaiResponsesStreamHandlerDumpsResponsesStreamTrace(t *testing.T) {
+	service.StopRequestDump()
+	service.ClearRequestDumpEvents()
+	t.Cleanup(func() {
+		service.StopRequestDump()
+		service.ClearRequestDumpEvents()
+	})
+
+	_, err := service.StartRequestDump(service.RequestDumpRule{
+		UserIDs:                   []int{123},
+		TokenNames:                []string{"test-codex"},
+		Models:                    []string{"gpt-test"},
+		Paths:                     []string{"/v1/responses"},
+		DurationSeconds:           60,
+		MaxCount:                  10,
+		PrintOn:                   service.RequestDumpPrintOnAll,
+		TraceResponsesStream:      true,
+		MaxStreamEventsPerRequest: 10,
+	})
+	require.NoError(t, err)
+
+	c, _, info, pr, pw := setupOpenAIStreamTerminalTest(t)
+	resp := &http.Response{Body: pr}
+
+	done := make(chan error, 1)
+	go func() {
+		_, apiErr := OaiResponsesStreamHandler(c, info, resp)
+		if apiErr != nil {
+			done <- apiErr
+			return
+		}
+		done <- nil
+	}()
+
+	writeResponsesCompletedEvent(t, pw)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(500 * time.Millisecond):
+		_ = pr.Close()
+		_ = pw.Close()
+		t.Fatal("OaiResponsesStreamHandler did not return after response.completed")
+	}
+
+	events := service.GetRequestDumpEvents(0, 10)
+	require.Len(t, events, 2)
+	require.Equal(t, service.RequestDumpStageResponsesStreamEvent, events[0].Stage)
+	require.Equal(t, "response.completed", events[0].StreamEventType)
+	require.Equal(t, service.RequestDumpStageResponsesStreamSummary, events[1].Stage)
+	require.Equal(t, "response.completed", events[1].StreamStopReason)
+	require.Equal(t, 1, events[1].StreamReceivedCount)
 }
