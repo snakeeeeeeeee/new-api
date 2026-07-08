@@ -483,6 +483,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 				}
 				sentStop = true
 			}
+			return false
 
 		case "response.error", "response.failed":
 			if streamResp.Response != nil {
@@ -492,6 +493,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 				}
 			}
 			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			return false
+
+		case "response.incomplete", "response.cancelled":
 			return false
 
 		default:

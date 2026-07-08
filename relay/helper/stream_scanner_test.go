@@ -193,6 +193,61 @@ func TestStreamScannerHandler_HandlerFailureStops(t *testing.T) {
 	assert.Equal(t, int64(failAt), count.Load())
 }
 
+func TestStreamScannerHandler_HandlerStopClosesOpenUpstream(t *testing.T) {
+	pr, pw := io.Pipe()
+	t.Cleanup(func() {
+		_ = pr.Close()
+		_ = pw.Close()
+	})
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		constant.StreamingTimeout = oldTimeout
+	})
+
+	resp := &http.Response{Body: pr}
+	info := &relaycommon.RelayInfo{
+		DisablePing: true,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		StreamScannerHandler(c, resp, info, func(data string) bool {
+			return false
+		})
+		close(done)
+	}()
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := fmt.Fprint(pw, "data: {\"ok\":true}\n")
+		writeDone <- err
+	}()
+
+	select {
+	case err := <-writeDone:
+		require.NoError(t, err)
+	case <-time.After(500 * time.Millisecond):
+		_ = pr.Close()
+		_ = pw.Close()
+		t.Fatal("timed out writing test stream data")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		_ = pr.Close()
+		_ = pw.Close()
+		t.Fatal("StreamScannerHandler did not return after handler requested stop")
+	}
+}
+
 func TestStreamScannerHandler_SkipsNonDataLines(t *testing.T) {
 	t.Parallel()
 

@@ -1071,6 +1071,10 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		if err != nil {
 			return false
 		}
+		var claudeResponse dto.ClaudeResponse
+		if common.UnmarshalJsonStr(data, &claudeResponse) == nil && claudeResponse.Type == "message_stop" {
+			return false
+		}
 		return true
 	})
 	if err != nil {

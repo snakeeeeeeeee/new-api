@@ -1,10 +1,21 @@
 package claude
 
 import (
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFormatClaudeResponseInfo_MessageStart(t *testing.T) {
@@ -43,6 +54,69 @@ func TestFormatClaudeResponseInfo_MessageStart(t *testing.T) {
 	}
 	if claudeInfo.Model != "claude-3-5-sonnet" {
 		t.Errorf("Model = %s, want claude-3-5-sonnet", claudeInfo.Model)
+	}
+}
+
+func TestClaudeStreamHandlerMessageStopOpenUpstreamReturns(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	pr, pw := io.Pipe()
+	t.Cleanup(func() {
+		_ = pr.Close()
+		_ = pw.Close()
+	})
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		constant.StreamingTimeout = oldTimeout
+	})
+
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatClaude,
+		DisablePing: true,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "claude-test",
+		},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, apiErr := ClaudeStreamHandler(c, &http.Response{Body: pr}, info)
+		if apiErr != nil {
+			done <- apiErr
+			return
+		}
+		done <- nil
+	}()
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := fmt.Fprint(pw, "data: {\"type\":\"message_stop\"}\n")
+		writeDone <- err
+	}()
+
+	select {
+	case err := <-writeDone:
+		require.NoError(t, err)
+	case <-time.After(500 * time.Millisecond):
+		_ = pr.Close()
+		_ = pw.Close()
+		t.Fatal("timed out writing message_stop event")
+	}
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+		require.Contains(t, recorder.Body.String(), "event: message_stop")
+	case <-time.After(500 * time.Millisecond):
+		_ = pr.Close()
+		_ = pw.Close()
+		t.Fatal("ClaudeStreamHandler did not return after message_stop")
 	}
 }
 

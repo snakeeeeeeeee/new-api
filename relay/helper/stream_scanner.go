@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -40,12 +41,17 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		return
 	}
 
-	// 确保响应体总是被关闭
-	defer func() {
-		if resp.Body != nil {
-			resp.Body.Close()
-		}
-	}()
+	var bodyClosedByHandler atomic.Bool
+	var closeBodyOnce sync.Once
+	closeResponseBody := func() {
+		closeBodyOnce.Do(func() {
+			bodyClosedByHandler.Store(true)
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+		})
+	}
+	defer closeResponseBody()
 
 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
 	if streamingTimeout <= 0 {
@@ -81,9 +87,14 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		println("ping interval seconds:", int64(pingInterval.Seconds()))
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// 改进资源清理，确保所有 goroutine 正确退出
 	defer func() {
 		// 通知所有 goroutine 停止
+		cancel()
+		closeResponseBody()
 		common.SafeSendBool(stopChan, true)
 
 		ticker.Stop()
@@ -110,9 +121,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	scanner.Buffer(make([]byte, InitialScannerBufferSize), getScannerBufferSize())
 	scanner.Split(bufio.ScanLines)
 	SetEventStreamHeaders(c)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	ctx = context.WithValue(ctx, "stop_chan", stopChan)
 
@@ -195,6 +203,8 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			success := dataHandler(data)
 			writeMutex.Unlock()
 			if !success {
+				cancel()
+				closeResponseBody()
 				return
 			}
 		}
@@ -266,6 +276,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 
 		if err := scanner.Err(); err != nil {
 			if err != io.EOF {
+				if bodyClosedByHandler.Load() {
+					return
+				}
 				logger.LogError(c, "scanner error: "+err.Error())
 			}
 		}
@@ -276,11 +289,17 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	case <-ticker.C:
 		// 超时处理逻辑
 		logger.LogError(c, "streaming timeout")
+		cancel()
+		closeResponseBody()
 	case <-stopChan:
 		// 正常结束
 		logger.LogInfo(c, "streaming finished")
+		cancel()
+		closeResponseBody()
 	case <-c.Request.Context().Done():
 		// 客户端断开连接
 		logger.LogInfo(c, "client disconnected")
+		cancel()
+		closeResponseBody()
 	}
 }

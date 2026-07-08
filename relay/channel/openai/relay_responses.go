@@ -68,6 +68,15 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	return &usage, nil
 }
 
+func isResponsesTerminalStreamType(eventType string) bool {
+	switch eventType {
+	case "response.completed", "response.failed", "response.error", "response.incomplete", "response.cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
 func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		logger.LogError(c, "invalid response or response body")
@@ -85,6 +94,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		var streamResponse dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResponse); err == nil {
 			sendResponsesStreamData(c, streamResponse, data)
+			terminal := isResponsesTerminalStreamType(streamResponse.Type)
 			switch streamResponse.Type {
 			case "response.completed":
 				if streamResponse.Response != nil {
@@ -108,6 +118,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 						c.Set("image_generation_call_size", streamResponse.Response.GetSize())
 					}
 				}
+				return false
 			case "response.output_text.delta":
 				// 处理输出文本
 				responseTextBuilder.WriteString(streamResponse.Delta)
@@ -123,6 +134,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 						}
 					}
 				}
+			}
+			if terminal {
+				return false
 			}
 		} else {
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
