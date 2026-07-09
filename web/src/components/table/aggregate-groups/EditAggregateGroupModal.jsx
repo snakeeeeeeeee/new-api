@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AutoComplete,
   Avatar,
   Button,
   Card,
@@ -1397,7 +1398,7 @@ const EditAggregateGroupModal = ({
           <div className='flex flex-col gap-2'>
             {rules.map((rule, index) => (
               <div
-                key={`${rule.real_group}-${rule.model_name}-${index}`}
+                key={`${rule.real_group}-${index}`}
                 className='rounded-lg border border-gray-200 bg-gray-50 px-3 py-3'
               >
                 <div className='grid grid-cols-1 gap-3 md:grid-cols-[minmax(140px,0.8fr)_minmax(220px,1.4fr)_130px_72px_36px] md:items-end'>
@@ -1422,9 +1423,9 @@ const EditAggregateGroupModal = ({
                     <div className='mb-1 text-xs text-gray-500'>
                       {t('精确模型')}
                     </div>
-                    <Select
+                    <AutoComplete
                       value={rule.model_name}
-                      optionList={getRouteModelOptions(rule)}
+                      data={getRouteModelOptions(rule)}
                       onChange={(value) =>
                         updateRouteModelRatio(index, {
                           model_name: value || '',
@@ -1436,9 +1437,7 @@ const EditAggregateGroupModal = ({
                         }
                       }}
                       loading={!!routeModelsLoading[rule.real_group]}
-                      allowCreate
-                      filter={selectFilter}
-                      searchPosition='dropdown'
+                      showClear
                       placeholder={t('选择或输入精确模型名')}
                       style={{ width: '100%' }}
                     />
