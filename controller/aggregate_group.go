@@ -232,7 +232,11 @@ func GetAggregateGroupTargetModels(c *gin.Context) {
 		common.ApiErrorMsg(c, "缺少真实分组")
 		return
 	}
-	models := model.GetGroupEnabledModels(realGroup)
+	models, err := model.GetGroupEnabledChannelModels(realGroup)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	slices.Sort(models)
 	common.ApiSuccess(c, models)
 }

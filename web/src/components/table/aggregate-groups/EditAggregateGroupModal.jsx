@@ -646,7 +646,7 @@ const EditAggregateGroupModal = ({
   const loadRouteModels = async (realGroup) => {
     if (
       !realGroup ||
-      routeModelOptions[realGroup] ||
+      routeModelOptions[realGroup]?.length > 0 ||
       routeModelsLoading[realGroup]
     ) {
       return;
@@ -1430,7 +1430,11 @@ const EditAggregateGroupModal = ({
                           model_name: value || '',
                         })
                       }
-                      onFocus={() => loadRouteModels(rule.real_group)}
+                      onDropdownVisibleChange={(dropdownVisible) => {
+                        if (dropdownVisible) {
+                          loadRouteModels(rule.real_group);
+                        }
+                      }}
                       loading={!!routeModelsLoading[rule.real_group]}
                       allowCreate
                       filter={selectFilter}

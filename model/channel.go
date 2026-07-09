@@ -211,6 +211,53 @@ func (channel *Channel) GetGroups() []string {
 	return groups
 }
 
+// GetGroupEnabledChannelModels returns models configured on enabled channels in
+// the exact group. This intentionally reads channel configuration directly so
+// admin configuration remains usable while the derived abilities table is being
+// repaired or synchronized.
+func GetGroupEnabledChannelModels(group string) ([]string, error) {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return []string{}, nil
+	}
+
+	var channels []Channel
+	err := DB.Model(&Channel{}).
+		Select("models", "group").
+		Where("status = ?", common.ChannelStatusEnabled).
+		Find(&channels).Error
+	if err != nil {
+		return nil, err
+	}
+
+	modelSet := make(map[string]struct{})
+	models := make([]string, 0)
+	for i := range channels {
+		matchesGroup := false
+		for _, channelGroup := range channels[i].GetGroups() {
+			if channelGroup == group {
+				matchesGroup = true
+				break
+			}
+		}
+		if !matchesGroup {
+			continue
+		}
+		for _, modelName := range channels[i].GetModels() {
+			modelName = strings.TrimSpace(modelName)
+			if modelName == "" {
+				continue
+			}
+			if _, exists := modelSet[modelName]; exists {
+				continue
+			}
+			modelSet[modelName] = struct{}{}
+			models = append(models, modelName)
+		}
+	}
+	return models, nil
+}
+
 func (channel *Channel) GetOtherInfo() map[string]interface{} {
 	otherInfo := make(map[string]interface{})
 	if channel.OtherInfo != "" {

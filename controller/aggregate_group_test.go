@@ -341,10 +341,37 @@ func TestCreateAggregateGroupRejectsInvalidRouteModelRatios(t *testing.T) {
 	}
 }
 
-func TestGetAggregateGroupTargetModels(t *testing.T) {
+func TestGetAggregateGroupTargetModelsUsesEnabledChannelConfiguration(t *testing.T) {
 	setupAggregateGroupControllerTestDB(t)
-	seedAggregateGroupControllerAbilityChannel(t, 2301, "default", "z-model", 0)
-	seedAggregateGroupControllerAbilityChannel(t, 2302, "default", "a-model", 0)
+	priority := int64(0)
+	weight := uint(10)
+	channels := []model.Channel{
+		{
+			Id: 2301, Name: "enabled-multi-group", Key: "sk-test",
+			Status: common.ChannelStatusEnabled, Group: "default, vip",
+			Models: "z-model, a-model", Priority: &priority, Weight: &weight,
+			CreatedTime: time.Now().Unix(),
+		},
+		{
+			Id: 2302, Name: "enabled-duplicate-model", Key: "sk-test",
+			Status: common.ChannelStatusEnabled, Group: "default",
+			Models: "a-model", Priority: &priority, Weight: &weight,
+			CreatedTime: time.Now().Unix(),
+		},
+		{
+			Id: 2303, Name: "disabled-channel", Key: "sk-test",
+			Status: common.ChannelStatusManuallyDisabled, Group: "default",
+			Models: "disabled-model", Priority: &priority, Weight: &weight,
+			CreatedTime: time.Now().Unix(),
+		},
+		{
+			Id: 2304, Name: "similar-group", Key: "sk-test",
+			Status: common.ChannelStatusEnabled, Group: "default-extra",
+			Models: "wrong-group-model", Priority: &priority, Weight: &weight,
+			CreatedTime: time.Now().Unix(),
+		},
+	}
+	require.NoError(t, model.DB.Create(&channels).Error)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
