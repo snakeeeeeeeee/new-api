@@ -119,29 +119,35 @@ type TaskPrivateData struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice              float64            `json:"model_price,omitempty"`                // 模型单价
-	GroupRatio              float64            `json:"group_ratio,omitempty"`                // 分组倍率
-	GroupSpecialRatio       float64            `json:"group_special_ratio,omitempty"`        // 专属倍率，用于日志展示
-	OriginalGroupRatio      float64            `json:"original_group_ratio,omitempty"`       // 覆盖前分组倍率
-	RatioOverride           float64            `json:"ratio_override,omitempty"`             // 用户聚合分组覆盖倍率
-	HasSpecialRatio         bool               `json:"has_special_ratio,omitempty"`          // 是否存在专属倍率
-	HasRatioOverride        bool               `json:"has_ratio_override,omitempty"`         // 是否使用用户聚合分组覆盖倍率
-	ModelRatio              float64            `json:"model_ratio,omitempty"`                // 模型倍率
-	CompletionRatio         float64            `json:"completion_ratio,omitempty"`           // 输出倍率
-	CacheRatio              float64            `json:"cache_ratio,omitempty"`                // 缓存读取倍率
-	CacheCreationRatio      float64            `json:"cache_creation_ratio,omitempty"`       // 缓存创建倍率
-	CacheCreation5mRatio    float64            `json:"cache_creation_5m_ratio,omitempty"`    // 5m 缓存创建倍率
-	CacheCreation1hRatio    float64            `json:"cache_creation_1h_ratio,omitempty"`    // 1h 缓存创建倍率
-	ImageRatio              float64            `json:"image_ratio,omitempty"`                // 图片输入倍率
-	UsePrice                bool               `json:"use_price,omitempty"`                  // true 表示固定按次价格
-	OtherRatios             map[string]float64 `json:"other_ratios,omitempty"`               // 附加倍率（时长、分辨率等）
-	OriginModelName         string             `json:"origin_model_name,omitempty"`          // 模型名称，必须为OriginModelName
-	PerCallBilling          bool               `json:"per_call_billing,omitempty"`           // 按次计费：跳过轮询阶段的差额结算
-	BillingMode             string             `json:"billing_mode,omitempty"`               // 计费模式快照，例如 async_image_usage_billing
-	PrechargeStrategy       string             `json:"precharge_strategy,omitempty"`         // 预扣策略快照
-	PrechargePerImage       int                `json:"precharge_per_image,omitempty"`        // 每张图预扣额度
-	PrechargeAmountPerImage float64            `json:"precharge_amount_per_image,omitempty"` // 每张图预扣美元金额
-	ImageCount              int                `json:"image_count,omitempty"`                // 本次提交按 n 估算的图片数量
+	ModelPrice               float64            `json:"model_price,omitempty"`                 // 模型单价
+	GroupRatio               float64            `json:"group_ratio,omitempty"`                 // 分组倍率
+	GroupSpecialRatio        float64            `json:"group_special_ratio,omitempty"`         // 专属倍率，用于日志展示
+	OriginalGroupRatio       float64            `json:"original_group_ratio,omitempty"`        // 覆盖前分组倍率
+	RatioOverride            float64            `json:"ratio_override,omitempty"`              // 用户聚合分组覆盖倍率
+	HasSpecialRatio          bool               `json:"has_special_ratio,omitempty"`           // 是否存在专属倍率
+	HasRatioOverride         bool               `json:"has_ratio_override,omitempty"`          // 是否使用用户聚合分组覆盖倍率
+	RatioOverrideApplied     bool               `json:"ratio_override_applied,omitempty"`      // 用户聚合覆盖倍率是否实际生效
+	RouteModelGroupRatio     float64            `json:"route_model_group_ratio,omitempty"`     // 子分组模型最终倍率
+	HasRouteModelGroupRatio  bool               `json:"has_route_model_group_ratio,omitempty"` // 是否命中子分组模型倍率
+	RouteModelAggregateGroup string             `json:"route_model_aggregate_group,omitempty"` // 命中规则的聚合分组
+	RouteModelRealGroup      string             `json:"route_model_real_group,omitempty"`      // 命中规则的真实分组
+	RouteModelName           string             `json:"route_model_name,omitempty"`            // 命中规则的原始模型名
+	ModelRatio               float64            `json:"model_ratio,omitempty"`                 // 模型倍率
+	CompletionRatio          float64            `json:"completion_ratio,omitempty"`            // 输出倍率
+	CacheRatio               float64            `json:"cache_ratio,omitempty"`                 // 缓存读取倍率
+	CacheCreationRatio       float64            `json:"cache_creation_ratio,omitempty"`        // 缓存创建倍率
+	CacheCreation5mRatio     float64            `json:"cache_creation_5m_ratio,omitempty"`     // 5m 缓存创建倍率
+	CacheCreation1hRatio     float64            `json:"cache_creation_1h_ratio,omitempty"`     // 1h 缓存创建倍率
+	ImageRatio               float64            `json:"image_ratio,omitempty"`                 // 图片输入倍率
+	UsePrice                 bool               `json:"use_price,omitempty"`                   // true 表示固定按次价格
+	OtherRatios              map[string]float64 `json:"other_ratios,omitempty"`                // 附加倍率（时长、分辨率等）
+	OriginModelName          string             `json:"origin_model_name,omitempty"`           // 模型名称，必须为OriginModelName
+	PerCallBilling           bool               `json:"per_call_billing,omitempty"`            // 按次计费：跳过轮询阶段的差额结算
+	BillingMode              string             `json:"billing_mode,omitempty"`                // 计费模式快照，例如 async_image_usage_billing
+	PrechargeStrategy        string             `json:"precharge_strategy,omitempty"`          // 预扣策略快照
+	PrechargePerImage        int                `json:"precharge_per_image,omitempty"`         // 每张图预扣额度
+	PrechargeAmountPerImage  float64            `json:"precharge_amount_per_image,omitempty"`  // 每张图预扣美元金额
+	ImageCount               int                `json:"image_count,omitempty"`                 // 本次提交按 n 估算的图片数量
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）

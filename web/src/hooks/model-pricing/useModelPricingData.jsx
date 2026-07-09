@@ -205,12 +205,17 @@ export const useModelPricingData = () => {
     return `$${priceInUSD.toFixed(3)}`;
   };
 
-  const setModelsFormat = (models, groupRatio, groupRatioDetails, vendorMap) => {
+  const setModelsFormat = (
+    models,
+    groupRatio,
+    modelGroupRatioDetails,
+    vendorMap,
+  ) => {
     for (let i = 0; i < models.length; i++) {
       const m = models[i];
       m.key = m.model_name;
       m.group_ratio = groupRatio[m.model_name];
-      m.group_ratio_details = groupRatioDetails[m.model_name];
+      m.group_ratio_details = modelGroupRatioDetails[m.model_name] || {};
 
       if (m.vendor_id && vendorMap[m.vendor_id]) {
         const vendor = vendorMap[m.vendor_id];
@@ -250,6 +255,7 @@ export const useModelPricingData = () => {
       vendors,
       group_ratio,
       group_ratio_details,
+      model_group_ratio_details,
       usable_group,
       supported_endpoint,
       auto_groups,
@@ -263,6 +269,17 @@ export const useModelPricingData = () => {
       const visibleGroupRatioDetails = filterVisibleGroupRatioDetailsMap(
         group_ratio_details || {},
         visibleUsableGroup,
+      );
+      const visibleModelGroupRatioDetails = Object.fromEntries(
+        Object.entries(model_group_ratio_details || {}).map(
+          ([modelName, details]) => [
+            modelName,
+            filterVisibleGroupRatioDetailsMap(
+              details || {},
+              visibleUsableGroup,
+            ),
+          ],
+        ),
       );
       setGroupRatio(visibleGroupRatio);
       setGroupRatioDetails(visibleGroupRatioDetails);
@@ -278,7 +295,12 @@ export const useModelPricingData = () => {
       setVendorsMap(vendorMap);
       setEndpointMap(supported_endpoint || {});
       setAutoGroups(auto_groups || []);
-      setModelsFormat(data, visibleGroupRatio, visibleGroupRatioDetails, vendorMap);
+      setModelsFormat(
+        data,
+        visibleGroupRatio,
+        visibleModelGroupRatioDetails,
+        vendorMap,
+      );
     } else {
       showError(message);
     }

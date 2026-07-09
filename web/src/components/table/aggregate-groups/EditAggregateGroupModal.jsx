@@ -41,6 +41,7 @@ import {
 import {
   IconArrowDown,
   IconArrowUp,
+  IconCoinMoneyStroked,
   IconClose,
   IconDelete,
   IconPlus,
@@ -107,9 +108,10 @@ const defaultRouteAffinityKeySources = () => [
 ];
 
 const normalizeRouteAffinityKeySources = (value) => {
-  const sources = Array.isArray(value) && value.length > 0
-    ? value
-    : defaultRouteAffinityKeySources();
+  const sources =
+    Array.isArray(value) && value.length > 0
+      ? value
+      : defaultRouteAffinityKeySources();
   return sources
     .map((source) => ({
       type: source?.type || 'gjson',
@@ -198,6 +200,7 @@ const defaultInputs = {
   targets: [],
   client_route_pools: defaultClientRoutePools(),
   smart_strategy_config: null,
+  route_model_group_ratio_overrides: [],
 };
 
 const EditAggregateGroupModal = ({
@@ -212,7 +215,11 @@ const EditAggregateGroupModal = ({
   const isMobile = useIsMobile();
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState(defaultInputs);
-  const [affinityAdvancedActiveKey, setAffinityAdvancedActiveKey] = useState([]);
+  const [affinityAdvancedActiveKey, setAffinityAdvancedActiveKey] = useState(
+    [],
+  );
+  const [routeModelOptions, setRouteModelOptions] = useState({});
+  const [routeModelsLoading, setRouteModelsLoading] = useState({});
 
   const isEdit = editingGroup?.id !== undefined;
   const isClusterMode = inputs.routing_mode === 'cluster';
@@ -220,6 +227,8 @@ const EditAggregateGroupModal = ({
   useEffect(() => {
     if (!visible) {
       setInputs(defaultInputs);
+      setRouteModelOptions({});
+      setRouteModelsLoading({});
       return;
     }
     if (!isEdit) {
@@ -283,6 +292,17 @@ const EditAggregateGroupModal = ({
           smart_strategy_config: normalizeSmartStrategyConfig(
             data.smart_strategy_config,
           ),
+          route_model_group_ratio_overrides: (
+            data.route_model_group_ratio_overrides || []
+          ).map((item) => ({
+            real_group: item.real_group || '',
+            model_name: item.model_name || '',
+            group_ratio:
+              item.group_ratio === undefined || item.group_ratio === null
+                ? 1
+                : item.group_ratio,
+            enabled: item.enabled !== false,
+          })),
         });
       } catch (error) {
         showError(error?.message || t('获取聚合分组详情失败'));
@@ -310,6 +330,40 @@ const EditAggregateGroupModal = ({
     () => claudeCliPool.targets.map((target) => target.real_group),
     [claudeCliPool.targets],
   );
+
+  const configuredRouteGroupOptions = useMemo(() => {
+    const groups = new Set([
+      ...inputs.targets.map((target) => target.real_group),
+      ...claudeCliPool.targets.map((target) => target.real_group),
+    ]);
+    return Array.from(groups)
+      .filter(Boolean)
+      .map((realGroup) => ({ label: realGroup, value: realGroup }));
+  }, [inputs.targets, claudeCliPool.targets]);
+
+  const configuredRouteGroupKey = configuredRouteGroupOptions
+    .map((option) => option.value)
+    .sort()
+    .join('\u0000');
+
+  useEffect(() => {
+    const configuredGroups = new Set(
+      configuredRouteGroupOptions.map((option) => option.value),
+    );
+    setInputs((prev) => {
+      const rules = prev.route_model_group_ratio_overrides || [];
+      const nextRules = rules.filter((rule) =>
+        configuredGroups.has(rule.real_group),
+      );
+      if (nextRules.length === rules.length) {
+        return prev;
+      }
+      return {
+        ...prev,
+        route_model_group_ratio_overrides: nextRules,
+      };
+    });
+  }, [configuredRouteGroupKey]);
 
   const availableTargetOptions = useMemo(() => {
     const selected = new Set(selectedTargetValues);
@@ -589,6 +643,91 @@ const EditAggregateGroupModal = ({
     });
   };
 
+  const loadRouteModels = async (realGroup) => {
+    if (
+      !realGroup ||
+      routeModelOptions[realGroup] ||
+      routeModelsLoading[realGroup]
+    ) {
+      return;
+    }
+    setRouteModelsLoading((prev) => ({ ...prev, [realGroup]: true }));
+    try {
+      const res = await API.get('/api/aggregate_group/models', {
+        params: { group: realGroup },
+      });
+      const { success, data, message } = res.data || {};
+      if (!success) {
+        showError(t(message || '获取子分组模型失败'));
+        return;
+      }
+      setRouteModelOptions((prev) => ({
+        ...prev,
+        [realGroup]: (data || []).map((modelName) => ({
+          label: modelName,
+          value: modelName,
+        })),
+      }));
+    } catch (error) {
+      showError(error?.message || t('获取子分组模型失败'));
+    } finally {
+      setRouteModelsLoading((prev) => ({ ...prev, [realGroup]: false }));
+    }
+  };
+
+  const addRouteModelRatio = () => {
+    const firstGroup = configuredRouteGroupOptions[0]?.value || '';
+    setInputs((prev) => ({
+      ...prev,
+      route_model_group_ratio_overrides: [
+        ...(prev.route_model_group_ratio_overrides || []),
+        {
+          real_group: firstGroup,
+          model_name: '',
+          group_ratio: Number(prev.group_ratio ?? 1),
+          enabled: true,
+        },
+      ],
+    }));
+    if (firstGroup) {
+      loadRouteModels(firstGroup);
+    }
+  };
+
+  const updateRouteModelRatio = (index, patch) => {
+    setInputs((prev) => ({
+      ...prev,
+      route_model_group_ratio_overrides: (
+        prev.route_model_group_ratio_overrides || []
+      ).map((rule, currentIndex) =>
+        currentIndex === index ? { ...rule, ...patch } : rule,
+      ),
+    }));
+    if (patch.real_group) {
+      loadRouteModels(patch.real_group);
+    }
+  };
+
+  const removeRouteModelRatio = (index) => {
+    setInputs((prev) => ({
+      ...prev,
+      route_model_group_ratio_overrides: (
+        prev.route_model_group_ratio_overrides || []
+      ).filter((_, currentIndex) => currentIndex !== index),
+    }));
+  };
+
+  const getRouteModelOptions = (rule) => {
+    const options = [...(routeModelOptions[rule.real_group] || [])];
+    if (
+      rule.model_name &&
+      !options.some((option) => option.value === rule.model_name)
+    ) {
+      options.unshift({ label: rule.model_name, value: rule.model_name });
+    }
+    return options;
+  };
+
   const renderRetryStatusCodes = () => (
     <Col xs={24} sm={12}>
       <div className='mb-2'>
@@ -656,16 +795,24 @@ const EditAggregateGroupModal = ({
         </div>
         <div className='mt-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-xs text-gray-600'>
           {strategy === 'platform_user' &&
-            t('按平台账号 ID 亲和，完全兼容旧逻辑；一个 token 被多人共用时会被视为同一个账号。')}
+            t(
+              '按平台账号 ID 亲和，完全兼容旧逻辑；一个 token 被多人共用时会被视为同一个账号。',
+            )}
           {strategy === 'request_first' &&
-            t('自动识别请求里的用户/会话标识，识别不到再按平台账号；适合多人共用同一个 Key 的场景。')}
+            t(
+              '自动识别请求里的用户/会话标识，识别不到再按平台账号；适合多人共用同一个 Key 的场景。',
+            )}
           {strategy === 'request_only' &&
-            t('只使用请求里的用户/会话标识；识别不到时不会强行粘住，继续按权重选择。')}
+            t(
+              '只使用请求里的用户/会话标识；识别不到时不会强行粘住，继续按权重选择。',
+            )}
           {strategy === 'off' &&
             t('关闭子分组亲和，每次都按当前候选和权重选择。')}
           {strategy !== 'off' && inputs.route_affinity_scope === 'model' && (
             <div className='mt-1'>
-              {t('当前按模型隔离：同一标识请求不同模型时会分别选择并固定子分组。')}
+              {t(
+                '当前按模型隔离：同一标识请求不同模型时会分别选择并固定子分组。',
+              )}
             </div>
           )}
         </div>
@@ -726,10 +873,12 @@ const EditAggregateGroupModal = ({
                             </Tag>
                             <Select
                               value={source.type || 'gjson'}
-                              optionList={routeAffinitySourceTypes.map((option) => ({
-                                ...option,
-                                label: t(option.label),
-                              }))}
+                              optionList={routeAffinitySourceTypes.map(
+                                (option) => ({
+                                  ...option,
+                                  label: t(option.label),
+                                }),
+                              )}
                               onChange={(value) =>
                                 updateRouteAffinitySource(index, {
                                   type: value || 'gjson',
@@ -930,7 +1079,9 @@ const EditAggregateGroupModal = ({
           <div>
             <Text strong>{t('智能降权策略')}</Text>
             <div className='mt-1 text-xs text-gray-500'>
-              {t('默认跟随全局；开启自定义后仅覆盖当前聚合分组的百分比降权参数。')}
+              {t(
+                '默认跟随全局；开启自定义后仅覆盖当前聚合分组的百分比降权参数。',
+              )}
             </div>
           </div>
           <Space>
@@ -955,10 +1106,7 @@ const EditAggregateGroupModal = ({
                 helper: '统计最近窗口内的可重试失败占尝试请求比例',
               },
             )}
-            {renderNumberInput(
-              '错误率最小样本数',
-              'failure_rate_min_requests',
-            )}
+            {renderNumberInput('错误率最小样本数', 'failure_rate_min_requests')}
             {renderNumberInput(
               '错误率阈值（%）',
               'failure_rate_threshold_percent',
@@ -1075,7 +1223,9 @@ const EditAggregateGroupModal = ({
               style={{ width: '100%' }}
             />
             <div className='mt-1 text-xs text-gray-500'>
-              {t('专用池与默认流量池互相独立；Failover 使用列表顺序，Cluster 使用专用权重。')}
+              {t(
+                '专用池与默认流量池互相独立；Failover 使用列表顺序，Cluster 使用专用权重。',
+              )}
             </div>
           </Col>
           <Col xs={24} sm={12}>
@@ -1096,7 +1246,9 @@ const EditAggregateGroupModal = ({
               }
             />
             <div className='mt-1 text-xs text-gray-500'>
-              {t('开启后专用池无可用节点或耗尽时继续走默认流量池；关闭则直接返回无可用路由。')}
+              {t(
+                '开启后专用池无可用节点或耗尽时继续走默认流量池；关闭则直接返回无可用路由。',
+              )}
             </div>
           </Col>
         </Row>
@@ -1141,7 +1293,9 @@ const EditAggregateGroupModal = ({
                           onChange={(value) =>
                             updateClaudeCliPoolWeight(index, value)
                           }
-                          disabled={!clientRoutePools.enabled || !claudeCliPool.enabled}
+                          disabled={
+                            !clientRoutePools.enabled || !claudeCliPool.enabled
+                          }
                           aria-label={t('Claude CLI 专用池权重')}
                           style={{ width: 112 }}
                         />
@@ -1171,7 +1325,9 @@ const EditAggregateGroupModal = ({
                         onChange={(value) =>
                           updateClaudeCliPoolRPMLimit(index, value)
                         }
-                        disabled={!clientRoutePools.enabled || !claudeCliPool.enabled}
+                        disabled={
+                          !clientRoutePools.enabled || !claudeCliPool.enabled
+                        }
                         aria-label={t('Claude CLI 专用池 RPM 上限')}
                         style={{ width: 112 }}
                       />
@@ -1208,7 +1364,163 @@ const EditAggregateGroupModal = ({
     </div>
   );
 
+  const renderRouteModelRatios = () => {
+    const rules = inputs.route_model_group_ratio_overrides || [];
+    return (
+      <Card className='!rounded-lg shadow-sm border-0 mt-3'>
+        <div className='flex items-start justify-between gap-3 mb-3 flex-wrap'>
+          <div className='flex items-center min-w-0'>
+            <Avatar size='small' color='orange' className='mr-2 shadow-md'>
+              <IconCoinMoneyStroked size={16} />
+            </Avatar>
+            <div>
+              <Text className='text-lg font-medium'>{t('子分组模型倍率')}</Text>
+              <div className='text-xs text-gray-600'>
+                {t('为精确模型配置选中子分组后的最终分组倍率')}
+              </div>
+            </div>
+          </div>
+          <Button
+            icon={<IconPlus />}
+            onClick={addRouteModelRatio}
+            disabled={configuredRouteGroupOptions.length === 0}
+          >
+            {t('添加倍率规则')}
+          </Button>
+        </div>
+
+        {rules.length === 0 ? (
+          <div className='rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-5 text-center text-sm text-gray-500'>
+            {t('暂无子分组模型倍率规则')}
+          </div>
+        ) : (
+          <div className='flex flex-col gap-2'>
+            {rules.map((rule, index) => (
+              <div
+                key={`${rule.real_group}-${rule.model_name}-${index}`}
+                className='rounded-lg border border-gray-200 bg-gray-50 px-3 py-3'
+              >
+                <div className='grid grid-cols-1 gap-3 md:grid-cols-[minmax(140px,0.8fr)_minmax(220px,1.4fr)_130px_72px_36px] md:items-end'>
+                  <div className='min-w-0'>
+                    <div className='mb-1 text-xs text-gray-500'>
+                      {t('子分组')}
+                    </div>
+                    <Select
+                      value={rule.real_group}
+                      optionList={configuredRouteGroupOptions}
+                      onChange={(value) =>
+                        updateRouteModelRatio(index, {
+                          real_group: value || '',
+                          model_name: '',
+                        })
+                      }
+                      filter={selectFilter}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div className='min-w-0'>
+                    <div className='mb-1 text-xs text-gray-500'>
+                      {t('精确模型')}
+                    </div>
+                    <Select
+                      value={rule.model_name}
+                      optionList={getRouteModelOptions(rule)}
+                      onChange={(value) =>
+                        updateRouteModelRatio(index, {
+                          model_name: value || '',
+                        })
+                      }
+                      onFocus={() => loadRouteModels(rule.real_group)}
+                      loading={!!routeModelsLoading[rule.real_group]}
+                      allowCreate
+                      filter={selectFilter}
+                      searchPosition='dropdown'
+                      placeholder={t('选择或输入精确模型名')}
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <div className='mb-1 text-xs text-gray-500'>
+                      {t('最终倍率')}
+                    </div>
+                    <InputNumber
+                      min={0}
+                      step={0.1}
+                      value={rule.group_ratio}
+                      onChange={(value) =>
+                        updateRouteModelRatio(index, {
+                          group_ratio: Math.max(0, Number(value ?? 0)),
+                        })
+                      }
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <div className='mb-1 text-xs text-gray-500'>
+                      {t('启用')}
+                    </div>
+                    <Switch
+                      checked={rule.enabled !== false}
+                      onChange={(checked) =>
+                        updateRouteModelRatio(index, { enabled: checked })
+                      }
+                    />
+                  </div>
+                  <Button
+                    theme='borderless'
+                    type='danger'
+                    icon={<IconDelete />}
+                    onClick={() => removeRouteModelRatio(index)}
+                    aria-label={t('删除倍率规则')}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    );
+  };
+
   const handleSubmit = async () => {
+    const configuredGroups = new Set(
+      configuredRouteGroupOptions.map((option) => option.value),
+    );
+    const routeModelRatios = (
+      inputs.route_model_group_ratio_overrides || []
+    ).map((rule) => ({
+      real_group: (rule.real_group || '').trim(),
+      model_name: (rule.model_name || '').trim(),
+      group_ratio: Number(rule.group_ratio),
+      enabled: rule.enabled !== false,
+    }));
+    const seenRules = new Set();
+    for (const rule of routeModelRatios) {
+      if (!configuredGroups.has(rule.real_group)) {
+        showError(t('倍率规则引用了未配置的子分组'));
+        return;
+      }
+      if (!rule.model_name) {
+        showError(t('倍率规则的模型名称不能为空'));
+        return;
+      }
+      if (!Number.isFinite(rule.group_ratio) || rule.group_ratio < 0) {
+        showError(t('倍率规则必须使用大于等于 0 的有限数值'));
+        return;
+      }
+      const ruleKey = `${rule.real_group}\u0000${rule.model_name}`;
+      if (seenRules.has(ruleKey)) {
+        showError(
+          t('子分组 {{group}} 的模型 {{model}} 重复配置', {
+            group: rule.real_group,
+            model: rule.model_name,
+          }),
+        );
+        return;
+      }
+      seenRules.add(ruleKey);
+    }
+
     setLoading(true);
     try {
       const payload = {
@@ -1253,6 +1565,7 @@ const EditAggregateGroupModal = ({
         smart_strategy_config: inputs.smart_strategy_config
           ? { ...inputs.smart_strategy_config }
           : null,
+        route_model_group_ratio_overrides: routeModelRatios,
       };
       const res = isEdit
         ? await API.put('/api/aggregate_group', payload)
@@ -1467,12 +1780,12 @@ const EditAggregateGroupModal = ({
                     <div className='mt-1 text-xs text-gray-500'>
                       {t('仅 Failover 懒恢复使用')}
                     </div>
-	                  </Col>
-	                  {renderRetryStatusCodes()}
-	                </Row>
-	                {renderTargetList()}
-	              </div>
-	            </TabPane>
+                  </Col>
+                  {renderRetryStatusCodes()}
+                </Row>
+                {renderTargetList()}
+              </div>
+            </TabPane>
             <TabPane itemKey='cluster' tab={t('Cluster 集群分发')}>
               <div className='mt-3'>
                 <div className='rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700'>
@@ -1489,24 +1802,30 @@ const EditAggregateGroupModal = ({
                       min={1}
                       value={inputs.cluster_affinity_ttl_seconds}
                       onChange={(value) =>
-                        updateField('cluster_affinity_ttl_seconds', value || 300)
+                        updateField(
+                          'cluster_affinity_ttl_seconds',
+                          value || 300,
+                        )
                       }
                       style={{ width: '100%' }}
                     />
                     <div className='mt-1 text-xs text-gray-500'>
-                      {t('同一用户尽量固定到同一子分组的时间，到期后重新按权重选择。')}
+                      {t(
+                        '同一用户尽量固定到同一子分组的时间，到期后重新按权重选择。',
+                      )}
                     </div>
                   </Col>
-	                  {renderRetryStatusCodes()}
-	                </Row>
-	                {renderRouteAffinityConfig()}
-	                {renderTargetList()}
-	              </div>
-	            </TabPane>
+                  {renderRetryStatusCodes()}
+                </Row>
+                {renderRouteAffinityConfig()}
+                {renderTargetList()}
+              </div>
+            </TabPane>
           </Tabs>
           {renderSmartStrategyConfig()}
           {renderClientRoutePools()}
         </Card>
+        {renderRouteModelRatios()}
       </div>
     </SideSheet>
   );

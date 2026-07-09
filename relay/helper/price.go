@@ -25,7 +25,7 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 		logger.LogDebug(ctx, fmt.Sprintf("final group: %s", autoGroup))
 		relayInfo.UsingGroup = autoGroup.(string)
 	}
-	return service.ResolveContextGroupRatioInfo(ctx, relayInfo.UserGroup, relayInfo.UsingGroup)
+	return service.ResolveContextGroupRatioInfoForModel(ctx, relayInfo.UserGroup, relayInfo.UsingGroup, relayInfo.OriginModelName)
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {

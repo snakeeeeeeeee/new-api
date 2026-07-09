@@ -357,6 +357,10 @@ func (g *AggregateGroup) GetTargetGroups() []string {
 }
 
 func (g *AggregateGroup) InsertWithTargets(targets []AggregateGroupTarget) error {
+	return g.InsertWithTargetsAndRouteModelRatios(targets, nil)
+}
+
+func (g *AggregateGroup) InsertWithTargetsAndRouteModelRatios(targets []AggregateGroupTarget, rules []AggregateGroupRouteModelRatio) error {
 	now := common.GetTimestamp()
 	g.CreatedTime = now
 	g.UpdatedTime = now
@@ -364,18 +368,32 @@ func (g *AggregateGroup) InsertWithTargets(targets []AggregateGroupTarget) error
 		if err := tx.Create(g).Error; err != nil {
 			return err
 		}
-		if len(targets) == 0 {
+		if len(targets) > 0 {
+			for i := range targets {
+				targets[i].Id = 0
+				targets[i].AggregateGroupId = g.Id
+			}
+			if err := tx.Create(&targets).Error; err != nil {
+				return err
+			}
+		}
+		preparedRules := prepareAggregateGroupRouteModelRatios(g.Id, rules)
+		if len(preparedRules) == 0 {
 			return nil
 		}
-		for i := range targets {
-			targets[i].Id = 0
-			targets[i].AggregateGroupId = g.Id
-		}
-		return tx.Create(&targets).Error
+		return tx.Create(&preparedRules).Error
 	})
 }
 
 func (g *AggregateGroup) UpdateWithTargets(targets []AggregateGroupTarget) error {
+	return g.updateWithTargetsAndRouteModelRatios(targets, nil, false)
+}
+
+func (g *AggregateGroup) UpdateWithTargetsAndRouteModelRatios(targets []AggregateGroupTarget, rules *[]AggregateGroupRouteModelRatio) error {
+	return g.updateWithTargetsAndRouteModelRatios(targets, rules, true)
+}
+
+func (g *AggregateGroup) updateWithTargetsAndRouteModelRatios(targets []AggregateGroupTarget, rules *[]AggregateGroupRouteModelRatio, manageRules bool) error {
 	if g == nil || g.Id == 0 {
 		return errors.New("aggregate group id is required")
 	}
@@ -406,15 +424,62 @@ func (g *AggregateGroup) UpdateWithTargets(targets []AggregateGroupTarget) error
 		if err := tx.Where("aggregate_group_id = ?", g.Id).Delete(&AggregateGroupTarget{}).Error; err != nil {
 			return err
 		}
-		if len(targets) == 0 {
+		if len(targets) > 0 {
+			for i := range targets {
+				targets[i].Id = 0
+				targets[i].AggregateGroupId = g.Id
+			}
+			if err := tx.Create(&targets).Error; err != nil {
+				return err
+			}
+		}
+		if !manageRules {
 			return nil
 		}
-		for i := range targets {
-			targets[i].Id = 0
-			targets[i].AggregateGroupId = g.Id
+		if rules != nil {
+			if err := tx.Where("aggregate_group_id = ?", g.Id).Delete(&AggregateGroupRouteModelRatio{}).Error; err != nil {
+				return err
+			}
+			preparedRules := prepareAggregateGroupRouteModelRatios(g.Id, *rules)
+			if len(preparedRules) == 0 {
+				return nil
+			}
+			return tx.Create(&preparedRules).Error
 		}
-		return tx.Create(&targets).Error
+
+		configuredGroups := configuredAggregateGroupRouteGroups(g, targets)
+		if len(configuredGroups) == 0 {
+			return tx.Where("aggregate_group_id = ?", g.Id).Delete(&AggregateGroupRouteModelRatio{}).Error
+		}
+		return tx.Where("aggregate_group_id = ? AND real_group NOT IN ?", g.Id, configuredGroups).
+			Delete(&AggregateGroupRouteModelRatio{}).Error
 	})
+}
+
+func configuredAggregateGroupRouteGroups(group *AggregateGroup, targets []AggregateGroupTarget) []string {
+	groups := make([]string, 0, len(targets))
+	seen := make(map[string]struct{})
+	add := func(realGroup string) {
+		realGroup = strings.TrimSpace(realGroup)
+		if realGroup == "" {
+			return
+		}
+		if _, exists := seen[realGroup]; exists {
+			return
+		}
+		seen[realGroup] = struct{}{}
+		groups = append(groups, realGroup)
+	}
+	for _, target := range targets {
+		add(target.RealGroup)
+	}
+	if group != nil {
+		clientPools := group.GetClientRoutePools()
+		for _, target := range clientPools.ClaudeCodeCLI.Targets {
+			add(target.RealGroup)
+		}
+	}
+	return groups
 }
 
 func DeleteAggregateGroupByID(id int) error {
@@ -422,6 +487,9 @@ func DeleteAggregateGroupByID(id int) error {
 		return errors.New("aggregate group id is required")
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("aggregate_group_id = ?", id).Delete(&AggregateGroupRouteModelRatio{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("aggregate_group_id = ?", id).Delete(&AggregateGroupTarget{}).Error; err != nil {
 			return err
 		}

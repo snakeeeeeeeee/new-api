@@ -222,6 +222,9 @@ export const getPricingTableColumns = ({
           </div>
           <div className='text-gray-700'>
             {t('分组倍率')}：{priceData?.usedGroupRatio ?? '-'}
+            {priceData?.isDynamicRouteMaximum
+              ? ` (${t('动态路由最高倍率')})`
+              : ''}
           </div>
         </div>
       );
@@ -244,6 +247,9 @@ export const getPricingTableColumns = ({
               {item.suffix}
             </div>
           ))}
+          {priceData?.isDynamicRouteMaximum ? (
+            <div className='text-orange-600'>{t('动态路由最高价')}</div>
+          ) : null}
         </div>
       );
     },

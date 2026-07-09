@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,7 @@ func setupTaskPriceTest(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	model.DB = db
-	require.NoError(t, db.AutoMigrate(&model.AggregateGroup{}, &model.AggregateGroupTarget{}))
+	require.NoError(t, db.AutoMigrate(&model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.AggregateGroupRouteModelRatio{}))
 
 	originalModelPrice := ratio_setting.ModelPrice2JSONString()
 	originalGroupRatio := ratio_setting.GroupRatio2JSONString()
@@ -46,7 +47,7 @@ func buildTaskPriceContext() *gin.Context {
 	return ctx
 }
 
-func seedTaskPriceAggregateGroup(t *testing.T, name string, ratio float64) {
+func seedTaskPriceAggregateGroup(t *testing.T, name string, ratio float64) *model.AggregateGroup {
 	t.Helper()
 	group := &model.AggregateGroup{
 		Name:                    name,
@@ -65,6 +66,7 @@ func seedTaskPriceAggregateGroup(t *testing.T, name string, ratio float64) {
 		RealGroup:        "default",
 		OrderIndex:       0,
 	}).Error)
+	return group
 }
 
 func TestModelPriceHelperPerCallUsesNormalGroupRatio(t *testing.T) {
@@ -130,4 +132,46 @@ func TestModelPriceHelperPerCallUsesAggregateGroupRatioAndOverride(t *testing.T)
 	assert.True(t, overridePriceData.GroupRatioInfo.HasRatioOverride)
 	assert.Equal(t, 0.5, overridePriceData.GroupRatioInfo.RatioOverride)
 	assert.Equal(t, int(0.5*common.QuotaPerUnit), overridePriceData.Quota)
+}
+
+func TestModelPriceHelpersUseAggregateRouteModelRatio(t *testing.T) {
+	setupTaskPriceTest(t)
+	group := seedTaskPriceAggregateGroup(t, "enterprise-premium-route", 2)
+	require.NoError(t, model.DB.Create(&model.AggregateGroupRouteModelRatio{
+		AggregateGroupId: group.Id,
+		RealGroup:        "default",
+		ModelName:        "grok-imagine-video-test",
+		GroupRatio:       4,
+		Enabled:          true,
+	}).Error)
+
+	buildInfoAndContext := func() (*relaycommon.RelayInfo, *gin.Context) {
+		ctx := buildTaskPriceContext()
+		common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, group.Name)
+		common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
+		common.SetContextKey(ctx, constant.ContextKeyUserSetting, dto.UserSetting{
+			AggregateGroupRatioOverrides: map[string]float64{group.Name: 0.5},
+		})
+		return &relaycommon.RelayInfo{
+			OriginModelName: "grok-imagine-video-test",
+			UserGroup:       "vip",
+			UsingGroup:      group.Name,
+			ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeXai},
+		}, ctx
+	}
+
+	perCallInfo, perCallCtx := buildInfoAndContext()
+	perCallPrice, err := ModelPriceHelperPerCall(perCallCtx, perCallInfo)
+	require.NoError(t, err)
+	assert.Equal(t, 4.0, perCallPrice.GroupRatioInfo.GroupRatio)
+	assert.True(t, perCallPrice.GroupRatioInfo.HasRouteModelGroupRatio)
+	assert.False(t, perCallPrice.GroupRatioInfo.RatioOverrideApplied)
+	assert.Equal(t, int(4*common.QuotaPerUnit), perCallPrice.Quota)
+
+	tokenInfo, tokenCtx := buildInfoAndContext()
+	tokenPrice, err := ModelPriceHelper(tokenCtx, tokenInfo, 100, &types.TokenCountMeta{})
+	require.NoError(t, err)
+	assert.Equal(t, 4.0, tokenPrice.GroupRatioInfo.GroupRatio)
+	assert.True(t, tokenPrice.GroupRatioInfo.HasRouteModelGroupRatio)
+	assert.Equal(t, int(4*common.QuotaPerUnit), tokenPrice.QuotaToPreConsume)
 }

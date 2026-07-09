@@ -79,6 +79,11 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			delete(otherMap, "reject_reason")
 			delete(otherMap, "is_model_mapped")
 			delete(otherMap, "upstream_model_name")
+			delete(otherMap, "route_model_group_ratio_applied")
+			delete(otherMap, "route_model_group_ratio")
+			delete(otherMap, "route_model_ratio_aggregate_group")
+			delete(otherMap, "route_model_ratio_real_group")
+			delete(otherMap, "route_model_ratio_model_name")
 			if logs[i].Type == LogTypeError {
 				delete(otherMap, "error_type")
 				delete(otherMap, "error_code")

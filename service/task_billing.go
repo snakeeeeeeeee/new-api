@@ -181,6 +181,14 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 		if bc.HasRatioOverride {
 			other["ratio_override"] = bc.RatioOverride
 			other["has_ratio_override"] = true
+			other["ratio_override_applied"] = bc.RatioOverrideApplied || !bc.HasRouteModelGroupRatio
+		}
+		if bc.HasRouteModelGroupRatio {
+			other["route_model_group_ratio_applied"] = true
+			other["route_model_group_ratio"] = bc.RouteModelGroupRatio
+			other["route_model_ratio_aggregate_group"] = bc.RouteModelAggregateGroup
+			other["route_model_ratio_real_group"] = bc.RouteModelRealGroup
+			other["route_model_ratio_model_name"] = bc.RouteModelName
 		}
 		if len(bc.OtherRatios) > 0 {
 			for k, v := range bc.OtherRatios {
@@ -418,7 +426,7 @@ func taskRelayInfoForBilling(task *model.Task) *relaycommon.RelayInfo {
 	bc := task.PrivateData.BillingContext
 	priceData := types.PriceData{
 		ModelPrice:           -1,
-		GroupRatioInfo:       types.GroupRatioInfo{GroupRatio: 1, GroupSpecialRatio: -1, OriginalGroupRatio: 1, RatioOverride: -1},
+		GroupRatioInfo:       types.GroupRatioInfo{GroupRatio: 1, GroupSpecialRatio: -1, OriginalGroupRatio: 1, RatioOverride: -1, RouteModelGroupRatio: -1},
 		CacheRatio:           1,
 		CacheCreationRatio:   1,
 		CacheCreation5mRatio: 1,
@@ -437,12 +445,32 @@ func taskRelayInfoForBilling(task *model.Task) *relaycommon.RelayInfo {
 		priceData.UsePrice = bc.UsePrice
 		priceData.OtherRatios = taskUsageBillingOtherRatios(bc.OtherRatios)
 		priceData.GroupRatioInfo = types.GroupRatioInfo{
-			GroupRatio:         defaultFloat(bc.GroupRatio, 1),
-			GroupSpecialRatio:  defaultFloat(bc.GroupSpecialRatio, -1),
-			HasSpecialRatio:    bc.HasSpecialRatio,
-			OriginalGroupRatio: defaultFloat(bc.OriginalGroupRatio, defaultFloat(bc.GroupRatio, 1)),
-			RatioOverride:      defaultFloat(bc.RatioOverride, -1),
-			HasRatioOverride:   bc.HasRatioOverride,
+			GroupRatio:                    defaultFloat(bc.GroupRatio, 1),
+			GroupSpecialRatio:             defaultFloat(bc.GroupSpecialRatio, -1),
+			HasSpecialRatio:               bc.HasSpecialRatio,
+			OriginalGroupRatio:            defaultFloat(bc.OriginalGroupRatio, defaultFloat(bc.GroupRatio, 1)),
+			RatioOverride:                 defaultFloat(bc.RatioOverride, -1),
+			HasRatioOverride:              bc.HasRatioOverride,
+			RatioOverrideApplied:          bc.RatioOverrideApplied,
+			RouteModelGroupRatio:          defaultFloat(bc.RouteModelGroupRatio, -1),
+			HasRouteModelGroupRatio:       bc.HasRouteModelGroupRatio,
+			RouteModelRatioAggregateGroup: bc.RouteModelAggregateGroup,
+			RouteModelRatioRealGroup:      bc.RouteModelRealGroup,
+			RouteModelRatioModelName:      bc.RouteModelName,
+		}
+		if bc.HasRouteModelGroupRatio {
+			priceData.GroupRatioInfo.GroupRatio = bc.GroupRatio
+			priceData.GroupRatioInfo.OriginalGroupRatio = bc.OriginalGroupRatio
+			priceData.GroupRatioInfo.RouteModelGroupRatio = bc.RouteModelGroupRatio
+		}
+		if bc.HasSpecialRatio {
+			priceData.GroupRatioInfo.GroupSpecialRatio = bc.GroupSpecialRatio
+		}
+		if bc.HasRatioOverride {
+			priceData.GroupRatioInfo.RatioOverride = bc.RatioOverride
+			if !bc.HasRouteModelGroupRatio {
+				priceData.GroupRatioInfo.RatioOverrideApplied = true
+			}
 		}
 	}
 	return &relaycommon.RelayInfo{

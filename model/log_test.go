@@ -136,6 +136,34 @@ func TestFormatUserLogsHidesModelMapping(t *testing.T) {
 	require.Equal(t, float64(0.5), other["model_ratio"])
 }
 
+func TestFormatUserLogsHidesAggregateRouteModelRatioDetails(t *testing.T) {
+	logs := []*Log{
+		{
+			Id:   42,
+			Type: LogTypeConsume,
+			Other: common.MapToJsonStr(map[string]interface{}{
+				"group_ratio":                       3.25,
+				"route_model_group_ratio_applied":   true,
+				"route_model_group_ratio":           3.25,
+				"route_model_ratio_aggregate_group": "aggregate-premium",
+				"route_model_ratio_real_group":      "premium-route",
+				"route_model_ratio_model_name":      "premium-model",
+			}),
+		},
+	}
+
+	formatUserLogs(logs, 0)
+
+	other, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	require.Equal(t, float64(3.25), other["group_ratio"])
+	require.NotContains(t, other, "route_model_group_ratio_applied")
+	require.NotContains(t, other, "route_model_group_ratio")
+	require.NotContains(t, other, "route_model_ratio_aggregate_group")
+	require.NotContains(t, other, "route_model_ratio_real_group")
+	require.NotContains(t, other, "route_model_ratio_model_name")
+}
+
 func TestFormatUserLogsSanitizesErrorContent(t *testing.T) {
 	logs := []*Log{
 		{

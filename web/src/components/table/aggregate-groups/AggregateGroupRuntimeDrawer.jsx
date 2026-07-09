@@ -1175,9 +1175,7 @@ const AggregateTopologyCanvas = ({
                 x={node.x + metricInset + 14}
                 y={metricY + 33}
                 fill={
-                  node.route.rpm_limited
-                    ? RPM_LIMIT_WARNING_COLOR
-                    : '#0f172a'
+                  node.route.rpm_limited ? RPM_LIMIT_WARNING_COLOR : '#0f172a'
                 }
                 fontSize='16'
                 fontWeight='700'
@@ -1357,29 +1355,35 @@ const AggregateGroupRuntimeDrawer = ({
       ) || allRuntimeRoutes[0]
     );
   }, [allRuntimeRoutes, selectedRouteKey]);
+  const selectedRouteRatio = useMemo(() => {
+    const defaultRatio = Number(runtimeGroup?.group_ratio ?? 1);
+    const rule = (runtimeGroup?.route_model_group_ratio_overrides || []).find(
+      (item) =>
+        item?.enabled &&
+        item?.real_group === selectedRoute?.route_group &&
+        item?.model_name === selectedModel,
+    );
+    return {
+      defaultRatio,
+      configuredRatio: rule ? Number(rule.group_ratio) : null,
+      effectiveRatio: rule ? Number(rule.group_ratio) : defaultRatio,
+      matched: Boolean(rule),
+    };
+  }, [runtimeGroup, selectedRoute?.route_group, selectedModel]);
   const degradedRouteCount = useMemo(
     () => allRuntimeRoutes.filter((route) => route.is_degraded).length || 0,
     [allRuntimeRoutes],
   );
-  const routeTotalRPM = useMemo(
-    () => {
-      const routeRPMMap = new Map();
-      allRuntimeRoutes.forEach((route) => {
-        if (!route?.route_group) {
-          return;
-        }
-        routeRPMMap.set(
-          route.route_group,
-          route?.total_rpm ?? route?.rpm ?? 0,
-        );
-      });
-      return Array.from(routeRPMMap.values()).reduce(
-        (sum, rpm) => sum + rpm,
-        0,
-      );
-    },
-    [allRuntimeRoutes],
-  );
+  const routeTotalRPM = useMemo(() => {
+    const routeRPMMap = new Map();
+    allRuntimeRoutes.forEach((route) => {
+      if (!route?.route_group) {
+        return;
+      }
+      routeRPMMap.set(route.route_group, route?.total_rpm ?? route?.rpm ?? 0);
+    });
+    return Array.from(routeRPMMap.values()).reduce((sum, rpm) => sum + rpm, 0);
+  }, [allRuntimeRoutes]);
 
   return (
     <>
@@ -1761,6 +1765,28 @@ const AggregateGroupRuntimeDrawer = ({
                       <Descriptions
                         data={[
                           {
+                            key: t('默认聚合倍率'),
+                            value: `${selectedRouteRatio.defaultRatio}x`,
+                          },
+                          {
+                            key: t('配置的子分组模型倍率'),
+                            value: selectedRouteRatio.matched ? (
+                              <Tag color='orange'>
+                                {selectedRouteRatio.configuredRatio}x
+                              </Tag>
+                            ) : (
+                              <Text type='tertiary'>{t('未配置')}</Text>
+                            ),
+                          },
+                          {
+                            key: t('当前有效倍率'),
+                            value: (
+                              <Text strong>
+                                {selectedRouteRatio.effectiveRatio}x
+                              </Text>
+                            ),
+                          },
+                          {
                             key: t('流量池'),
                             value: selectedRoute.route_pool || t('默认流量池'),
                           },
@@ -1855,16 +1881,13 @@ const AggregateGroupRuntimeDrawer = ({
                           },
                           {
                             key: t('错误率窗口'),
-                            value: t(
-                              '{{failures}} / {{requests}}，{{rate}}%',
-                              {
-                                failures:
-                                  selectedRoute.failure_window_failures ?? 0,
-                                requests:
-                                  selectedRoute.failure_window_requests ?? 0,
-                                rate: selectedRoute.failure_rate_percent ?? 0,
-                              },
-                            ),
+                            value: t('{{failures}} / {{requests}}，{{rate}}%', {
+                              failures:
+                                selectedRoute.failure_window_failures ?? 0,
+                              requests:
+                                selectedRoute.failure_window_requests ?? 0,
+                              rate: selectedRoute.failure_rate_percent ?? 0,
+                            }),
                           },
                           {
                             key: t('错误率样本'),

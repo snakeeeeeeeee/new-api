@@ -91,8 +91,9 @@ const AggregateGroupsPage = () => {
   const [runtimeGroup, setRuntimeGroup] = useState(null);
   const [showRuntime, setShowRuntime] = useState(false);
   const [strategyInputs, setStrategyInputs] = useState(defaultStrategyInputs);
-  const [strategyInputsRow, setStrategyInputsRow] =
-    useState(defaultStrategyInputs);
+  const [strategyInputsRow, setStrategyInputsRow] = useState(
+    defaultStrategyInputs,
+  );
   const [searchFilters, setSearchFilters] = useState(defaultSearchFilters);
 
   const loadGroups = async () => {
@@ -274,8 +275,7 @@ const AggregateGroupsPage = () => {
       return (
         (!aggregateKeyword || aggregateText.includes(aggregateKeyword)) &&
         (!targetKeyword || targetText.includes(targetKeyword)) &&
-        (!visibleGroupKeyword ||
-          visibleGroupText.includes(visibleGroupKeyword))
+        (!visibleGroupKeyword || visibleGroupText.includes(visibleGroupKeyword))
       );
     });
   }, [groups, searchFilters]);
@@ -331,6 +331,16 @@ const AggregateGroupsPage = () => {
         dataIndex: 'group_ratio',
         key: 'group_ratio',
         render: (value) => `${value}x`,
+      },
+      {
+        title: t('模型倍率规则'),
+        dataIndex: 'enabled_route_model_group_ratio_override_count',
+        key: 'enabled_route_model_group_ratio_override_count',
+        render: (value = 0) => (
+          <Tag color={value > 0 ? 'orange' : 'grey'} size='small'>
+            {t('{{count}} 条启用', { count: value })}
+          </Tag>
+        ),
       },
       {
         title: t('真实分组链'),
@@ -482,9 +492,7 @@ const AggregateGroupsPage = () => {
                 prefix={<Search size={16} />}
                 showClear
                 value={searchFilters.visibleGroup}
-                onChange={(value) =>
-                  updateSearchFilter('visibleGroup', value)
-                }
+                onChange={(value) => updateSearchFilter('visibleGroup', value)}
                 placeholder={t('搜索可见用户组')}
               />
               <Select
@@ -518,7 +526,9 @@ const AggregateGroupsPage = () => {
                 <div>
                   <Text strong>{t('聚合分组全局策略')}</Text>
                   <div className='text-xs text-gray-600 mt-1'>
-                    {t('为开启智能策略的聚合分组配置滑动窗口错误率、慢率、临时降级和 Cluster 有效权重')}
+                    {t(
+                      '为开启智能策略的聚合分组配置滑动窗口错误率、慢率、临时降级和 Cluster 有效权重',
+                    )}
                   </div>
                 </div>
                 <Button type='primary' onClick={handleSaveStrategy}>
@@ -573,7 +583,9 @@ const AggregateGroupsPage = () => {
                   <InputNumber
                     min={1}
                     value={
-                      strategyInputs['aggregate_group.failure_rate_min_requests']
+                      strategyInputs[
+                        'aggregate_group.failure_rate_min_requests'
+                      ]
                     }
                     onChange={(value) =>
                       updateStrategyField(

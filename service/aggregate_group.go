@@ -3,12 +3,14 @@ package service
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -95,6 +97,12 @@ type GroupRatioView struct {
 	HasRatioOverride bool     `json:"has_ratio_override"`
 }
 
+type ModelGroupRatioView struct {
+	GroupRatioView
+	MaxRatio     float64 `json:"max_ratio"`
+	DynamicRoute bool    `json:"dynamic_route"`
+}
+
 func GetAggregateGroupRatioOverride(userSetting dto.UserSetting, aggregateGroup string) (float64, bool) {
 	if strings.TrimSpace(aggregateGroup) == "" || userSetting.AggregateGroupRatioOverrides == nil {
 		return 0, false
@@ -107,20 +115,71 @@ func GetAggregateGroupRatioOverride(userSetting dto.UserSetting, aggregateGroup 
 }
 
 func GetAggregateGroupRatioView(userSetting dto.UserSetting, aggregateGroup string) (GroupRatioView, bool) {
-	ratio, ok := GetAggregateGroupRatio(aggregateGroup)
+	group, ok := GetAggregateGroup(aggregateGroup, true)
 	if !ok {
 		return GroupRatioView{}, false
 	}
+	return getAggregateGroupRatioView(userSetting, group), true
+}
+
+func getAggregateGroupRatioView(userSetting dto.UserSetting, aggregateGroup *model.AggregateGroup) GroupRatioView {
+	ratio := aggregateGroup.GroupRatio
 	view := GroupRatioView{
 		Ratio:         ratio,
 		OriginalRatio: ratio,
 	}
-	if override, hasOverride := GetAggregateGroupRatioOverride(userSetting, aggregateGroup); hasOverride {
+	if override, hasOverride := GetAggregateGroupRatioOverride(userSetting, aggregateGroup.Name); hasOverride {
 		view.Ratio = override
 		view.RatioOverride = common.GetPointer(override)
 		view.HasRatioOverride = true
 	}
-	return view, true
+	return view
+}
+
+func GetAggregateModelGroupRatioView(
+	userSetting dto.UserSetting,
+	aggregateGroup *model.AggregateGroup,
+	modelName string,
+	rules []model.AggregateGroupRouteModelRatio,
+	modelEnabledRealGroups []string,
+) (ModelGroupRatioView, bool) {
+	if aggregateGroup == nil || strings.TrimSpace(modelName) == "" {
+		return ModelGroupRatioView{}, false
+	}
+	baseView := getAggregateGroupRatioView(userSetting, aggregateGroup)
+	view := ModelGroupRatioView{
+		GroupRatioView: baseView,
+		MaxRatio:       baseView.Ratio,
+	}
+
+	enabledGroupSet := make(map[string]struct{}, len(modelEnabledRealGroups))
+	for _, realGroup := range modelEnabledRealGroups {
+		enabledGroupSet[strings.TrimSpace(realGroup)] = struct{}{}
+	}
+	ruleRatios := make(map[string]float64)
+	for _, rule := range rules {
+		if !rule.Enabled || rule.ModelName != modelName {
+			continue
+		}
+		ruleRatios[rule.RealGroup] = rule.GroupRatio
+	}
+
+	hasReachableRoute := false
+	for _, realGroup := range getAggregateGroupModelSourceGroups(aggregateGroup) {
+		if _, enabled := enabledGroupSet[realGroup]; !enabled {
+			continue
+		}
+		ratio := baseView.Ratio
+		if routeRatio, matched := ruleRatios[realGroup]; matched {
+			ratio = routeRatio
+			view.DynamicRoute = true
+		}
+		if !hasReachableRoute || ratio > view.MaxRatio {
+			view.MaxRatio = ratio
+		}
+		hasReachableRoute = true
+	}
+	return view, hasReachableRoute
 }
 
 func GetUserVisibleGroups(userGroup string) map[string]string {
@@ -307,6 +366,71 @@ func ValidateAggregateTargetLimits(targets []model.AggregateGroupTarget) error {
 
 func ValidateAggregateTargetWeights(targets []model.AggregateGroupTarget) error {
 	return ValidateAggregateTargetLimits(targets)
+}
+
+func GetConfiguredAggregateRouteGroups(targets []model.AggregateGroupTarget, clientRoutePools model.AggregateGroupClientRoutePools) []string {
+	groups := make([]string, 0, len(targets)+len(clientRoutePools.ClaudeCodeCLI.Targets))
+	seen := make(map[string]struct{})
+	add := func(realGroup string) {
+		realGroup = strings.TrimSpace(realGroup)
+		if realGroup == "" {
+			return
+		}
+		if _, exists := seen[realGroup]; exists {
+			return
+		}
+		seen[realGroup] = struct{}{}
+		groups = append(groups, realGroup)
+	}
+	for _, target := range targets {
+		add(target.RealGroup)
+	}
+	for _, target := range clientRoutePools.ClaudeCodeCLI.Targets {
+		add(target.RealGroup)
+	}
+	return groups
+}
+
+func NormalizeAndValidateAggregateRouteModelRatios(
+	input []model.AggregateGroupRouteModelRatio,
+	targets []model.AggregateGroupTarget,
+	clientRoutePools model.AggregateGroupClientRoutePools,
+) ([]model.AggregateGroupRouteModelRatio, error) {
+	allowedGroups := make(map[string]struct{})
+	for _, realGroup := range GetConfiguredAggregateRouteGroups(targets, clientRoutePools) {
+		allowedGroups[realGroup] = struct{}{}
+	}
+
+	rules := make([]model.AggregateGroupRouteModelRatio, 0, len(input))
+	seen := make(map[string]struct{}, len(input))
+	for _, rule := range input {
+		realGroup := strings.TrimSpace(rule.RealGroup)
+		modelName := strings.TrimSpace(rule.ModelName)
+		if realGroup == "" {
+			return nil, errors.New("子分组模型倍率的真实分组不能为空")
+		}
+		if _, exists := allowedGroups[realGroup]; !exists {
+			return nil, fmt.Errorf("子分组模型倍率引用了未配置的真实分组 %s", realGroup)
+		}
+		if modelName == "" {
+			return nil, fmt.Errorf("真实分组 %s 的模型名称不能为空", realGroup)
+		}
+		if math.IsNaN(rule.GroupRatio) || math.IsInf(rule.GroupRatio, 0) || rule.GroupRatio < 0 {
+			return nil, fmt.Errorf("真实分组 %s 模型 %s 的倍率必须是大于等于 0 的有限数值", realGroup, modelName)
+		}
+		ruleKey := model.AggregateGroupRouteModelRatioRuleKey(realGroup, modelName)
+		if _, exists := seen[ruleKey]; exists {
+			return nil, fmt.Errorf("真实分组 %s 模型 %s 的倍率重复配置", realGroup, modelName)
+		}
+		seen[ruleKey] = struct{}{}
+		rules = append(rules, model.AggregateGroupRouteModelRatio{
+			RealGroup:  realGroup,
+			ModelName:  modelName,
+			GroupRatio: rule.GroupRatio,
+			Enabled:    rule.Enabled,
+		})
+	}
+	return rules, nil
 }
 
 func NormalizeAndValidateAggregateRouteAffinityKeySources(inputSources []model.AggregateGroupRouteAffinityKeySource) ([]model.AggregateGroupRouteAffinityKeySource, error) {
@@ -557,12 +681,19 @@ func BuildAggregateGroupVisibilityLabel(group *model.AggregateGroup) string {
 	return group.Name
 }
 
+var lookupAggregateRouteModelRatio = model.GetEnabledAggregateGroupRouteModelRatio
+
 func ResolveContextGroupRatioInfo(ctx *gin.Context, userGroup string, logicalGroup string) types.GroupRatioInfo {
+	return ResolveContextGroupRatioInfoForModel(ctx, userGroup, logicalGroup, "")
+}
+
+func ResolveContextGroupRatioInfoForModel(ctx *gin.Context, userGroup string, logicalGroup string, modelName string) types.GroupRatioInfo {
 	groupRatioInfo := types.GroupRatioInfo{
-		GroupRatio:         1.0,
-		GroupSpecialRatio:  -1,
-		OriginalGroupRatio: 1.0,
-		RatioOverride:      -1,
+		GroupRatio:           1.0,
+		GroupSpecialRatio:    -1,
+		OriginalGroupRatio:   1.0,
+		RatioOverride:        -1,
+		RouteModelGroupRatio: -1,
 	}
 	aggregateGroup := ""
 	userSetting := dto.UserSetting{}
@@ -573,7 +704,8 @@ func ResolveContextGroupRatioInfo(ctx *gin.Context, userGroup string, logicalGro
 		}
 	}
 	if aggregateGroup != "" {
-		if ratioView, ok := GetAggregateGroupRatioView(userSetting, aggregateGroup); ok {
+		if group, ok := GetAggregateGroup(aggregateGroup, true); ok {
+			ratioView := getAggregateGroupRatioView(userSetting, group)
 			groupRatioInfo.GroupRatio = ratioView.Ratio
 			groupRatioInfo.OriginalGroupRatio = ratioView.OriginalRatio
 			if ratioView.HasRatioOverride && ratioView.RatioOverride != nil {
@@ -581,6 +713,39 @@ func ResolveContextGroupRatioInfo(ctx *gin.Context, userGroup string, logicalGro
 				groupRatioInfo.HasSpecialRatio = true
 				groupRatioInfo.RatioOverride = *ratioView.RatioOverride
 				groupRatioInfo.HasRatioOverride = true
+				groupRatioInfo.RatioOverrideApplied = true
+			}
+
+			realGroup := ""
+			if ctx != nil {
+				realGroup = common.GetContextKeyString(ctx, constant.ContextKeyRouteGroup)
+			}
+			if strings.TrimSpace(realGroup) != "" && strings.TrimSpace(modelName) != "" {
+				rule, matched, err := lookupAggregateRouteModelRatio(group.Id, realGroup, modelName)
+				if err != nil {
+					message := fmt.Sprintf(
+						"lookup aggregate route model ratio failed: aggregate_group=%s, route_group=%s, model=%s, err=%v",
+						aggregateGroup,
+						realGroup,
+						modelName,
+						err,
+					)
+					if ctx != nil {
+						logger.LogError(ctx, message)
+					} else {
+						common.SysError(message)
+					}
+				} else if matched {
+					groupRatioInfo.GroupRatio = rule.GroupRatio
+					groupRatioInfo.GroupSpecialRatio = -1
+					groupRatioInfo.HasSpecialRatio = false
+					groupRatioInfo.RatioOverrideApplied = false
+					groupRatioInfo.RouteModelGroupRatio = rule.GroupRatio
+					groupRatioInfo.HasRouteModelGroupRatio = true
+					groupRatioInfo.RouteModelRatioAggregateGroup = aggregateGroup
+					groupRatioInfo.RouteModelRatioRealGroup = rule.RealGroup
+					groupRatioInfo.RouteModelRatioModelName = rule.ModelName
+				}
 			}
 			return groupRatioInfo
 		}

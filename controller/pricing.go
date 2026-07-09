@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
@@ -31,6 +32,7 @@ func GetPricing(c *gin.Context) {
 	usableGroup := map[string]string{}
 	groupRatio := map[string]float64{}
 	groupRatioDetails := map[string]service.GroupRatioView{}
+	modelGroupRatioDetails := map[string]map[string]service.ModelGroupRatioView{}
 	var group string
 	userSetting := dto.UserSetting{}
 	if exists {
@@ -47,21 +49,55 @@ func GetPricing(c *gin.Context) {
 		groupRatio[groupName] = ratioView.Ratio
 		groupRatioDetails[groupName] = ratioView
 	}
+	visibleAggregateGroups := service.GetVisibleAggregateGroupsWithSetting(group, userSetting)
+	aggregateGroupsByName := make(map[string]*model.AggregateGroup, len(visibleAggregateGroups))
+	aggregateGroupIds := make([]int, 0, len(visibleAggregateGroups))
+	for _, aggregateGroup := range visibleAggregateGroups {
+		aggregateGroupsByName[aggregateGroup.Name] = aggregateGroup
+		aggregateGroupIds = append(aggregateGroupIds, aggregateGroup.Id)
+	}
+	rulesByAggregateGroupId, ruleErr := model.GetAggregateGroupRouteModelRatiosByGroupIDs(aggregateGroupIds)
+	if ruleErr != nil {
+		common.SysError("failed to load aggregate route model ratios for pricing: " + ruleErr.Error())
+		rulesByAggregateGroupId = map[int][]model.AggregateGroupRouteModelRatio{}
+	}
 	for i := range pricing {
+		modelEnabledRealGroups := append([]string{}, pricing[i].EnableGroup...)
 		pricing[i].EnableGroup = service.MapVisibleModelGroupsWithSetting(group, pricing[i].EnableGroup, userSetting)
+		for _, groupName := range pricing[i].EnableGroup {
+			aggregateGroup, isAggregate := aggregateGroupsByName[groupName]
+			if !isAggregate {
+				continue
+			}
+			detail, reachable := service.GetAggregateModelGroupRatioView(
+				userSetting,
+				aggregateGroup,
+				pricing[i].ModelName,
+				rulesByAggregateGroupId[aggregateGroup.Id],
+				modelEnabledRealGroups,
+			)
+			if !reachable {
+				continue
+			}
+			if modelGroupRatioDetails[pricing[i].ModelName] == nil {
+				modelGroupRatioDetails[pricing[i].ModelName] = make(map[string]service.ModelGroupRatioView)
+			}
+			modelGroupRatioDetails[pricing[i].ModelName][groupName] = detail
+		}
 	}
 	autoGroups := service.MapVisibleModelGroupsWithSetting(group, service.GetUserAutoGroupWithSetting(group, userSetting), userSetting)
 
 	c.JSON(200, gin.H{
-		"success":             true,
-		"data":                pricing,
-		"vendors":             model.GetVendors(),
-		"group_ratio":         groupRatio,
-		"group_ratio_details": groupRatioDetails,
-		"usable_group":        usableGroup,
-		"supported_endpoint":  model.GetSupportedEndpointMap(),
-		"auto_groups":         autoGroups,
-		"_":                   "a42d372ccf0b5dd13ecf71203521f9d2",
+		"success":                   true,
+		"data":                      pricing,
+		"vendors":                   model.GetVendors(),
+		"group_ratio":               groupRatio,
+		"group_ratio_details":       groupRatioDetails,
+		"model_group_ratio_details": modelGroupRatioDetails,
+		"usable_group":              usableGroup,
+		"supported_endpoint":        model.GetSupportedEndpointMap(),
+		"auto_groups":               autoGroups,
+		"_":                         "a42d372ccf0b5dd13ecf71203521f9d2",
 	})
 }
 

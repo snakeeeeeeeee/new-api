@@ -405,6 +405,41 @@ func TestBillingSessionSettleAllowsLegitimateRefundDelta(t *testing.T) {
 	assert.Equal(t, 440, getTokenRemainQuota(t, tokenID))
 }
 
+func TestRetryToHigherRouteRatioSettlesAdditionalQuotaOnlyOnce(t *testing.T) {
+	truncate(t)
+	const userID, tokenID = 111, 111
+	const tokenKey = "sk-route-ratio-retry"
+	const initialQuota = 10000
+	const lowRoutePrecharge = 100
+	const highRouteActualQuota = 400
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, tokenKey, initialQuota)
+
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          userID,
+		TokenId:         tokenID,
+		TokenKey:        tokenKey,
+		OriginModelName: "premium-model",
+		UsingGroup:      "aggregate-retry",
+		UserSetting:     dto.UserSetting{BillingPreference: "wallet_only"},
+		PriceData: types.PriceData{GroupRatioInfo: types.GroupRatioInfo{
+			GroupRatio:                    4,
+			OriginalGroupRatio:            1,
+			RouteModelGroupRatio:          4,
+			HasRouteModelGroupRatio:       true,
+			RouteModelRatioAggregateGroup: "aggregate-retry",
+			RouteModelRatioRealGroup:      "high-cost-route",
+			RouteModelRatioModelName:      "premium-model",
+		}},
+	}
+	require.Nil(t, PreConsumeBilling(testGinContext(), lowRoutePrecharge, relayInfo))
+	require.NoError(t, SettleBilling(testGinContext(), relayInfo, highRouteActualQuota))
+	require.NoError(t, SettleBilling(testGinContext(), relayInfo, highRouteActualQuota))
+
+	assert.Equal(t, initialQuota-highRouteActualQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialQuota-highRouteActualQuota, getTokenRemainQuota(t, tokenID))
+}
+
 // ===========================================================================
 // RefundTaskQuota tests
 // ===========================================================================
@@ -625,6 +660,83 @@ func TestRecalculate_LogKeepsAggregateRatioOverrideInfo(t *testing.T) {
 	assert.Equal(t, float64(2), other["original_ratio"])
 	assert.Equal(t, float64(0.5), other["ratio_override"])
 	assert.Equal(t, true, other["has_ratio_override"])
+}
+
+func TestTaskBillingLogUsesEffectiveRouteModelRatio(t *testing.T) {
+	task := makeTask(1, 1, 100, 1, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelPrice:               1,
+		GroupRatio:               4,
+		GroupSpecialRatio:        -1,
+		OriginalGroupRatio:       2,
+		RatioOverride:            0.5,
+		HasRatioOverride:         true,
+		RatioOverrideApplied:     false,
+		RouteModelGroupRatio:     4,
+		HasRouteModelGroupRatio:  true,
+		RouteModelAggregateGroup: "aggregate-premium",
+		RouteModelRealGroup:      "premium-route",
+		RouteModelName:           "premium-model",
+	}
+
+	other := taskBillingOther(task)
+	assert.Equal(t, float64(4), other["group_ratio"])
+	assert.NotContains(t, other, "user_group_ratio")
+	assert.Equal(t, float64(0.5), other["ratio_override"])
+	assert.Equal(t, false, other["ratio_override_applied"])
+	assert.Equal(t, true, other["route_model_group_ratio_applied"])
+	assert.Equal(t, float64(4), other["route_model_group_ratio"])
+	assert.Equal(t, "aggregate-premium", other["route_model_ratio_aggregate_group"])
+	assert.Equal(t, "premium-route", other["route_model_ratio_real_group"])
+	assert.Equal(t, "premium-model", other["route_model_ratio_model_name"])
+}
+
+func TestTaskBillingRouteModelRatioSnapshotPreservesZero(t *testing.T) {
+	task := makeTask(1, 1, 0, 1, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		GroupRatio:               0,
+		OriginalGroupRatio:       1.5,
+		RouteModelGroupRatio:     0,
+		HasRouteModelGroupRatio:  true,
+		RouteModelAggregateGroup: "aggregate-free-route",
+		RouteModelRealGroup:      "free-route",
+		RouteModelName:           "free-model",
+	}
+
+	info := taskRelayInfoForBilling(task)
+	assert.Zero(t, info.PriceData.GroupRatioInfo.GroupRatio)
+	assert.Zero(t, info.PriceData.GroupRatioInfo.RouteModelGroupRatio)
+	assert.True(t, info.PriceData.GroupRatioInfo.HasRouteModelGroupRatio)
+	assert.Equal(t, 1.5, info.PriceData.GroupRatioInfo.OriginalGroupRatio)
+}
+
+func TestGenerateTextOtherInfoDoesNotApplySuppressedUserRatio(t *testing.T) {
+	ctx := testGinContext()
+	now := time.Now()
+	relayInfo := &relaycommon.RelayInfo{
+		StartTime:         now,
+		FirstResponseTime: now,
+		ChannelMeta:       &relaycommon.ChannelMeta{},
+		PriceData: types.PriceData{GroupRatioInfo: types.GroupRatioInfo{
+			GroupRatio:                    4,
+			GroupSpecialRatio:             -1,
+			OriginalGroupRatio:            2,
+			RatioOverride:                 0.5,
+			HasRatioOverride:              true,
+			RatioOverrideApplied:          false,
+			RouteModelGroupRatio:          4,
+			HasRouteModelGroupRatio:       true,
+			RouteModelRatioAggregateGroup: "aggregate-premium",
+			RouteModelRatioRealGroup:      "premium-route",
+			RouteModelRatioModelName:      "premium-model",
+		}},
+	}
+
+	other := GenerateTextOtherInfo(ctx, relayInfo, 1, 4, 1, 0, 1, -1, -1)
+	assert.Equal(t, float64(4), other["group_ratio"])
+	assert.Equal(t, float64(-1), other["user_group_ratio"])
+	assert.Equal(t, false, other["ratio_override_applied"])
+	assert.Equal(t, float64(4), other["route_model_group_ratio"])
 }
 
 func TestRecalculate_NegativeDelta(t *testing.T) {

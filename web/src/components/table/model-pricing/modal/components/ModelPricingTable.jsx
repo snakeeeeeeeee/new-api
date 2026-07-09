@@ -70,13 +70,15 @@ const ModelPricingTable = ({
       // 获取分组倍率
       const groupRatioValue =
         groupRatio && groupRatio[group] !== undefined ? groupRatio[group] : 1;
-      const groupRatioDetail = groupRatioDetails[group];
+      const groupRatioDetail =
+        modelData?.group_ratio_details?.[group] || groupRatioDetails[group];
 
       return {
         key: group,
         group: group,
-        ratio: groupRatioValue,
+        ratio: priceData.usedGroupRatio ?? groupRatioValue,
         ratioDetail: groupRatioDetail,
+        isDynamicRouteMaximum: priceData.isDynamicRouteMaximum,
         billingType:
           modelData?.quota_type === 0
             ? t('按量计费')
@@ -108,7 +110,12 @@ const ModelPricingTable = ({
         dataIndex: 'ratio',
         render: (text, record) => (
           <Tag color='white' size='small' shape='circle'>
-            {record?.ratioDetail?.has_ratio_override ? (
+            {record?.isDynamicRouteMaximum ? (
+              <span style={{ display: 'inline-flex', gap: 4 }}>
+                <span>{formatRatioLabel(text)}x</span>
+                <span>{t('动态路由最高倍率')}</span>
+              </span>
+            ) : record?.ratioDetail?.has_ratio_override ? (
               <span style={{ display: 'inline-flex', gap: 4 }}>
                 <span style={{ textDecoration: 'line-through' }}>
                   {formatRatioLabel(record.ratioDetail.original_ratio)}x

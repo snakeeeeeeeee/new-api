@@ -682,7 +682,15 @@ export const calculateModelPrice = ({
 }) => {
   // 1. 选择实际使用的分组
   let usedGroup = selectedGroup;
-  let usedGroupRatio = groupRatio[selectedGroup];
+  const resolveGroupRatio = (group) => {
+    const detail = record?.group_ratio_details?.[group];
+    const maxRatio = Number(detail?.max_ratio);
+    if (detail?.dynamic_route && Number.isFinite(maxRatio)) {
+      return maxRatio;
+    }
+    return groupRatio[group];
+  };
+  let usedGroupRatio = resolveGroupRatio(selectedGroup);
 
   if (selectedGroup === 'all' || usedGroupRatio === undefined) {
     // 在模型可用分组中选择倍率最小的分组，若无则使用 1
@@ -692,7 +700,7 @@ export const calculateModelPrice = ({
       record.enable_groups.length > 0
     ) {
       record.enable_groups.forEach((g) => {
-        const r = groupRatio[g];
+        const r = resolveGroupRatio(g);
         if (r !== undefined && r < minRatio) {
           minRatio = r;
           usedGroup = g;
@@ -706,6 +714,12 @@ export const calculateModelPrice = ({
       usedGroupRatio = 1;
     }
   }
+
+  const usedGroupRatioDetail = record?.group_ratio_details?.[usedGroup];
+  const isDynamicRouteMaximum = Boolean(
+    usedGroupRatioDetail?.dynamic_route &&
+      Number.isFinite(Number(usedGroupRatioDetail?.max_ratio)),
+  );
 
   // 2. 根据计费类型计算价格
   if (record.quota_type === 0) {
@@ -736,6 +750,8 @@ export const calculateModelPrice = ({
         isTokensDisplay: true,
         usedGroup,
         usedGroupRatio,
+        usedGroupRatioDetail,
+        isDynamicRouteMaximum,
       };
     }
 
@@ -777,7 +793,9 @@ export const calculateModelPrice = ({
         ? formatTokenPrice(inputRatioPriceUSD * Number(record.cache_ratio))
         : null,
       createCachePrice: hasRatioValue(record.create_cache_ratio)
-        ? formatTokenPrice(inputRatioPriceUSD * Number(record.create_cache_ratio))
+        ? formatTokenPrice(
+            inputRatioPriceUSD * Number(record.create_cache_ratio),
+          )
         : null,
       imagePrice: hasRatioValue(record.image_ratio)
         ? formatTokenPrice(inputRatioPriceUSD * Number(record.image_ratio))
@@ -796,6 +814,8 @@ export const calculateModelPrice = ({
       isTokensDisplay: false,
       usedGroup,
       usedGroupRatio,
+      usedGroupRatioDetail,
+      isDynamicRouteMaximum,
     };
   }
 
@@ -810,6 +830,8 @@ export const calculateModelPrice = ({
       isTokensDisplay: false,
       usedGroup,
       usedGroupRatio,
+      usedGroupRatioDetail,
+      isDynamicRouteMaximum,
     };
   }
 
@@ -820,14 +842,12 @@ export const calculateModelPrice = ({
     isTokensDisplay: false,
     usedGroup,
     usedGroupRatio,
+    usedGroupRatioDetail,
+    isDynamicRouteMaximum,
   };
 };
 
-export const getModelPriceItems = (
-  priceData,
-  t,
-  quotaDisplayType = 'USD',
-) => {
+export const getModelPriceItems = (priceData, t, quotaDisplayType = 'USD') => {
   if (priceData.isPerToken) {
     if (quotaDisplayType === 'TOKENS' || priceData.isTokensDisplay) {
       return [
@@ -923,7 +943,10 @@ export const getModelPriceItems = (
         value: priceData.audioOutputPrice,
         suffix: unitSuffix,
       },
-    ].filter((item) => item.value !== null && item.value !== undefined && item.value !== '');
+    ].filter(
+      (item) =>
+        item.value !== null && item.value !== undefined && item.value !== '',
+    );
   }
 
   return [
@@ -933,7 +956,10 @@ export const getModelPriceItems = (
       value: priceData.price,
       suffix: ` / ${t('次')}`,
     },
-  ].filter((item) => item.value !== null && item.value !== undefined && item.value !== '');
+  ].filter(
+    (item) =>
+      item.value !== null && item.value !== undefined && item.value !== '',
+  );
 };
 
 // 格式化价格信息（用于卡片视图）
@@ -947,6 +973,11 @@ export const formatPriceInfo = (priceData, t, quotaDisplayType = 'USD') => {
           {item.suffix}
         </span>
       ))}
+      {priceData?.isDynamicRouteMaximum ? (
+        <span style={{ color: 'var(--semi-color-warning)' }}>
+          {t('动态路由最高价')}
+        </span>
+      ) : null}
     </>
   );
 };

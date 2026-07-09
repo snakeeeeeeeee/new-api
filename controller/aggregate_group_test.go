@@ -52,7 +52,7 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.Channel{}, &model.Ability{}, &model.Option{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.AggregateGroupRouteModelRatio{}, &model.Channel{}, &model.Ability{}, &model.Option{}, &model.Model{}, &model.Vendor{}))
 
 	t.Cleanup(func() {
 		setting.AggregateGroupSmartStrategyEnabled = originalSmartStrategyEnabled
@@ -199,6 +199,163 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"smart_strategy_config"`)
 	require.Contains(t, string(listResp.Data), `"failure_rate_threshold_percent":8`)
 	require.Contains(t, string(listResp.Data), `"cluster_degraded_weight_percent":35`)
+}
+
+func TestAggregateGroupRouteModelRatioAPIPreservePruneAndClear(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+
+	createPayload := []byte(`{
+		"name":"route-model-ratio-api",
+		"display_name":"Route Model Ratio API",
+		"status":1,
+		"group_ratio":1.25,
+		"recovery_enabled":true,
+		"recovery_interval_seconds":300,
+		"visible_user_groups":["vip"],
+		"targets":[{"real_group":"default","weight":100},{"real_group":"vip","weight":100}],
+		"route_model_group_ratio_overrides":[
+			{"real_group":"default","model_name":"gpt-route-a","group_ratio":2},
+			{"real_group":"vip","model_name":"gpt-route-b","group_ratio":0,"enabled":false}
+		]
+	}`)
+	createRecorder := httptest.NewRecorder()
+	createCtx, _ := gin.CreateTestContext(createRecorder)
+	createCtx.Request = httptest.NewRequest(http.MethodPost, "/api/aggregate_group", bytes.NewReader(createPayload))
+	createCtx.Request.Header.Set("Content-Type", "application/json")
+	CreateAggregateGroup(createCtx)
+
+	createResp := decodeAggregateGroupAPIResponse(t, createRecorder)
+	require.True(t, createResp.Success, createResp.Message)
+	var created aggregateGroupResponse
+	require.NoError(t, common.Unmarshal(createResp.Data, &created))
+	require.NotZero(t, created.Id)
+	require.Len(t, created.RouteModelGroupRatioOverrides, 2)
+	require.Equal(t, 1, created.EnabledRouteModelGroupRatioOverrideCount)
+	require.True(t, created.RouteModelGroupRatioOverrides[0].Enabled)
+	require.Zero(t, created.RouteModelGroupRatioOverrides[1].GroupRatio)
+
+	omitRulesPayload := []byte(fmt.Sprintf(`{
+		"id":%d,
+		"name":"route-model-ratio-api",
+		"display_name":"Route Model Ratio API Updated",
+		"status":1,
+		"group_ratio":1.25,
+		"recovery_enabled":true,
+		"recovery_interval_seconds":300,
+		"visible_user_groups":["vip"],
+		"targets":[{"real_group":"default","weight":100}]
+	}`, created.Id))
+	omitRecorder := httptest.NewRecorder()
+	omitCtx, _ := gin.CreateTestContext(omitRecorder)
+	omitCtx.Request = httptest.NewRequest(http.MethodPut, "/api/aggregate_group", bytes.NewReader(omitRulesPayload))
+	omitCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateAggregateGroup(omitCtx)
+
+	omitResp := decodeAggregateGroupAPIResponse(t, omitRecorder)
+	require.True(t, omitResp.Success, omitResp.Message)
+	var afterOmit aggregateGroupResponse
+	require.NoError(t, common.Unmarshal(omitResp.Data, &afterOmit))
+	require.Len(t, afterOmit.RouteModelGroupRatioOverrides, 1)
+	require.Equal(t, "default", afterOmit.RouteModelGroupRatioOverrides[0].RealGroup)
+	require.Equal(t, "gpt-route-a", afterOmit.RouteModelGroupRatioOverrides[0].ModelName)
+
+	clearRulesPayload := []byte(fmt.Sprintf(`{
+		"id":%d,
+		"name":"route-model-ratio-api",
+		"display_name":"Route Model Ratio API Updated",
+		"status":1,
+		"group_ratio":1.25,
+		"recovery_enabled":true,
+		"recovery_interval_seconds":300,
+		"visible_user_groups":["vip"],
+		"targets":[{"real_group":"default","weight":100}],
+		"route_model_group_ratio_overrides":[]
+	}`, created.Id))
+	clearRecorder := httptest.NewRecorder()
+	clearCtx, _ := gin.CreateTestContext(clearRecorder)
+	clearCtx.Request = httptest.NewRequest(http.MethodPut, "/api/aggregate_group", bytes.NewReader(clearRulesPayload))
+	clearCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateAggregateGroup(clearCtx)
+
+	clearResp := decodeAggregateGroupAPIResponse(t, clearRecorder)
+	require.True(t, clearResp.Success, clearResp.Message)
+	var afterClear aggregateGroupResponse
+	require.NoError(t, common.Unmarshal(clearResp.Data, &afterClear))
+	require.Empty(t, afterClear.RouteModelGroupRatioOverrides)
+	require.Zero(t, afterClear.EnabledRouteModelGroupRatioOverrideCount)
+}
+
+func TestCreateAggregateGroupRejectsInvalidRouteModelRatios(t *testing.T) {
+	tests := []struct {
+		name    string
+		rules   string
+		message string
+	}{
+		{
+			name: "duplicate",
+			rules: `[
+				{"real_group":"default","model_name":"same-model","group_ratio":2},
+				{"real_group":"default","model_name":"same-model","group_ratio":3}
+			]`,
+			message: "重复配置",
+		},
+		{
+			name:    "negative ratio",
+			rules:   `[{"real_group":"default","model_name":"bad-model","group_ratio":-1}]`,
+			message: "有限数值",
+		},
+		{
+			name:    "unknown child group",
+			rules:   `[{"real_group":"missing","model_name":"bad-model","group_ratio":2}]`,
+			message: "未配置的真实分组",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupAggregateGroupControllerTestDB(t)
+			payload := []byte(fmt.Sprintf(`{
+				"name":"invalid-route-ratio-%s",
+				"display_name":"Invalid Route Ratio",
+				"status":1,
+				"group_ratio":1,
+				"recovery_enabled":true,
+				"recovery_interval_seconds":300,
+				"visible_user_groups":["vip"],
+				"targets":[{"real_group":"default","weight":100}],
+				"route_model_group_ratio_overrides":%s
+			}`, strings.ReplaceAll(tt.name, " ", "-"), tt.rules))
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/aggregate_group", bytes.NewReader(payload))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			CreateAggregateGroup(ctx)
+
+			resp := decodeAggregateGroupAPIResponse(t, recorder)
+			require.False(t, resp.Success)
+			require.Contains(t, resp.Message, tt.message)
+			var count int64
+			require.NoError(t, model.DB.Model(&model.AggregateGroup{}).Where("name = ?", "invalid-route-ratio-"+strings.ReplaceAll(tt.name, " ", "-")).Count(&count).Error)
+			require.Zero(t, count)
+		})
+	}
+}
+
+func TestGetAggregateGroupTargetModels(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+	seedAggregateGroupControllerAbilityChannel(t, 2301, "default", "z-model", 0)
+	seedAggregateGroupControllerAbilityChannel(t, 2302, "default", "a-model", 0)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/aggregate_group/models?group=default", nil)
+	GetAggregateGroupTargetModels(ctx)
+
+	resp := decodeAggregateGroupAPIResponse(t, recorder)
+	require.True(t, resp.Success, resp.Message)
+	var models []string
+	require.NoError(t, common.Unmarshal(resp.Data, &models))
+	require.Equal(t, []string{"a-model", "z-model"}, models)
 }
 
 func TestCreateAggregateGroupRejectsInvalidRouteAffinityScope(t *testing.T) {
@@ -700,8 +857,18 @@ func TestGetPricingMapsExtraAuthorizedAggregateGroupModels(t *testing.T) {
 	}
 	require.NoError(t, group.SetVisibleUserGroups([]string{"svip"}))
 	require.NoError(t, group.InsertWithTargets(service.NormalizeAggregateTargets([]string{"video-real"})))
+	require.NoError(t, model.DB.Create(&model.AggregateGroupRouteModelRatio{
+		AggregateGroupId: group.Id,
+		RealGroup:        "video-real",
+		ModelName:        "grok-video-model",
+		GroupRatio:       3,
+		Enabled:          true,
+	}).Error)
 	seedAggregateGroupControllerUser(t, db, 45, "extra_pricing_user", "vip", common.RoleCommonUser, dto.UserSetting{
 		ExtraUsableGroups: []string{"extra-video-aggregate"},
+		AggregateGroupRatioOverrides: map[string]float64{
+			"extra-video-aggregate": 0.25,
+		},
 	})
 	model.RefreshPricing()
 
@@ -714,11 +881,17 @@ func TestGetPricingMapsExtraAuthorizedAggregateGroupModels(t *testing.T) {
 	resp := decodeAggregateGroupAPIResponse(t, recorder)
 	require.True(t, resp.Success, resp.Message)
 	var data struct {
-		UsableGroup map[string]string `json:"usable_group"`
-		Data        []model.Pricing   `json:"data"`
+		UsableGroup            map[string]string                                 `json:"usable_group"`
+		Data                   []model.Pricing                                   `json:"data"`
+		ModelGroupRatioDetails map[string]map[string]service.ModelGroupRatioView `json:"model_group_ratio_details"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &data))
 	require.Contains(t, data.UsableGroup, "extra-video-aggregate")
+	detail := data.ModelGroupRatioDetails["grok-video-model"]["extra-video-aggregate"]
+	require.True(t, detail.DynamicRoute)
+	require.Equal(t, 0.25, detail.Ratio)
+	require.Equal(t, 1.5, detail.OriginalRatio)
+	require.Equal(t, 3.0, detail.MaxRatio)
 	for _, pricing := range data.Data {
 		if pricing.ModelName == "grok-video-model" {
 			require.Contains(t, pricing.EnableGroup, "extra-video-aggregate")
@@ -954,6 +1127,13 @@ func TestGetChannelRetryDoesNotReuseInitialSelectedChannelForAggregateGroup(t *t
 		{RealGroup: "kiro2", OrderIndex: 0, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
 		{RealGroup: "kiro1", OrderIndex: 1, Weight: common.GetPointer(model.AggregateGroupTargetDefaultWeight)},
 	}))
+	require.NoError(t, model.DB.Create(&model.AggregateGroupRouteModelRatio{
+		AggregateGroupId: group.Id,
+		RealGroup:        "kiro1",
+		ModelName:        "claude-haiku-4-5",
+		GroupRatio:       4,
+		Enabled:          true,
+	}).Error)
 
 	weight := uint(10)
 	priority := int64(0)
@@ -1004,6 +1184,8 @@ func TestGetChannelRetryDoesNotReuseInitialSelectedChannelForAggregateGroup(t *t
 	}
 	relayInfo := &relaycommon.RelayInfo{
 		OriginModelName: "claude-haiku-4-5",
+		UserGroup:       "svip",
+		UsingGroup:      "ha-route",
 	}
 
 	channel, apiErr := getChannel(ctx, relayInfo, retryParam)
@@ -1011,6 +1193,9 @@ func TestGetChannelRetryDoesNotReuseInitialSelectedChannelForAggregateGroup(t *t
 	require.NotNil(t, channel)
 	require.Equal(t, 5, channel.Id)
 	require.Equal(t, "kiro1", common.GetContextKeyString(ctx, constant.ContextKeyRouteGroup))
+	require.Equal(t, 4.0, relayInfo.PriceData.GroupRatioInfo.GroupRatio)
+	require.True(t, relayInfo.PriceData.GroupRatioInfo.HasRouteModelGroupRatio)
+	require.Equal(t, "kiro1", relayInfo.PriceData.GroupRatioInfo.RouteModelRatioRealGroup)
 }
 
 func TestGetAggregateGroupRuntimeDefaultsToSortedModelAndReturnsRouteState(t *testing.T) {

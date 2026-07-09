@@ -6,12 +6,18 @@ import (
 )
 
 type GroupRatioInfo struct {
-	GroupRatio         float64
-	GroupSpecialRatio  float64
-	HasSpecialRatio    bool
-	OriginalGroupRatio float64
-	RatioOverride      float64
-	HasRatioOverride   bool
+	GroupRatio                    float64
+	GroupSpecialRatio             float64
+	HasSpecialRatio               bool
+	OriginalGroupRatio            float64
+	RatioOverride                 float64
+	HasRatioOverride              bool
+	RatioOverrideApplied          bool
+	RouteModelGroupRatio          float64
+	HasRouteModelGroupRatio       bool
+	RouteModelRatioAggregateGroup string
+	RouteModelRatioRealGroup      string
+	RouteModelRatioModelName      string
 }
 
 type PriceData struct {

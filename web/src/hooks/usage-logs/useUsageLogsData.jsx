@@ -41,6 +41,14 @@ import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
 
+const formatLogRatio = (value) => {
+  const ratio = Number(value);
+  if (!Number.isFinite(ratio)) {
+    return '-';
+  }
+  return `${Number(ratio.toFixed(6))}x`;
+};
+
 export const useLogsData = () => {
   const { t } = useTranslation();
 
@@ -630,6 +638,29 @@ export const useLogsData = () => {
             value: other.reasoning_effort,
           });
         }
+      }
+      if (isAdminUser && other?.route_model_group_ratio_applied === true) {
+        const routeModelRatioLines = [
+          `${t('聚合分组')}：${other?.route_model_ratio_aggregate_group || logs[i].group || '-'}`,
+          `${t('实际分组')}：${other?.route_model_ratio_real_group || '-'}`,
+          `${t('模型')}：${other?.route_model_ratio_model_name || logs[i].model_name || '-'}`,
+          `${t('最终倍率')}：${formatLogRatio(other?.route_model_group_ratio)}`,
+          `${t('默认聚合倍率')}：${formatLogRatio(other?.original_group_ratio)}`,
+        ];
+        expandDataLocal.push({
+          key: t('子分组模型倍率'),
+          value: (
+            <div
+              style={{
+                whiteSpace: 'pre-line',
+                wordBreak: 'break-word',
+                lineHeight: 1.6,
+              }}
+            >
+              {routeModelRatioLines.join('\n')}
+            </div>
+          ),
+        });
       }
       if (logs[i].type === 6) {
         if (other?.task_id) {
