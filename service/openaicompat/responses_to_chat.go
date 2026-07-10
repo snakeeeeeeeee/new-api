@@ -7,6 +7,36 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 )
 
+const openAIResponsesUsageSource = "openai_responses"
+
+// NormalizeResponsesInputUsage preserves Responses API input usage metadata
+// while mapping its token details to the common prompt-token representation.
+func NormalizeResponsesInputUsage(target *dto.Usage, source *dto.Usage) {
+	if target == nil || source == nil {
+		return
+	}
+
+	target.InputTokens = source.InputTokens
+	if target.UsageSemantic == "" {
+		target.UsageSemantic = source.UsageSemantic
+	}
+	if target.UsageSource == "" {
+		target.UsageSource = source.UsageSource
+	}
+	legacyClaudeCacheUsage := source.ClaudeCacheCreation5mTokens > 0 || source.ClaudeCacheCreation1hTokens > 0
+	if target.UsageSource == "" && target.UsageSemantic != "anthropic" && !legacyClaudeCacheUsage {
+		target.UsageSource = openAIResponsesUsageSource
+	}
+
+	if source.InputTokensDetails == nil {
+		return
+	}
+	cacheCreationTokens, _ := source.InputTokensDetails.ResolveCacheCreationTokens()
+	target.PromptTokensDetails.CachedTokens = source.InputTokensDetails.CachedTokens
+	target.PromptTokensDetails.CachedCreationTokens = cacheCreationTokens
+	target.PromptTokensDetails.CacheWriteTokens = source.InputTokensDetails.CacheWriteTokens
+}
+
 func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesResponse, id string) (*dto.OpenAITextResponse, *dto.Usage, error) {
 	if resp == nil {
 		return nil, nil, errors.New("response is nil")
@@ -29,8 +59,8 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 		} else {
 			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 		}
+		NormalizeResponsesInputUsage(usage, resp.Usage)
 		if resp.Usage.InputTokensDetails != nil {
-			usage.PromptTokensDetails.CachedTokens = resp.Usage.InputTokensDetails.CachedTokens
 			usage.PromptTokensDetails.ImageTokens = resp.Usage.InputTokensDetails.ImageTokens
 			usage.PromptTokensDetails.AudioTokens = resp.Usage.InputTokensDetails.AudioTokens
 		}

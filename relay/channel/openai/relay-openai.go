@@ -667,6 +667,8 @@ func applyUsagePostProcessing(info *relaycommon.RelayInfo, usage *dto.Usage, res
 	if info == nil || usage == nil {
 		return
 	}
+	cacheCreationTokens, _ := usage.PromptTokensDetails.ResolveCacheCreationTokens()
+	usage.PromptTokensDetails.CachedCreationTokens = cacheCreationTokens
 
 	switch info.ChannelType {
 	case constant.ChannelTypeDeepSeek:

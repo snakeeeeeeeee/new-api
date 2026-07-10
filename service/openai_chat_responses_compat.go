@@ -13,6 +13,10 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 	return openaicompat.ResponsesResponseToChatCompletionsResponse(resp, id)
 }
 
+func NormalizeResponsesInputUsage(target *dto.Usage, source *dto.Usage) {
+	openaicompat.NormalizeResponsesInputUsage(target, source)
+}
+
 func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 	return openaicompat.ExtractOutputTextFromResponses(resp)
 }

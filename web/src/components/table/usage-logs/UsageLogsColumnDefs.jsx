@@ -31,6 +31,7 @@ import {
   renderQuota,
   stringToColor,
   getLogOther,
+  normalizePromptCacheUsage,
   renderModelTag,
   renderModelPriceSimple,
 } from '../../../helpers';
@@ -297,29 +298,27 @@ function formatTokenCount(value) {
   return toTokenNumber(value).toLocaleString();
 }
 
-function getPromptCacheSummary(other) {
+function getPromptCacheSummary(record, other) {
   if (!other || typeof other !== 'object') {
     return null;
   }
 
-  const cacheReadTokens = toTokenNumber(other.cache_tokens);
-  const cacheCreationTokens = toTokenNumber(other.cache_creation_tokens);
-  const cacheCreationTokens5m = toTokenNumber(other.cache_creation_tokens_5m);
-  const cacheCreationTokens1h = toTokenNumber(other.cache_creation_tokens_1h);
+  const normalized = normalizePromptCacheUsage(record, other);
+  const cacheReadTokens = normalized.cacheReadTokens;
+  const cacheWriteTokens = normalized.cacheWriteTokensReported;
+  const hasCacheWrite =
+    (normalized.cacheWriteTokensWasReported &&
+      normalized.cacheWriteTokensReportValid) ||
+    cacheWriteTokens > 0;
 
-  const hasSplitCacheCreation =
-    cacheCreationTokens5m > 0 || cacheCreationTokens1h > 0;
-  const cacheWriteTokens = hasSplitCacheCreation
-    ? cacheCreationTokens5m + cacheCreationTokens1h
-    : cacheCreationTokens;
-
-  if (cacheReadTokens <= 0 && cacheWriteTokens <= 0) {
+  if (cacheReadTokens <= 0 && !hasCacheWrite) {
     return null;
   }
 
   return {
     cacheReadTokens,
     cacheWriteTokens,
+    hasCacheWrite,
   };
 }
 
@@ -379,6 +378,7 @@ function renderCompactDetailSummary(summarySegments) {
 
 function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   const other = getLogOther(record.other);
+  const promptCacheUsage = normalizePromptCacheUsage(record, other);
 
   if (record.type === 5) {
     const clientStatusCode = other?.client_response_status_code;
@@ -437,36 +437,38 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   }
 
   return {
-    segments: other?.claude
+    segments: promptCacheUsage.isClaude
       ? renderModelPriceSimple(
           other.model_ratio,
           other.model_price,
           other.group_ratio,
           other?.user_group_ratio,
-          other.cache_tokens || 0,
-          other.cache_ratio || 1.0,
-          other.cache_creation_tokens || 0,
-          other.cache_creation_ratio || 1.0,
-          other.cache_creation_tokens_5m || 0,
-          other.cache_creation_ratio_5m || other.cache_creation_ratio || 1.0,
-          other.cache_creation_tokens_1h || 0,
-          other.cache_creation_ratio_1h || other.cache_creation_ratio || 1.0,
+          promptCacheUsage.cacheReadTokens,
+          other.cache_ratio ?? 1.0,
+          promptCacheUsage.cacheWriteTokensBilled,
+          promptCacheUsage.cacheWriteRatio,
+          promptCacheUsage.cacheWriteTokens5m,
+          promptCacheUsage.cacheWriteRatio5m,
+          promptCacheUsage.cacheWriteTokens1h,
+          promptCacheUsage.cacheWriteRatio1h,
           false,
           1.0,
           other?.is_system_prompt_overwritten,
           'claude',
           billingDisplayMode,
           'segments',
+          promptCacheUsage.cacheWriteTokensReported,
+          promptCacheUsage.cacheWriteBillingEnabled,
         )
       : renderModelPriceSimple(
           other.model_ratio,
           other.model_price,
           other.group_ratio,
           other?.user_group_ratio,
-          other.cache_tokens || 0,
-          other.cache_ratio || 1.0,
-          0,
-          1.0,
+          promptCacheUsage.cacheReadTokens,
+          other.cache_ratio ?? 1.0,
+          promptCacheUsage.cacheWriteTokensBilled,
+          promptCacheUsage.cacheWriteRatio,
           0,
           1.0,
           0,
@@ -477,6 +479,8 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
           'openai',
           billingDisplayMode,
           'segments',
+          promptCacheUsage.cacheWriteTokensReported,
+          promptCacheUsage.cacheWriteBillingEnabled,
         ),
   };
 }
@@ -749,9 +753,9 @@ export const getLogsColumns = ({
       dataIndex: 'prompt_tokens',
       render: (text, record, index) => {
         const other = getLogOther(record.other);
-        const cacheSummary = getPromptCacheSummary(other);
+        const cacheSummary = getPromptCacheSummary(record, other);
         const hasCacheRead = (cacheSummary?.cacheReadTokens || 0) > 0;
-        const hasCacheWrite = (cacheSummary?.cacheWriteTokens || 0) > 0;
+        const hasCacheWrite = cacheSummary?.hasCacheWrite === true;
         let cacheText = '';
         if (hasCacheRead && hasCacheWrite) {
           cacheText = `${t('缓存读')} ${formatTokenCount(cacheSummary.cacheReadTokens)} · ${t('写')} ${formatTokenCount(cacheSummary.cacheWriteTokens)}`;

@@ -36,6 +36,7 @@ import {
   renderAudioModelPrice,
   renderClaudeModelPrice,
   renderModelPrice,
+  normalizePromptCacheUsage,
 } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
@@ -389,6 +390,7 @@ export const useLogsData = () => {
       logs[i].timestamp2string = timestamp2string(logs[i].created_at);
       logs[i].key = logs[i].id;
       let other = getLogOther(logs[i].other);
+      const promptCacheUsage = normalizePromptCacheUsage(logs[i], other);
       const isAsyncImageFinalBilling =
         other?.billing_stage === 'async_image_final';
       const shouldRenderBillingDetail =
@@ -473,38 +475,40 @@ export const useLogsData = () => {
           value: other.text_output,
         });
       }
-      if (other?.cache_tokens > 0) {
+      if (promptCacheUsage.cacheReadTokens > 0) {
         expandDataLocal.push({
           key: t('缓存 Tokens'),
-          value: other.cache_tokens,
+          value: promptCacheUsage.cacheReadTokens,
         });
       }
-      if (other?.cache_creation_tokens > 0) {
+      if (
+        (promptCacheUsage.cacheWriteTokensWasReported &&
+          promptCacheUsage.cacheWriteTokensReportValid) ||
+        promptCacheUsage.cacheWriteTokensReported > 0
+      ) {
         expandDataLocal.push({
-          key: t('缓存创建 Tokens'),
-          value: other.cache_creation_tokens,
+          key: promptCacheUsage.cacheWriteBillingEnabled
+            ? t('缓存创建 Tokens')
+            : t('缓存写入 Tokens（按普通输入价格计费）'),
+          value: promptCacheUsage.cacheWriteTokensReported,
         });
       }
       if (shouldRenderBillingDetail) {
         expandDataLocal.push({
           key: t('日志详情'),
-          value: other?.claude
+          value: promptCacheUsage.isClaude
             ? renderClaudeLogContent(
                 other?.model_ratio,
                 other.completion_ratio,
                 other.model_price,
                 other.group_ratio,
                 other?.user_group_ratio,
-                other.cache_ratio || 1.0,
-                other.cache_creation_ratio || 1.0,
-                other.cache_creation_tokens_5m || 0,
-                other.cache_creation_ratio_5m ||
-                  other.cache_creation_ratio ||
-                  1.0,
-                other.cache_creation_tokens_1h || 0,
-                other.cache_creation_ratio_1h ||
-                  other.cache_creation_ratio ||
-                  1.0,
+                other.cache_ratio ?? 1.0,
+                promptCacheUsage.cacheWriteRatio,
+                promptCacheUsage.cacheWriteTokens5m,
+                promptCacheUsage.cacheWriteRatio5m,
+                promptCacheUsage.cacheWriteTokens1h,
+                promptCacheUsage.cacheWriteRatio1h,
                 billingDisplayMode,
               )
             : renderLogContent(
@@ -513,7 +517,7 @@ export const useLogsData = () => {
                 other.model_price,
                 other.group_ratio,
                 other?.user_group_ratio,
-                other.cache_ratio || 1.0,
+                other.cache_ratio ?? 1.0,
                 false,
                 1.0,
                 other.web_search || false,
@@ -521,6 +525,10 @@ export const useLogsData = () => {
                 other.file_search || false,
                 other.file_search_call_count || 0,
                 billingDisplayMode,
+                promptCacheUsage.cacheWriteTokensBilled,
+                promptCacheUsage.cacheWriteRatio,
+                promptCacheUsage.cacheWriteTokensReported,
+                promptCacheUsage.cacheWriteBillingEnabled,
               ),
         });
         if (logs[i]?.content) {
@@ -576,40 +584,36 @@ export const useLogsData = () => {
               other?.cache_ratio || 1.0,
               billingDisplayMode,
             );
-          } else if (other?.claude) {
+          } else if (promptCacheUsage.isClaude) {
             content = renderClaudeModelPrice(
-              logs[i].prompt_tokens,
+              promptCacheUsage.ordinaryInputTokens,
               logs[i].completion_tokens,
               other.model_ratio,
               other.model_price,
               other.completion_ratio,
               other.group_ratio,
               other?.user_group_ratio,
-              other.cache_tokens || 0,
-              other.cache_ratio || 1.0,
-              other.cache_creation_tokens || 0,
-              other.cache_creation_ratio || 1.0,
-              other.cache_creation_tokens_5m || 0,
-              other.cache_creation_ratio_5m ||
-                other.cache_creation_ratio ||
-                1.0,
-              other.cache_creation_tokens_1h || 0,
-              other.cache_creation_ratio_1h ||
-                other.cache_creation_ratio ||
-                1.0,
+              promptCacheUsage.cacheReadTokens,
+              other.cache_ratio ?? 1.0,
+              promptCacheUsage.cacheWriteTokensBilled,
+              promptCacheUsage.cacheWriteRatio,
+              promptCacheUsage.cacheWriteTokens5m,
+              promptCacheUsage.cacheWriteRatio5m,
+              promptCacheUsage.cacheWriteTokens1h,
+              promptCacheUsage.cacheWriteRatio1h,
               billingDisplayMode,
             );
           } else {
             content = renderModelPrice(
-              logs[i].prompt_tokens,
+              promptCacheUsage.inputTokensTotal,
               logs[i].completion_tokens,
               other?.model_ratio,
               other?.model_price,
               other?.completion_ratio,
               other?.group_ratio,
               other?.user_group_ratio,
-              other?.cache_tokens || 0,
-              other?.cache_ratio || 1.0,
+              promptCacheUsage.cacheReadTokens,
+              other?.cache_ratio ?? 1.0,
               other?.image || false,
               other?.image_ratio || 0,
               other?.image_output || 0,
@@ -625,6 +629,10 @@ export const useLogsData = () => {
               other?.image_generation_call || false,
               other?.image_generation_call_price || 0,
               billingDisplayMode,
+              promptCacheUsage.cacheWriteTokensBilled,
+              promptCacheUsage.cacheWriteRatio,
+              promptCacheUsage.cacheWriteTokensReported,
+              promptCacheUsage.cacheWriteBillingEnabled,
             );
           }
           expandDataLocal.push({

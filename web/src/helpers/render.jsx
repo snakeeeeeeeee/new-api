@@ -1389,6 +1389,8 @@ function renderPriceSimpleCore({
   cacheCreationRatio5m = 1.0,
   cacheCreationTokens1h = 0,
   cacheCreationRatio1h = 1.0,
+  cacheWriteTokensReported = cacheCreationTokens,
+  cacheWriteBillingEnabled = cacheCreationTokens !== 0,
   image = false,
   imageRatio = 1.0,
   isSystemPromptOverride = false,
@@ -1406,7 +1408,11 @@ function renderPriceSimpleCore({
     cacheCreationTokens5m > 0 || cacheCreationTokens1h > 0;
 
   const shouldShowLegacyCacheCreation =
-    !hasSplitCacheCreation && cacheCreationTokens !== 0;
+    cacheWriteBillingEnabled &&
+    !hasSplitCacheCreation &&
+    cacheCreationTokens !== 0;
+  const shouldShowUnpricedCacheWrite =
+    cacheWriteTokensReported > 0 && !cacheWriteBillingEnabled;
 
   const shouldShowCache = cacheTokens !== 0;
   const shouldShowCacheCreation5m =
@@ -1478,6 +1484,14 @@ function renderPriceSimpleCore({
           }),
         });
       }
+      if (shouldShowUnpricedCacheWrite) {
+        segments.push({
+          tone: 'secondary',
+          text: i18next.t('缓存写入 {{tokens}} tokens 按普通输入价格计费', {
+            tokens: cacheWriteTokensReported,
+          }),
+        });
+      }
 
       if (image) {
         segments.push({
@@ -1536,6 +1550,14 @@ function renderPriceSimpleCore({
           tone: 'secondary',
           text: i18next.t('缓存创建: {{cacheCreationRatio}}', {
             cacheCreationRatio: cacheCreationRatio,
+          }),
+        });
+      }
+      if (shouldShowUnpricedCacheWrite) {
+        segments.push({
+          tone: 'secondary',
+          text: i18next.t('缓存写入 {{tokens}} tokens 按普通输入价格计费', {
+            tokens: cacheWriteTokensReported,
           }),
         });
       }
@@ -1632,6 +1654,13 @@ function renderPriceSimpleCore({
         }),
       );
     }
+    if (shouldShowUnpricedCacheWrite) {
+      parts.push(
+        i18next.t('缓存写入 {{tokens}} tokens 按普通输入价格计费', {
+          tokens: cacheWriteTokensReported,
+        }),
+      );
+    }
 
     if (image) {
       parts.push(
@@ -1673,6 +1702,13 @@ function renderPriceSimpleCore({
     }
   } else if (shouldShowLegacyCacheCreation) {
     parts.push(i18next.t('缓存创建: {{cacheCreationRatio}}'));
+  }
+  if (shouldShowUnpricedCacheWrite) {
+    parts.push(
+      i18next.t('缓存写入 {{tokens}} tokens 按普通输入价格计费', {
+        tokens: cacheWriteTokensReported,
+      }),
+    );
   }
 
   // image part
@@ -1725,6 +1761,10 @@ export function renderModelPrice(
   imageGenerationCall = false,
   imageGenerationCallPrice = 0,
   displayMode = 'price',
+  cacheCreationTokens = 0,
+  cacheCreationRatio = 1.0,
+  cacheWriteTokensReported = cacheCreationTokens,
+  cacheWriteBillingEnabled = cacheCreationTokens > 0,
 ) {
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -1763,9 +1803,19 @@ export function renderModelPrice(
     const inputRatioPrice = modelRatio * 2.0;
     const completionRatioPrice = modelRatio * 2.0 * completionRatio;
     const cacheRatioPrice = modelRatio * 2.0 * cacheRatio;
+    const cacheCreationRatioPrice = modelRatio * 2.0 * cacheCreationRatio;
     const imageRatioPrice = modelRatio * 2.0 * imageRatio;
+    const billedCacheCreationTokens = cacheWriteBillingEnabled
+      ? cacheCreationTokens
+      : 0;
+    const ordinaryInputTokens = Math.max(
+      inputTokens - cacheTokens - billedCacheCreationTokens,
+      0,
+    );
     let effectiveInputTokens =
-      inputTokens - cacheTokens + cacheTokens * cacheRatio;
+      ordinaryInputTokens +
+      cacheTokens * cacheRatio +
+      billedCacheCreationTokens * cacheCreationRatio;
     if (image && imageOutputTokens > 0) {
       effectiveInputTokens =
         inputTokens - imageOutputTokens + imageOutputTokens * imageRatio;
@@ -1793,7 +1843,7 @@ export function renderModelPrice(
           rate,
         },
       );
-    } else if (cacheTokens > 0) {
+    } else if (cacheTokens > 0 && billedCacheCreationTokens === 0) {
       inputDesc = buildBillingText(
         '(输入 {{nonCacheInput}} tokens / 1M tokens * {{symbol}}{{price}} + 缓存 {{cacheInput}} tokens / 1M tokens * {{symbol}}{{cachePrice}}',
         {
@@ -1804,6 +1854,42 @@ export function renderModelPrice(
           cachePrice: formatBillingDisplayPrice(cacheRatioPrice, rate),
         },
       );
+    } else if (billedCacheCreationTokens > 0) {
+      const inputParts = [
+        buildBillingText(
+          '输入 {{input}} tokens / 1M tokens * {{symbol}}{{price}}',
+          {
+            input: ordinaryInputTokens,
+            symbol,
+            price: formatBillingDisplayPrice(inputRatioPrice, rate),
+          },
+        ),
+      ];
+      if (cacheTokens > 0) {
+        inputParts.push(
+          buildBillingText(
+            '缓存 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+            {
+              tokens: cacheTokens,
+              symbol,
+              price: formatBillingDisplayPrice(cacheRatioPrice, rate),
+            },
+          ),
+        );
+      }
+      if (billedCacheCreationTokens > 0) {
+        inputParts.push(
+          buildBillingText(
+            '缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+            {
+              tokens: billedCacheCreationTokens,
+              symbol,
+              price: formatBillingDisplayPrice(cacheCreationRatioPrice, rate),
+            },
+          ),
+        );
+      }
+      inputDesc = `(${inputParts.join(' + ')}`;
     } else if (audioInputSeperatePrice && audioInputTokens > 0) {
       inputDesc = buildBillingText(
         '(输入 {{nonAudioInput}} tokens / 1M tokens * {{symbol}}{{price}} + 音频输入 {{audioInput}} tokens / 1M tokens * {{symbol}}{{audioPrice}}',
@@ -1908,6 +1994,21 @@ export function renderModelPrice(
             },
           )
         : null,
+      billedCacheCreationTokens > 0
+        ? buildBillingPriceText(
+            '缓存创建价格：{{symbol}}{{price}} / 1M tokens',
+            {
+              symbol,
+              usdAmount: cacheCreationRatioPrice,
+              rate,
+            },
+          )
+        : null,
+      cacheWriteTokensReported > 0 && !cacheWriteBillingEnabled
+        ? buildBillingText('缓存写入 {{tokens}} tokens 按普通输入价格计费', {
+            tokens: cacheWriteTokensReported,
+          })
+        : null,
       image && imageOutputTokens > 0
         ? buildBillingPriceText(
             '图片输入价格：{{symbol}}{{total}} / 1M tokens',
@@ -1977,16 +2078,20 @@ export function renderModelPrice(
   const modelRatioValue = formatRatioValue(modelRatio);
   const completionRatioValue = formatRatioValue(completionRatio);
   const cacheRatioValue = formatRatioValue(cacheRatio);
+  const cacheCreationRatioValue = formatRatioValue(cacheCreationRatio);
   const imageRatioValue = formatRatioValue(imageRatio);
   const inputRatioPrice = modelRatio * 2.0;
   const completionRatioPrice = modelRatio * 2.0 * completionRatioValue;
+  const billedCacheCreationTokens = cacheWriteBillingEnabled
+    ? cacheCreationTokens
+    : 0;
   const audioRatioValue =
     audioInputSeperatePrice && audioInputPrice > 0
       ? formatRatioValue(audioInputPrice / inputRatioPrice)
       : null;
 
   const textInputTokens = Math.max(
-    inputTokens - cacheTokens - audioInputTokens,
+    inputTokens - cacheTokens - billedCacheCreationTokens - audioInputTokens,
     0,
   );
   const imageInputTokens =
@@ -1999,6 +2104,11 @@ export function renderModelPrice(
     (cacheInputTokens / 1000000) *
     inputRatioPrice *
     cacheRatioValue *
+    groupRatio;
+  const cacheCreationAmount =
+    (billedCacheCreationTokens / 1000000) *
+    inputRatioPrice *
+    cacheCreationRatioValue *
     groupRatio;
   const imageInputAmount =
     (imageInputTokens / 1000000) *
@@ -2018,6 +2128,7 @@ export function renderModelPrice(
   const totalAmount =
     textInputAmount +
     cacheInputAmount +
+    cacheCreationAmount +
     imageInputAmount +
     audioInputAmount +
     completionAmount +
@@ -2036,6 +2147,11 @@ export function renderModelPrice(
       cacheInputTokens > 0
         ? buildBillingText('缓存倍率 {{cacheRatio}}', {
             cacheRatio: cacheRatioValue,
+          })
+        : null,
+      billedCacheCreationTokens > 0
+        ? buildBillingText('缓存创建倍率 {{cacheCreationRatio}}', {
+            cacheCreationRatio: cacheCreationRatioValue,
           })
         : null,
       imageInputTokens > 0
@@ -2079,6 +2195,24 @@ export function renderModelPrice(
             amount: renderDisplayAmountFromUsd(cacheInputAmount),
           },
         )
+      : null,
+    billedCacheCreationTokens > 0
+      ? buildBillingText(
+          '缓存创建：{{tokens}} / 1M * 模型倍率 {{modelRatio}} * 缓存创建倍率 {{cacheCreationRatio}} * {{ratioType}} {{ratio}} = {{amount}}',
+          {
+            tokens: billedCacheCreationTokens,
+            modelRatio: modelRatioValue,
+            cacheCreationRatio: cacheCreationRatioValue,
+            ratioType: ratioLabel,
+            ratio: groupRatio,
+            amount: renderDisplayAmountFromUsd(cacheCreationAmount),
+          },
+        )
+      : null,
+    cacheWriteTokensReported > 0 && !cacheWriteBillingEnabled
+      ? buildBillingText('缓存写入 {{tokens}} tokens 按普通输入价格计费', {
+          tokens: cacheWriteTokensReported,
+        })
       : null,
     imageInputTokens > 0
       ? buildBillingText(
@@ -2172,6 +2306,10 @@ export function renderLogContent(
   fileSearch = false,
   fileSearchCallCount = 0,
   displayMode = 'price',
+  cacheCreationTokens = 0,
+  cacheCreationRatio = 1.0,
+  cacheWriteTokensReported = cacheCreationTokens,
+  cacheWriteBillingEnabled = cacheCreationTokens > 0,
 ) {
   const {
     ratio,
@@ -2214,6 +2352,21 @@ export function renderLogContent(
     );
     appendPricePart(
       parts,
+      cacheWriteBillingEnabled && cacheCreationTokens > 0,
+      '缓存创建价格 {{symbol}}{{price}} / 1M tokens',
+      {
+        symbol,
+        price: (modelRatio * 2.0 * cacheCreationRatio * rate).toFixed(6),
+      },
+    );
+    appendPricePart(
+      parts,
+      cacheWriteTokensReported > 0 && !cacheWriteBillingEnabled,
+      '缓存写入 {{tokens}} tokens 按普通输入价格计费',
+      { tokens: cacheWriteTokensReported },
+    );
+    appendPricePart(
+      parts,
       image,
       '图片输入价格 {{symbol}}{{price}} / 1M tokens',
       {
@@ -2249,42 +2402,56 @@ export function renderLogContent(
       ratio,
     });
   } else {
+    let content;
     if (image) {
-      return i18next.t(
+      content = i18next.t(
         '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，图片输入倍率 {{imageRatio}}，{{ratioType}} {{ratio}}',
         {
-          modelRatio: modelRatio,
-          cacheRatio: cacheRatio,
-          completionRatio: completionRatio,
-          imageRatio: imageRatio,
+          modelRatio,
+          cacheRatio,
+          completionRatio,
+          imageRatio,
           ratioType: ratioLabel,
           ratio,
         },
       );
     } else if (webSearch) {
-      return i18next.t(
+      content = i18next.t(
         '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}，Web 搜索调用 {{webSearchCallCount}} 次',
         {
-          modelRatio: modelRatio,
-          cacheRatio: cacheRatio,
-          completionRatio: completionRatio,
+          modelRatio,
+          cacheRatio,
+          completionRatio,
           ratioType: ratioLabel,
           ratio,
           webSearchCallCount,
         },
       );
     } else {
-      return i18next.t(
+      content = i18next.t(
         '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}',
         {
-          modelRatio: modelRatio,
-          cacheRatio: cacheRatio,
-          completionRatio: completionRatio,
+          modelRatio,
+          cacheRatio,
+          completionRatio,
           ratioType: ratioLabel,
           ratio,
         },
       );
     }
+
+    if (cacheWriteBillingEnabled && cacheCreationTokens > 0) {
+      return `${content}，${i18next.t('缓存创建倍率 {{cacheCreationRatio}}', {
+        cacheCreationRatio,
+      })}`;
+    }
+    if (cacheWriteTokensReported > 0) {
+      return `${content}，${i18next.t(
+        '缓存写入 {{tokens}} tokens 按普通输入价格计费',
+        { tokens: cacheWriteTokensReported },
+      )}`;
+    }
+    return content;
   }
 }
 
@@ -2307,6 +2474,8 @@ export function renderModelPriceSimple(
   provider = 'openai',
   displayMode = 'price',
   outputMode = 'text',
+  cacheWriteTokensReported = cacheCreationTokens,
+  cacheWriteBillingEnabled = cacheCreationTokens !== 0,
 ) {
   return renderPriceSimpleCore({
     modelRatio,
@@ -2321,6 +2490,8 @@ export function renderModelPriceSimple(
     cacheCreationRatio5m,
     cacheCreationTokens1h,
     cacheCreationRatio1h,
+    cacheWriteTokensReported,
+    cacheWriteBillingEnabled,
     image,
     imageRatio,
     isSystemPromptOverride,

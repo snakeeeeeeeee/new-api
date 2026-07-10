@@ -482,3 +482,373 @@ func TestCalculateTextQuotaSummaryKeepsPrePRClaudeOpenRouterBilling(t *testing.T
 	require.Equal(t, 172, summary.PromptTokens)
 	require.Equal(t, 798, summary.Quota)
 }
+
+func TestCalculateTextQuotaSummaryOfficialCacheWriteBilling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cacheWrite := func(tokens int) *int { return &tokens }
+	baseRelayInfo := func(configured bool, ratio float64) *relaycommon.RelayInfo {
+		return &relaycommon.RelayInfo{
+			OriginModelName: "gpt-cache-write-test",
+			PriceData: types.PriceData{
+				ModelRatio:                   1,
+				CompletionRatio:              6,
+				CacheRatio:                   0.1,
+				CacheCreationRatio:           ratio,
+				CacheCreationRatioConfigured: configured,
+				GroupRatioInfo:               types.GroupRatioInfo{GroupRatio: 1},
+			},
+			StartTime: time.Now(),
+		}
+	}
+	baseUsage := func(write *int, legacy int) *dto.Usage {
+		return &dto.Usage{
+			PromptTokens:     2000,
+			CompletionTokens: 100,
+			PromptTokensDetails: dto.InputTokenDetails{
+				CachedTokens:         800,
+				CachedCreationTokens: legacy,
+				CacheWriteTokens:     write,
+			},
+		}
+	}
+
+	tests := []struct {
+		name               string
+		configured         bool
+		ratio              float64
+		write              *int
+		legacy             int
+		wantQuota          int
+		wantCreationTokens int
+		wantReported       *int
+		wantEnabled        bool
+		wantWarning        bool
+	}{
+		{
+			name:               "configured one point two five",
+			configured:         true,
+			ratio:              1.25,
+			write:              cacheWrite(400),
+			wantQuota:          1980,
+			wantCreationTokens: 400,
+			wantReported:       cacheWrite(400),
+			wantEnabled:        true,
+		},
+		{
+			name:         "unconfigured stays normal input",
+			configured:   false,
+			ratio:        1.25,
+			write:        cacheWrite(400),
+			wantQuota:    1880,
+			wantReported: cacheWrite(400),
+		},
+		{
+			name:               "configured zero is enabled",
+			configured:         true,
+			ratio:              0,
+			write:              cacheWrite(400),
+			wantQuota:          1480,
+			wantCreationTokens: 400,
+			wantReported:       cacheWrite(400),
+			wantEnabled:        true,
+		},
+		{
+			name:               "configured one is enabled",
+			configured:         true,
+			ratio:              1,
+			write:              cacheWrite(400),
+			wantQuota:          1880,
+			wantCreationTokens: 400,
+			wantReported:       cacheWrite(400),
+			wantEnabled:        true,
+		},
+		{
+			name:               "legacy fallback keeps old billing",
+			configured:         false,
+			ratio:              1.25,
+			legacy:             400,
+			wantQuota:          1980,
+			wantCreationTokens: 400,
+		},
+		{
+			name:         "official zero overrides legacy",
+			configured:   true,
+			ratio:        1.25,
+			write:        cacheWrite(0),
+			legacy:       400,
+			wantQuota:    1880,
+			wantReported: cacheWrite(0),
+			wantEnabled:  true,
+		},
+		{
+			name:         "negative is rejected",
+			configured:   true,
+			ratio:        1.25,
+			write:        cacheWrite(-5),
+			legacy:       400,
+			wantQuota:    1880,
+			wantReported: cacheWrite(-5),
+			wantWarning:  true,
+		},
+		{
+			name:         "more than available input is rejected",
+			configured:   true,
+			ratio:        1.25,
+			write:        cacheWrite(1201),
+			wantQuota:    1880,
+			wantReported: cacheWrite(1201),
+			wantWarning:  true,
+		},
+		{
+			name:       "missing fields has no creation billing",
+			configured: true,
+			ratio:      1.25,
+			wantQuota:  1880,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			summary := calculateTextQuotaSummary(ctx, baseRelayInfo(tt.configured, tt.ratio), baseUsage(tt.write, tt.legacy))
+
+			require.Equal(t, tt.wantQuota, summary.Quota)
+			require.Equal(t, tt.wantCreationTokens, summary.CacheCreationTokens)
+			require.Equal(t, tt.wantReported, summary.CacheWriteTokensReported)
+			require.Equal(t, tt.wantEnabled, summary.CacheWriteBillingEnabled)
+			require.Equal(t, tt.wantWarning, summary.CacheWriteBillingWarning != "")
+		})
+	}
+}
+
+func TestAppendCacheWriteBillingOther(t *testing.T) {
+	reported := 400
+	other := map[string]interface{}{}
+	appendCacheWriteBillingOther(other, textQuotaSummary{
+		CacheWriteTokensReported: &reported,
+		CacheWriteBillingEnabled: false,
+	})
+
+	require.Equal(t, 400, other["cache_write_tokens_reported"])
+	require.Equal(t, false, other["cache_write_billing_enabled"])
+
+	legacyOther := map[string]interface{}{}
+	appendCacheWriteBillingOther(legacyOther, textQuotaSummary{CacheCreationTokens: 400})
+	require.NotContains(t, legacyOther, "cache_write_tokens_reported")
+	require.NotContains(t, legacyOther, "cache_write_billing_enabled")
+}
+
+func TestCalculateTextQuotaSummaryCacheWritePlanAmounts(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	writeTokens := 400
+	usage := &dto.Usage{
+		PromptTokens:     2000,
+		CompletionTokens: 100,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:     800,
+			CacheWriteTokens: &writeTokens,
+		},
+	}
+
+	for _, tt := range []struct {
+		name       string
+		configured bool
+		wantQuota  int
+	}{
+		{name: "configured", configured: true, wantQuota: 1089},
+		{name: "unconfigured", configured: false, wantQuota: 1034},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			relayInfo := &relaycommon.RelayInfo{
+				OriginModelName: "gpt-cache-write-test",
+				PriceData: types.PriceData{
+					ModelRatio:                   0.5,
+					CompletionRatio:              6,
+					CacheRatio:                   0.1,
+					CacheCreationRatio:           1.25,
+					CacheCreationRatioConfigured: tt.configured,
+					GroupRatioInfo:               types.GroupRatioInfo{GroupRatio: 1.1},
+				},
+				StartTime: time.Now(),
+			}
+
+			summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+			require.Equal(t, tt.wantQuota, summary.Quota)
+		})
+	}
+}
+
+func TestAppendInputTokensTotalOtherForOfficialCacheWrite(t *testing.T) {
+	reported := 400
+	usage := &dto.Usage{PromptTokens: 2000}
+	summary := textQuotaSummary{CacheWriteTokensReported: &reported}
+
+	other := map[string]interface{}{}
+	appendInputTokensTotalOther(other, &relaycommon.RelayInfo{}, usage, summary)
+	require.Equal(t, 2000, other["input_tokens_total"])
+
+	legacyOther := map[string]interface{}{}
+	appendInputTokensTotalOther(legacyOther, &relaycommon.RelayInfo{}, usage, textQuotaSummary{})
+	require.NotContains(t, legacyOther, "input_tokens_total")
+
+	normalizedOther := map[string]interface{}{}
+	normalizedUsage := &dto.Usage{PromptTokens: 2000, InputTokens: 2100, UsageSource: "openai_responses"}
+	appendInputTokensTotalOther(normalizedOther, &relaycommon.RelayInfo{}, normalizedUsage, summary)
+	require.Equal(t, 2100, normalizedOther["input_tokens_total"])
+
+	claudeOther := map[string]interface{}{}
+	appendInputTokensTotalOther(claudeOther, &relaycommon.RelayInfo{
+		FinalRequestRelayFormat: types.RelayFormatClaude,
+	}, usage, summary)
+	require.NotContains(t, claudeOther, "input_tokens_total")
+}
+
+func TestCalculateTextQuotaSummaryUsePriceSkipsOfficialCacheWriteClassification(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cacheWrite := func(tokens int) *int { return &tokens }
+
+	tests := []struct {
+		name               string
+		write              *int
+		legacy             int
+		creation5m         int
+		creation1h         int
+		wantCreationTokens int
+		wantCreation5m     int
+		wantCreation1h     int
+	}{
+		{name: "official positive", write: cacheWrite(400), legacy: 999, creation5m: 10, creation1h: 20},
+		{name: "official explicit zero", write: cacheWrite(0), legacy: 999},
+		{name: "official negative", write: cacheWrite(-5), legacy: 999},
+		{name: "official exceeds input", write: cacheWrite(2001), legacy: 999},
+		{
+			name:               "legacy only remains unchanged",
+			legacy:             400,
+			creation5m:         10,
+			creation1h:         20,
+			wantCreationTokens: 400,
+			wantCreation5m:     10,
+			wantCreation1h:     20,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			relayInfo := &relaycommon.RelayInfo{
+				OriginModelName: "fixed-price-cache-write-test",
+				PriceData: types.PriceData{
+					UsePrice:                     true,
+					ModelPrice:                   0.01,
+					CacheCreationRatio:           1.25,
+					CacheCreation5mRatio:         1.25,
+					CacheCreation1hRatio:         2,
+					GroupRatioInfo:               types.GroupRatioInfo{GroupRatio: 1},
+					CacheCreationRatioConfigured: true,
+				},
+				StartTime: time.Now(),
+			}
+			usage := &dto.Usage{
+				PromptTokens:     2000,
+				CompletionTokens: 100,
+				PromptTokensDetails: dto.InputTokenDetails{
+					CachedTokens:         800,
+					CachedCreationTokens: tt.legacy,
+					CacheWriteTokens:     tt.write,
+				},
+				ClaudeCacheCreation5mTokens: tt.creation5m,
+				ClaudeCacheCreation1hTokens: tt.creation1h,
+			}
+
+			summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+			require.Equal(t, 5000, summary.Quota)
+			require.Equal(t, tt.wantCreationTokens, summary.CacheCreationTokens)
+			require.Equal(t, tt.wantCreation5m, summary.CacheCreationTokens5m)
+			require.Equal(t, tt.wantCreation1h, summary.CacheCreationTokens1h)
+			require.Nil(t, summary.CacheWriteTokensReported)
+			require.False(t, summary.CacheWriteBillingEnabled)
+			require.Empty(t, summary.CacheWriteBillingWarning)
+		})
+	}
+}
+
+func TestCalculateTextQuotaSummaryOfficialCacheWriteSuppressesOpenRouterCostInference(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cacheWrite := func(tokens int) *int { return &tokens }
+
+	priceData := types.PriceData{
+		ModelRatio:         1.5,
+		CompletionRatio:    1,
+		CacheRatio:         0.1,
+		CacheCreationRatio: 1.25,
+		GroupRatioInfo:     types.GroupRatioInfo{GroupRatio: 1},
+	}
+	// This cost would infer 100 cache creation tokens if the legacy OpenRouter
+	// cost fallback were allowed to run.
+	const upstreamCost = 0.0024696
+	probeUsage := dto.Usage{
+		PromptTokens:     2604,
+		CompletionTokens: 383,
+		Cost:             upstreamCost,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 2432,
+		},
+	}
+	require.Equal(t, 100, CalcOpenRouterCacheCreateTokens(probeUsage, priceData))
+
+	tests := []struct {
+		name         string
+		write        *int
+		configured   bool
+		wantReported int
+		wantEnabled  bool
+	}{
+		{
+			name:         "official explicit zero",
+			write:        cacheWrite(0),
+			configured:   true,
+			wantReported: 0,
+			wantEnabled:  true,
+		},
+		{
+			name:         "unconfigured official positive",
+			write:        cacheWrite(100),
+			wantReported: 100,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			testPriceData := priceData
+			testPriceData.CacheCreationRatioConfigured = tt.configured
+			relayInfo := &relaycommon.RelayInfo{
+				FinalRequestRelayFormat: types.RelayFormatClaude,
+				OriginModelName:         "claude-3-7-sonnet-20250219",
+				ChannelMeta: &relaycommon.ChannelMeta{
+					ChannelType: constant.ChannelTypeOpenRouter,
+				},
+				PriceData: testPriceData,
+				StartTime: time.Now(),
+			}
+			usage := probeUsage
+			usage.PromptTokensDetails.CacheWriteTokens = tt.write
+
+			summary := calculateTextQuotaSummary(ctx, relayInfo, &usage)
+
+			require.Zero(t, summary.CacheCreationTokens)
+			require.Equal(t, 172, summary.PromptTokens)
+			require.NotNil(t, summary.CacheWriteTokensReported)
+			require.Equal(t, tt.wantReported, *summary.CacheWriteTokensReported)
+			require.Equal(t, tt.wantEnabled, summary.CacheWriteBillingEnabled)
+		})
+	}
+}

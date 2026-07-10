@@ -3117,6 +3117,8 @@
     "缓存倍率": "Cache ratio",
     "缓存倍率 {{cacheRatio}}": "Cache ratio {{cacheRatio}}",
     "缓存写": "Cache Write",
+    "缓存写入 {{tokens}} tokens 按普通输入价格计费": "Cache write {{tokens}} tokens billed at the standard input price",
+    "缓存写入 Tokens（按普通输入价格计费）": "Cache Write Tokens (billed at the standard input price)",
     "缓存创建 {{price}} / 1M tokens": "Cache creation {{price}} / 1M tokens",
     "缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}": "Cache creation {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}",
     "缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (倍率: {{ratio}})": "Cache creation {{tokens}} tokens / 1M tokens * {{symbol}}{{price}} (ratio: {{ratio}})",

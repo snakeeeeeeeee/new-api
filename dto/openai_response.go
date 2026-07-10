@@ -257,11 +257,26 @@ type OpenAIVideoResponse struct {
 }
 
 type InputTokenDetails struct {
-	CachedTokens         int `json:"cached_tokens"`
-	CachedCreationTokens int `json:"cached_creation_tokens,omitempty"`
-	TextTokens           int `json:"text_tokens"`
-	AudioTokens          int `json:"audio_tokens"`
-	ImageTokens          int `json:"image_tokens"`
+	CachedTokens         int  `json:"cached_tokens"`
+	CachedCreationTokens int  `json:"cached_creation_tokens,omitempty"`
+	CacheWriteTokens     *int `json:"cache_write_tokens,omitempty"`
+	TextTokens           int  `json:"text_tokens"`
+	AudioTokens          int  `json:"audio_tokens"`
+	ImageTokens          int  `json:"image_tokens"`
+}
+
+// ResolveCacheCreationTokens returns the normalized cache creation token count.
+// OpenAI's official cache_write_tokens field takes precedence, including an
+// explicitly reported zero. The bool reports whether that official field was
+// present, not whether its value was positive.
+func (d InputTokenDetails) ResolveCacheCreationTokens() (int, bool) {
+	if d.CacheWriteTokens == nil {
+		return d.CachedCreationTokens, false
+	}
+	if *d.CacheWriteTokens < 0 {
+		return 0, true
+	}
+	return *d.CacheWriteTokens, true
 }
 
 type OutputTokenDetails struct {

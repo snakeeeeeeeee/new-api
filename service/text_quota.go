@@ -26,6 +26,9 @@ type textQuotaSummary struct {
 	CacheCreationTokens                         int
 	CacheCreationTokens5m                       int
 	CacheCreationTokens1h                       int
+	CacheWriteTokensReported                    *int
+	CacheWriteBillingEnabled                    bool
+	CacheWriteBillingWarning                    string
 	ImageTokens                                 int
 	AudioTokens                                 int
 	ModelName                                   string
@@ -137,6 +140,31 @@ func appendClaudeCacheTTLBillingCompatOther(other map[string]interface{}, summar
 	other["claude_cache_ttl_billed_cache_creation_tokens_5m"] = summary.ClaudeCacheTTLBilledCacheCreation5mTokens
 }
 
+func appendCacheWriteBillingOther(other map[string]interface{}, summary textQuotaSummary) {
+	if other == nil || summary.CacheWriteTokensReported == nil {
+		return
+	}
+	other["cache_write_tokens_reported"] = *summary.CacheWriteTokensReported
+	other["cache_write_billing_enabled"] = summary.CacheWriteBillingEnabled
+}
+
+func appendInputTokensTotalOther(other map[string]interface{}, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, summary textQuotaSummary) {
+	if other == nil || relayInfo == nil || usage == nil || relayInfo.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
+		return
+	}
+	if usage.UsageSource != "" && usage.InputTokens > 0 {
+		// Only trust normalized input_tokens when a conversion path has tagged
+		// the usage source; older payloads may use different token semantics.
+		other["input_tokens_total"] = usage.InputTokens
+		return
+	}
+	if summary.CacheWriteTokensReported != nil && usage.PromptTokens > 0 {
+		// Official cache_write_tokens is reported alongside a reliable OpenAI
+		// prompt token total even when an adapter has not tagged UsageSource.
+		other["input_tokens_total"] = usage.PromptTokens
+	}
+}
+
 func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage) textQuotaSummary {
 	summary := textQuotaSummary{
 		ModelName:            relayInfo.OriginModelName,
@@ -167,12 +195,44 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	summary.CompletionTokens = usage.CompletionTokens
 	summary.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	summary.CacheTokens = usage.PromptTokensDetails.CachedTokens
-	summary.CacheCreationTokens = usage.PromptTokensDetails.CachedCreationTokens
+	cacheCreationTokens, cacheWriteTokensReported := usage.PromptTokensDetails.ResolveCacheCreationTokens()
+	summary.CacheCreationTokens = cacheCreationTokens
 	summary.CacheCreationTokens5m = usage.ClaudeCacheCreation5mTokens
 	summary.CacheCreationTokens1h = usage.ClaudeCacheCreation1hTokens
 	summary.ImageTokens = usage.PromptTokensDetails.ImageTokens
 	summary.AudioTokens = usage.PromptTokensDetails.AudioTokens
 	legacyClaudeDerived := isLegacyClaudeDerivedOpenAIUsage(relayInfo, usage)
+	if cacheWriteTokensReported {
+		summary.CacheCreationTokens = 0
+		if relayInfo.PriceData.UsePrice {
+			summary.CacheCreationTokens5m = 0
+			summary.CacheCreationTokens1h = 0
+		} else {
+			reportedTokens := *usage.PromptTokensDetails.CacheWriteTokens
+			summary.CacheWriteTokensReported = &reportedTokens
+
+			availableInputTokens := summary.PromptTokens
+			if !summary.IsClaudeUsageSemantic && summary.CacheTokens > 0 {
+				availableInputTokens -= summary.CacheTokens
+			}
+			if availableInputTokens < 0 {
+				availableInputTokens = 0
+			}
+
+			switch {
+			case reportedTokens < 0:
+				summary.CacheWriteBillingWarning = fmt.Sprintf("上游返回的缓存写入 Tokens 无效：%d，已按普通输入计费", reportedTokens)
+			case cacheCreationTokens > availableInputTokens:
+				summary.CacheWriteBillingWarning = fmt.Sprintf("上游返回的缓存写入 Tokens %d 超过可用输入 Tokens %d，已按普通输入计费", reportedTokens, availableInputTokens)
+			case relayInfo.PriceData.CacheCreationRatioConfigured:
+				summary.CacheCreationTokens = cacheCreationTokens
+				summary.CacheWriteBillingEnabled = true
+			}
+			if summary.CacheWriteBillingWarning != "" {
+				logger.LogWarn(ctx, summary.CacheWriteBillingWarning)
+			}
+		}
+	}
 	isOpenRouterClaudeBilling := relayInfo.ChannelMeta != nil &&
 		relayInfo.ChannelType == constant.ChannelTypeOpenRouter &&
 		summary.IsClaudeUsageSemantic
@@ -180,7 +240,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	if isOpenRouterClaudeBilling {
 		summary.PromptTokens -= summary.CacheTokens
 		isUsingCustomSettings := relayInfo.PriceData.UsePrice || hasCustomModelRatio(summary.ModelName, relayInfo.PriceData.ModelRatio)
-		if summary.CacheCreationTokens == 0 && relayInfo.PriceData.CacheCreationRatio != 1 && usage.Cost != 0 && !isUsingCustomSettings {
+		if summary.CacheCreationTokens == 0 && summary.CacheWriteTokensReported == nil && relayInfo.PriceData.CacheCreationRatio != 1 && usage.Cost != 0 && !isUsingCustomSettings {
 			maybeCacheCreationTokens := CalcOpenRouterCacheCreateTokens(*usage, relayInfo.PriceData)
 			if maybeCacheCreationTokens >= 0 && summary.PromptTokens >= maybeCacheCreationTokens {
 				summary.CacheCreationTokens = maybeCacheCreationTokens
@@ -363,6 +423,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+	if summary.CacheWriteBillingWarning != "" {
+		extraContent = append(extraContent, summary.CacheWriteBillingWarning)
+	}
 
 	if summary.WebSearchCallCount > 0 {
 		extraContent = append(extraContent, fmt.Sprintf("Web Search 调用 %d 次，调用花费 %s", summary.WebSearchCallCount, decimal.NewFromFloat(summary.WebSearchPrice).Mul(decimal.NewFromInt(int64(summary.WebSearchCallCount))).Div(decimal.NewFromInt(1000)).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
@@ -427,6 +490,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other["reject_reason"] = adminRejectReason
 	}
 	appendClaudeCacheTTLBillingCompatOther(other, summary)
+	appendCacheWriteBillingOther(other, summary)
 	if summary.ImageTokens != 0 {
 		other["image"] = true
 		other["image_ratio"] = summary.ImageRatio
@@ -474,13 +538,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		// to cache_creation_tokens.
 		other["cache_write_tokens"] = cacheWriteTokens
 	}
-	if relayInfo.GetFinalRequestRelayFormat() != types.RelayFormatClaude && usage != nil && usage.UsageSource != "" && usage.InputTokens > 0 {
-		// input_tokens_total: explicit normalized total input used by the usage log UI.
-		// Only write this field when upstream/current conversion has already provided a
-		// reliable total input value and tagged the usage source. Do not infer it from
-		// prompt/cache fields here, otherwise old upstream payloads may be double-counted.
-		other["input_tokens_total"] = usage.InputTokens
-	}
+	appendInputTokensTotalOther(other, relayInfo, usage, summary)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
