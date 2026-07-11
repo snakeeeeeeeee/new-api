@@ -1,3 +1,33 @@
+# GPT Cache-Write Billing Progress
+
+## 2026-07-11
+- Resumed the completed backend/frontend implementation from the prior context.
+- Confirmed backend coverage includes Responses, Chat, Compact, streaming, non-streaming, and format conversions.
+- Confirmed frontend tests cover old/new logs, Claude split fields, explicit zero, and configured ratio zero.
+- Started independent backend review and Docker/live integration reconnaissance in parallel.
+- Independent review found and is fixing a fixed-price log-classification issue; OpenRouter precedence tests are being added.
+- Live reconnaissance confirmed sub2api passes through official `cache_write_tokens`; sampled authorized calls returned explicit zero and can be re-run after the Docker rebuild.
+- Fixed-price and OpenRouter review findings were corrected with passing targeted tests.
+- Unified the new unconfigured-write frontend wording across all locales.
+- Targeted Go tests passed for `dto`, `relay/helper`, `relay/channel/openai`, `service/openaicompat`, and `service`.
+- Bun unit tests passed 9/9; `git diff --check` passed.
+- Full `go test -count=1 ./...`, targeted `go vet`, and `bun run build` passed; only existing frontend build warnings remain.
+- Built image `new-api-local:dev` from the final code, force-recreated `new-api-dev`, and confirmed `/api/status` is healthy on port 3001.
+- Authorized live sub2api retest passed for two non-streaming requests and one streaming request; explicit-zero cache write billing and quota matched exactly.
+- Started a temporary deterministic OpenAI/Anthropic mock on host port 39001 and verified it is reachable from the rebuilt application container.
+- Added and verified isolated temporary Docker-dev models/group/two channels/seven abilities/one token, then restarted the app so ratio and routing caches use the fixtures.
+- Deterministic Responses fixtures passed for configured, unconfigured, missing, explicit zero, negative, and oversized writes; planned configured/unconfigured dollar amounts matched exactly.
+- Deterministic Chat and Responses streaming/non-streaming requests all returned the official write field for configured and unconfigured models.
+- Compact configured/unconfigured/zero requests passed after adding the internal suffixed fixtures.
+- Claude 5m/1h compatibility passed with unchanged split fields and no new GPT log flags.
+- Attempted desktop/narrow visual log verification; the local management session was expired, so no credentials were changed and that visual check remains unavailable.
+- Removed every temporary mock token/channel/ability/ratio/group key, stopped and deleted the mock source, confirmed original token 122/channel 85/create ratio 1.25 remained intact, restarted Docker dev, and rechecked health.
+- Final `git diff --check` and temporary-resource audit passed; worktree scope matches implementation plus task planning records, while unrelated user files remain untouched.
+- Added the final hybrid-log explicit-zero regression; Bun tests, targeted ESLint, frontend build, and diff check passed again.
+- Rebuilt and recreated Docker dev from the final source; `http://localhost:3001/api/status` is healthy.
+
+---
+
 # Progress
 
 ## 2026-06-23

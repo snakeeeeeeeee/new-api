@@ -1,3 +1,69 @@
+# Task Plan: GPT cache-write configurable billing
+
+## Goal
+Recognize official OpenAI `cache_write_tokens`, bill it separately only when the model has an explicit `CreateCacheRatio` entry, preserve all legacy cache accounting, and verify the result with unit, Docker mock, and authorized live sub2api tests.
+
+## Current Phase
+Complete
+
+## Phases
+- [x] Implement usage DTO normalization and preserve explicit zero values across OpenAI relay/conversion paths.
+- [x] Implement configuration-presence gating, billing split, validation, and log snapshots.
+- [x] Implement frontend normalization and generic non-Claude billing display.
+- [x] Independently review the complete diff and run backend/frontend regression tests.
+- [x] Rebuild Docker dev and run deterministic configured/unconfigured usage scenarios.
+- [x] Run authorized streaming and non-streaming live sub2api tests without exposing token secrets.
+- [x] Review the final diff and report compatibility and any upstream limitations.
+
+## Completion Audit
+
+### Phase 1: Usage normalization
+**Status:** complete
+
+### Phase 2: Billing and logging
+**Status:** complete
+
+### Phase 3: Frontend display
+**Status:** complete
+
+### Phase 4: Automated regression
+**Status:** complete
+
+### Phase 5: Docker mock integration
+**Status:** complete
+
+### Phase 6: Live sub2api integration
+**Status:** complete
+
+### Phase 7: Final review and cleanup
+**Status:** complete
+
+## Current Decisions
+| Decision | Rationale |
+| --- | --- |
+| Configuration-key presence is the only billing switch | Ratios `0`, `1`, and `1.25` must all count as explicitly enabled. |
+| Official `cache_write_tokens` takes precedence over legacy usage | A present value, including explicit `0`, is authoritative. |
+| Unconfigured or invalid official writes remain ordinary input | Prevents free input and preserves old billing behavior. |
+| Legacy, Claude split-cache, and OpenRouter logic is unchanged | Limits the compatibility surface of this feature. |
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Official writes on fixed per-call pricing were labeled as ordinary-input billing even though token classes do not affect the fixed price | Independent review | Skip all new official cache-write billing/log state for `UsePrice` requests and add a regression test. |
+| OpenRouter official-field precedence had no direct regression test | Independent review | Add explicit-zero and unconfigured-positive cases with nonzero upstream cost. |
+| First wording patch assumed an incorrect Russian translation value and did not apply | Frontend wording cleanup | Inspect exact locale entries, then apply a narrower key-only patch. |
+| A plan status patch used hunks in reverse file order and did not apply | Phase update | Reordered hunks to match file order and re-applied. |
+| Initial mock search used an unmatched zsh glob (`test*`) | Docker mock discovery | Re-run with explicit `rg` include/exclude globs only. |
+| First mock setup transaction passed literal `\\n` characters to `psql -c` and failed before `BEGIN` | Docker mock setup | Re-run with shell-safe single-quote escaping and verify all temporary rows/keys after commit. |
+| Compact requests add the internal `-openai-compact` model suffix before channel distribution, so the first fixtures had no matching abilities | Docker Compact test | Add temporary suffixed abilities/models and matching ratios, restart, and retry. |
+| In-app browser load-state helper does not support `networkidle` | UI verification | Use a fresh DOM snapshot and targeted element checks instead of repeating the unsupported wait mode. |
+| Local browser session is expired when entering the authenticated console | Desktop/narrow log verification | Do not alter credentials; retain automated frontend checks and report the visual verification limitation. |
+| Final phase patch again placed a later file hunk before an earlier one | Phase update | Reordered the phase-title hunk before the phase-list hunk. |
+| Frontend explicit-zero fallback could prefer a stale legacy field when `reported=0` and `enabled=true` coexisted | Final frontend review | When the new reported key exists, use it exclusively for billed tokens and add a realistic enabled-zero regression test. |
+| Planning completion checker did not recognize list-style phase statuses | Final plan audit | Add the required `### Phase` and `**Status:** complete` audit entries, then re-run the checker. |
+
+---
+
 # Task Plan: ImageHandle edit upload compatibility
 
 ## Goal
