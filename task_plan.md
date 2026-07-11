@@ -64,6 +64,91 @@ Complete
 
 ---
 
+# Task Plan: Compare GPT-5.6 cache-write billing with upstream rc.21
+
+## Goal
+Compare the fork's completed GPT-5.6 cache-write billing implementation with `QuantumNous/new-api` tag `v1.0.0-rc.21`, and explain behavioral and implementation differences without changing product code.
+
+## Current Phase
+Complete
+
+### Phase 1: Resolve versions and change scope
+- [x] Fetch and identify the upstream tag commit.
+- [x] Identify the fork's relevant commits and files.
+- **Status:** complete
+
+### Phase 2: Compare implementations
+- [x] Compare usage DTO normalization, billing, logs, frontend display, and tests.
+- [x] Trace concrete behavioral differences and edge cases.
+- **Status:** complete
+
+### Phase 3: Verify conclusions
+- [x] Run focused tests or static checks where needed.
+- [x] Produce an evidence-backed Chinese summary with file references.
+- **Status:** complete
+
+## Comparison Questions
+1. Does upstream preserve absent versus explicit-zero `cache_write_tokens`?
+2. What enables separate cache-write billing upstream: model family, ratio presence, or another switch?
+3. How do invalid/unconfigured write-token values affect ordinary input billing?
+4. Are streaming, non-streaming, Responses, Chat, Compact, OpenRouter, logs, and frontend display covered equally?
+
+## Comparison Errors
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| GitHub connector tools are unavailable in this session | 1 | Use read-only local `git` fetch/show/diff against the public tag, as allowed by the GitHub skill fallback. |
+| `gh` CLI is not installed | 1 | Use the public GitHub REST endpoint with `curl` for release metadata; continue using the deepened temporary clone for commit history. |
+
+---
+
+# Task Plan: Merge upstream GPT-5.6 cache-write accounting
+
+## Goal
+Retain the fork's explicit-zero semantics, configuration gating, audit data, and frontend compatibility while adopting upstream overlap-aware GPT-5.6 cache-write accounting; hide missing and zero writes in visible logs and verify with unit plus Docker dev tests.
+
+## Current Phase
+Complete
+
+### Phase 1: Design and baseline
+- [x] Confirm desired visible-log behavior for missing and zero writes.
+- [x] Inspect current billing, frontend, and Docker fixtures.
+- **Status:** complete
+
+### Phase 2: Implementation
+- [x] Replace the non-cached-input rejection with overlap-aware accounting and bounded malformed-value protection.
+- [x] Add GPT-5.6 default creation ratios where compatible with local configuration semantics.
+- [x] Hide zero/missing cache writes from visible log summaries while preserving backend explicit-zero precedence.
+- **Status:** complete
+
+### Phase 3: Automated verification
+- [x] Add/update backend regression tests for official overlapping-prefix fixtures and boundary cases.
+- [x] Add/update frontend tests for hidden missing/zero visible logs.
+- [x] Run focused and broad Go/Bun checks.
+- **Status:** complete
+
+### Phase 4: Docker dev verification
+- [x] Rebuild Docker dev.
+- [x] Run deterministic configured overlap, missing, zero, unconfigured, and malformed scenarios.
+- [x] Audit logs, quota totals, cleanup, and final diff.
+- **Status:** complete
+
+## Decisions
+| Decision | Rationale |
+| --- | --- |
+| Preserve `*int` and raw explicit-zero state | Explicit zero must override stale legacy creation fields and suppress inference. |
+| Hide missing and zero only in visible log UI | Meets the user-facing requirement without weakening billing semantics. |
+| Keep explicit ratio-key gating | Retains operator control and prevents new token classes from changing unconfigured-model prices. |
+| Adopt overlap-aware base calculation | GPT-5.6 read and write prefix counts can legitimately overlap. |
+
+## Errors
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| `rg` included nonexistent root `package.json` and exited 2 after still finding the frontend scripts | 1 | Use the confirmed `web/package.json` scripts directly; do not repeat the invalid root path. |
+| Full `bun run lint` scans generated `web/dist` and 111 pre-existing unformatted source files; concurrent build also replaced dist files during the scan | 1 | Do not modify unrelated files. Run Prettier `--check` only on the four touched frontend files after the build completes. |
+| Docker configured-overlap, unconfigured-overlap, and oversized requests returned HTTP 403 while zero/missing succeeded | 1 | Inspect response bodies, user quota, model access, and pre-consumption state before changing fixtures; do not repeat the same requests blindly. |
+
+---
+
 # Task Plan: ImageHandle edit upload compatibility
 
 ## Goal

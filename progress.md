@@ -1,5 +1,70 @@
 # GPT Cache-Write Billing Progress
 
+## 2026-07-11 Upstream rc.21 comparison
+- Loaded the GitHub and planning-with-files skills.
+- Confirmed the current branch is `main` tracking fork `origin/main` with no tracked modifications.
+- Found the prior GPT cache-write billing plan, findings, and verification history already present in the workspace.
+- Started a read-only comparison against upstream `v1.0.0-rc.21`; product code remains unchanged.
+- Cloned the public upstream tag to `/tmp/new-api-upstream-rc21` and recorded commit `bde9b2f44887d34ec54799ae191d50f97914359e`.
+- Enumerated the local cache-write implementation surface and its targeted tests.
+- Located the local feature introduction commit `614d134cebba4eef4cb9fae2d411612f5252c5e7`.
+- Initial upstream inspection found non-pointer cache-write DTO semantics and no preservation of the ratio configuration-presence flag.
+- Compared DTO and quota implementation directly: upstream uses max-and-clamp normalization and subtract-then-clamp billing; local uses official-field precedence, validity checks, and explicit configuration gating.
+- Confirmed upstream bills missing-ratio models with the fallback 1.25 ratio, while local requires explicit key presence; upstream also ships default 1.25 entries for the three GPT-5.6 variants.
+- Deepened the temporary upstream clone. The attempted `gh release view` failed because `gh` is not installed; switched to the public REST API.
+- Read the rc.21 release body and located upstream feature commit `48068ce9236e7bfcf923f8d20ca39fb8e611ef86`.
+- Compared feature-commit scope: upstream is a focused 18-file/158-line patch; local is a broader 28-file/1,580-line implementation with audit/UI/test layers.
+- Identified the main semantic conflict: upstream intentionally permits overlapping cached-read/write prefix counts and clamps only the ordinary-input remainder; local rejects writes exceeding `prompt-cached`.
+- Reviewed conversion and UI paths: upstream propagates a unified integer token class into Claude and tiered billing; local preserves native-vs-legacy provenance and adds explicit log/UI audit states.
+- Confirmed by test search that upstream does not cover explicit-zero, absent-field, unconfigured-ratio, negative-value, or audit-state cases.
+- Ran local focused Go tests across DTO, price helper, OpenAI relay, conversion, and quota packages: all passed.
+- Ran upstream rc.21 focused quota/conversion tests from the temporary clone: all passed.
+- Ran local `bun test src/helpers/promptCacheUsage.test.js`: 11 passed, 0 failed.
+- Completed the comparison. Only the three planning records were modified; unrelated untracked files remain untouched.
+
+## 2026-07-11 GPT-5.6 overlap merge
+- Loaded the brainstorming and planning-with-files skills and recovered the completed comparison context.
+- Selected the hybrid design: preserve explicit-zero backend semantics, hide zero/missing values in visible logs, retain explicit configuration gating, and adopt upstream overlap-aware billing.
+- Started Phase 1 discovery; no product code changed yet.
+- Inspected current backend and frontend paths. Identified the exact obsolete bound and the two visible-log predicates that expose explicit zero.
+- Confirmed quota math needs the upstream zero clamp and that GPT-5.6 default ratios can use the existing ratio map without changing configuration APIs.
+- Completed Phase 1. Defined exact expected quotas and a centralized positive-only visible-log flag; implementation is starting.
+- Implemented overlap-aware configured billing with a zero-clamped ordinary-input base and a total-input malformed-value bound.
+- Added default 1.25 creation ratios for `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`.
+- Added the positive-only frontend visibility flag and switched compact/expanded usage-log consumers to it.
+- Updated backend/frontend unit fixtures, including the upstream 4,884-quota overlap case.
+- Reviewed the implementation diff. The only discovery-command error was an unnecessary nonexistent root `package.json`; frontend scripts were still resolved from `web/package.json`.
+- Focused Go tests passed across `service`, `dto`, `relay/helper`, `relay/channel/openai`, and `service/openaicompat`.
+- Frontend prompt-cache normalization tests passed: 11 tests, 58 assertions, including visible-zero suppression.
+- Inspected ratio initialization and Docker helpers. Existing persisted options may override source defaults; no dedicated cache-write simulation script is available, so Docker testing will use temporary isolated fixtures.
+- Confirmed persisted ratio maps intentionally replace defaults. Existing installations remain operator-controlled; fresh defaults will include the three GPT-5.6 variants.
+- Added and passed `TestDefaultCreateCacheRatioIncludesGPT56Models` for the three 1.25 defaults.
+- Audited every frontend use of reported cache-write tokens; all visible render paths now require a positive value.
+- Completed Phase 2 and started broad automated verification.
+- `go test ./...` passed.
+- `bun run build` passed with existing Browserslist, lottie `eval`, and chunk-size warnings.
+- Full `bun run lint` failed on generated `dist` churn plus 111 pre-existing format warnings; this is outside the change scope, so verification is narrowed to touched frontend files.
+- Targeted Prettier check passed for all four touched frontend files.
+- Completed Phase 3 and started Docker dev verification; unrelated untracked files remain untouched.
+- Docker baseline is healthy on port 3001 with PostgreSQL and Redis; current app container is 19 hours old and will be rebuilt.
+- Rebuilt and recreated `new-api-dev` successfully from the changed source; `/api/status` returned `success=true` immediately after startup.
+- Confirmed the Compose network and relevant PostgreSQL schemas for isolated channel, token, ability, option, and log verification.
+- Selected user id 2/default group and type-1 OpenAI fixtures without exposing or modifying existing channel credentials.
+- Started `codex-cache-write-mock` on the Compose network.
+- Adjusted the fixture plan after discovering the live default group ratio is 999: tests will use a unique temporary group at ratio 1.
+- Created temporary ratio/group/channel/ability/token fixtures transactionally and restarted the app.
+- First Docker request batch: explicit-zero and missing-field requests succeeded; configured, unconfigured, and oversized requests returned 403 and require fixture diagnostics before retry.
+- Diagnosed the 403 response as user id 2 having zero quota. Routing and ratio fixtures are correct; will snapshot/temporarily raise only this user's quota and restore it after log verification.
+- Verified the two successful logs: zero and missing both cost 1,062; only explicit zero retained the raw reported/enabled snapshot.
+- Chose a safer correction: reverse the two token-scoped charges, remove those rows, and use a disposable high-quota user for the complete rerun.
+- Reversed the first two charges and removed their logs, then rebound the token to disposable user id 994183 with isolated quota.
+- Final Docker batch passed all five scenarios with exact quotas: configured 4,884; unconfigured/zero/missing/oversized 1,062 each.
+- Verified raw log metadata, the oversized warning, and disposable-user total consumption of 9,132 quota.
+- Removed all temporary Docker/DB fixtures, stopped the mock, restored options, and restarted the app.
+- Residue audit passed: all temporary row counts are zero, all option keys are absent, user id 2 is restored to 2,124/999,000, and `new-api-dev` is healthy.
+- Final status endpoint and whitespace audit passed. Product changes remain limited to billing, ratio defaults/tests, and visible-log normalization/consumers/tests.
+- Final product diff reviewed. Phase 4 and the full implementation are complete.
+
 ## 2026-07-11
 - Resumed the completed backend/frontend implementation from the prior context.
 - Confirmed backend coverage includes Responses, Chat, Compact, streaming, non-streaming, and format conversions.
