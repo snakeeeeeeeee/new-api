@@ -76,6 +76,7 @@ export function normalizePromptCacheUsage(record = {}, other = {}) {
   const cacheWriteTokensReported = hasReportedCacheWriteTokens
     ? (reportedCacheWriteTokensValue ?? 0)
     : billedCacheWriteTokensFromLog;
+  const hasVisibleCacheWrite = cacheWriteTokensReported > 0;
   const cacheWriteTokensBilled = cacheWriteBillingEnabled
     ? hasReportedCacheWriteTokens
       ? cacheWriteTokensReported
@@ -115,6 +116,7 @@ export function normalizePromptCacheUsage(record = {}, other = {}) {
     cacheWriteTokensWasReported: hasReportedCacheWriteTokens,
     cacheWriteTokensReportValid,
     cacheWriteTokensReported,
+    hasVisibleCacheWrite,
     cacheWriteTokensBilled,
     cacheWriteBillingEnabled,
     cacheWriteRatio,

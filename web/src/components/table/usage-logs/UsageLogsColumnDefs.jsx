@@ -306,10 +306,7 @@ function getPromptCacheSummary(record, other) {
   const normalized = normalizePromptCacheUsage(record, other);
   const cacheReadTokens = normalized.cacheReadTokens;
   const cacheWriteTokens = normalized.cacheWriteTokensReported;
-  const hasCacheWrite =
-    (normalized.cacheWriteTokensWasReported &&
-      normalized.cacheWriteTokensReportValid) ||
-    cacheWriteTokens > 0;
+  const hasCacheWrite = normalized.hasVisibleCacheWrite;
 
   if (cacheReadTokens <= 0 && !hasCacheWrite) {
     return null;

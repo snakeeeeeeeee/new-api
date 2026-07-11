@@ -592,12 +592,22 @@ func TestCalculateTextQuotaSummaryOfficialCacheWriteBilling(t *testing.T) {
 			wantWarning:  true,
 		},
 		{
-			name:         "more than available input is rejected",
+			name:               "overlapping cache prefixes are billed",
+			configured:         true,
+			ratio:              1.25,
+			write:              cacheWrite(1201),
+			wantQuota:          2181,
+			wantCreationTokens: 1201,
+			wantReported:       cacheWrite(1201),
+			wantEnabled:        true,
+		},
+		{
+			name:         "more than total input is rejected",
 			configured:   true,
 			ratio:        1.25,
-			write:        cacheWrite(1201),
+			write:        cacheWrite(2001),
 			wantQuota:    1880,
-			wantReported: cacheWrite(1201),
+			wantReported: cacheWrite(2001),
 			wantWarning:  true,
 		},
 		{
@@ -621,6 +631,41 @@ func TestCalculateTextQuotaSummaryOfficialCacheWriteBilling(t *testing.T) {
 			require.Equal(t, tt.wantWarning, summary.CacheWriteBillingWarning != "")
 		})
 	}
+}
+
+func TestCalculateTextQuotaSummaryMatchesOpenAICacheWriteOverlapFixture(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	cacheWriteTokens := 3616
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.6-sol",
+		PriceData: types.PriceData{
+			ModelRatio:                   1,
+			CompletionRatio:              2,
+			CacheRatio:                   0.1,
+			CacheCreationRatio:           1.25,
+			CacheCreationRatioConfigured: true,
+			GroupRatioInfo:               types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     3619,
+		CompletionTokens: 36,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:     2921,
+			CacheWriteTokens: &cacheWriteTokens,
+		},
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 3616, summary.CacheCreationTokens)
+	require.True(t, summary.CacheWriteBillingEnabled)
+	require.Empty(t, summary.CacheWriteBillingWarning)
+	// max(3619-2921-3616, 0) + 2921*0.1 + 3616*1.25 + 36*2 = 4884.1 => 4884
+	require.Equal(t, 4884, summary.Quota)
 }
 
 func TestAppendCacheWriteBillingOther(t *testing.T) {

@@ -481,11 +481,7 @@ export const useLogsData = () => {
           value: promptCacheUsage.cacheReadTokens,
         });
       }
-      if (
-        (promptCacheUsage.cacheWriteTokensWasReported &&
-          promptCacheUsage.cacheWriteTokensReportValid) ||
-        promptCacheUsage.cacheWriteTokensReported > 0
-      ) {
+      if (promptCacheUsage.hasVisibleCacheWrite) {
         expandDataLocal.push({
           key: promptCacheUsage.cacheWriteBillingEnabled
             ? t('缓存创建 Tokens')

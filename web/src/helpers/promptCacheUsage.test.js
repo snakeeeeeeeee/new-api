@@ -37,6 +37,7 @@ describe('normalizePromptCacheUsage', () => {
     expect(usage.inputTokensTotal).toBe(208343);
     expect(usage.ordinaryInputTokens).toBe(1022);
     expect(usage.cacheWriteTokensReported).toBe(729);
+    expect(usage.hasVisibleCacheWrite).toBe(true);
     expect(usage.cacheWriteTokensWasReported).toBe(true);
     expect(usage.cacheWriteTokensReportValid).toBe(true);
     expect(usage.cacheWriteTokensBilled).toBe(729);
@@ -163,6 +164,7 @@ describe('normalizePromptCacheUsage', () => {
     expect(usage.cacheWriteTokensReportValid).toBe(true);
     expect(usage.cacheWriteTokensBilled).toBe(0);
     expect(usage.cacheWriteBillingEnabled).toBe(true);
+    expect(usage.hasVisibleCacheWrite).toBe(false);
     expect(usage.ordinaryInputTokens).toBe(1000);
   });
 
@@ -178,6 +180,7 @@ describe('normalizePromptCacheUsage', () => {
     expect(usage.cacheWriteTokensWasReported).toBe(true);
     expect(usage.cacheWriteTokensReportValid).toBe(true);
     expect(usage.cacheWriteTokensReported).toBe(0);
+    expect(usage.hasVisibleCacheWrite).toBe(false);
     expect(usage.cacheWriteTokensBilled).toBe(0);
     expect(usage.cacheWriteBillingEnabled).toBe(false);
     expect(usage.ordinaryInputTokens).toBe(1000);
@@ -206,6 +209,7 @@ describe('normalizePromptCacheUsage', () => {
         ordinaryInputTokens: 12,
         cacheReadTokens: 0,
         cacheWriteTokensReported: 0,
+        hasVisibleCacheWrite: false,
         cacheWriteTokensWasReported: false,
         cacheWriteTokensReportValid: false,
       }),

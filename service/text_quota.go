@@ -211,19 +211,11 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 			reportedTokens := *usage.PromptTokensDetails.CacheWriteTokens
 			summary.CacheWriteTokensReported = &reportedTokens
 
-			availableInputTokens := summary.PromptTokens
-			if !summary.IsClaudeUsageSemantic && summary.CacheTokens > 0 {
-				availableInputTokens -= summary.CacheTokens
-			}
-			if availableInputTokens < 0 {
-				availableInputTokens = 0
-			}
-
 			switch {
 			case reportedTokens < 0:
 				summary.CacheWriteBillingWarning = fmt.Sprintf("上游返回的缓存写入 Tokens 无效：%d，已按普通输入计费", reportedTokens)
-			case cacheCreationTokens > availableInputTokens:
-				summary.CacheWriteBillingWarning = fmt.Sprintf("上游返回的缓存写入 Tokens %d 超过可用输入 Tokens %d，已按普通输入计费", reportedTokens, availableInputTokens)
+			case cacheCreationTokens > summary.PromptTokens:
+				summary.CacheWriteBillingWarning = fmt.Sprintf("上游返回的缓存写入 Tokens %d 超过输入 Tokens %d，已按普通输入计费", reportedTokens, summary.PromptTokens)
 			case relayInfo.PriceData.CacheCreationRatioConfigured:
 				summary.CacheCreationTokens = cacheCreationTokens
 				summary.CacheWriteBillingEnabled = true
@@ -357,6 +349,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 				audioInputQuota = decimal.NewFromFloat(summary.AudioInputPrice).
 					Div(decimal.NewFromInt(1000000)).Mul(dAudioTokens).Mul(dGroupRatio).Mul(dQuotaPerUnit)
 			}
+		}
+		if summary.CacheWriteBillingEnabled && baseTokens.IsNegative() {
+			baseTokens = decimal.Zero
 		}
 
 		promptQuota := baseTokens.Add(cachedTokensWithRatio).Add(imageTokensWithRatio).Add(cachedCreationTokensWithRatio)
