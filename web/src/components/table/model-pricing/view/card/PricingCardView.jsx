@@ -356,9 +356,6 @@ const PricingCardView = ({
                         </div>
                         <div>
                           {t('分组')}: {priceData?.usedGroupRatio ?? '-'}
-                          {priceData?.isDynamicRouteMaximum
-                            ? ` (${t('动态路由最高倍率')})`
-                            : ''}
                         </div>
                       </div>
                     </div>

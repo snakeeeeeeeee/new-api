@@ -973,11 +973,6 @@ export const formatPriceInfo = (priceData, t, quotaDisplayType = 'USD') => {
           {item.suffix}
         </span>
       ))}
-      {priceData?.isDynamicRouteMaximum ? (
-        <span style={{ color: 'var(--semi-color-warning)' }}>
-          {t('动态路由最高价')}
-        </span>
-      ) : null}
     </>
   );
 };

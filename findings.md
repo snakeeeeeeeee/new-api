@@ -1,3 +1,12 @@
+# Model marketplace dynamic-route label findings (2026-07-12)
+
+- The screenshot's orange label is emitted by `formatPriceInfo`; the same wording also appears in table and pricing-detail views.
+- `/api/pricing` returns per-model aggregate details with `ratio`, `max_ratio`, and `dynamic_route`.
+- `max_ratio` covers configured ratios across reachable child routes. Removing that calculation would risk showing a lower price than a route can actually charge.
+- The scoped fix keeps price and ratio values unchanged and removes only the "动态路由最高价/最高倍率" labels from all model-marketplace views.
+
+---
+
 # Usage Statistics Split Findings (2026-07-12)
 
 ## Follow-up table audit

@@ -111,10 +111,7 @@ const ModelPricingTable = ({
         render: (text, record) => (
           <Tag color='white' size='small' shape='circle'>
             {record?.isDynamicRouteMaximum ? (
-              <span style={{ display: 'inline-flex', gap: 4 }}>
-                <span>{formatRatioLabel(text)}x</span>
-                <span>{t('动态路由最高倍率')}</span>
-              </span>
+              `${formatRatioLabel(text)}x`
             ) : record?.ratioDetail?.has_ratio_override ? (
               <span style={{ display: 'inline-flex', gap: 4 }}>
                 <span style={{ textDecoration: 'line-through' }}>

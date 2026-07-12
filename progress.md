@@ -156,6 +156,17 @@
 
 ---
 
+# 2026-07-12 Model marketplace dynamic-route labels
+
+- Located the label and ratio suffix in card, table, shared price formatting, and pricing-detail modal paths.
+- Confirmed backend model-specific aggregate pricing exposes both configured base ratio and maximum reachable child-route ratio.
+- Removed the user-facing maximum-price/maximum-ratio wording while preserving the pricing calculation.
+- Preserved the detail modal's dynamic-route numeric precedence so user-specific base overrides cannot replace the correct model-route value.
+- Targeted Prettier and ESLint checks passed; the production Vite build passed with existing dependency/chunk warnings.
+- Browser verification on `http://localhost:3000/pricing` found `claude-fable-5` pricing and confirmed both removed labels are absent from the page.
+
+---
+
 # Progress
 
 ## 2026-06-23

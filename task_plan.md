@@ -1,3 +1,25 @@
+# Task Plan: Hide dynamic-route maximum pricing labels
+
+## Goal
+Keep aggregate child-route model pricing calculations intact while showing users only the configured price and ratio values, without "dynamic route maximum" labels.
+
+## Current Phase
+Complete
+
+### Phase 1: Discovery, implementation, and verification
+- [x] Locate all model-marketplace dynamic-route maximum labels.
+- [x] Confirm `max_ratio` remains necessary for price coverage across reachable child routes.
+- [x] Remove the labels from card, table, and pricing-detail views.
+- [x] Run focused frontend checks and review the final diff.
+- **Status:** complete
+
+## Decision
+| Decision | Rationale |
+| --- | --- |
+| Preserve existing `max_ratio` calculation and hide only user-facing labels | Avoids understating a dynamically routed price while removing confusing "highest price" wording. |
+
+---
+
 # Task Plan: Usage statistics billing split and dashboard redesign
 
 ## Goal
