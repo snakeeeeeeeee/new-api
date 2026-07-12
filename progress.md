@@ -1,5 +1,13 @@
 # Usage Statistics Split Progress (2026-07-12)
 
+## Phase 5: Docker table layout audit
+- **Status:** in_progress
+- User reported that some UsageStats tables do not visually fill their available width.
+- Current plan is to rebuild Docker dev, inspect all ranking/funding tables with real data, and fix column sizing based on rendered evidence.
+- Built Docker image `1aa4938c...`, recreated `new-api-dev`, and verified `/api/status` succeeds.
+- Source review identified unconstrained columns plus desktop `max-content` scrolling in both main table components.
+- Initial browser verification is authentication-blocked; checking another available local browser session before requesting user action.
+
 ## Phase 1: Backend contract and attribution
 - **Status:** complete
 - Loaded required planning, brainstorming, UI/UX, and browser workflows.
@@ -220,3 +228,32 @@
 | 2026-06-23 | Local token `qArd...` returned 401 | Docker dev test | Token row was soft-deleted; created a local test token `codexasyncimage20260623localtest0000abcdef123456`. |
 | 2026-06-23 | Local token could not access `ikun_gpt-image-2` | Docker dev test | Added `ikun_gpt-image-2` to dev `UserUsableGroups`. |
 | 2026-06-23 | First callback event stayed pending | Docker dev test | Callback URL was `localhost:3001`, which points to the image-handle container. Changed local callback address to `http://host.docker.internal:3001`. |
+# 2026-07-12 UsageStats table layout audit
+- Rebuilt and recreated `new-api-dev` from the final source; image `sha256:948eb79a1ad3b4663b682a5f2e4784606fd0b4ac5111b07213d51dbf19449c22` is healthy on port 3001.
+- Replaced shrinking `max-content` table widths with container-filling desktop widths and bounded mobile scroll widths.
+- Added explicit column widths and first-column ellipsis so Semi Table uses fixed layout and long usernames/order numbers cannot distort adjacent columns.
+- Authenticated browser checks passed for total usage, subscription usage, recharge, subscription purchase, user model details, and funding order details.
+- At 1440px the main table is 1174/1174px; at 1024px and 768px only the table body scrolls; at 375px the four-column table is exactly 580px inside a 327px viewport container.
+- Document `scrollWidth` matched viewport width at 1440, 1024, 768, and 375px. Mobile header height is stable at 58px.
+- Targeted Prettier and ESLint, production Vite build, Docker build, and `git diff --check` passed.
+- Removed the temporary local administrator used for authenticated verification.
+# 2026-07-12 Wallet usage ranking
+- Started a new implementation phase for an independent wallet/usage-based ranking placed after total usage.
+- Scope is backend `wallet_ranking`, frontend tab/order/detail source, focused tests, and Docker dev rebuild.
+- Located the one-pass aggregation and existing mixed-source regression test in `model/log.go` and `model/log_test.go`.
+- Confirmed source-specific rank rows reuse `usageStatsSortedUserRows`, preserving quota/request/user-ID ordering and the configured limit.
+- Traced the frontend ranking mode and user-detail source flow; no new route or request cache layer is required.
+- First focused model test reached the new wallet assertions, then failed only because an existing model-level expected wallet total needed to include the added fixture.
+- Full i18n lint remains blocked by 421 pre-existing repository findings; none reference the changed UsageStats modules.
+- Focused UsageStats model tests passed after updating the fixture-dependent model total.
+- Targeted ESLint/Prettier, seven-locale key validation, and the production Vite build passed.
+- Reviewed the complete wallet-ranking diff and reference graph; backend response, frontend mode, empty state, and wallet detail scope are connected.
+- Built Docker image `sha256:f44fbd674575a60103588c21b3b8ebd74d3f0d6fd46bca96a404543a676986e8`; recreated app is healthy on port 3001.
+- Created a disposable local root account for authenticated browser verification; it will be deleted after the audit.
+- Authenticated successfully against the rebuilt Docker app and opened `/console/usage-stats`.
+- Loaded the existing 2026-04-27 mixed-source dataset; overview reports `$0.83` wallet usage and 22 wallet requests.
+- Verified the new wallet tab title, quota column, selected state, populated rows, and independent wallet ordering in the rebuilt Docker UI.
+- Clicked the top wallet user and verified wallet-scoped detail data and copy.
+- Mobile browser verification passed for tab fit, selected state, populated ranking, and absence of document-level horizontal overflow.
+- Full `go test ./model`, final whitespace audit, Docker health/status check, and temporary-account residue check passed.
+- Phase 6 is complete; unrelated untracked files remain untouched.

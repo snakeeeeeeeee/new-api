@@ -1,5 +1,13 @@
 # Usage Statistics Split Findings (2026-07-12)
 
+## Follow-up table audit
+- The reported issue is visual table fill, not API completeness. Primary suspects are unconstrained Semi Table column allocation, hidden mobile columns, and pagination/container width behavior.
+- The preferred correction is one elastic identity column plus explicit widths for numeric/time columns, avoiding fixed total table widths and whole-page horizontal scrolling.
+- Docker dev is currently healthy but predates commit `424d5e02`; it must be rebuilt before visual conclusions are valid.
+- Docker image `1aa4938c...` was rebuilt from current `main` and the app was recreated successfully on port 3001.
+- Both desktop ranking tables currently use `scroll={{ x: 'max-content' }}` without explicit column widths; this is a strong source-level explanation for unfilled right-side space when cell content is short.
+- The first automated in-app browser session redirects the rebuilt page to `/login`, so it cannot yet provide authenticated table measurements.
+
 ## Requirements and current state
 - Current `GetUsageStats` loads filtered consume logs and builds one total summary, trend, model ranking, user ranking, and user-model details in memory.
 - Consumption logs can be classified from `other.billing_source`; exact `wallet` and `subscription` are known, while missing/invalid values must remain unknown.
@@ -272,3 +280,29 @@
 - `/Users/zhangyu/code/go/new-api/relay/image_handle_sync.go`
 - `/Users/zhangyu/code/go/new-api/service/image_handle_executor.go`
 - `/Users/zhangyu/code/go/new-api/docs/image-handle-new-api-internal-executor.md`
+# UsageStats Table Layout Findings (2026-07-12)
+- Semi Table writes `scroll.x` directly to the internal `<table>` width. `max-content` therefore shrank short-content tables and left unused space on the right.
+- `scroll.x='100%'` fixes desktop fill but auto table layout still lets long usernames expand the first column and compress other headers.
+- In the installed Semi version, the public `tableLayout` prop is not consulted by `getTableLayout`; fixed layout is selected when a column has `ellipsis` or `fixed`.
+- The stable combination is explicit column widths, `ellipsis` on the first text-heavy column, `100%`/`max(100%, min-width)` desktop width, and a bounded 580px mobile width for the four visible columns.
+- Internal horizontal scrolling at narrow widths is intentional; the document itself has no horizontal overflow.
+# Wallet Usage Ranking Direction (2026-07-12)
+- The new tab must use an independently aggregated and sorted wallet ranking; client-side sorting of the total ranking would use the wrong ordering and may omit users.
+- Display order is `总消耗 / 按量消耗 / 订阅包消耗`.
+- Wallet ranking excludes subscription and unknown-source quota, and its user detail drill-down uses the wallet billing source.
+- `populateUsageStatsUsage` already maintains a dedicated subscription accumulator during the single log scan; a wallet accumulator can follow the same path without another database query.
+- The response contract currently exposes `ranking` and `subscription_ranking`; `wallet_ranking` belongs beside them in `UsageStatsData`.
+- Both source-specific rankings should include only positive-quota consumption, matching the current subscription ranking semantics.
+- The existing mixed-source model test is the right regression point; wallet fixtures should make wallet ordering differ from total ordering so independent sorting is proven.
+- `UsageStatsPage.loadUserDetail` already accepts an arbitrary billing source and sends it as `billing_source`; wallet mode only needs to pass `wallet` from the ranking row click.
+- Frontend mode-specific copy must cover the panel title, quota column, empty state, tag color, and detail sheet title, not only the new tab label.
+- No component-level UsageRanking test exists; backend aggregation tests plus frontend static/build/i18n checks and Docker browser verification provide proportional coverage.
+- Locale coverage is seven files: en, fr, ja, ru, vi, zh-CN, and zh-TW.
+- Wallet detail trend copy needs its own `仅统计按量计费额度` key so the displayed scope matches the filtered API response.
+- Final static trace confirms `wallet_ranking` is initialized as an empty array, populated only from positive wallet consumption, sorted independently, and consumed by wallet mode.
+- The tab order in code is total, wallet, subscription, matching the requested placement.
+- Docker data for 2026-04-27 contains wallet quota `$0.83` across 22 requests, sufficient for an authenticated wallet-ranking and drill-down audit.
+- Authenticated UI shows the requested order `总消耗 / 按量消耗 / 订阅包消耗`.
+- Wallet ranking is demonstrably independent: its first user has `$0.26` wallet usage, while the total ranking first user has `$0.53` combined usage.
+- Wallet drill-down title is `按量消耗明细`; the selected user shows `$0.26` wallet, `$0.00` subscription, and one wallet-only model row.
+- At 375px all three secondary tabs remain visible, document width stays 375px, and the table uses its existing bounded 580px internal scroll width.

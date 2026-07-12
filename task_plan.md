@@ -4,7 +4,7 @@
 Separate subscription, wallet, and unknown usage accounting; add a subscription usage ranking; and redesign `/console/usage-stats` into a compact, responsive, lazily loaded tabbed dashboard.
 
 ## Current Phase
-Implementation complete; authenticated visual QA blocked by the unavailable admin session.
+Complete
 
 ### Phase 1: Backend contract and attribution
 - [x] Add section and billing-source query contracts with validation and backward-compatible defaults.
@@ -26,9 +26,23 @@ Implementation complete; authenticated visual QA blocked by the unavailable admi
 
 ### Phase 4: Verification and delivery
 - [x] Run focused/full Go tests and frontend formatting/build/i18n checks.
-- [ ] Run authenticated responsive browser checks when a local admin session is available.
+- [x] Run authenticated responsive browser checks against Docker dev.
 - [x] Review diff scope, update planning records, and deliver.
-- **Status:** complete_with_visual_qa_blocked
+- **Status:** complete
+
+### Phase 5: Docker table layout audit
+- [x] Rebuild and recreate Docker dev from current `main`.
+- [x] Inspect every usage-statistics table at desktop and narrow viewports.
+- [x] Correct incomplete table fill and unstable mobile column allocation.
+- [x] Run targeted frontend checks, production build, and authenticated browser verification.
+- **Status:** complete
+
+### Phase 6: Wallet usage ranking
+- [x] Add an independently sorted `wallet_ranking` to the usage aggregation response.
+- [x] Add backend coverage for wallet-only membership, values, and ordering.
+- [x] Add `按量消耗` after `总消耗` and preserve wallet-scoped detail drill-down.
+- [x] Run focused backend/frontend checks and rebuild Docker dev.
+- **Status:** complete
 
 ## Decisions
 | Decision | Rationale |
@@ -51,6 +65,15 @@ Implementation complete; authenticated visual QA blocked by the unavailable admi
 | Full i18n lint reports 426 repository-wide hardcoded strings | 1 | Remove the five new-page findings; retain unrelated existing warnings and run targeted checks. |
 | `i18n:extract` rewrote hundreds of unrelated locale entries | 1 | Mechanically reverse only the locale diff, then add feature keys with scoped patches. |
 | In-app browser redirects `/console/usage-stats` to `/login` | 1 | Preserve authentication boundaries and report responsive screenshot QA as blocked until an admin signs in. |
+| Cached Browser skill version path no longer existed | 1 | Locate and load the current installed browser skill version before browser work. |
+| Semi Table ignored its declared `tableLayout` prop | 1 | Follow the installed implementation and enable `ellipsis` on a bounded first column, which activates fixed layout. |
+| Docker health loop used zsh's read-only `status` name | 1 | Rename the loop variable to `health_status`. |
+| A usage-file search used unmatched zsh globs | 1 | Use the confirmed `model/log.go` and explicit test paths instead of optional shell globs. |
+| Locale lookup assumed `zh.json` existed | 1 | Enumerate the locale directory and patch the repository's actual Chinese locale filename. |
+| Extended wallet fixture changed the existing `gpt-4o` model total | 1 | Update the expected wallet model quota from 100 to 450; the new aggregate was correct. |
+| Full i18n lint reports 421 repository-wide hardcoded strings | 1 | Confirm no UsageStats finding is present and retain targeted locale/prettier checks. |
+| Python environment has no bcrypt module | 1 | Use the project's existing Go password-hash implementation for the temporary browser account. |
+| Phase 4 status patch omitted the Markdown list prefix | 1 | Read the exact line and patch `- **Status:**` with its prefix. |
 
 ---
 

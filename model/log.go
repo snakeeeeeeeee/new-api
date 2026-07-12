@@ -745,6 +745,7 @@ type UsageStatsData struct {
 	GeneratedAt                 int64                                    `json:"generated_at"`
 	Summary                     UsageStatsSummary                        `json:"summary"`
 	Ranking                     []UsageStatsRankItem                     `json:"ranking"`
+	WalletRanking               []UsageStatsRankItem                     `json:"wallet_ranking"`
 	SubscriptionRanking         []UsageStatsRankItem                     `json:"subscription_ranking"`
 	Trend                       []UsageStatsTrendPoint                   `json:"trend"`
 	Models                      []UsageStatsModelItem                    `json:"models"`
@@ -1707,6 +1708,7 @@ func populateUsageStatsUsage(data *UsageStatsData, query UsageStatsQuery) error 
 	activeUsers := make(map[int]struct{})
 	subscriptionActiveUsers := make(map[int]struct{})
 	rankingMap := make(map[int]*usageStatsBaseRow)
+	walletRankingMap := make(map[int]*usageStatsBaseRow)
 	subscriptionRankingMap := make(map[int]*usageStatsBaseRow)
 	modelMap := make(map[string]*usageStatsBaseRow)
 	detailMap := make(map[string]*usageStatsBaseRow)
@@ -1744,6 +1746,14 @@ func populateUsageStatsUsage(data *UsageStatsData, query UsageStatsQuery) error 
 			rankingMap[row.UserId] = rankingRow
 		}
 		addUsageStatsBaseRow(rankingRow, row, tokens, source)
+		if source == UsageStatsBillingSourceWallet && row.Quota > 0 {
+			walletRow := walletRankingMap[row.UserId]
+			if walletRow == nil {
+				walletRow = &usageStatsBaseRow{UserId: row.UserId, Username: row.Username}
+				walletRankingMap[row.UserId] = walletRow
+			}
+			addUsageStatsBaseRow(walletRow, row, tokens, source)
+		}
 		if source == UsageStatsBillingSourceSubscription && row.Quota > 0 {
 			subscriptionRow := subscriptionRankingMap[row.UserId]
 			if subscriptionRow == nil {
@@ -1791,6 +1801,9 @@ func populateUsageStatsUsage(data *UsageStatsData, query UsageStatsQuery) error 
 
 	for _, row := range usageStatsSortedUserRows(rankingMap, query.Limit) {
 		data.Ranking = append(data.Ranking, usageStatsRankItemFromRow(row))
+	}
+	for _, row := range usageStatsSortedUserRows(walletRankingMap, query.Limit) {
+		data.WalletRanking = append(data.WalletRanking, usageStatsRankItemFromRow(row))
 	}
 	for _, row := range usageStatsSortedUserRows(subscriptionRankingMap, query.Limit) {
 		data.SubscriptionRanking = append(data.SubscriptionRanking, usageStatsRankItemFromRow(row))
@@ -1852,6 +1865,7 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 		TrendGranularity:            query.TrendGranularity,
 		GeneratedAt:                 time.Now().Unix(),
 		Ranking:                     []UsageStatsRankItem{},
+		WalletRanking:               []UsageStatsRankItem{},
 		SubscriptionRanking:         []UsageStatsRankItem{},
 		Trend:                       []UsageStatsTrendPoint{},
 		Models:                      []UsageStatsModelItem{},

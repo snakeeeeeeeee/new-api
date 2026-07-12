@@ -274,7 +274,7 @@ func sumUsageStatsTrend(trend []UsageStatsTrendPoint) UsageStatsTrendPoint {
 	return total
 }
 
-func TestGetUsageStatsSplitsBillingSourcesAndBuildsSubscriptionRanking(t *testing.T) {
+func TestGetUsageStatsSplitsBillingSourcesAndBuildsSourceRankings(t *testing.T) {
 	truncateTables(t)
 	resetLogTestTables(t)
 	base := time.Date(2026, 7, 12, 9, 0, 0, 0, time.Local).Unix()
@@ -284,6 +284,8 @@ func TestGetUsageStatsSplitsBillingSourcesAndBuildsSubscriptionRanking(t *testin
 		{UserId: 2, Username: "bob", CreatedAt: base + 120, Type: LogTypeConsume, ModelName: "claude-sonnet", Quota: 300, PromptTokens: 30, CompletionTokens: 3, Other: `{"billing_source":"subscription"}`},
 		{UserId: 3, Username: "carol", CreatedAt: base + 180, Type: LogTypeConsume, ModelName: "gemini-pro", Quota: 400, PromptTokens: 40, CompletionTokens: 4, Other: `{}`},
 		{UserId: 4, Username: "zero", CreatedAt: base + 240, Type: LogTypeConsume, ModelName: "gpt-4o", Quota: 0, PromptTokens: 5, CompletionTokens: 0, Other: `{"billing_source":"subscription"}`},
+		{UserId: 5, Username: "dave", CreatedAt: base + 300, Type: LogTypeConsume, ModelName: "gpt-4o", Quota: 350, PromptTokens: 35, CompletionTokens: 3, Other: `{"billing_source":"wallet"}`},
+		{UserId: 6, Username: "wallet-zero", CreatedAt: base + 360, Type: LogTypeConsume, ModelName: "gpt-4o", Quota: 0, PromptTokens: 5, CompletionTokens: 0, Other: `{"billing_source":"wallet"}`},
 	}
 	for _, logItem := range logs {
 		seedUsageStatsLog(t, logItem)
@@ -297,15 +299,23 @@ func TestGetUsageStatsSplitsBillingSourcesAndBuildsSubscriptionRanking(t *testin
 		TrendGranularity: UsageStatsGranularityHour,
 	})
 	require.NoError(t, err)
-	require.Equal(t, int64(1000), stats.Summary.Quota)
-	require.Equal(t, int64(100), stats.Summary.WalletQuota)
-	require.Equal(t, int64(1), stats.Summary.WalletRequestCount)
+	require.Equal(t, int64(1350), stats.Summary.Quota)
+	require.Equal(t, int64(450), stats.Summary.WalletQuota)
+	require.Equal(t, int64(3), stats.Summary.WalletRequestCount)
 	require.Equal(t, int64(500), stats.Summary.SubscriptionQuota)
 	require.Equal(t, int64(3), stats.Summary.SubscriptionRequestCount)
 	require.Equal(t, int64(2), stats.Summary.SubscriptionActiveUserCount)
 	require.Equal(t, int64(400), stats.Summary.UnknownQuota)
 	require.Equal(t, int64(1), stats.Summary.UnknownRequestCount)
 	require.Equal(t, stats.Summary.Quota, stats.Summary.WalletQuota+stats.Summary.SubscriptionQuota+stats.Summary.UnknownQuota)
+
+	require.Len(t, stats.WalletRanking, 2)
+	require.Equal(t, 5, stats.WalletRanking[0].UserId)
+	require.Equal(t, int64(350), stats.WalletRanking[0].Quota)
+	require.Equal(t, int64(350), stats.WalletRanking[0].WalletQuota)
+	require.Equal(t, 1, stats.WalletRanking[1].UserId)
+	require.Equal(t, int64(100), stats.WalletRanking[1].Quota)
+	require.Zero(t, stats.WalletRanking[1].SubscriptionQuota)
 
 	require.Len(t, stats.SubscriptionRanking, 2)
 	require.Equal(t, 2, stats.SubscriptionRanking[0].UserId)
@@ -322,7 +332,7 @@ func TestGetUsageStatsSplitsBillingSourcesAndBuildsSubscriptionRanking(t *testin
 	for _, item := range stats.Models {
 		modelsByName[item.ModelName] = item
 	}
-	require.Equal(t, int64(100), modelsByName["gpt-4o"].WalletQuota)
+	require.Equal(t, int64(450), modelsByName["gpt-4o"].WalletQuota)
 	require.Equal(t, int64(200), modelsByName["gpt-4o"].SubscriptionQuota)
 	require.Equal(t, int64(400), modelsByName["gemini-pro"].UnknownQuota)
 }

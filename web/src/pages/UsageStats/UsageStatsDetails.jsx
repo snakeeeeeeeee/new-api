@@ -103,7 +103,9 @@ const UsageStatsDetails = ({
         subtext:
           userState?.source === 'subscription'
             ? t('仅统计订阅包额度')
-            : t('按当前筛选条件统计'),
+            : userState?.source === 'wallet'
+              ? t('仅统计按量计费额度')
+              : t('按当前筛选条件统计'),
       },
       axes: [
         { orient: 'bottom', type: 'band' },
@@ -137,17 +139,21 @@ const UsageStatsDetails = ({
       {
         title: t('模型'),
         dataIndex: 'model_name',
+        width: isMobile ? 220 : 200,
+        ellipsis: true,
         render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
       },
       {
         title: t('消耗额度 ($)'),
         dataIndex: 'quota',
+        width: 130,
         sorter: (a, b) => (a.quota || 0) - (b.quota || 0),
         render: formatQuotaUSD,
       },
       {
         title: t('请求数'),
         dataIndex: 'request_count',
+        width: 90,
         render: (value) => renderNumber(value || 0),
       },
     ];
@@ -156,16 +162,19 @@ const UsageStatsDetails = ({
         {
           title: t('订阅包'),
           dataIndex: 'subscription_quota',
+          width: 110,
           render: formatQuotaUSD,
         },
         {
           title: t('按量计费'),
           dataIndex: 'wallet_quota',
+          width: 110,
           render: formatQuotaUSD,
         },
         {
           title: t('Token 消耗 (M)'),
           dataIndex: 'total_tokens',
+          width: 130,
           render: formatTokensMillion,
         },
       );
@@ -185,16 +194,20 @@ const UsageStatsDetails = ({
         {
           title: t('订单号'),
           dataIndex: 'trade_no',
+          width: isMobile ? 260 : 240,
+          ellipsis: true,
           render: (value) => <Text copyable>{value || '-'}</Text>,
         },
         {
           title: t('余额充值实付'),
           dataIndex: 'money',
+          width: 130,
           render: renderPaymentAmount,
         },
         {
           title: t('完成时间'),
           dataIndex: 'complete_time',
+          width: 170,
           render: formatDateTime,
         },
       ];
@@ -205,11 +218,13 @@ const UsageStatsDetails = ({
           {
             title: t('支付方式'),
             dataIndex: 'payment_method',
+            width: 120,
             render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
           },
           {
             title: t('余额充值额度'),
             dataIndex: 'amount',
+            width: 140,
             render: renderQuotaWithAmount,
           },
         );
@@ -220,22 +235,27 @@ const UsageStatsDetails = ({
       {
         title: t('订单号'),
         dataIndex: 'trade_no',
+        width: isMobile ? 260 : 220,
+        ellipsis: true,
         render: (value) => <Text copyable>{value || '-'}</Text>,
       },
       {
         title: t('订阅套餐'),
         dataIndex: 'plan_title',
+        width: isMobile ? 180 : 160,
         render: (value, record) =>
           value || `${t('套餐')} #${record.plan_id || '-'}`,
       },
       {
         title: t('订阅包购买金额'),
         dataIndex: 'money',
+        width: 130,
         render: renderPaymentAmount,
       },
       {
         title: t('完成时间'),
         dataIndex: 'complete_time',
+        width: 170,
         render: formatDateTime,
       },
     ];
@@ -243,6 +263,7 @@ const UsageStatsDetails = ({
       columns.splice(2, 0, {
         title: t('支付方式'),
         dataIndex: 'payment_method',
+        width: 120,
         render: (value) => <Tag shape='circle'>{value || '-'}</Tag>,
       });
     }
@@ -254,7 +275,7 @@ const UsageStatsDetails = ({
       <SideSheet
         title={
           userRecord
-            ? `${userState?.source === 'subscription' ? t('订阅包消耗明细') : t('用户模型明细')} · ${userRecord.username || userRecord.user_id}`
+            ? `${userState?.source === 'wallet' ? t('按量消耗明细') : userState?.source === 'subscription' ? t('订阅包消耗明细') : t('用户模型明细')} · ${userRecord.username || userRecord.user_id}`
             : t('用户模型明细')
         }
         visible={!!userRecord}
@@ -315,7 +336,7 @@ const UsageStatsDetails = ({
               dataSource={userDetails}
               loading={userState.loading}
               pagination={false}
-              scroll={isMobile ? undefined : { x: 'max-content' }}
+              scroll={{ x: isMobile ? 440 : '100%' }}
               empty={<Empty title={t('暂无模型明细')} />}
             />
           </div>
@@ -350,7 +371,9 @@ const UsageStatsDetails = ({
               onPageChange: onFundingPageChange,
               onPageSizeChange: onFundingPageSizeChange,
             }}
-            scroll={isMobile ? undefined : { x: 'max-content' }}
+            scroll={{
+              x: isMobile ? (isRecharge ? 560 : 740) : '100%',
+            }}
             empty={
               <Empty
                 title={

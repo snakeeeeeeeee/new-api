@@ -77,6 +77,8 @@ const FundingRecords = ({
     const userColumn = {
       title: t('用户'),
       dataIndex: 'username',
+      width: isMobile ? 200 : 180,
+      ellipsis: true,
       render: (_, record, index) => (
         <div className='min-w-0'>
           <div className='truncate font-medium'>
@@ -101,17 +103,20 @@ const FundingRecords = ({
         {
           title: t('余额充值实付'),
           dataIndex: 'money',
+          width: isMobile ? 130 : 120,
           sorter: (a, b) => (a.money || 0) - (b.money || 0),
           render: (value) => renderPaymentAmount(value || 0),
         },
         {
           title: t('充值笔数'),
           dataIndex: 'order_count',
+          width: isMobile ? 90 : 80,
           render: (value) => renderNumber(value || 0),
         },
         {
           title: t('最后充值时间'),
           dataIndex: 'last_topup_at',
+          width: 160,
           render: formatDateTime,
         },
       ];
@@ -119,6 +124,7 @@ const FundingRecords = ({
         result.splice(2, 0, {
           title: t('余额充值额度'),
           dataIndex: 'amount',
+          width: 140,
           render: (value) => renderQuotaWithAmount(value || 0),
         });
       }
@@ -129,17 +135,20 @@ const FundingRecords = ({
       {
         title: t('订阅包购买金额'),
         dataIndex: 'money',
+        width: isMobile ? 130 : 120,
         sorter: (a, b) => (a.money || 0) - (b.money || 0),
         render: (value) => renderPaymentAmount(value || 0),
       },
       {
         title: t('订阅购买笔数'),
         dataIndex: 'order_count',
+        width: isMobile ? 90 : 80,
         render: (value) => renderNumber(value || 0),
       },
       {
         title: t('最后购买时间'),
         dataIndex: 'last_purchase_at',
+        width: 160,
         render: formatDateTime,
       },
     ];
@@ -147,6 +156,7 @@ const FundingRecords = ({
       result.splice(3, 0, {
         title: t('订阅包数'),
         dataIndex: 'plan_count',
+        width: 100,
         render: (value) => renderNumber(value || 0),
       });
     }
@@ -209,7 +219,7 @@ const FundingRecords = ({
           onClick: () => onUserSelect(record, mode),
           className: 'cursor-pointer',
         })}
-        scroll={isMobile ? undefined : { x: 'max-content' }}
+        scroll={{ x: isMobile ? 580 : '100%' }}
         empty={
           <Empty
             title={

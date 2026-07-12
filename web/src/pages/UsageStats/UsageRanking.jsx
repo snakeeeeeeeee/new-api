@@ -43,13 +43,21 @@ const UsageRanking = ({
 }) => {
   const { t } = useTranslation();
   const totalItems = data?.ranking || [];
+  const walletItems = data?.wallet_ranking || [];
   const subscriptionItems = data?.subscription_ranking || [];
-  const items = mode === 'subscription' ? subscriptionItems : totalItems;
+  const items =
+    mode === 'wallet'
+      ? walletItems
+      : mode === 'subscription'
+        ? subscriptionItems
+        : totalItems;
 
   const columns = useMemo(() => {
     const userColumn = {
       title: t('用户'),
       dataIndex: 'username',
+      width: isMobile ? 200 : 180,
+      ellipsis: true,
       render: (_, record, index) => (
         <div className='min-w-0'>
           <div className='truncate font-medium'>
@@ -65,8 +73,14 @@ const UsageRanking = ({
       ),
     };
     const quotaColumn = {
-      title: mode === 'subscription' ? t('订阅包使用额度') : t('总消耗额度'),
+      title:
+        mode === 'wallet'
+          ? t('按量使用额度')
+          : mode === 'subscription'
+            ? t('订阅包使用额度')
+            : t('总消耗额度'),
       dataIndex: 'quota',
+      width: isMobile ? 130 : 120,
       sorter: (a, b) => (a.quota || 0) - (b.quota || 0),
       render: (value) => (
         <span className='font-medium tabular-nums'>
@@ -77,12 +91,14 @@ const UsageRanking = ({
     const requestColumn = {
       title: t('请求数'),
       dataIndex: 'request_count',
+      width: isMobile ? 90 : 80,
       sorter: (a, b) => (a.request_count || 0) - (b.request_count || 0),
       render: (value) => renderNumber(value || 0),
     };
     const lastColumn = {
       title: t('最后请求时间'),
       dataIndex: 'last_request_at',
+      width: 160,
       render: (value) => formatDateTime(value),
     };
     if (isMobile) return [userColumn, quotaColumn, requestColumn, lastColumn];
@@ -92,16 +108,19 @@ const UsageRanking = ({
         {
           title: t('订阅包'),
           dataIndex: 'subscription_quota',
+          width: 100,
           render: (value) => formatQuotaUSD(value || 0),
         },
         {
           title: t('按量计费'),
           dataIndex: 'wallet_quota',
+          width: 100,
           render: (value) => formatQuotaUSD(value || 0),
         },
         {
           title: t('来源未知'),
           dataIndex: 'unknown_quota',
+          width: 100,
           render: (value) => formatQuotaUSD(value || 0),
         },
       );
@@ -111,6 +130,7 @@ const UsageRanking = ({
       {
         title: t('Token 消耗 (M)'),
         dataIndex: 'total_tokens',
+        width: 120,
         render: (value) => formatTokensMillion(value || 0),
       },
       lastColumn,
@@ -123,11 +143,24 @@ const UsageRanking = ({
       <div className='mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between'>
         <div>
           <Title heading={6} className='!mb-1'>
-            {mode === 'subscription' ? t('订阅包消耗排行') : t('用户消耗排行')}
+            {mode === 'wallet'
+              ? t('按量消耗排行')
+              : mode === 'subscription'
+                ? t('订阅包消耗排行')
+                : t('用户消耗排行')}
           </Title>
           <Text type='tertiary'>{t('点击用户行查看该用户的模型明细')}</Text>
         </div>
-        <Tag color={mode === 'subscription' ? 'violet' : 'blue'} shape='circle'>
+        <Tag
+          color={
+            mode === 'wallet'
+              ? 'green'
+              : mode === 'subscription'
+                ? 'violet'
+                : 'blue'
+          }
+          shape='circle'
+        >
           {t('按消耗额度倒序')}
         </Tag>
       </div>
@@ -138,6 +171,7 @@ const UsageRanking = ({
         className='mb-3'
       >
         <TabPane itemKey='total' tab={t('总消耗')} />
+        <TabPane itemKey='wallet' tab={t('按量消耗')} />
         <TabPane itemKey='subscription' tab={t('订阅包消耗')} />
       </Tabs>
       <Table
@@ -154,17 +188,25 @@ const UsageRanking = ({
           onClick: () =>
             onUserSelect(
               record,
-              mode === 'subscription' ? 'subscription' : 'all',
+              mode === 'wallet'
+                ? 'wallet'
+                : mode === 'subscription'
+                  ? 'subscription'
+                  : 'all',
             ),
           className: 'cursor-pointer',
         })}
-        scroll={isMobile ? undefined : { x: 'max-content' }}
+        scroll={{
+          x: isMobile ? 580 : mode === 'total' ? 'max(100%, 960px)' : '100%',
+        }}
         empty={
           <Empty
             title={
-              mode === 'subscription'
-                ? t('暂无订阅包消耗数据')
-                : t('暂无用户消耗数据')
+              mode === 'wallet'
+                ? t('暂无按量消耗数据')
+                : mode === 'subscription'
+                  ? t('暂无订阅包消耗数据')
+                  : t('暂无用户消耗数据')
             }
             description={t('当前筛选范围内没有消费日志')}
           />
