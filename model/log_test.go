@@ -261,11 +261,102 @@ func sumUsageStatsTrend(trend []UsageStatsTrendPoint) UsageStatsTrendPoint {
 		total.PromptTokens += point.PromptTokens
 		total.CompletionTokens += point.CompletionTokens
 		total.TotalTokens += point.TotalTokens
+		total.WalletQuota += point.WalletQuota
+		total.WalletRequestCount += point.WalletRequestCount
+		total.SubscriptionQuota += point.SubscriptionQuota
+		total.SubscriptionRequestCount += point.SubscriptionRequestCount
+		total.UnknownQuota += point.UnknownQuota
+		total.UnknownRequestCount += point.UnknownRequestCount
 		total.ClaudeCacheTTLSubsidyQuota += point.ClaudeCacheTTLSubsidyQuota
 		total.ClaudeCacheTTLSubsidyRequestCount += point.ClaudeCacheTTLSubsidyRequestCount
 		total.ClaudeCacheTTLRepricedTokens += point.ClaudeCacheTTLRepricedTokens
 	}
 	return total
+}
+
+func TestGetUsageStatsSplitsBillingSourcesAndBuildsSubscriptionRanking(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+	base := time.Date(2026, 7, 12, 9, 0, 0, 0, time.Local).Unix()
+	logs := []*Log{
+		{UserId: 1, Username: "alice", CreatedAt: base, Type: LogTypeConsume, ModelName: "gpt-4o", Quota: 100, PromptTokens: 10, CompletionTokens: 1, Other: `{"billing_source":"wallet"}`},
+		{UserId: 1, Username: "alice", CreatedAt: base + 60, Type: LogTypeConsume, ModelName: "gpt-4o", Quota: 200, PromptTokens: 20, CompletionTokens: 2, Other: `{"billing_source":"subscription"}`},
+		{UserId: 2, Username: "bob", CreatedAt: base + 120, Type: LogTypeConsume, ModelName: "claude-sonnet", Quota: 300, PromptTokens: 30, CompletionTokens: 3, Other: `{"billing_source":"subscription"}`},
+		{UserId: 3, Username: "carol", CreatedAt: base + 180, Type: LogTypeConsume, ModelName: "gemini-pro", Quota: 400, PromptTokens: 40, CompletionTokens: 4, Other: `{}`},
+		{UserId: 4, Username: "zero", CreatedAt: base + 240, Type: LogTypeConsume, ModelName: "gpt-4o", Quota: 0, PromptTokens: 5, CompletionTokens: 0, Other: `{"billing_source":"subscription"}`},
+	}
+	for _, logItem := range logs {
+		seedUsageStatsLog(t, logItem)
+	}
+
+	stats, err := GetUsageStats(UsageStatsQuery{
+		Section:          UsageStatsSectionUsage,
+		StartTimestamp:   base - 1,
+		EndTimestamp:     base + 3600,
+		Limit:            10,
+		TrendGranularity: UsageStatsGranularityHour,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1000), stats.Summary.Quota)
+	require.Equal(t, int64(100), stats.Summary.WalletQuota)
+	require.Equal(t, int64(1), stats.Summary.WalletRequestCount)
+	require.Equal(t, int64(500), stats.Summary.SubscriptionQuota)
+	require.Equal(t, int64(3), stats.Summary.SubscriptionRequestCount)
+	require.Equal(t, int64(2), stats.Summary.SubscriptionActiveUserCount)
+	require.Equal(t, int64(400), stats.Summary.UnknownQuota)
+	require.Equal(t, int64(1), stats.Summary.UnknownRequestCount)
+	require.Equal(t, stats.Summary.Quota, stats.Summary.WalletQuota+stats.Summary.SubscriptionQuota+stats.Summary.UnknownQuota)
+
+	require.Len(t, stats.SubscriptionRanking, 2)
+	require.Equal(t, 2, stats.SubscriptionRanking[0].UserId)
+	require.Equal(t, int64(300), stats.SubscriptionRanking[0].Quota)
+	require.Equal(t, 1, stats.SubscriptionRanking[1].UserId)
+	require.Equal(t, int64(200), stats.SubscriptionRanking[1].Quota)
+
+	trendTotal := sumUsageStatsTrend(stats.Trend)
+	require.Equal(t, stats.Summary.WalletQuota, trendTotal.WalletQuota)
+	require.Equal(t, stats.Summary.SubscriptionQuota, trendTotal.SubscriptionQuota)
+	require.Equal(t, stats.Summary.UnknownQuota, trendTotal.UnknownQuota)
+
+	modelsByName := make(map[string]UsageStatsModelItem)
+	for _, item := range stats.Models {
+		modelsByName[item.ModelName] = item
+	}
+	require.Equal(t, int64(100), modelsByName["gpt-4o"].WalletQuota)
+	require.Equal(t, int64(200), modelsByName["gpt-4o"].SubscriptionQuota)
+	require.Equal(t, int64(400), modelsByName["gemini-pro"].UnknownQuota)
+}
+
+func TestGetUsageStatsFiltersBillingSourceAndSection(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+	base := time.Date(2026, 7, 12, 10, 0, 0, 0, time.Local).Unix()
+	seedUsageStatsLog(t, &Log{UserId: 1, Username: "wallet", CreatedAt: base, Type: LogTypeConsume, ModelName: "model-a", Quota: 100, Other: `{"billing_source":"wallet"}`})
+	seedUsageStatsLog(t, &Log{UserId: 2, Username: "subscriber", CreatedAt: base + 1, Type: LogTypeConsume, ModelName: "model-b", Quota: 250, Other: `{"billing_source":"subscription"}`})
+
+	subscriptionStats, err := GetUsageStats(UsageStatsQuery{
+		Section:          UsageStatsSectionUsage,
+		BillingSource:    UsageStatsBillingSourceSubscription,
+		StartTimestamp:   base - 1,
+		EndTimestamp:     base + 60,
+		TrendGranularity: UsageStatsGranularityHour,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(250), subscriptionStats.Summary.Quota)
+	require.Equal(t, int64(250), subscriptionStats.Summary.SubscriptionQuota)
+	require.Zero(t, subscriptionStats.Summary.WalletQuota)
+	require.Len(t, subscriptionStats.Ranking, 1)
+	require.Equal(t, 2, subscriptionStats.Ranking[0].UserId)
+
+	rechargeOnly, err := GetUsageStats(UsageStatsQuery{
+		Section:        UsageStatsSectionRecharge,
+		StartTimestamp: base - 1,
+		EndTimestamp:   base + 60,
+	})
+	require.NoError(t, err)
+	require.Zero(t, rechargeOnly.Summary.Quota)
+	require.Empty(t, rechargeOnly.Ranking)
+	require.Empty(t, rechargeOnly.Trend)
 }
 
 func TestGetUsageStatsAggregatesAndFiltersConsumeLogs(t *testing.T) {
@@ -761,7 +852,13 @@ func TestGetUsageStatsRechargeRankingAndDetails(t *testing.T) {
 }
 
 func TestGetUsageStatsRejectsInvalidRangeAndGranularity(t *testing.T) {
-	_, err := GetUsageStats(UsageStatsQuery{
+	_, err := GetUsageStats(UsageStatsQuery{Section: "invalid"})
+	require.ErrorContains(t, err, "section")
+
+	_, err = GetUsageStats(UsageStatsQuery{BillingSource: "invalid"})
+	require.ErrorContains(t, err, "billing_source")
+
+	_, err = GetUsageStats(UsageStatsQuery{
 		StartTimestamp: time.Date(2026, 6, 2, 0, 0, 0, 0, time.Local).Unix(),
 		EndTimestamp:   time.Date(2026, 6, 1, 0, 0, 0, 0, time.Local).Unix(),
 	})

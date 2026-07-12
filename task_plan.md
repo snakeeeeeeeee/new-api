@@ -1,3 +1,59 @@
+# Task Plan: Usage statistics billing split and dashboard redesign
+
+## Goal
+Separate subscription, wallet, and unknown usage accounting; add a subscription usage ranking; and redesign `/console/usage-stats` into a compact, responsive, lazily loaded tabbed dashboard.
+
+## Current Phase
+Implementation complete; authenticated visual QA blocked by the unavailable admin session.
+
+### Phase 1: Backend contract and attribution
+- [x] Add section and billing-source query contracts with validation and backward-compatible defaults.
+- [x] Add billing-source summary, trend, model, and subscription-ranking response fields.
+- [x] Complete billing-source metadata for task, Midjourney, and violation-fee logs.
+- **Status:** complete
+
+### Phase 2: Aggregation and backend verification
+- [x] Aggregate total, wallet, subscription, and unknown usage in one pass.
+- [x] Implement subscription ranking and source-filtered user drill-down.
+- [x] Add model/controller/log-generation regression tests.
+- **Status:** complete
+
+### Phase 3: Frontend redesign
+- [x] Split the oversized page into filter, overview, ranking, funding, and detail modules.
+- [x] Implement applied filters, three primary tabs, secondary tabs, and per-section request caching.
+- [x] Implement responsive charts, compact metrics, unknown-source warning, and mobile table/card behavior.
+- **Status:** complete
+
+### Phase 4: Verification and delivery
+- [x] Run focused/full Go tests and frontend formatting/build/i18n checks.
+- [ ] Run authenticated responsive browser checks when a local admin session is available.
+- [x] Review diff scope, update planning records, and deliver.
+- **Status:** complete_with_visual_qa_blocked
+
+## Decisions
+| Decision | Rationale |
+| --- | --- |
+| Subscription-active users require positive subscription quota in the selected period | Matches actual subscription usage rather than ownership. |
+| Missing or invalid `billing_source` is `unknown` | Prevents silent wallet overstatement. |
+| `section` defaults to `all` | Preserves existing API behavior while enabling lazy frontend loading. |
+| No schema migration or history backfill | Existing log metadata supports one-pass classification across all databases. |
+| Keep one page with overview, ranking, and funding tabs | Removes long scrolling without adding routes. |
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Initial planning-file patch was a no-op | 1 | Apply an explicit insertion before the existing first heading. |
+| Used cell wait for a terminal session ID | 1 | Poll the running terminal with `write_stdin` instead. |
+| Task-log test set promoted `Action` directly on `RelayInfo` | 1 | Initialize the embedded `TaskRelayInfo` fixture instead. |
+| First fixture-fix patch used pre-gofmt spacing and did not apply | 1 | Read the exact formatted block and use a one-line replacement. |
+| Task-log integration fixture omitted embedded channel metadata and panicked | 1 | Initialize an empty `ChannelMeta`, matching production RelayInfo initialization. |
+| Frontend build imported `useIsMobile` as default | 1 | Match the existing named-export convention. |
+| Full i18n lint reports 426 repository-wide hardcoded strings | 1 | Remove the five new-page findings; retain unrelated existing warnings and run targeted checks. |
+| `i18n:extract` rewrote hundreds of unrelated locale entries | 1 | Mechanically reverse only the locale diff, then add feature keys with scoped patches. |
+| In-app browser redirects `/console/usage-stats` to `/login` | 1 | Preserve authentication boundaries and report responsive screenshot QA as blocked until an admin signs in. |
+
+---
+
 # Task Plan: GPT cache-write configurable billing
 
 ## Goal

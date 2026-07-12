@@ -1,3 +1,58 @@
+# Usage Statistics Split Progress (2026-07-12)
+
+## Phase 1: Backend contract and attribution
+- **Status:** complete
+- Loaded required planning, brainstorming, UI/UX, and browser workflows.
+- Recovered prior completed planning context and preserved unrelated untracked files.
+- Confirmed API compatibility, billing-source classification, lazy-loading, and responsive layout decisions.
+- Added section/source query validation, additive split fields, subscription ranking, one-pass aggregation, and section-gated data loading.
+- Added wallet/subscription/unknown summary, trend, model, filtering, and controller regression tests.
+- Added task, Midjourney, and violation-fee billing metadata; task and Midjourney paths have direct regression tests.
+
+## Phase 2: Aggregation and backend verification
+- **Status:** complete
+- Focused service/model/controller packages pass after source split, subscription ranking, and lazy sections.
+
+## Phase 3: Frontend redesign
+- **Status:** complete
+- Replaced the oversized page with a request/state coordinator and separate filter, overview, ranking, funding, and detail modules.
+- Added draft/applied filters, primary and secondary tabs, per-section caching, stale-response guards, and lazy funding queries.
+- Added compact source-split metrics, an unknown-source warning, source charts, responsive tables, and detail sheets.
+- Added 29 feature translations to all seven locale files through scoped edits.
+
+## Phase 4: Verification and delivery
+- **Status:** complete_with_visual_qa_blocked
+- Full Go tests and the frontend production build pass.
+- Targeted UsageStats ESLint and Prettier checks pass; the page adds no project-level i18n lint findings.
+- Vite is running at `http://127.0.0.1:5173/`.
+- Browser navigation to the protected page redirects to `/login`; responsive light/dark screenshot checks require an authenticated admin session.
+
+## Test Results
+| Test | Status | Notes |
+| --- | --- | --- |
+| Baseline inspection | passed | Current implementation and missing log-attribution paths identified. |
+| `go test ./model ./controller ./service` | passed | Split aggregation and API compatibility changes compile and pass focused tests. |
+| Special log attribution tests | passed | Task and Midjourney metadata include wallet/subscription source fields. |
+| `go test ./...` | passed | All repository Go packages compile and pass. |
+| UsageStats ESLint and Prettier | passed | New modules and locale changes are clean. |
+| `bun run build` | passed | Existing dependency/chunk warnings only. |
+| Authenticated responsive browser QA | blocked | Existing browser session redirects to `/login`. |
+
+## Errors
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Initial task-plan patch made no content change | 1 | Replaced it with an explicit top insertion. |
+| Waited on an exec session with the cell-wait tool | 1 | Switched to terminal-session polling; the test process was unaffected. |
+| Special-log test used `Action` as a direct struct field | 1 | Initialize the embedded `TaskRelayInfo` fixture. |
+| First patch for the fixture used stale spacing context | 1 | Re-read the formatted code and applied a narrow field replacement. |
+| Task-log test panicked at promoted channel fields | 1 | Add the embedded `ChannelMeta` that production initializes before logging. |
+| Frontend build failed on the `useIsMobile` import | 1 | Replaced the default import with the established named import. |
+| `bun run i18n:lint` found 426 repository-wide issues | 1 | Fix the five findings introduced in UsageStats and treat the remaining baseline warnings as unrelated. |
+| `bun run i18n:extract` produced large unrelated locale churn | 1 | Reversed only the generated locale changes and switched to scoped feature-key updates. |
+| In-app browser has no administrator session | 1 | Kept authentication intact and documented the remaining screenshot QA requirement. |
+
+---
+
 # GPT Cache-Write Billing Progress
 
 ## 2026-07-11 Upstream rc.21 comparison

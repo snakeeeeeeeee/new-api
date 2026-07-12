@@ -138,6 +138,8 @@ func GetUsageStats(c *gin.Context) {
 	subscriptionPurchaseDetailPageSize, _ := strconv.Atoi(c.Query("subscription_purchase_detail_page_size"))
 
 	stats, err := model.GetUsageStats(model.UsageStatsQuery{
+		Section:                        c.Query("section"),
+		BillingSource:                  c.Query("billing_source"),
 		StartTimestamp:                 startTimestamp,
 		EndTimestamp:                   endTimestamp,
 		UserId:                         userId,

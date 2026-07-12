@@ -142,6 +142,27 @@ func TestGetUsageStatsReturnsStructuredData(t *testing.T) {
 	require.Contains(t, string(resp.Data), `"trend"`)
 	require.Contains(t, string(resp.Data), `"models"`)
 	require.Contains(t, string(resp.Data), `"user_model_details"`)
+	require.Contains(t, string(resp.Data), `"subscription_ranking"`)
+	require.Contains(t, string(resp.Data), `"unknown_quota":123`)
+}
+
+func TestGetUsageStatsPassesSectionAndBillingSource(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	base := time.Date(2026, 7, 12, 10, 0, 0, 0, time.Local).Unix()
+	require.NoError(t, db.Create(&model.Log{UserId: 904, Username: "wallet_user", CreatedAt: base, Type: model.LogTypeConsume, ModelName: "gpt-4o", Quota: 100, Other: `{"billing_source":"wallet"}`}).Error)
+	require.NoError(t, db.Create(&model.Log{UserId: 905, Username: "subscription_user", CreatedAt: base + 1, Type: model.LogTypeConsume, ModelName: "gpt-4o", Quota: 250, Other: `{"billing_source":"subscription"}`}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/log/usage_stats?section=usage&billing_source=subscription&start_timestamp="+strconv.FormatInt(base-1, 10)+"&end_timestamp="+strconv.FormatInt(base+60, 10), nil)
+	GetUsageStats(ctx)
+
+	var resp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.True(t, resp.Success, resp.Message)
+	require.Contains(t, string(resp.Data), `"quota":250`)
+	require.Contains(t, string(resp.Data), `"user_id":905`)
+	require.NotContains(t, string(resp.Data), `"user_id":904`)
 }
 
 func TestGetUsageStatsPassesUserIDFilter(t *testing.T) {

@@ -1,3 +1,42 @@
+# Usage Statistics Split Findings (2026-07-12)
+
+## Requirements and current state
+- Current `GetUsageStats` loads filtered consume logs and builds one total summary, trend, model ranking, user ranking, and user-model details in memory.
+- Consumption logs can be classified from `other.billing_source`; exact `wallet` and `subscription` are known, while missing/invalid values must remain unknown.
+- Text/audio/realtime log helpers already append billing metadata. `LogTaskConsumption`, `GenerateMjOtherInfo`, and violation-fee log construction omit it.
+- Subscription billing launched with the metadata field on 2026-02-03; historical gaps are not safely backfillable for all special paths.
+- The current page is a single large component with a filter card, eight equal KPI cards, two charts, three vertically stacked ranking tables, and three side sheets.
+- The redesign will use overview/ranking/funding tabs, lazy section loading, a sticky compact filter surface, four primary KPIs, and responsive reduced-column tables.
+
+## Technical decisions
+| Decision | Rationale |
+| --- | --- |
+| Add flat additive fields to existing response structs | Keeps current clients compatible and minimizes frontend normalization. |
+| Add `subscription_ranking` beside `ranking` | Satisfies the requested separate leaderboard without changing the existing total ranking. |
+| Add `section=usage|recharge|subscription_purchase|all` | Hidden tabs should not trigger irrelevant log/order scans. |
+| Add `billing_source=all|wallet|subscription|unknown` for usage | Reuses the existing detail response shape for source-specific drill-down. |
+| Use Semi theme tokens and Lucide icons | Matches the established frontend and supports dark mode. |
+
+## Implementation findings
+- `section=usage` can bypass both recharge queries and subscription-order queries without changing the default response.
+- Source filtering must occur after parsing `other`, so it remains database-neutral.
+- Subscription zero-quota requests are retained in source request counts but excluded from active-user counting and the subscription ranking.
+- Existing model and controller tests pass after the additive response changes.
+- Frontend already provides `useIsMobile`; responsive columns can use the established breakpoint rather than adding a new media-query hook.
+- `useIsMobile` is a named export; new page modules must follow the existing import convention.
+- The locale extractor is not scoped to changed files and currently rewrites hundreds of pre-existing missing keys; it is unsuitable for a narrow feature diff without cleanup.
+- Current `UsageStats` mixes request orchestration, chart specs, table definitions, and three detail sheets in one file; component extraction removes real complexity rather than adding a cosmetic abstraction.
+
+## Visual/browser findings
+- Local Docker UI is available on port 3001, but the current in-app browser session redirects the protected usage page to login.
+- Source inspection confirms the long-scroll problem is structural, not caused only by row count.
+- Final implementation keeps usage, recharge, and subscription-purchase queries independently addressable through `section`; omitted `section` remains backward-compatible `all`.
+- The frontend cache key includes applied filters, section, and funding pagination. Query/reset clears the cache, while refresh reloads only the visible section.
+- All seven locale files contain the 29 new dashboard strings. The broad repository i18n lint retains unrelated baseline warnings, but none remain under `src/pages/UsageStats`.
+- Full Go tests and the frontend production build pass. Authenticated multi-viewport screenshots remain blocked by the login redirect.
+
+---
+
 # GPT Cache-Write Billing Findings
 
 ## Current State

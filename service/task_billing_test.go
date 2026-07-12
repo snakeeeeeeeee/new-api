@@ -216,6 +216,59 @@ func testGinContext() *gin.Context {
 	return c
 }
 
+func TestLogTaskConsumptionIncludesSubscriptionBillingMetadata(t *testing.T) {
+	truncate(t)
+	const userID = 115
+	seedUser(t, userID, 10000)
+	ctx := testGinContext()
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", nil)
+	ctx.Set("username", "test_user")
+	info := &relaycommon.RelayInfo{
+		UserId:                                userID,
+		OriginModelName:                       "task-model",
+		ChannelMeta:                           &relaycommon.ChannelMeta{},
+		TaskRelayInfo:                         &relaycommon.TaskRelayInfo{Action: "generate"},
+		UsingGroup:                            "default",
+		BillingSource:                         BillingSourceSubscription,
+		SubscriptionId:                        77,
+		SubscriptionPreConsumed:               321,
+		SubscriptionPlanId:                    9,
+		SubscriptionPlanTitle:                 "Pro",
+		SubscriptionAmountTotal:               1000,
+		SubscriptionAmountUsedAfterPreConsume: 321,
+		PriceData: types.PriceData{
+			Quota:          321,
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+
+	LogTaskConsumption(ctx, info)
+	logItem := getLastLog(t)
+	require.NotNil(t, logItem)
+	other, err := common.StrToMap(logItem.Other)
+	require.NoError(t, err)
+	require.Equal(t, BillingSourceSubscription, other["billing_source"])
+	require.Equal(t, float64(77), other["subscription_id"])
+	require.Equal(t, float64(321), other["subscription_consumed"])
+	require.Equal(t, float64(0), other["wallet_quota_deducted"])
+}
+
+func TestGenerateMjOtherInfoIncludesBillingMetadata(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		BillingSource:         BillingSourceWallet,
+		OriginModelName:       "mj-model",
+		SubscriptionPlanTitle: "ignored",
+	}
+	other := GenerateMjOtherInfo(info, types.PriceData{GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1}})
+	require.Equal(t, BillingSourceWallet, other["billing_source"])
+
+	info.BillingSource = BillingSourceSubscription
+	info.SubscriptionId = 88
+	other = GenerateMjOtherInfo(info, types.PriceData{GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1}})
+	require.Equal(t, BillingSourceSubscription, other["billing_source"])
+	require.Equal(t, 88, other["subscription_id"])
+}
+
 // ===========================================================================
 // Atomic quota decrement tests
 // ===========================================================================

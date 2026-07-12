@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -504,14 +505,24 @@ type Stat struct {
 }
 
 const (
-	UsageStatsGranularityHour = "hour"
-	UsageStatsGranularityDay  = "day"
-	usageStatsDefaultLimit    = 50
-	usageStatsMaxLimit        = 200
-	usageStatsMaxRangeSeconds = 90 * 24 * 60 * 60
+	UsageStatsGranularityHour             = "hour"
+	UsageStatsGranularityDay              = "day"
+	UsageStatsSectionAll                  = "all"
+	UsageStatsSectionUsage                = "usage"
+	UsageStatsSectionRecharge             = "recharge"
+	UsageStatsSectionSubscriptionPurchase = "subscription_purchase"
+	UsageStatsBillingSourceAll            = "all"
+	UsageStatsBillingSourceWallet         = "wallet"
+	UsageStatsBillingSourceSubscription   = "subscription"
+	UsageStatsBillingSourceUnknown        = "unknown"
+	usageStatsDefaultLimit                = 50
+	usageStatsMaxLimit                    = 200
+	usageStatsMaxRangeSeconds             = 90 * 24 * 60 * 60
 )
 
 type UsageStatsQuery struct {
+	Section                        string
+	BillingSource                  string
 	StartTimestamp                 int64
 	EndTimestamp                   int64
 	UserId                         int
@@ -537,6 +548,13 @@ type UsageStatsSummary struct {
 	Quota                             int64 `json:"quota"`
 	RequestCount                      int64 `json:"request_count"`
 	ActiveUserCount                   int64 `json:"active_user_count"`
+	WalletQuota                       int64 `json:"wallet_quota"`
+	WalletRequestCount                int64 `json:"wallet_request_count"`
+	SubscriptionQuota                 int64 `json:"subscription_quota"`
+	SubscriptionRequestCount          int64 `json:"subscription_request_count"`
+	SubscriptionActiveUserCount       int64 `json:"subscription_active_user_count"`
+	UnknownQuota                      int64 `json:"unknown_quota"`
+	UnknownRequestCount               int64 `json:"unknown_request_count"`
 	InputTokens                       int64 `json:"input_tokens"`
 	CacheTokens                       int64 `json:"cache_tokens"`
 	PromptTokens                      int64 `json:"prompt_tokens"`
@@ -550,17 +568,23 @@ type UsageStatsSummary struct {
 }
 
 type UsageStatsRankItem struct {
-	UserId           int     `json:"user_id"`
-	Username         string  `json:"username"`
-	Quota            int64   `json:"quota"`
-	RequestCount     int64   `json:"request_count"`
-	InputTokens      int64   `json:"input_tokens"`
-	CacheTokens      int64   `json:"cache_tokens"`
-	PromptTokens     int64   `json:"prompt_tokens"`
-	CompletionTokens int64   `json:"completion_tokens"`
-	TotalTokens      int64   `json:"total_tokens"`
-	AverageUseTime   float64 `json:"average_use_time"`
-	LastRequestAt    int64   `json:"last_request_at"`
+	UserId                   int     `json:"user_id"`
+	Username                 string  `json:"username"`
+	Quota                    int64   `json:"quota"`
+	RequestCount             int64   `json:"request_count"`
+	InputTokens              int64   `json:"input_tokens"`
+	CacheTokens              int64   `json:"cache_tokens"`
+	PromptTokens             int64   `json:"prompt_tokens"`
+	CompletionTokens         int64   `json:"completion_tokens"`
+	TotalTokens              int64   `json:"total_tokens"`
+	AverageUseTime           float64 `json:"average_use_time"`
+	LastRequestAt            int64   `json:"last_request_at"`
+	WalletQuota              int64   `json:"wallet_quota"`
+	WalletRequestCount       int64   `json:"wallet_request_count"`
+	SubscriptionQuota        int64   `json:"subscription_quota"`
+	SubscriptionRequestCount int64   `json:"subscription_request_count"`
+	UnknownQuota             int64   `json:"unknown_quota"`
+	UnknownRequestCount      int64   `json:"unknown_request_count"`
 }
 
 type UsageStatsTrendPoint struct {
@@ -573,35 +597,53 @@ type UsageStatsTrendPoint struct {
 	PromptTokens                      int64  `json:"prompt_tokens"`
 	CompletionTokens                  int64  `json:"completion_tokens"`
 	TotalTokens                       int64  `json:"total_tokens"`
+	WalletQuota                       int64  `json:"wallet_quota"`
+	WalletRequestCount                int64  `json:"wallet_request_count"`
+	SubscriptionQuota                 int64  `json:"subscription_quota"`
+	SubscriptionRequestCount          int64  `json:"subscription_request_count"`
+	UnknownQuota                      int64  `json:"unknown_quota"`
+	UnknownRequestCount               int64  `json:"unknown_request_count"`
 	ClaudeCacheTTLSubsidyQuota        int64  `json:"claude_cache_ttl_subsidy_quota"`
 	ClaudeCacheTTLSubsidyRequestCount int64  `json:"claude_cache_ttl_subsidy_request_count"`
 	ClaudeCacheTTLRepricedTokens      int64  `json:"claude_cache_ttl_repriced_tokens"`
 }
 
 type UsageStatsModelItem struct {
-	ModelName        string  `json:"model_name"`
-	Quota            int64   `json:"quota"`
-	RequestCount     int64   `json:"request_count"`
-	InputTokens      int64   `json:"input_tokens"`
-	CacheTokens      int64   `json:"cache_tokens"`
-	PromptTokens     int64   `json:"prompt_tokens"`
-	CompletionTokens int64   `json:"completion_tokens"`
-	TotalTokens      int64   `json:"total_tokens"`
-	AverageUseTime   float64 `json:"average_use_time"`
+	ModelName                string  `json:"model_name"`
+	Quota                    int64   `json:"quota"`
+	RequestCount             int64   `json:"request_count"`
+	InputTokens              int64   `json:"input_tokens"`
+	CacheTokens              int64   `json:"cache_tokens"`
+	PromptTokens             int64   `json:"prompt_tokens"`
+	CompletionTokens         int64   `json:"completion_tokens"`
+	TotalTokens              int64   `json:"total_tokens"`
+	AverageUseTime           float64 `json:"average_use_time"`
+	WalletQuota              int64   `json:"wallet_quota"`
+	WalletRequestCount       int64   `json:"wallet_request_count"`
+	SubscriptionQuota        int64   `json:"subscription_quota"`
+	SubscriptionRequestCount int64   `json:"subscription_request_count"`
+	UnknownQuota             int64   `json:"unknown_quota"`
+	UnknownRequestCount      int64   `json:"unknown_request_count"`
 }
 
 type UsageStatsUserModelDetail struct {
-	UserId           int     `json:"user_id"`
-	Username         string  `json:"username"`
-	ModelName        string  `json:"model_name"`
-	Quota            int64   `json:"quota"`
-	RequestCount     int64   `json:"request_count"`
-	InputTokens      int64   `json:"input_tokens"`
-	CacheTokens      int64   `json:"cache_tokens"`
-	PromptTokens     int64   `json:"prompt_tokens"`
-	CompletionTokens int64   `json:"completion_tokens"`
-	TotalTokens      int64   `json:"total_tokens"`
-	AverageUseTime   float64 `json:"average_use_time"`
+	UserId                   int     `json:"user_id"`
+	Username                 string  `json:"username"`
+	ModelName                string  `json:"model_name"`
+	Quota                    int64   `json:"quota"`
+	RequestCount             int64   `json:"request_count"`
+	InputTokens              int64   `json:"input_tokens"`
+	CacheTokens              int64   `json:"cache_tokens"`
+	PromptTokens             int64   `json:"prompt_tokens"`
+	CompletionTokens         int64   `json:"completion_tokens"`
+	TotalTokens              int64   `json:"total_tokens"`
+	AverageUseTime           float64 `json:"average_use_time"`
+	WalletQuota              int64   `json:"wallet_quota"`
+	WalletRequestCount       int64   `json:"wallet_request_count"`
+	SubscriptionQuota        int64   `json:"subscription_quota"`
+	SubscriptionRequestCount int64   `json:"subscription_request_count"`
+	UnknownQuota             int64   `json:"unknown_quota"`
+	UnknownRequestCount      int64   `json:"unknown_request_count"`
 }
 
 type UsageStatsRechargeSummary struct {
@@ -703,6 +745,7 @@ type UsageStatsData struct {
 	GeneratedAt                 int64                                    `json:"generated_at"`
 	Summary                     UsageStatsSummary                        `json:"summary"`
 	Ranking                     []UsageStatsRankItem                     `json:"ranking"`
+	SubscriptionRanking         []UsageStatsRankItem                     `json:"subscription_ranking"`
 	Trend                       []UsageStatsTrendPoint                   `json:"trend"`
 	Models                      []UsageStatsModelItem                    `json:"models"`
 	UserModelDetails            []UsageStatsUserModelDetail              `json:"user_model_details"`
@@ -715,19 +758,25 @@ type UsageStatsData struct {
 }
 
 type usageStatsBaseRow struct {
-	UserId           int
-	Username         string
-	ModelName        string
-	Quota            int64
-	InputTokens      int64
-	CacheTokens      int64
-	PromptTokens     int64
-	CompletionTokens int64
-	TotalTokens      int64
-	RequestCount     int64
-	AverageUseTime   float64
-	LastRequestAt    int64
-	useTimeTotal     int64
+	UserId                   int
+	Username                 string
+	ModelName                string
+	Quota                    int64
+	InputTokens              int64
+	CacheTokens              int64
+	PromptTokens             int64
+	CompletionTokens         int64
+	TotalTokens              int64
+	RequestCount             int64
+	AverageUseTime           float64
+	LastRequestAt            int64
+	WalletQuota              int64
+	WalletRequestCount       int64
+	SubscriptionQuota        int64
+	SubscriptionRequestCount int64
+	UnknownQuota             int64
+	UnknownRequestCount      int64
+	useTimeTotal             int64
 }
 
 type usageStatsTrendRow struct {
@@ -739,6 +788,12 @@ type usageStatsTrendRow struct {
 	PromptTokens                      int64
 	CompletionTokens                  int64
 	TotalTokens                       int64
+	WalletQuota                       int64
+	WalletRequestCount                int64
+	SubscriptionQuota                 int64
+	SubscriptionRequestCount          int64
+	UnknownQuota                      int64
+	UnknownRequestCount               int64
 	ClaudeCacheTTLSubsidyQuota        int64
 	ClaudeCacheTTLSubsidyRequestCount int64
 	ClaudeCacheTTLRepricedTokens      int64
@@ -834,6 +889,22 @@ type usageStatsClaudeCacheTTLSubsidy struct {
 }
 
 func normalizeUsageStatsQuery(query UsageStatsQuery) (UsageStatsQuery, error) {
+	if query.Section == "" {
+		query.Section = UsageStatsSectionAll
+	}
+	switch query.Section {
+	case UsageStatsSectionAll, UsageStatsSectionUsage, UsageStatsSectionRecharge, UsageStatsSectionSubscriptionPurchase:
+	default:
+		return query, errors.New("section 仅支持 all、usage、recharge 或 subscription_purchase")
+	}
+	if query.BillingSource == "" {
+		query.BillingSource = UsageStatsBillingSourceAll
+	}
+	switch query.BillingSource {
+	case UsageStatsBillingSourceAll, UsageStatsBillingSourceWallet, UsageStatsBillingSourceSubscription, UsageStatsBillingSourceUnknown:
+	default:
+		return query, errors.New("billing_source 仅支持 all、wallet、subscription 或 unknown")
+	}
 	nowTime := time.Now()
 	if query.EndTimestamp == 0 {
 		query.EndTimestamp = time.Date(nowTime.Year(), nowTime.Month(), nowTime.Day(), 23, 59, 59, 0, nowTime.Location()).Unix()
@@ -901,6 +972,10 @@ func normalizeUsageStatsQuery(query UsageStatsQuery) (UsageStatsQuery, error) {
 		return query, errors.New("trend_granularity 仅支持 hour 或 day")
 	}
 	return query, nil
+}
+
+func usageStatsIncludesSection(query UsageStatsQuery, section string) bool {
+	return query.Section == UsageStatsSectionAll || query.Section == section
 }
 
 func applyUsageStatsRechargeFilters(tx *gorm.DB, query UsageStatsQuery) (*gorm.DB, error) {
@@ -1026,6 +1101,25 @@ func usageStatsOtherFromLog(row usageStatsLogRow) map[string]interface{} {
 	return other
 }
 
+func usageStatsBillingSourceFromOther(other map[string]interface{}) string {
+	value, ok := other["billing_source"].(string)
+	if !ok {
+		return UsageStatsBillingSourceUnknown
+	}
+	switch strings.TrimSpace(value) {
+	case UsageStatsBillingSourceWallet:
+		return UsageStatsBillingSourceWallet
+	case UsageStatsBillingSourceSubscription:
+		return UsageStatsBillingSourceSubscription
+	default:
+		return UsageStatsBillingSourceUnknown
+	}
+}
+
+func usageStatsMatchesBillingSource(query UsageStatsQuery, source string) bool {
+	return query.BillingSource == UsageStatsBillingSourceAll || query.BillingSource == source
+}
+
 func usageStatsTokenBreakdownFromLog(row usageStatsLogRow) usageStatsTokenBreakdown {
 	return usageStatsTokenBreakdownFromOther(row, usageStatsOtherFromLog(row))
 }
@@ -1132,6 +1226,12 @@ func buildUsageStatsTrend(rows []usageStatsTrendRow, query UsageStatsQuery) []Us
 		point.PromptTokens += row.InputTokens
 		point.CompletionTokens += row.CompletionTokens
 		point.TotalTokens += row.TotalTokens
+		point.WalletQuota += row.WalletQuota
+		point.WalletRequestCount += row.WalletRequestCount
+		point.SubscriptionQuota += row.SubscriptionQuota
+		point.SubscriptionRequestCount += row.SubscriptionRequestCount
+		point.UnknownQuota += row.UnknownQuota
+		point.UnknownRequestCount += row.UnknownRequestCount
 		point.ClaudeCacheTTLSubsidyQuota += row.ClaudeCacheTTLSubsidyQuota
 		point.ClaudeCacheTTLSubsidyRequestCount += row.ClaudeCacheTTLSubsidyRequestCount
 		point.ClaudeCacheTTLRepricedTokens += row.ClaudeCacheTTLRepricedTokens
@@ -1157,17 +1257,23 @@ func buildUsageStatsUserModelDetails(rows []usageStatsBaseRow, rankedUsers []Usa
 	details := make([]UsageStatsUserModelDetail, 0, len(rows))
 	for _, row := range rows {
 		details = append(details, UsageStatsUserModelDetail{
-			UserId:           row.UserId,
-			Username:         row.Username,
-			ModelName:        row.ModelName,
-			Quota:            row.Quota,
-			RequestCount:     row.RequestCount,
-			InputTokens:      row.InputTokens,
-			CacheTokens:      row.CacheTokens,
-			PromptTokens:     row.InputTokens,
-			CompletionTokens: row.CompletionTokens,
-			TotalTokens:      row.TotalTokens,
-			AverageUseTime:   row.AverageUseTime,
+			UserId:                   row.UserId,
+			Username:                 row.Username,
+			ModelName:                row.ModelName,
+			Quota:                    row.Quota,
+			RequestCount:             row.RequestCount,
+			InputTokens:              row.InputTokens,
+			CacheTokens:              row.CacheTokens,
+			PromptTokens:             row.InputTokens,
+			CompletionTokens:         row.CompletionTokens,
+			TotalTokens:              row.TotalTokens,
+			AverageUseTime:           row.AverageUseTime,
+			WalletQuota:              row.WalletQuota,
+			WalletRequestCount:       row.WalletRequestCount,
+			SubscriptionQuota:        row.SubscriptionQuota,
+			SubscriptionRequestCount: row.SubscriptionRequestCount,
+			UnknownQuota:             row.UnknownQuota,
+			UnknownRequestCount:      row.UnknownRequestCount,
 		})
 	}
 	sort.Slice(details, func(i, j int) bool {
@@ -1464,7 +1570,7 @@ func populateUsageStatsSubscriptionPurchase(data *UsageStatsData, query UsageSta
 	return populateUsageStatsSubscriptionPurchaseDetails(data, query)
 }
 
-func addUsageStatsBaseRow(target *usageStatsBaseRow, row usageStatsLogRow, tokens usageStatsTokenBreakdown) {
+func addUsageStatsBaseRow(target *usageStatsBaseRow, row usageStatsLogRow, tokens usageStatsTokenBreakdown, source string) {
 	target.Quota += row.Quota
 	target.RequestCount++
 	target.InputTokens += tokens.InputTokens
@@ -1473,6 +1579,17 @@ func addUsageStatsBaseRow(target *usageStatsBaseRow, row usageStatsLogRow, token
 	target.CompletionTokens += tokens.CompletionTokens
 	target.TotalTokens += tokens.TotalTokens
 	target.useTimeTotal += row.UseTime
+	switch source {
+	case UsageStatsBillingSourceWallet:
+		target.WalletQuota += row.Quota
+		target.WalletRequestCount++
+	case UsageStatsBillingSourceSubscription:
+		target.SubscriptionQuota += row.Quota
+		target.SubscriptionRequestCount++
+	default:
+		target.UnknownQuota += row.Quota
+		target.UnknownRequestCount++
+	}
 	if row.CreatedAt > target.LastRequestAt {
 		target.LastRequestAt = row.CreatedAt
 		target.Username = row.Username
@@ -1488,94 +1605,119 @@ func finalizeUsageStatsBaseRow(row *usageStatsBaseRow) {
 
 func usageStatsRankItemFromRow(row usageStatsBaseRow) UsageStatsRankItem {
 	return UsageStatsRankItem{
-		UserId:           row.UserId,
-		Username:         row.Username,
-		Quota:            row.Quota,
-		RequestCount:     row.RequestCount,
-		InputTokens:      row.InputTokens,
-		CacheTokens:      row.CacheTokens,
-		PromptTokens:     row.InputTokens,
-		CompletionTokens: row.CompletionTokens,
-		TotalTokens:      row.TotalTokens,
-		AverageUseTime:   row.AverageUseTime,
-		LastRequestAt:    row.LastRequestAt,
+		UserId:                   row.UserId,
+		Username:                 row.Username,
+		Quota:                    row.Quota,
+		RequestCount:             row.RequestCount,
+		InputTokens:              row.InputTokens,
+		CacheTokens:              row.CacheTokens,
+		PromptTokens:             row.InputTokens,
+		CompletionTokens:         row.CompletionTokens,
+		TotalTokens:              row.TotalTokens,
+		AverageUseTime:           row.AverageUseTime,
+		LastRequestAt:            row.LastRequestAt,
+		WalletQuota:              row.WalletQuota,
+		WalletRequestCount:       row.WalletRequestCount,
+		SubscriptionQuota:        row.SubscriptionQuota,
+		SubscriptionRequestCount: row.SubscriptionRequestCount,
+		UnknownQuota:             row.UnknownQuota,
+		UnknownRequestCount:      row.UnknownRequestCount,
 	}
 }
 
 func usageStatsModelItemFromRow(row usageStatsBaseRow) UsageStatsModelItem {
 	return UsageStatsModelItem{
-		ModelName:        row.ModelName,
-		Quota:            row.Quota,
-		RequestCount:     row.RequestCount,
-		InputTokens:      row.InputTokens,
-		CacheTokens:      row.CacheTokens,
-		PromptTokens:     row.InputTokens,
-		CompletionTokens: row.CompletionTokens,
-		TotalTokens:      row.TotalTokens,
-		AverageUseTime:   row.AverageUseTime,
+		ModelName:                row.ModelName,
+		Quota:                    row.Quota,
+		RequestCount:             row.RequestCount,
+		InputTokens:              row.InputTokens,
+		CacheTokens:              row.CacheTokens,
+		PromptTokens:             row.InputTokens,
+		CompletionTokens:         row.CompletionTokens,
+		TotalTokens:              row.TotalTokens,
+		AverageUseTime:           row.AverageUseTime,
+		WalletQuota:              row.WalletQuota,
+		WalletRequestCount:       row.WalletRequestCount,
+		SubscriptionQuota:        row.SubscriptionQuota,
+		SubscriptionRequestCount: row.SubscriptionRequestCount,
+		UnknownQuota:             row.UnknownQuota,
+		UnknownRequestCount:      row.UnknownRequestCount,
 	}
 }
 
-func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
-	var err error
-	query, err = normalizeUsageStatsQuery(query)
-	if err != nil {
-		return UsageStatsData{}, err
+func usageStatsSortedUserRows(rows map[int]*usageStatsBaseRow, limit int) []usageStatsBaseRow {
+	result := make([]usageStatsBaseRow, 0, len(rows))
+	for _, row := range rows {
+		finalizeUsageStatsBaseRow(row)
+		result = append(result, *row)
 	}
-	ensureCommonColumnsInitialized()
-
-	data := UsageStatsData{
-		StartTimestamp:   query.StartTimestamp,
-		EndTimestamp:     query.EndTimestamp,
-		TrendGranularity: query.TrendGranularity,
-		GeneratedAt:      time.Now().Unix(),
-		Ranking:          []UsageStatsRankItem{},
-		Trend:            []UsageStatsTrendPoint{},
-		Models:           []UsageStatsModelItem{},
-		UserModelDetails: []UsageStatsUserModelDetail{},
-		RechargeRanking: UsageStatsRechargeRankPage{
-			Page:     query.RechargePage,
-			PageSize: query.RechargePageSize,
-			Items:    []UsageStatsRechargeRankItem{},
-		},
-		RechargeDetails: UsageStatsRechargeDetailPage{
-			Page:     query.RechargeDetailPage,
-			PageSize: query.RechargeDetailSize,
-			UserId:   query.RechargeUserId,
-			Items:    []UsageStatsRechargeDetailItem{},
-		},
-		SubscriptionPurchaseRanking: UsageStatsSubscriptionPurchaseRankPage{
-			Page:     query.SubscriptionPurchasePage,
-			PageSize: query.SubscriptionPurchasePageSize,
-			Items:    []UsageStatsSubscriptionPurchaseRankItem{},
-		},
-		SubscriptionPurchaseDetails: UsageStatsSubscriptionPurchaseDetailPage{
-			Page:     query.SubscriptionPurchaseDetailPage,
-			PageSize: query.SubscriptionPurchaseDetailSize,
-			UserId:   query.SubscriptionPurchaseUserId,
-			Items:    []UsageStatsSubscriptionPurchaseDetailItem{},
-		},
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Quota != result[j].Quota {
+			return result[i].Quota > result[j].Quota
+		}
+		if result[i].RequestCount != result[j].RequestCount {
+			return result[i].RequestCount > result[j].RequestCount
+		}
+		return result[i].UserId < result[j].UserId
+	})
+	if len(result) > limit {
+		result = result[:limit]
 	}
+	return result
+}
 
+func usageStatsAddSummarySource(summary *UsageStatsSummary, source string, quota int64) {
+	switch source {
+	case UsageStatsBillingSourceWallet:
+		summary.WalletQuota += quota
+		summary.WalletRequestCount++
+	case UsageStatsBillingSourceSubscription:
+		summary.SubscriptionQuota += quota
+		summary.SubscriptionRequestCount++
+	default:
+		summary.UnknownQuota += quota
+		summary.UnknownRequestCount++
+	}
+}
+
+func usageStatsAddTrendSource(row *usageStatsTrendRow, source string, quota int64) {
+	switch source {
+	case UsageStatsBillingSourceWallet:
+		row.WalletQuota += quota
+		row.WalletRequestCount++
+	case UsageStatsBillingSourceSubscription:
+		row.SubscriptionQuota += quota
+		row.SubscriptionRequestCount++
+	default:
+		row.UnknownQuota += quota
+		row.UnknownRequestCount++
+	}
+}
+
+func populateUsageStatsUsage(data *UsageStatsData, query UsageStatsQuery) error {
 	baseQuery, err := applyUsageStatsFilters(LOG_DB.Table("logs"), query)
 	if err != nil {
-		return data, err
+		return err
 	}
-
 	var logRows []usageStatsLogRow
-	if err = baseQuery.Select("user_id, username, model_name, quota, prompt_tokens, completion_tokens, use_time, created_at, other").
-		Scan(&logRows).Error; err != nil {
-		return data, err
+	if err = baseQuery.Select("user_id, username, model_name, quota, prompt_tokens, completion_tokens, use_time, created_at, other").Scan(&logRows).Error; err != nil {
+		return err
 	}
 
 	activeUsers := make(map[int]struct{})
+	subscriptionActiveUsers := make(map[int]struct{})
 	rankingMap := make(map[int]*usageStatsBaseRow)
+	subscriptionRankingMap := make(map[int]*usageStatsBaseRow)
 	modelMap := make(map[string]*usageStatsBaseRow)
 	detailMap := make(map[string]*usageStatsBaseRow)
 	trendMap := make(map[int64]*usageStatsTrendRow)
 
 	for _, row := range logRows {
 		other := usageStatsOtherFromLog(row)
+		source := usageStatsBillingSourceFromOther(other)
+		if !usageStatsMatchesBillingSource(query, source) {
+			continue
+		}
 		tokens := usageStatsTokenBreakdownFromOther(row, other)
 		claudeCacheTTLSubsidy := usageStatsClaudeCacheTTLSubsidyFromOther(other)
 		data.Summary.Quota += row.Quota
@@ -1590,46 +1732,46 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 		data.Summary.ClaudeCacheTTLRepricedTokens += claudeCacheTTLSubsidy.RepricedTokens
 		data.Summary.ClaudeCacheTTLUpstream1hTokens += claudeCacheTTLSubsidy.Upstream1hTokens
 		data.Summary.ClaudeCacheTTLBilled5mTokens += claudeCacheTTLSubsidy.Billed5mTokens
+		usageStatsAddSummarySource(&data.Summary, source, row.Quota)
 		activeUsers[row.UserId] = struct{}{}
+		if source == UsageStatsBillingSourceSubscription && row.Quota > 0 {
+			subscriptionActiveUsers[row.UserId] = struct{}{}
+		}
 
-		rankingRow, ok := rankingMap[row.UserId]
-		if !ok {
-			rankingRow = &usageStatsBaseRow{
-				UserId:   row.UserId,
-				Username: row.Username,
-			}
+		rankingRow := rankingMap[row.UserId]
+		if rankingRow == nil {
+			rankingRow = &usageStatsBaseRow{UserId: row.UserId, Username: row.Username}
 			rankingMap[row.UserId] = rankingRow
 		}
-		addUsageStatsBaseRow(rankingRow, row, tokens)
-
-		modelKey := row.ModelName
-		modelRow, ok := modelMap[modelKey]
-		if !ok {
-			modelRow = &usageStatsBaseRow{
-				ModelName: modelKey,
+		addUsageStatsBaseRow(rankingRow, row, tokens, source)
+		if source == UsageStatsBillingSourceSubscription && row.Quota > 0 {
+			subscriptionRow := subscriptionRankingMap[row.UserId]
+			if subscriptionRow == nil {
+				subscriptionRow = &usageStatsBaseRow{UserId: row.UserId, Username: row.Username}
+				subscriptionRankingMap[row.UserId] = subscriptionRow
 			}
-			modelMap[modelKey] = modelRow
+			addUsageStatsBaseRow(subscriptionRow, row, tokens, source)
 		}
-		addUsageStatsBaseRow(modelRow, row, tokens)
+
+		modelRow := modelMap[row.ModelName]
+		if modelRow == nil {
+			modelRow = &usageStatsBaseRow{ModelName: row.ModelName}
+			modelMap[row.ModelName] = modelRow
+		}
+		addUsageStatsBaseRow(modelRow, row, tokens, source)
 
 		detailKey := fmt.Sprintf("%d\x00%s", row.UserId, row.ModelName)
-		detailRow, ok := detailMap[detailKey]
-		if !ok {
-			detailRow = &usageStatsBaseRow{
-				UserId:    row.UserId,
-				Username:  row.Username,
-				ModelName: row.ModelName,
-			}
+		detailRow := detailMap[detailKey]
+		if detailRow == nil {
+			detailRow = &usageStatsBaseRow{UserId: row.UserId, Username: row.Username, ModelName: row.ModelName}
 			detailMap[detailKey] = detailRow
 		}
-		addUsageStatsBaseRow(detailRow, row, tokens)
+		addUsageStatsBaseRow(detailRow, row, tokens, source)
 
 		bucketStart := usageStatsBucketStart(row.CreatedAt, query.TrendGranularity)
-		trendRow, ok := trendMap[bucketStart]
-		if !ok {
-			trendRow = &usageStatsTrendRow{
-				BucketStart: bucketStart,
-			}
+		trendRow := trendMap[bucketStart]
+		if trendRow == nil {
+			trendRow = &usageStatsTrendRow{BucketStart: bucketStart}
 			trendMap[bucketStart] = trendRow
 		}
 		trendRow.Quota += row.Quota
@@ -1642,28 +1784,16 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 		trendRow.ClaudeCacheTTLSubsidyQuota += claudeCacheTTLSubsidy.Quota
 		trendRow.ClaudeCacheTTLSubsidyRequestCount += claudeCacheTTLSubsidy.RequestCount
 		trendRow.ClaudeCacheTTLRepricedTokens += claudeCacheTTLSubsidy.RepricedTokens
+		usageStatsAddTrendSource(trendRow, source, row.Quota)
 	}
 	data.Summary.ActiveUserCount = int64(len(activeUsers))
+	data.Summary.SubscriptionActiveUserCount = int64(len(subscriptionActiveUsers))
 
-	rankingRows := make([]usageStatsBaseRow, 0, len(rankingMap))
-	for _, row := range rankingMap {
-		finalizeUsageStatsBaseRow(row)
-		rankingRows = append(rankingRows, *row)
-	}
-	sort.Slice(rankingRows, func(i, j int) bool {
-		if rankingRows[i].Quota != rankingRows[j].Quota {
-			return rankingRows[i].Quota > rankingRows[j].Quota
-		}
-		if rankingRows[i].RequestCount != rankingRows[j].RequestCount {
-			return rankingRows[i].RequestCount > rankingRows[j].RequestCount
-		}
-		return rankingRows[i].UserId < rankingRows[j].UserId
-	})
-	if len(rankingRows) > query.Limit {
-		rankingRows = rankingRows[:query.Limit]
-	}
-	for _, row := range rankingRows {
+	for _, row := range usageStatsSortedUserRows(rankingMap, query.Limit) {
 		data.Ranking = append(data.Ranking, usageStatsRankItemFromRow(row))
+	}
+	for _, row := range usageStatsSortedUserRows(subscriptionRankingMap, query.Limit) {
+		data.SubscriptionRanking = append(data.SubscriptionRanking, usageStatsRankItemFromRow(row))
 	}
 
 	modelRows := make([]usageStatsBaseRow, 0, len(modelMap))
@@ -1683,12 +1813,11 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 	if len(modelRows) > query.Limit {
 		modelRows = modelRows[:query.Limit]
 	}
-	var trendRows []usageStatsTrendRow
 	for _, row := range modelRows {
 		data.Models = append(data.Models, usageStatsModelItemFromRow(row))
 	}
 
-	trendRows = make([]usageStatsTrendRow, 0, len(trendMap))
+	trendRows := make([]usageStatsTrendRow, 0, len(trendMap))
 	for _, row := range trendMap {
 		trendRows = append(trendRows, *row)
 	}
@@ -1698,25 +1827,55 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 	for _, item := range data.Ranking {
 		rankedUserIDs[item.UserId] = struct{}{}
 	}
-	if len(rankedUserIDs) > 0 {
-		detailRows := make([]usageStatsBaseRow, 0, len(detailMap))
-		for _, row := range detailMap {
-			if _, ok := rankedUserIDs[row.UserId]; !ok {
-				continue
-			}
-			finalizeUsageStatsBaseRow(row)
-			detailRows = append(detailRows, *row)
+	detailRows := make([]usageStatsBaseRow, 0, len(detailMap))
+	for _, row := range detailMap {
+		if _, ok := rankedUserIDs[row.UserId]; !ok {
+			continue
 		}
-		data.UserModelDetails = buildUsageStatsUserModelDetails(detailRows, data.Ranking)
+		finalizeUsageStatsBaseRow(row)
+		detailRows = append(detailRows, *row)
 	}
+	data.UserModelDetails = buildUsageStatsUserModelDetails(detailRows, data.Ranking)
+	return nil
+}
 
-	if err = populateUsageStatsRecharge(&data, query); err != nil {
-		return data, err
+func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
+	var err error
+	query, err = normalizeUsageStatsQuery(query)
+	if err != nil {
+		return UsageStatsData{}, err
 	}
-	if err = populateUsageStatsSubscriptionPurchase(&data, query); err != nil {
-		return data, err
+	ensureCommonColumnsInitialized()
+	data := UsageStatsData{
+		StartTimestamp:              query.StartTimestamp,
+		EndTimestamp:                query.EndTimestamp,
+		TrendGranularity:            query.TrendGranularity,
+		GeneratedAt:                 time.Now().Unix(),
+		Ranking:                     []UsageStatsRankItem{},
+		SubscriptionRanking:         []UsageStatsRankItem{},
+		Trend:                       []UsageStatsTrendPoint{},
+		Models:                      []UsageStatsModelItem{},
+		UserModelDetails:            []UsageStatsUserModelDetail{},
+		RechargeRanking:             UsageStatsRechargeRankPage{Page: query.RechargePage, PageSize: query.RechargePageSize, Items: []UsageStatsRechargeRankItem{}},
+		RechargeDetails:             UsageStatsRechargeDetailPage{Page: query.RechargeDetailPage, PageSize: query.RechargeDetailSize, UserId: query.RechargeUserId, Items: []UsageStatsRechargeDetailItem{}},
+		SubscriptionPurchaseRanking: UsageStatsSubscriptionPurchaseRankPage{Page: query.SubscriptionPurchasePage, PageSize: query.SubscriptionPurchasePageSize, Items: []UsageStatsSubscriptionPurchaseRankItem{}},
+		SubscriptionPurchaseDetails: UsageStatsSubscriptionPurchaseDetailPage{Page: query.SubscriptionPurchaseDetailPage, PageSize: query.SubscriptionPurchaseDetailSize, UserId: query.SubscriptionPurchaseUserId, Items: []UsageStatsSubscriptionPurchaseDetailItem{}},
 	}
-
+	if usageStatsIncludesSection(query, UsageStatsSectionUsage) {
+		if err = populateUsageStatsUsage(&data, query); err != nil {
+			return data, err
+		}
+	}
+	if usageStatsIncludesSection(query, UsageStatsSectionRecharge) {
+		if err = populateUsageStatsRecharge(&data, query); err != nil {
+			return data, err
+		}
+	}
+	if usageStatsIncludesSection(query, UsageStatsSectionSubscriptionPurchase) {
+		if err = populateUsageStatsSubscriptionPurchase(&data, query); err != nil {
+			return data, err
+		}
+	}
 	return data, nil
 }
 
