@@ -98,6 +98,10 @@ var defaultModelRatio = map[string]float64{
 	"gpt-5-mini-2025-08-07":            0.125,
 	"gpt-5-nano":                       0.025,
 	"gpt-5-nano-2025-08-07":            0.025,
+	"gpt-5.6":                          2.5,  // $5 / 1M tokens, alias of gpt-5.6-sol
+	"gpt-5.6-sol":                      2.5,  // $5 / 1M tokens
+	"gpt-5.6-terra":                    1.25, // $2.5 / 1M tokens
+	"gpt-5.6-luna":                     0.5,  // $1 / 1M tokens
 	//"gpt-3.5-turbo-0301":           0.75, //deprecated
 	"gpt-3.5-turbo":          0.25,
 	"gpt-3.5-turbo-0613":     0.75,
@@ -331,6 +335,10 @@ var defaultCompletionRatio = map[string]float64{
 	"gpt-4o-gizmo-*": 3,
 	"gpt-4-all":      2,
 	"gpt-image-1":    8,
+	"gpt-5.6":        6,
+	"gpt-5.6-sol":    6,
+	"gpt-5.6-terra":  6,
+	"gpt-5.6-luna":   6,
 }
 
 // InitRatioSettings initializes all model related settings maps
@@ -398,6 +406,9 @@ func GetModelRatio(name string) (float64, bool, string) {
 	name = FormatMatchingModelName(name)
 
 	ratio, ok := modelRatioMap.Get(name)
+	if !ok && name == "gpt-5.6" {
+		ratio, ok = modelRatioMap.Get("gpt-5.6-sol")
+	}
 	if !ok {
 		if strings.HasSuffix(name, CompactModelSuffix) {
 			if wildcardRatio, ok := modelRatioMap.Get(CompactWildcardModelKey); ok {
@@ -449,6 +460,11 @@ func GetCompletionRatio(name string) float64 {
 	if ratio, ok := completionRatioMap.Get(name); ok {
 		return ratio
 	}
+	if name == "gpt-5.6" {
+		if ratio, ok := completionRatioMap.Get("gpt-5.6-sol"); ok {
+			return ratio
+		}
+	}
 	return hardCodedRatio
 }
 
@@ -483,6 +499,11 @@ func GetCompletionRatioInfo(name string) CompletionRatioInfo {
 			Locked: false,
 		}
 	}
+	if name == "gpt-5.6" {
+		if ratio, ok := completionRatioMap.Get("gpt-5.6-sol"); ok {
+			return CompletionRatioInfo{Ratio: ratio, Locked: false}
+		}
+	}
 
 	return CompletionRatioInfo{
 		Ratio:  hardCodedRatio,
@@ -509,6 +530,9 @@ func getHardcodedCompletionModelRatio(name string) (float64, bool) {
 		}
 		// gpt-5 匹配
 		if strings.HasPrefix(name, "gpt-5") {
+			if strings.HasPrefix(name, "gpt-5.6") {
+				return 6, false
+			}
 			if strings.HasPrefix(name, "gpt-5.5") {
 				return 6, false
 			}

@@ -244,6 +244,16 @@ export const getPricingTableColumns = ({
               {item.suffix}
             </div>
           ))}
+          {record.token_tier_pricing ? (
+            <div className='flex items-center gap-2 flex-wrap pt-1'>
+              <Tag color='orange' size='small'>
+                {t('阶梯计价 · {{count}}档', {
+                  count: record.token_tier_pricing.rule?.tiers?.length || 0,
+                })}
+              </Tag>
+              <span className='text-xs text-gray-500'>{t('基础价格起')}</span>
+            </div>
+          ) : null}
         </div>
       );
     },

@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,6 +21,13 @@ func clonePricingItems(pricing []model.Pricing) []model.Pricing {
 		}
 		if len(item.SupportedEndpointTypes) > 0 {
 			copied.SupportedEndpointTypes = append([]constant.EndpointType{}, item.SupportedEndpointTypes...)
+		}
+		copied.TokenTierPricing = nil
+		if item.QuotaType == 0 {
+			if tierPricing, ok := ratio_setting.GetEffectiveTokenTierPricingRule(item.ModelName); ok {
+				tierPricing.Rule.Tiers = append([]types.TokenTier(nil), tierPricing.Rule.Tiers...)
+				copied.TokenTierPricing = &tierPricing
+			}
 		}
 		cloned = append(cloned, copied)
 	}

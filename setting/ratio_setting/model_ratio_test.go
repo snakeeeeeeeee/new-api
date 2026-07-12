@@ -66,3 +66,29 @@ func TestGetCompletionRatioForGPT5UsesConfiguredRatio(t *testing.T) {
 		t.Fatalf("expected configured gpt-5.6-luna completion ratio 4.5, got %v", customInfo.Ratio)
 	}
 }
+
+func TestGPT56AliasFallsBackToConfiguredSolPrices(t *testing.T) {
+	originalModel := ModelRatio2JSONString()
+	originalCompletion := CompletionRatio2JSONString()
+	t.Cleanup(func() {
+		if err := UpdateModelRatioByJSONString(originalModel); err != nil {
+			t.Fatal(err)
+		}
+		if err := UpdateCompletionRatioByJSONString(originalCompletion); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := UpdateModelRatioByJSONString(`{"gpt-5.6-sol":2.75}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateCompletionRatioByJSONString(`{"gpt-5.6-sol":6.5}`); err != nil {
+		t.Fatal(err)
+	}
+	ratio, ok, _ := GetModelRatio("gpt-5.6")
+	if !ok || ratio != 2.75 {
+		t.Fatalf("expected Sol model ratio fallback, got %v, %v", ratio, ok)
+	}
+	if ratio := GetCompletionRatio("gpt-5.6"); ratio != 6.5 {
+		t.Fatalf("expected Sol completion ratio fallback, got %v", ratio)
+	}
+}

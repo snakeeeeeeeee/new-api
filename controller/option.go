@@ -64,6 +64,14 @@ func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 	return string(jsonBytes)
 }
 
+func buildTokenTierPricingRulesMetaValue() string {
+	jsonBytes, err := common.Marshal(ratio_setting.GetTokenTierPricingRulesMeta())
+	if err != nil {
+		return "{}"
+	}
+	return string(jsonBytes)
+}
+
 func GetOptions(c *gin.Context) {
 	var options []*model.Option
 	optionValues := make(map[string]string)
@@ -95,6 +103,10 @@ func GetOptions(c *gin.Context) {
 	options = append(options, &model.Option{
 		Key:   "CompletionRatioMeta",
 		Value: buildCompletionRatioMetaValue(optionValues),
+	})
+	options = append(options, &model.Option{
+		Key:   "TokenTierPricingRulesMeta",
+		Value: buildTokenTierPricingRulesMetaValue(),
 	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

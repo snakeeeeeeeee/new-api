@@ -1,3 +1,22 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+
 import { useEffect, useMemo, useState } from 'react';
 import { API, showError, showSuccess } from '../../../../helpers';
 
@@ -28,6 +47,7 @@ const EMPTY_MODEL = {
     audioCompletionRatio: '',
   },
   hasConflict: false,
+  tokenTierPricing: null,
 };
 
 const NUMERIC_INPUT_REGEX = /^(\d+(\.\d*)?|\.\d*)?$/;
@@ -75,6 +95,140 @@ const parseOptionJSON = (rawValue) => {
     console.error('JSON解析错误:', error);
     return {};
   }
+};
+
+const emptyTokenTierPricing = () => ({
+  enabled: false,
+  source: 'custom',
+  hash: '',
+  id: '',
+  serviceTier: 'standard',
+  meter: 'input_tokens_total',
+  billingMode: 'whole_request',
+  dirty: false,
+  rawOverride: null,
+  tiers: [
+    {
+      upToInclusive: '272000',
+      useBasePrice: true,
+      prices: { input: '', cached_input: '', cache_write: '', output: '' },
+    },
+    {
+      upToInclusive: '',
+      useBasePrice: false,
+      prices: { input: '', cached_input: '', cache_write: '', output: '' },
+    },
+  ],
+});
+
+const normalizeTokenTierPricing = (meta, rawOverride) => {
+  if (!meta?.rule) {
+    return emptyTokenTierPricing();
+  }
+  const rule = meta.rule;
+  return {
+    enabled: Boolean(rule.enabled),
+    source: meta.source || 'custom',
+    hash: meta.hash || '',
+    id: rule.id || '',
+    serviceTier: rule.service_tier || 'standard',
+    meter: rule.meter || 'input_tokens_total',
+    billingMode: rule.billing_mode || 'whole_request',
+    dirty: false,
+    rawOverride: rawOverride || null,
+    tiers:
+      Array.isArray(rule.tiers) && rule.tiers.length >= 2
+        ? rule.tiers.map((tier, index) => ({
+            upToInclusive:
+              tier.up_to_inclusive === null ||
+              tier.up_to_inclusive === undefined
+                ? ''
+                : String(tier.up_to_inclusive),
+            useBasePrice: index === 0 ? true : Boolean(tier.use_base_price),
+            prices: {
+              input: toNumericString(tier.prices?.input),
+              cached_input: toNumericString(tier.prices?.cached_input),
+              cache_write: toNumericString(tier.prices?.cache_write),
+              output: toNumericString(tier.prices?.output),
+            },
+          }))
+        : emptyTokenTierPricing().tiers,
+  };
+};
+
+export const getTokenTierPricingErrors = (pricing, t) => {
+  if (!pricing?.enabled) return {};
+  const errors = {};
+  if (!Array.isArray(pricing.tiers) || pricing.tiers.length < 2) {
+    errors.general = t('至少需要两个阶梯价格档位');
+    return errors;
+  }
+  let previousLimit = -1;
+  pricing.tiers.forEach((tier, index) => {
+    const isLast = index === pricing.tiers.length - 1;
+    if (isLast) {
+      if (tier.upToInclusive !== '') {
+        errors[`${index}.limit`] = t('最后一档必须没有上限');
+      }
+    } else {
+      const limit = Number(tier.upToInclusive);
+      if (
+        tier.upToInclusive === '' ||
+        !Number.isInteger(limit) ||
+        limit < 0 ||
+        limit <= previousLimit
+      ) {
+        errors[`${index}.limit`] = t('档位上限必须是严格递增的非负整数');
+      } else {
+        previousLimit = limit;
+      }
+    }
+    if (index === 0) return;
+    ['input', 'cached_input', 'cache_write', 'output'].forEach((field) => {
+      const rawValue = tier.prices?.[field];
+      const value = Number(rawValue);
+      if (rawValue === '' || !Number.isFinite(value) || value < 0) {
+        errors[`${index}.${field}`] = t('请输入有限的非负价格');
+      }
+    });
+  });
+  return errors;
+};
+
+const serializeTokenTierPricing = (model, t) => {
+  const pricing = model.tokenTierPricing;
+  if (!pricing) return null;
+  if (!pricing.dirty && pricing.source === 'system') return null;
+  if (!pricing.dirty && pricing.rawOverride) return pricing.rawOverride;
+  if (!pricing.enabled) return { enabled: false };
+
+  const errors = getTokenTierPricingErrors(pricing, t);
+  if (Object.keys(errors).length > 0) {
+    throw new Error(
+      t('模型 {{name}} 的 Token 阶梯价格配置不完整', { name: model.name }),
+    );
+  }
+  return {
+    id: pricing.id || `custom-${model.name}-standard`,
+    enabled: true,
+    service_tier: 'standard',
+    meter: 'input_tokens_total',
+    billing_mode: 'whole_request',
+    tiers: pricing.tiers.map((tier, index) => ({
+      up_to_inclusive:
+        index === pricing.tiers.length - 1 ? null : Number(tier.upToInclusive),
+      ...(index === 0
+        ? { use_base_price: true }
+        : {
+            prices: {
+              input: Number(tier.prices.input),
+              cached_input: Number(tier.prices.cached_input),
+              cache_write: Number(tier.prices.cache_write),
+              output: Number(tier.prices.output),
+            },
+          }),
+    })),
+  };
 };
 
 const ratioToBasePrice = (ratio) => {
@@ -179,6 +333,10 @@ const buildModelState = (name, sourceMaps) => {
         audioRatio,
         audioCompletionRatio,
       ].some(hasValue),
+    tokenTierPricing: normalizeTokenTierPricing(
+      sourceMaps.TokenTierPricingRulesMeta[name],
+      sourceMaps.TokenTierPricingRules[name],
+    ),
   };
 };
 
@@ -552,6 +710,10 @@ export function useModelPricingEditorState({
       ImageRatio: parseOptionJSON(options.ImageRatio),
       AudioRatio: parseOptionJSON(options.AudioRatio),
       AudioCompletionRatio: parseOptionJSON(options.AudioCompletionRatio),
+      TokenTierPricingRules: parseOptionJSON(options.TokenTierPricingRules),
+      TokenTierPricingRulesMeta: parseOptionJSON(
+        options.TokenTierPricingRulesMeta,
+      ),
     };
 
     const names = new Set([
@@ -565,6 +727,8 @@ export function useModelPricingEditorState({
       ...Object.keys(sourceMaps.ImageRatio),
       ...Object.keys(sourceMaps.AudioRatio),
       ...Object.keys(sourceMaps.AudioCompletionRatio),
+      ...Object.keys(sourceMaps.TokenTierPricingRules),
+      ...Object.keys(sourceMaps.TokenTierPricingRulesMeta),
     ]);
 
     const nextModels = Array.from(names)
@@ -782,6 +946,86 @@ export function useModelPricingEditorState({
     }));
   };
 
+  const updateSelectedTokenTierPricing = (updater) => {
+    if (!selectedModel) return;
+    upsertModel(selectedModel.name, (model) => {
+      const nextPricing = updater(
+        model.tokenTierPricing || emptyTokenTierPricing(),
+      );
+      return {
+        ...model,
+        tokenTierPricing: {
+          ...nextPricing,
+          source: nextPricing.dirty ? 'custom' : nextPricing.source,
+        },
+      };
+    });
+  };
+
+  const handleTokenTierEnabledChange = (enabled) => {
+    updateSelectedTokenTierPricing((pricing) => ({
+      ...pricing,
+      enabled,
+      dirty: true,
+    }));
+  };
+
+  const handleTokenTierLimitChange = (index, value) => {
+    if (!/^\d*$/.test(value)) return;
+    updateSelectedTokenTierPricing((pricing) => ({
+      ...pricing,
+      dirty: true,
+      tiers: pricing.tiers.map((tier, tierIndex) =>
+        tierIndex === index ? { ...tier, upToInclusive: value } : tier,
+      ),
+    }));
+  };
+
+  const handleTokenTierPriceChange = (index, field, value) => {
+    if (!NUMERIC_INPUT_REGEX.test(value)) return;
+    updateSelectedTokenTierPricing((pricing) => ({
+      ...pricing,
+      dirty: true,
+      tiers: pricing.tiers.map((tier, tierIndex) =>
+        tierIndex === index
+          ? { ...tier, prices: { ...tier.prices, [field]: value } }
+          : tier,
+      ),
+    }));
+  };
+
+  const addTokenTier = () => {
+    updateSelectedTokenTierPricing((pricing) => {
+      const nextTier = {
+        upToInclusive: '',
+        useBasePrice: false,
+        prices: { input: '', cached_input: '', cache_write: '', output: '' },
+      };
+      return {
+        ...pricing,
+        dirty: true,
+        tiers: [
+          ...pricing.tiers.slice(0, -1),
+          nextTier,
+          pricing.tiers[pricing.tiers.length - 1],
+        ],
+      };
+    });
+  };
+
+  const deleteTokenTier = (index) => {
+    updateSelectedTokenTierPricing((pricing) => {
+      const tiers = pricing.tiers.filter((_, tierIndex) => tierIndex !== index);
+      if (tiers.length > 0) {
+        tiers[tiers.length - 1] = {
+          ...tiers[tiers.length - 1],
+          upToInclusive: '',
+        };
+      }
+      return { ...pricing, dirty: true, tiers };
+    });
+  };
+
   const addModel = (modelName) => {
     const trimmedName = modelName.trim();
     if (!trimmedName) {
@@ -854,6 +1098,18 @@ export function useModelPricingEditorState({
           imagePrice: selectedModel.imagePrice,
           audioInputPrice: selectedModel.audioInputPrice,
           audioOutputPrice: selectedModel.audioOutputPrice,
+          tokenTierPricing: selectedModel.tokenTierPricing
+            ? {
+                ...selectedModel.tokenTierPricing,
+                source: 'custom',
+                dirty: true,
+                rawOverride: null,
+                tiers: selectedModel.tokenTierPricing.tiers.map((tier) => ({
+                  ...tier,
+                  prices: { ...tier.prices },
+                })),
+              }
+            : null,
         };
 
         if (
@@ -913,6 +1169,7 @@ export function useModelPricingEditorState({
         ImageRatio: {},
         AudioRatio: {},
         AudioCompletionRatio: {},
+        TokenTierPricingRules: {},
       };
 
       for (const model of models) {
@@ -922,6 +1179,10 @@ export function useModelPricingEditorState({
             output[key][model.name] = value;
           }
         });
+        const tokenTierPricing = serializeTokenTierPricing(model, t);
+        if (tokenTierPricing !== null) {
+          output.TokenTierPricingRules[model.name] = tokenTierPricing;
+        }
       }
 
       const requestQueue = Object.entries(output).map(([key, value]) =>
@@ -970,6 +1231,11 @@ export function useModelPricingEditorState({
     handleOptionalFieldToggle,
     handleNumericFieldChange,
     handleBillingModeChange,
+    handleTokenTierEnabledChange,
+    handleTokenTierLimitChange,
+    handleTokenTierPriceChange,
+    addTokenTier,
+    deleteTokenTier,
     handleSubmit,
     addModel,
     deleteModel,

@@ -1,3 +1,24 @@
+# Multi-level Token Tier Pricing Findings (2026-07-13)
+
+- Official GPT-5.6 Standard pricing uses a whole-request threshold: requests above 272,000 total input tokens charge all input at 2x and all output at 1.5x; this is not marginal pricing on only the excess tokens.
+- Threshold selection uses total input usage only. Cached-read and cache-write usage are component details within total input and must not be added again.
+- Existing billing snapshots live in `types/price_data.go`; final token settlement and log text live in `service/text_quota.go`.
+- The feature must preserve the legacy formula byte-for-byte for models without an effective enabled rule and must exclude per-call fixed pricing.
+- Docker dev is currently healthy on port 3001. `test-gpt` is a database token name, not a literal key; validation must retrieve the secret without printing it.
+- UI guidance favors inline row errors, stable column widths, and stacked mobile tier rows rather than requiring horizontal scrolling.
+- Existing quota units convert to absolute prices as `price_per_million = ratio * 1_000_000 / QuotaPerUnit`; resolving this at request start preserves custom `QuotaPerUnit` behavior.
+- The final text quota function already separates Token quota from fixed tool quotas before summing. The tier branch replaces only the Token subtotal, so Web Search, File Search, image-generation calls, and audio fixed charges are not multiplied by the context tier.
+- Marketplace group/currency conversion can reuse `calculateModelPrice` with a synthetic per-tier ratio record, avoiding a second frontend currency implementation.
+- The final live report contains seven passed scenarios. The official long-context case used `gpt-5.6-luna` with 285,016 input and 18 output tokens, selected tier 2, and matched 285,097 expected/actual quota plus identical user, token, and channel deltas.
+- The repeatable validator stores its evidence in `tmp/token-tier-pricing-report-1783875609.json`, guards the costly long-context case behind `--allow-real-long-context`, and never prints the `test-gpt` secret.
+- Final Docker image `e1c0d1bdf24c...` is running at port 3001. `new-api-dev` and `sub2api-dev` are healthy; PostgreSQL and Redis are running and pass the validator's readiness probes despite having no Compose healthcheck metadata.
+- Final database audit confirms the temporary override and visual user were deleted, the original two usable groups remain, and the temporary root access token was restored to null.
+- The disabled marketplace badge was a display-cache issue, not a billing-state issue: settlement used the current disabled rule immediately, while `/api/pricing` copied tier metadata from its one-minute cached model row.
+- Recomputing only `token_tier_pricing` while cloning the pricing response gives immediate enable/disable behavior without forcing the expensive abilities, model metadata, vendor, and endpoint pricing cache to rebuild.
+- Docker browser verification confirms the disabled Luna card contains only its normal prices and usage-billing tag; restoring the system default immediately restores the localized base-price suffix and two-tier badge.
+
+---
+
 # Model marketplace dynamic-route label findings (2026-07-12)
 
 - The screenshot's orange label is emitted by `formatPriceInfo`; the same wording also appears in table and pricing-detail views.

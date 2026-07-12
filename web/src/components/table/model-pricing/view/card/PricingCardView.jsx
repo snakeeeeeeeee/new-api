@@ -175,6 +175,8 @@ const PricingCardView = ({
       );
     }
 
+    const tierCount = record.token_tier_pricing?.rule?.tiers?.length || 0;
+
     // 自定义标签（右边）
     const customTags = [];
     if (record.tags) {
@@ -195,7 +197,14 @@ const PricingCardView = ({
 
     return (
       <div className='flex items-center justify-between'>
-        <div className='flex items-center gap-2'>{billingTag}</div>
+        <div className='flex items-center gap-2 flex-wrap'>
+          {billingTag}
+          {tierCount > 0 ? (
+            <Tag color='orange' shape='circle' size='small'>
+              {t('阶梯计价 · {{count}}档', { count: tierCount })}
+            </Tag>
+          ) : null}
+        </div>
         <div className='flex items-center gap-1'>
           {customTags.length > 0 &&
             renderLimitedItems({
@@ -270,6 +279,11 @@ const PricingCardView = ({
                       </h3>
                       <div className='flex flex-col gap-1 text-xs mt-1'>
                         {formatPriceInfo(priceData, t, siteDisplayType)}
+                        {model.token_tier_pricing ? (
+                          <span className='text-gray-500'>
+                            {t('基础价格起')}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   </div>

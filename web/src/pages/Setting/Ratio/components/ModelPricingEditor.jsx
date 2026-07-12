@@ -45,6 +45,7 @@ import {
   PAGE_SIZE,
   PRICE_SUFFIX,
   buildSummaryText,
+  getTokenTierPricingErrors,
   hasValue,
   useModelPricingEditorState,
 } from '../hooks/useModelPricingEditorState';
@@ -83,6 +84,184 @@ const PriceInput = ({
     ) : null}
   </div>
 );
+
+const TOKEN_TIER_PRICE_FIELDS = [
+  ['input', '输入'],
+  ['cached_input', '缓存读取'],
+  ['cache_write', '缓存写入'],
+  ['output', '输出'],
+];
+
+const TokenTierPricingEditor = ({
+  model,
+  isMobile,
+  t,
+  onEnabledChange,
+  onLimitChange,
+  onPriceChange,
+  onAddTier,
+  onDeleteTier,
+}) => {
+  const pricing = model.tokenTierPricing;
+  const errors = getTokenTierPricingErrors(pricing, t);
+  if (!pricing) return null;
+
+  const basePrices = {
+    input: model.inputPrice,
+    cached_input: model.cachePrice,
+    cache_write: model.createCachePrice,
+    output: model.completionPrice,
+  };
+  const rangeText = (index) => {
+    const tier = pricing.tiers[index];
+    const previous = index > 0 ? pricing.tiers[index - 1] : null;
+    if (index === 0) return `≤${tier.upToInclusive || '-'}`;
+    if (index === pricing.tiers.length - 1) {
+      return `>${previous?.upToInclusive || '-'}`;
+    }
+    return `>${previous?.upToInclusive || '-'} ${t('且')} ≤${tier.upToInclusive || '-'}`;
+  };
+
+  return (
+    <div
+      style={{
+        borderTop: '1px solid var(--semi-color-border)',
+        paddingTop: 16,
+        marginTop: 4,
+      }}
+    >
+      <div className='flex items-center justify-between gap-3 mb-2'>
+        <div>
+          <div className='font-medium'>{t('Token 阶梯价格')}</div>
+          <div className='text-xs text-gray-500 mt-1'>
+            {t('按单次请求总输入 Token 选择档位，命中后整次请求换档。')}
+          </div>
+        </div>
+        <Switch checked={pricing.enabled} onChange={onEnabledChange} />
+      </div>
+      <div className='flex items-center gap-2 mb-3'>
+        <Tag color={pricing.source === 'system' ? 'blue' : 'green'}>
+          {pricing.source === 'system' ? t('系统默认') : t('自定义')}
+        </Tag>
+        <Text type='tertiary' size='small'>
+          {t('计量依据：总输入 Token；计费方式：整次请求换档')}
+        </Text>
+      </div>
+      {pricing.enabled ? (
+        <>
+          <Banner
+            type='info'
+            bordered
+            fullMode={false}
+            closeIcon={null}
+            style={{ marginBottom: 12 }}
+            description={t(
+              '档位由单次请求总输入 Token 数决定；命中更高档位后，本次请求全部输入和输出 Token 均按该档位计费。',
+            )}
+          />
+          {errors.general ? (
+            <div className='text-sm text-red-500 mb-2'>{errors.general}</div>
+          ) : null}
+          <div className='flex flex-col gap-3'>
+            {pricing.tiers.map((tier, index) => (
+              <div
+                key={`${index}-${pricing.tiers.length}`}
+                style={{
+                  border: '1px solid var(--semi-color-border)',
+                  borderRadius: 6,
+                  padding: 12,
+                }}
+              >
+                <div className='flex items-center justify-between gap-2 mb-2'>
+                  <div className='flex items-center gap-2 flex-wrap'>
+                    <Text strong>
+                      {t('第 {{index}} 档', { index: index + 1 })}
+                    </Text>
+                    <Tag>{rangeText(index)}</Tag>
+                    {index === 0 ? (
+                      <Tag color='teal'>{t('引用基础价格')}</Tag>
+                    ) : null}
+                  </div>
+                  {index > 0 && pricing.tiers.length > 2 ? (
+                    <Button
+                      type='danger'
+                      theme='borderless'
+                      icon={<IconDelete />}
+                      aria-label={t('删除档位')}
+                      title={t('删除档位')}
+                      onClick={() => onDeleteTier(index)}
+                    />
+                  ) : null}
+                </div>
+                {index < pricing.tiers.length - 1 ? (
+                  <div className='mb-2'>
+                    <div className='text-xs text-gray-500 mb-1'>
+                      {t('上限（包含）')}
+                    </div>
+                    <Input
+                      value={tier.upToInclusive}
+                      suffix={t('tokens')}
+                      validateStatus={
+                        errors[`${index}.limit`] ? 'error' : 'default'
+                      }
+                      onChange={(value) => onLimitChange(index, value)}
+                    />
+                    {errors[`${index}.limit`] ? (
+                      <div className='text-xs text-red-500 mt-1'>
+                        {errors[`${index}.limit`]}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: isMobile
+                      ? 'minmax(0, 1fr)'
+                      : 'repeat(2, minmax(0, 1fr))',
+                    gap: 10,
+                  }}
+                >
+                  {TOKEN_TIER_PRICE_FIELDS.map(([field, label]) => {
+                    const error = errors[`${index}.${field}`];
+                    return (
+                      <div key={field}>
+                        <div className='text-xs text-gray-500 mb-1'>
+                          {t(label)}
+                        </div>
+                        <Input
+                          value={
+                            index === 0
+                              ? basePrices[field] || ''
+                              : tier.prices?.[field] || ''
+                          }
+                          suffix={t('$/1M')}
+                          disabled={index === 0}
+                          validateStatus={error ? 'error' : 'default'}
+                          onChange={(value) =>
+                            onPriceChange(index, field, value)
+                          }
+                        />
+                        {error ? (
+                          <div className='text-xs text-red-500 mt-1'>
+                            {error}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+          <Button className='mt-3' icon={<IconPlus />} onClick={onAddTier}>
+            {t('增加档位')}
+          </Button>
+        </>
+      ) : null}
+    </div>
+  );
+};
 
 export default function ModelPricingEditor({
   options,
@@ -123,6 +302,11 @@ export default function ModelPricingEditor({
     handleOptionalFieldToggle,
     handleNumericFieldChange,
     handleBillingModeChange,
+    handleTokenTierEnabledChange,
+    handleTokenTierLimitChange,
+    handleTokenTierPriceChange,
+    addTokenTier,
+    deleteTokenTier,
     handleSubmit,
     addModel,
     deleteModel,
@@ -255,7 +439,9 @@ export default function ModelPricingEditor({
             style={isMobile ? { width: '100%' } : undefined}
           >
             {t('批量应用当前模型价格')}
-            {selectedModelNames.length > 0 ? ` (${selectedModelNames.length})` : ''}
+            {selectedModelNames.length > 0
+              ? ` (${selectedModelNames.length})`
+              : ''}
           </Button>
           <Input
             prefix={<IconSearch />}
@@ -377,7 +563,9 @@ export default function ModelPricingEditor({
                   <RadioGroup
                     type='button'
                     value={selectedModel.billingMode}
-                    onChange={(event) => handleBillingModeChange(event.target.value)}
+                    onChange={(event) =>
+                      handleBillingModeChange(event.target.value)
+                    }
                   >
                     <Radio value='per-token'>{t('按量计费')}</Radio>
                     <Radio value='per-request'>{t('按次计费')}</Radio>
@@ -412,7 +600,9 @@ export default function ModelPricingEditor({
                     value={selectedModel.fixedPrice}
                     placeholder={t('输入每次调用价格')}
                     suffix={t('$/次')}
-                    onChange={(value) => handleNumericFieldChange('fixedPrice', value)}
+                    onChange={(value) =>
+                      handleNumericFieldChange('fixedPrice', value)
+                    }
                     extraText={t('适合 MJ / 任务类等按次收费模型。')}
                   />
                 ) : (
@@ -429,7 +619,9 @@ export default function ModelPricingEditor({
                         label={t('输入价格')}
                         value={selectedModel.inputPrice}
                         placeholder={t('输入 $/1M tokens')}
-                        onChange={(value) => handleNumericFieldChange('inputPrice', value)}
+                        onChange={(value) =>
+                          handleNumericFieldChange('inputPrice', value)
+                        }
                       />
                       {selectedModel.completionRatioLocked ? (
                         <Banner
@@ -463,12 +655,18 @@ export default function ModelPricingEditor({
                             )}
                             disabled={selectedModel.completionRatioLocked}
                             onChange={(checked) =>
-                              handleOptionalFieldToggle('completionPrice', checked)
+                              handleOptionalFieldToggle(
+                                'completionPrice',
+                                checked,
+                              )
                             }
                           />
                         }
                         hidden={
-                          !isOptionalFieldEnabled(selectedModel, 'completionPrice')
+                          !isOptionalFieldEnabled(
+                            selectedModel,
+                            'completionPrice',
+                          )
                         }
                         disabled={
                           !hasValue(selectedModel.inputPrice) ||
@@ -479,7 +677,8 @@ export default function ModelPricingEditor({
                             ? t(
                                 '后端固定倍率：{{ratio}}。该字段仅展示换算后的价格。',
                                 {
-                                  ratio: selectedModel.lockedCompletionRatio || '-',
+                                  ratio:
+                                    selectedModel.lockedCompletionRatio || '-',
                                 },
                               )
                             : !isOptionalFieldEnabled(
@@ -494,17 +693,24 @@ export default function ModelPricingEditor({
                         label={t('缓存读取价格')}
                         value={selectedModel.cachePrice}
                         placeholder={t('输入 $/1M tokens')}
-                        onChange={(value) => handleNumericFieldChange('cachePrice', value)}
+                        onChange={(value) =>
+                          handleNumericFieldChange('cachePrice', value)
+                        }
                         headerAction={
                           <Switch
                             size='small'
-                            checked={isOptionalFieldEnabled(selectedModel, 'cachePrice')}
+                            checked={isOptionalFieldEnabled(
+                              selectedModel,
+                              'cachePrice',
+                            )}
                             onChange={(checked) =>
                               handleOptionalFieldToggle('cachePrice', checked)
                             }
                           />
                         }
-                        hidden={!isOptionalFieldEnabled(selectedModel, 'cachePrice')}
+                        hidden={
+                          !isOptionalFieldEnabled(selectedModel, 'cachePrice')
+                        }
                         disabled={!hasValue(selectedModel.inputPrice)}
                         extraText={
                           !isOptionalFieldEnabled(selectedModel, 'cachePrice')
@@ -527,12 +733,18 @@ export default function ModelPricingEditor({
                               'createCachePrice',
                             )}
                             onChange={(checked) =>
-                              handleOptionalFieldToggle('createCachePrice', checked)
+                              handleOptionalFieldToggle(
+                                'createCachePrice',
+                                checked,
+                              )
                             }
                           />
                         }
                         hidden={
-                          !isOptionalFieldEnabled(selectedModel, 'createCachePrice')
+                          !isOptionalFieldEnabled(
+                            selectedModel,
+                            'createCachePrice',
+                          )
                         }
                         disabled={!hasValue(selectedModel.inputPrice)}
                         extraText={
@@ -543,6 +755,16 @@ export default function ModelPricingEditor({
                             ? t('当前未启用，需要时再打开即可。')
                             : ''
                         }
+                      />
+                      <TokenTierPricingEditor
+                        model={selectedModel}
+                        isMobile={isMobile}
+                        t={t}
+                        onEnabledChange={handleTokenTierEnabledChange}
+                        onLimitChange={handleTokenTierLimitChange}
+                        onPriceChange={handleTokenTierPriceChange}
+                        onAddTier={addTokenTier}
+                        onDeleteTier={deleteTokenTier}
                       />
                     </Card>
 
@@ -563,17 +785,24 @@ export default function ModelPricingEditor({
                         label={t('图片输入价格')}
                         value={selectedModel.imagePrice}
                         placeholder={t('输入 $/1M tokens')}
-                        onChange={(value) => handleNumericFieldChange('imagePrice', value)}
+                        onChange={(value) =>
+                          handleNumericFieldChange('imagePrice', value)
+                        }
                         headerAction={
                           <Switch
                             size='small'
-                            checked={isOptionalFieldEnabled(selectedModel, 'imagePrice')}
+                            checked={isOptionalFieldEnabled(
+                              selectedModel,
+                              'imagePrice',
+                            )}
                             onChange={(checked) =>
                               handleOptionalFieldToggle('imagePrice', checked)
                             }
                           />
                         }
-                        hidden={!isOptionalFieldEnabled(selectedModel, 'imagePrice')}
+                        hidden={
+                          !isOptionalFieldEnabled(selectedModel, 'imagePrice')
+                        }
                         disabled={!hasValue(selectedModel.inputPrice)}
                         extraText={
                           !isOptionalFieldEnabled(selectedModel, 'imagePrice')
@@ -596,11 +825,19 @@ export default function ModelPricingEditor({
                               'audioInputPrice',
                             )}
                             onChange={(checked) =>
-                              handleOptionalFieldToggle('audioInputPrice', checked)
+                              handleOptionalFieldToggle(
+                                'audioInputPrice',
+                                checked,
+                              )
                             }
                           />
                         }
-                        hidden={!isOptionalFieldEnabled(selectedModel, 'audioInputPrice')}
+                        hidden={
+                          !isOptionalFieldEnabled(
+                            selectedModel,
+                            'audioInputPrice',
+                          )
+                        }
                         disabled={!hasValue(selectedModel.inputPrice)}
                         extraText={
                           !isOptionalFieldEnabled(
@@ -625,17 +862,25 @@ export default function ModelPricingEditor({
                               selectedModel,
                               'audioOutputPrice',
                             )}
-                            disabled={!isOptionalFieldEnabled(
-                              selectedModel,
-                              'audioInputPrice',
-                            )}
+                            disabled={
+                              !isOptionalFieldEnabled(
+                                selectedModel,
+                                'audioInputPrice',
+                              )
+                            }
                             onChange={(checked) =>
-                              handleOptionalFieldToggle('audioOutputPrice', checked)
+                              handleOptionalFieldToggle(
+                                'audioOutputPrice',
+                                checked,
+                              )
                             }
                           />
                         }
                         hidden={
-                          !isOptionalFieldEnabled(selectedModel, 'audioOutputPrice')
+                          !isOptionalFieldEnabled(
+                            selectedModel,
+                            'audioOutputPrice',
+                          )
                         }
                         disabled={!hasValue(selectedModel.audioInputPrice)}
                         extraText={

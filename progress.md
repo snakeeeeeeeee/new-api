@@ -1,3 +1,38 @@
+# Multi-level Token Tier Pricing Progress (2026-07-13)
+
+## Phase 1: Configuration and billing core
+- **Status:** complete
+- Recovered the approved implementation plan and confirmed no tracked implementation changes were left by the prior session.
+- Loaded the required planning, OpenAI documentation, brainstorming, and UI/UX workflows.
+- Preserved unrelated untracked scripts and output artifacts.
+- Added generic rule types, GPT-5.6 built-ins, strict validation, exact-name overrides, disabled overrides, hashes, and atomic runtime snapshots.
+- Added GPT-5.6 base input/output/cache-read/cache-write defaults including the unsuffixed Sol alias.
+- Added estimated precharge tier selection and Decimal final settlement with structured and readable audit details.
+- Added `/api/option` metadata and optional `/api/pricing` tier payloads.
+- Added the admin editor and marketplace tier presentation with responsive layouts and inline validation.
+- Completed desktop and mobile visual QA for the admin tier editor, marketplace card/table, and pricing detail sidebar; corrected missing cache component translations in all locales.
+- Added the secure Docker validator and completed all seven disabled, official short, synthetic three-tier, real long-context, and streaming scenarios.
+- Rebuilt the final Docker image `e1c0d1bdf24c...`; `new-api-dev` and `sub2api-dev` are healthy at completion.
+- Verified the validator restored configuration: no `TokenTierPricingRules` option row or temporary visual user remains, the original usable groups remain, and the root access token is null.
+- Fixed the disabled-rule marketplace regression by reconciling cached pricing rows against the current effective rule during `/api/pricing` response cloning.
+- Added regression coverage for stale enabled cache data, disabled rules, restored system defaults, and fixed-price models.
+- Rebuilt Docker image `0cc94fe3acd7...`; API and browser checks confirm disabled Luna cards omit both the tier badge and base-price suffix, while restoring the default immediately restores both labels.
+
+## Verification
+| Check | Status | Notes |
+| --- | --- | --- |
+| Worktree baseline | passed | No tracked changes; unrelated untracked files preserved. |
+| Official pricing behavior | confirmed | Whole-request switch above 272K total input tokens. |
+| Focused backend tests | passed | `ratio_setting`, `relay/helper`, `service`, `controller`, and `model`. |
+| Initial frontend build | passed | Existing bundle-size and browserslist warnings only. |
+| Full Go suite | passed | `go test ./...` completed successfully. |
+| Final frontend/Docker build | passed | Final source built into image `e1c0d1bdf24c...`; warnings are unchanged dependency/chunk-size warnings. |
+| Docker real-upstream validation | passed | Seven scenarios passed; report `tmp/token-tier-pricing-report-1783875609.json` independently matches every log and quota delta. |
+| Final residue and whitespace audit | passed | Configuration restored, temporary credentials removed, all containers ready, and `git diff --check` clean. |
+| Disabled marketplace visibility | passed | Immediate disable/restore verified through the management API, public pricing API, and rendered Luna marketplace card. |
+
+---
+
 # Usage Statistics Split Progress (2026-07-12)
 
 ## Phase 5: Docker table layout audit

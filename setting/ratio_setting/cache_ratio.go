@@ -36,6 +36,10 @@ var defaultCacheRatio = map[string]float64{
 	"gpt-5-mini-2025-08-07":               0.1,
 	"gpt-5-nano":                          0.1,
 	"gpt-5-nano-2025-08-07":               0.1,
+	"gpt-5.6":                             0.1,
+	"gpt-5.6-sol":                         0.1,
+	"gpt-5.6-terra":                       0.1,
+	"gpt-5.6-luna":                        0.1,
 	"deepseek-chat":                       0.25,
 	"deepseek-reasoner":                   0.25,
 	"deepseek-coder":                      0.25,
@@ -67,6 +71,7 @@ var defaultCacheRatio = map[string]float64{
 }
 
 var defaultCreateCacheRatio = map[string]float64{
+	"gpt-5.6":                             1.25,
 	"gpt-5.6-sol":                         1.25,
 	"gpt-5.6-terra":                       1.25,
 	"gpt-5.6-luna":                        1.25,
@@ -130,6 +135,9 @@ func UpdateCreateCacheRatioByJSONString(jsonStr string) error {
 // GetCacheRatio returns the cache ratio for a model
 func GetCacheRatio(name string) (float64, bool) {
 	ratio, ok := cacheRatioMap.Get(name)
+	if !ok && name == "gpt-5.6" {
+		ratio, ok = cacheRatioMap.Get("gpt-5.6-sol")
+	}
 	if !ok {
 		return 1, false // Default to 1 if not found
 	}
@@ -138,6 +146,9 @@ func GetCacheRatio(name string) (float64, bool) {
 
 func GetCreateCacheRatio(name string) (float64, bool) {
 	ratio, ok := createCacheRatioMap.Get(name)
+	if !ok && name == "gpt-5.6" {
+		ratio, ok = createCacheRatioMap.Get("gpt-5.6-sol")
+	}
 	if !ok {
 		return 1.25, false // Default to 1.25 if not found
 	}

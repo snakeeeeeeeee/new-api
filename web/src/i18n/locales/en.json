@@ -4389,6 +4389,27 @@
     "订阅包消耗明细": "Subscription usage details",
     "订阅购买": "Subscription purchases",
     "资金记录": "Funding records",
-    "运营数据": "Operational data"
+    "运营数据": "Operational data",
+    "Token 阶梯价格": "Token tier pricing",
+    "至少需要两个阶梯价格档位": "At least two pricing tiers are required",
+    "最后一档必须没有上限": "The final tier must be unbounded",
+    "档位上限必须是严格递增的非负整数": "Tier limits must be strictly increasing non-negative integers",
+    "请输入有限的非负价格": "Enter a finite non-negative price",
+    "模型 {{name}} 的 Token 阶梯价格配置不完整": "Token tier pricing for model {{name}} is incomplete",
+    "按单次请求总输入 Token 选择档位，命中后整次请求换档。": "The tier is selected by total input tokens per request and applies to the whole request.",
+    "系统默认": "System default",
+    "档位由单次请求总输入 Token 数决定；命中更高档位后，本次请求全部输入和输出 Token 均按该档位计费。": "The tier is selected by total input tokens for one request. When a higher tier is selected, all input and output tokens in that request use that tier.",
+    "第 {{index}} 档": "Tier {{index}}",
+    "引用基础价格": "Uses base price",
+    "删除档位": "Delete tier",
+    "上限（包含）": "Inclusive upper limit",
+    "增加档位": "Add tier",
+    "阶梯计价 · {{count}}档": "Tier pricing · {{count}} tiers",
+    "基础价格起": "Starting at base price",
+    "且": "and",
+    "计量依据：总输入 Token；计费方式：整次请求换档": "Meter: total input tokens; billing: whole request",
+    "tokens": "tokens",
+    "$/1M": "$/1M",
+    "缓存写入": "Cache write"
   }
 }

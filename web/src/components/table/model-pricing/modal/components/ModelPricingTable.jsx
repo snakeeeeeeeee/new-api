@@ -28,6 +28,16 @@ import {
 
 const { Text } = Typography;
 
+const buildTierRange = (tiers, index, t) => {
+  const current = tiers[index];
+  const previous = index > 0 ? tiers[index - 1] : null;
+  if (index === 0) return `≤${current.up_to_inclusive}`;
+  if (current.up_to_inclusive === null) {
+    return `>${previous?.up_to_inclusive}`;
+  }
+  return `>${previous?.up_to_inclusive} ${t('且')} ≤${current.up_to_inclusive}`;
+};
+
 const ModelPricingTable = ({
   modelData,
   groupRatio,
@@ -73,6 +83,44 @@ const ModelPricingTable = ({
       const groupRatioDetail =
         modelData?.group_ratio_details?.[group] || groupRatioDetails[group];
 
+      const tiers = modelData?.token_tier_pricing?.rule?.tiers || [];
+      const tierPrices = tiers.map((tier, index) => {
+        if (index === 0 || tier.use_base_price) {
+          return {
+            range: buildTierRange(tiers, index, t),
+            items: getModelPriceItems(priceData, t, siteDisplayType),
+          };
+        }
+        const inputPrice = Number(tier.prices?.input || 0);
+        const syntheticRecord = {
+          ...modelData,
+          model_ratio: inputPrice / 2,
+          completion_ratio:
+            inputPrice > 0 ? Number(tier.prices?.output || 0) / inputPrice : 0,
+          cache_ratio:
+            inputPrice > 0
+              ? Number(tier.prices?.cached_input || 0) / inputPrice
+              : 0,
+          create_cache_ratio:
+            inputPrice > 0
+              ? Number(tier.prices?.cache_write || 0) / inputPrice
+              : 0,
+        };
+        const tierPriceData = calculateModelPrice({
+          record: syntheticRecord,
+          selectedGroup: group,
+          groupRatio,
+          tokenUnit,
+          displayPrice,
+          currency,
+          quotaDisplayType: siteDisplayType,
+        });
+        return {
+          range: buildTierRange(tiers, index, t),
+          items: getModelPriceItems(tierPriceData, t, siteDisplayType),
+        };
+      });
+
       return {
         key: group,
         group: group,
@@ -86,6 +134,7 @@ const ModelPricingTable = ({
               ? t('按次计费')
               : '-',
         priceItems: getModelPriceItems(priceData, t, siteDisplayType),
+        tierPrices,
       };
     });
 
@@ -146,7 +195,7 @@ const ModelPricingTable = ({
     columns.push({
       title: siteDisplayType === 'TOKENS' ? t('计费摘要') : t('价格摘要'),
       dataIndex: 'priceItems',
-      render: (items) => (
+      render: (items, record) => (
         <div className='space-y-1'>
           {items.map((item) => (
             <div key={item.key}>
@@ -156,6 +205,43 @@ const ModelPricingTable = ({
               <div className='text-xs text-gray-500'>{item.suffix}</div>
             </div>
           ))}
+          {record.tierPrices.length > 0 ? (
+            <div
+              className='mt-3 pt-3 space-y-3'
+              style={{ borderTop: '1px solid var(--semi-color-border)' }}
+            >
+              <div className='text-xs font-medium text-gray-700'>
+                {t('阶梯计价 · {{count}}档', {
+                  count: record.tierPrices.length,
+                })}
+              </div>
+              {record.tierPrices.map((tier, index) => (
+                <div key={`${record.key}-${index}`}>
+                  <div className='flex items-center gap-2 mb-1'>
+                    <Tag size='small'>{tier.range}</Tag>
+                    {index === 0 ? (
+                      <span className='text-xs text-gray-500'>
+                        {t('基础价格')}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className='grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1'>
+                    {tier.items.map((item) => (
+                      <div key={item.key} className='text-xs text-gray-600'>
+                        {item.label} {item.value}
+                        {item.suffix}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <div className='text-xs text-gray-500 leading-relaxed'>
+                {t(
+                  '档位由单次请求总输入 Token 数决定；命中更高档位后，本次请求全部输入和输出 Token 均按该档位计费。',
+                )}
+              </div>
+            </div>
+          ) : null}
         </div>
       ),
     });

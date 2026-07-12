@@ -12,10 +12,62 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 // https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
 const claudeCacheCreation1hMultiplier = 6 / 3.75
+
+func buildTokenTierPricingSnapshot(modelName string, priceData types.PriceData) *types.TokenTierPricingSnapshot {
+	meta, ok := ratio_setting.GetEffectiveTokenTierPricingRule(modelName)
+	if !ok || priceData.UsePrice || common.QuotaPerUnit <= 0 {
+		return nil
+	}
+	tiers := append([]types.TokenTier(nil), meta.Rule.Tiers...)
+	baseInputPrice := priceData.ModelRatio * 1_000_000 / common.QuotaPerUnit
+	for index := range tiers {
+		if tiers[index].UpToInclusive != nil {
+			limit := *tiers[index].UpToInclusive
+			tiers[index].UpToInclusive = &limit
+		}
+		if tiers[index].UseBasePrice {
+			tiers[index].Prices = types.TokenTierPrices{
+				Input:       baseInputPrice,
+				CachedInput: baseInputPrice * priceData.CacheRatio,
+				CacheWrite:  baseInputPrice * priceData.CacheCreationRatio,
+				Output:      baseInputPrice * priceData.CompletionRatio,
+			}
+		}
+	}
+	return &types.TokenTierPricingSnapshot{
+		RuleID:      meta.Rule.ID,
+		RuleHash:    meta.Hash,
+		Source:      meta.Source,
+		ServiceTier: meta.Rule.ServiceTier,
+		Meter:       meta.Rule.Meter,
+		BillingMode: meta.Rule.BillingMode,
+		Tiers:       tiers,
+	}
+}
+
+func calculateTokenTierPreConsumedQuota(snapshot *types.TokenTierPricingSnapshot, promptTokens int, maxTokens int, groupRatio float64) (int, bool) {
+	if snapshot == nil {
+		return 0, false
+	}
+	tier, _, ok := snapshot.SelectTier(promptTokens)
+	if !ok {
+		return 0, false
+	}
+	inputTokens := common.Max(promptTokens, common.PreConsumedQuota)
+	quota := decimal.NewFromInt(int64(inputTokens)).Mul(decimal.NewFromFloat(tier.Prices.Input))
+	if maxTokens > 0 {
+		quota = quota.Add(decimal.NewFromInt(int64(maxTokens)).Mul(decimal.NewFromFloat(tier.Prices.Output)))
+	}
+	quota = quota.Div(decimal.NewFromInt(1_000_000)).
+		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
+		Mul(decimal.NewFromFloat(groupRatio))
+	return common.QuotaFromDecimalRound(quota), true
+}
 
 // HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
 func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.GroupRatioInfo {
@@ -115,6 +167,10 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		CacheCreation5mRatio:         cacheCreationRatio5m,
 		CacheCreation1hRatio:         cacheCreationRatio1h,
 		QuotaToPreConsume:            preConsumedQuota,
+	}
+	priceData.TokenTierPricing = buildTokenTierPricingSnapshot(info.OriginModelName, priceData)
+	if tierQuota, ok := calculateTokenTierPreConsumedQuota(priceData.TokenTierPricing, promptTokens, meta.MaxTokens, groupRatioInfo.GroupRatio); ok {
+		priceData.QuotaToPreConsume = tierQuota
 	}
 
 	if common.DebugEnabled {

@@ -69,6 +69,95 @@ func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	require.Equal(t, 1488, chatSummary.Quota)
 }
 
+func TestCalculateTextQuotaSummaryUsesWholeRequestTokenTierPrices(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	limit := 999
+	cacheWriteTokens := 50
+	relayInfo := &relaycommon.RelayInfo{
+		RelayFormat:             types.RelayFormatOpenAI,
+		FinalRequestRelayFormat: types.RelayFormatOpenAI,
+		OriginModelName:         "tier-test",
+		StartTime:               time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:                   0.5,
+			CompletionRatio:              6,
+			CacheRatio:                   0.1,
+			CacheCreationRatio:           1.25,
+			CacheCreationRatioConfigured: true,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1.2,
+			},
+			TokenTierPricing: &types.TokenTierPricingSnapshot{
+				RuleID:      "test",
+				RuleHash:    "hash",
+				ServiceTier: types.TokenTierServiceTierStandard,
+				Meter:       types.TokenTierMeterInputTotal,
+				BillingMode: types.TokenTierBillingWholeRequest,
+				Tiers: []types.TokenTier{
+					{UpToInclusive: &limit, Prices: types.TokenTierPrices{Input: 1, CachedInput: 0.1, CacheWrite: 1.25, Output: 6}},
+					{UpToInclusive: nil, Prices: types.TokenTierPrices{Input: 2, CachedInput: 0.2, CacheWrite: 2.5, Output: 9}},
+				},
+			},
+		},
+	}
+	usage := &dto.Usage{
+		PromptTokens:     1000,
+		InputTokens:      1000,
+		CompletionTokens: 10,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:     100,
+			CacheWriteTokens: &cacheWriteTokens,
+		},
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	// The meter is 1000 total input tokens, not 1000 + 100 cached + 50 writes.
+	// (850*2 + 100*.2 + 50*2.5 + 10*9) * 500000/1M * 1.2 = 1161 quota.
+	require.Equal(t, 1161, summary.Quota)
+	require.NotNil(t, summary.TokenTierPricing)
+	require.Equal(t, 2, summary.TokenTierPricing.TierIndex)
+	require.Equal(t, 1000, summary.TokenTierPricing.TotalInputTokens)
+	require.Equal(t, 850, summary.TokenTierPricing.BilledUncachedTokens)
+	require.Equal(t, 100, summary.TokenTierPricing.BilledCachedTokens)
+	require.Equal(t, 50, summary.TokenTierPricing.BilledCacheWriteTokens)
+	require.Equal(t, 10, summary.TokenTierPricing.BilledOutputTokens)
+	require.Equal(t, "967.5", summary.TokenTierPricing.TokenSubtotalQuota)
+	require.Equal(t, "1161", summary.TokenTierPricing.TokenQuotaAfterGroup)
+	require.Equal(t, 1161, summary.TokenTierPricing.FinalQuota)
+	require.Contains(t, tokenTierPricingContent(summary.TokenTierPricing), "整次请求换档")
+}
+
+func TestCalculateTextQuotaSummaryMarksEstimatedTierMeter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	limit := 272000
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "estimated-tier-test",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      0.5,
+			CompletionRatio: 6,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+			TokenTierPricing: &types.TokenTierPricingSnapshot{
+				RuleID: "estimated",
+				Tiers: []types.TokenTier{
+					{UpToInclusive: &limit, Prices: types.TokenTierPrices{Input: 1, Output: 6}},
+					{UpToInclusive: nil, Prices: types.TokenTierPrices{Input: 2, Output: 9}},
+				},
+			},
+		},
+	}
+	relayInfo.SetEstimatePromptTokens(100)
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, nil)
+
+	require.NotNil(t, summary.TokenTierPricing)
+	require.Equal(t, "estimated", summary.TokenTierPricing.MeterSource)
+	require.Equal(t, 100, summary.TokenTierPricing.TotalInputTokens)
+}
+
 func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

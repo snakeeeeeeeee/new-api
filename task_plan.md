@@ -1,3 +1,62 @@
+# Task Plan: Multi-level token tier pricing
+
+## Goal
+Add configurable whole-request token tier pricing, preserve legacy billing for all unconfigured models, expose auditable calculations in logs and the marketplace, and verify the implementation with unit, Docker, and authorized live upstream tests.
+
+## Current Phase
+Complete
+
+### Phase 1: Configuration and billing core
+- [x] Add rule types, built-in GPT-5.6 defaults, validation, merging, and atomic snapshots.
+- [x] Add Decimal whole-request tier selection and settlement without changing legacy or fixed-price billing.
+- [x] Add structured and human-readable billing audit details.
+- **Status:** complete
+
+### Phase 2: API and frontend
+- [x] Add option metadata and optional marketplace pricing payloads.
+- [x] Add admin tier editor with inline validation and responsive layouts.
+- [x] Add marketplace badges and full tier details.
+- **Status:** complete
+
+### Phase 3: Automated verification
+- [x] Add boundary, component, protocol, configuration, snapshot, and legacy regression tests.
+- [x] Run focused and full Go tests, frontend build, formatting, and i18n checks.
+- **Status:** complete
+
+### Phase 4: Docker and live upstream verification
+- [x] Add the repeatable secure validation script and report output.
+- [x] Rebuild Docker dev and run disabled, official short, synthetic multi-tier, authorized real long-context, and streaming scenarios.
+- [x] Restore configuration, audit quota deltas, and retain reports/logs.
+- **Status:** complete
+
+### Phase 5: Disabled marketplace visibility regression
+- [x] Reconcile cached marketplace pricing rows with the current effective tier rule on every response.
+- [x] Add enabled, disabled, re-enabled, and fixed-price response regression coverage.
+- [x] Rebuild Docker dev and verify disabled rules disappear from the marketplace API and UI immediately.
+- **Status:** complete
+
+## Locked Decisions
+| Decision | Rationale |
+| --- | --- |
+| V1 supports only `whole_request` selected by total input tokens | Matches the current OpenAI GPT-5.6 pricing rule and avoids marginal-tier misbilling. |
+| Rules match exact model names and support arbitrary ordered tiers | Prevents accidental rollout while allowing future 500K+ tiers without code changes. |
+| Tier pricing is additive and opt-in per effective rule | Unconfigured, disabled, and fixed-price models retain their existing behavior. |
+| Actual usage selects the final tier; request-start data is immutable | Supports correct reconciliation and prevents mid-request configuration changes from altering charges. |
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Combined defaults patch used stale map alignment context | 1 | Re-read exact locations and apply narrowly scoped per-file hunks. |
+| Targeted frontend lint found the edited hook lacked the repository license header | 1 | Add the same protected project header used by the adjacent editor component, then rerun checks. |
+| Full i18n lint retained 424 repository-wide findings, including three new technical labels | 1 | Translate the three labels and verify feature files no longer appear; retain unrelated baseline findings. |
+| Docker compose rebuild used the container name instead of the compose service name | 1 | Read `config --services` and rebuild the `new-api-dev` service. |
+| Initial live validator required a Docker healthcheck on Postgres/Redis, which these containers do not define | 1 | Accept running containers without health metadata and add real `psql`/`redis-cli` readiness probes. |
+| Temporary administrator access token exceeded the database `char(32)` limit | 1 | Generate a 32-character token with `token_hex(16)`; the rejected write changed no state. |
+| Non-Chinese admin UI exposed empty/missing cache component labels | Visual QA | Fill existing empty cache-read translations and add cache-write translations in all seven locales. |
+| Disabled tier rules remained visible in the marketplace for up to one minute | User report | Reconcile each cloned pricing response with the current effective rule instead of copying stale cached tier metadata. |
+
+---
+
 # Task Plan: Hide dynamic-route maximum pricing labels
 
 ## Goal

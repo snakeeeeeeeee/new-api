@@ -60,6 +60,133 @@ type textQuotaSummary struct {
 	FileSearchCallCount                         int
 	AudioInputPrice                             float64
 	ImageGenerationCallPrice                    float64
+	TokenTierPricing                            *tokenTierPricingAudit
+}
+
+type tokenTierPricingAudit struct {
+	RuleID                 string                `json:"rule_id"`
+	RuleHash               string                `json:"rule_hash"`
+	Source                 string                `json:"source"`
+	ServiceTier            string                `json:"service_tier"`
+	Meter                  string                `json:"meter"`
+	MeterSource            string                `json:"meter_source"`
+	BillingMode            string                `json:"billing_mode"`
+	TotalInputTokens       int                   `json:"total_input_tokens"`
+	TierIndex              int                   `json:"tier_index"`
+	LowerBoundExclusive    *int                  `json:"lower_bound_exclusive,omitempty"`
+	UpperBoundInclusive    *int                  `json:"upper_bound_inclusive"`
+	Prices                 types.TokenTierPrices `json:"prices"`
+	BilledUncachedTokens   int                   `json:"billed_uncached_tokens"`
+	BilledCachedTokens     int                   `json:"billed_cached_tokens"`
+	BilledCacheWriteTokens int                   `json:"billed_cache_write_tokens"`
+	BilledOutputTokens     int                   `json:"billed_output_tokens"`
+	ComponentQuota         map[string]string     `json:"component_quota"`
+	TokenSubtotalQuota     string                `json:"token_subtotal_quota"`
+	GroupRatio             float64               `json:"group_ratio"`
+	TokenQuotaAfterGroup   string                `json:"token_quota_after_group"`
+	FinalQuota             int                   `json:"final_quota"`
+}
+
+func clampTokenComponent(value int, maximum int) int {
+	if value <= 0 || maximum <= 0 {
+		return 0
+	}
+	if value > maximum {
+		return maximum
+	}
+	return value
+}
+
+func totalInputTokensForTier(usage *dto.Usage, fallback int) int {
+	if usage == nil {
+		return fallback
+	}
+	if usage.InputTokens > 0 {
+		return usage.InputTokens
+	}
+	if usage.PromptTokens > 0 {
+		return usage.PromptTokens
+	}
+	return fallback
+}
+
+func calculateTokenTierQuota(relayInfo *relaycommon.RelayInfo, usage *dto.Usage, summary *textQuotaSummary, estimated bool) (decimal.Decimal, bool) {
+	snapshot := relayInfo.PriceData.TokenTierPricing
+	if snapshot == nil || summary == nil {
+		return decimal.Zero, false
+	}
+	totalInputTokens := totalInputTokensForTier(usage, summary.PromptTokens)
+	tier, tierIndex, ok := snapshot.SelectTier(totalInputTokens)
+	if !ok {
+		return decimal.Zero, false
+	}
+
+	cachedTokens := clampTokenComponent(summary.CacheTokens, totalInputTokens)
+	remainingInput := totalInputTokens - cachedTokens
+	cacheWriteTokens := 0
+	if summary.CacheWriteBillingEnabled {
+		cacheWriteTokens = clampTokenComponent(summary.CacheCreationTokens, remainingInput)
+		remainingInput -= cacheWriteTokens
+	}
+	uncachedTokens := remainingInput
+	outputTokens := summary.CompletionTokens
+	if outputTokens < 0 {
+		outputTokens = 0
+	}
+
+	quotaPerPrice := decimal.NewFromFloat(common.QuotaPerUnit).Div(decimal.NewFromInt(1_000_000))
+	componentQuota := func(tokens int, price float64) decimal.Decimal {
+		return decimal.NewFromInt(int64(tokens)).Mul(decimal.NewFromFloat(price)).Mul(quotaPerPrice)
+	}
+	uncachedQuota := componentQuota(uncachedTokens, tier.Prices.Input)
+	cachedQuota := componentQuota(cachedTokens, tier.Prices.CachedInput)
+	cacheWriteQuota := componentQuota(cacheWriteTokens, tier.Prices.CacheWrite)
+	outputQuota := componentQuota(outputTokens, tier.Prices.Output)
+	subtotal := uncachedQuota.Add(cachedQuota).Add(cacheWriteQuota).Add(outputQuota)
+	groupAdjusted := subtotal.Mul(decimal.NewFromFloat(summary.GroupRatio))
+
+	var lowerBound *int
+	if tierIndex > 0 && snapshot.Tiers[tierIndex-1].UpToInclusive != nil {
+		value := *snapshot.Tiers[tierIndex-1].UpToInclusive
+		lowerBound = &value
+	}
+	var upperBound *int
+	if tier.UpToInclusive != nil {
+		value := *tier.UpToInclusive
+		upperBound = &value
+	}
+	meterSource := "actual"
+	if estimated {
+		meterSource = "estimated"
+	}
+	summary.TokenTierPricing = &tokenTierPricingAudit{
+		RuleID:                 snapshot.RuleID,
+		RuleHash:               snapshot.RuleHash,
+		Source:                 snapshot.Source,
+		ServiceTier:            snapshot.ServiceTier,
+		Meter:                  snapshot.Meter,
+		MeterSource:            meterSource,
+		BillingMode:            snapshot.BillingMode,
+		TotalInputTokens:       totalInputTokens,
+		TierIndex:              tierIndex + 1,
+		LowerBoundExclusive:    lowerBound,
+		UpperBoundInclusive:    upperBound,
+		Prices:                 tier.Prices,
+		BilledUncachedTokens:   uncachedTokens,
+		BilledCachedTokens:     cachedTokens,
+		BilledCacheWriteTokens: cacheWriteTokens,
+		BilledOutputTokens:     outputTokens,
+		ComponentQuota: map[string]string{
+			"uncached_input": uncachedQuota.String(),
+			"cached_input":   cachedQuota.String(),
+			"cache_write":    cacheWriteQuota.String(),
+			"output":         outputQuota.String(),
+		},
+		TokenSubtotalQuota:   subtotal.String(),
+		GroupRatio:           summary.GroupRatio,
+		TokenQuotaAfterGroup: groupAdjusted.String(),
+	}
+	return groupAdjusted, true
 }
 
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
@@ -166,6 +293,7 @@ func appendInputTokensTotalOther(other map[string]interface{}, relayInfo *relayc
 }
 
 func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage) textQuotaSummary {
+	usageEstimated := usage == nil
 	summary := textQuotaSummary{
 		ModelName:            relayInfo.OriginModelName,
 		TokenName:            ctx.GetString("token_name"),
@@ -357,6 +485,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		promptQuota := baseTokens.Add(cachedTokensWithRatio).Add(imageTokensWithRatio).Add(cachedCreationTokensWithRatio)
 		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
 		quotaCalculateDecimal := promptQuota.Add(completionQuota).Mul(ratio)
+		if tierQuota, ok := calculateTokenTierQuota(relayInfo, usage, &summary, usageEstimated); ok {
+			quotaCalculateDecimal = tierQuota
+		}
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(dWebSearchQuota)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(dClaudeWebSearchQuota)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(dFileSearchQuota)
@@ -390,8 +521,11 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 	if summary.TotalTokens == 0 {
 		summary.Quota = 0
-	} else if !ratio.IsZero() && summary.Quota == 0 {
+	} else if (!ratio.IsZero() || summary.TokenTierPricing != nil) && summary.Quota == 0 {
 		summary.Quota = 1
+	}
+	if summary.TokenTierPricing != nil {
+		summary.TokenTierPricing.FinalQuota = summary.Quota
 	}
 
 	return summary
@@ -407,6 +541,40 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 	return "openai"
 }
 
+func tokenTierPricingContent(audit *tokenTierPricingAudit) string {
+	if audit == nil {
+		return ""
+	}
+	rangeText := ""
+	switch {
+	case audit.LowerBoundExclusive == nil && audit.UpperBoundInclusive != nil:
+		rangeText = fmt.Sprintf("总输入 %d <= %d", audit.TotalInputTokens, *audit.UpperBoundInclusive)
+	case audit.LowerBoundExclusive != nil && audit.UpperBoundInclusive != nil:
+		rangeText = fmt.Sprintf("%d < 总输入 %d <= %d", *audit.LowerBoundExclusive, audit.TotalInputTokens, *audit.UpperBoundInclusive)
+	case audit.LowerBoundExclusive != nil:
+		rangeText = fmt.Sprintf("总输入 %d > %d", audit.TotalInputTokens, *audit.LowerBoundExclusive)
+	default:
+		rangeText = fmt.Sprintf("总输入 %d", audit.TotalInputTokens)
+	}
+	return fmt.Sprintf(
+		"阶梯计费：%s，命中第 %d 档（整次请求换档）；普通输入 %d x $%g/M；缓存输入 %d x $%g/M；缓存写入 %d x $%g/M；输出 %d x $%g/M；Token 小计 %s quota x 分组倍率 %g = %s quota；最终 %d quota",
+		rangeText,
+		audit.TierIndex,
+		audit.BilledUncachedTokens,
+		audit.Prices.Input,
+		audit.BilledCachedTokens,
+		audit.Prices.CachedInput,
+		audit.BilledCacheWriteTokens,
+		audit.Prices.CacheWrite,
+		audit.BilledOutputTokens,
+		audit.Prices.Output,
+		audit.TokenSubtotalQuota,
+		audit.GroupRatio,
+		audit.TokenQuotaAfterGroup,
+		audit.FinalQuota,
+	)
+}
+
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
 	originUsage := usage
 	if usage == nil {
@@ -418,6 +586,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+	if tierContent := tokenTierPricingContent(summary.TokenTierPricing); tierContent != "" {
+		extraContent = append(extraContent, tierContent)
+	}
 	if summary.CacheWriteBillingWarning != "" {
 		extraContent = append(extraContent, summary.CacheWriteBillingWarning)
 	}
@@ -486,6 +657,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 	appendClaudeCacheTTLBillingCompatOther(other, summary)
 	appendCacheWriteBillingOther(other, summary)
+	if summary.TokenTierPricing != nil {
+		other["token_tier_pricing"] = summary.TokenTierPricing
+	}
 	if summary.ImageTokens != 0 {
 		other["image"] = true
 		other["image_ratio"] = summary.ImageRatio
