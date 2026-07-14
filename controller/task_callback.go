@@ -296,6 +296,9 @@ func handleImageCallbackEvent(c *gin.Context, event imageCallbackEvent) imageCal
 		result.Status = "provider_task_mismatch"
 		return result
 	}
+	if task.PrivateData.UpstreamTaskID == "" {
+		task.PrivateData.UpstreamTaskID = event.ProviderTaskID
+	}
 	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
 		result.Status = "ignored_terminal"
 		return result

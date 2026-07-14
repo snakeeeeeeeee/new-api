@@ -383,24 +383,82 @@ func DeleteTokenById(id int, userId int) (err error) {
 }
 
 func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
+	return RefundTokenQuota(tokenId, key, quota)
+}
+
+// RefundTokenQuota reverses quota previously consumed by a request.
+// Unlimited tokens only track used_quota, so their remain_quota must not be
+// increased during a refund.
+func RefundTokenQuota(tokenId int, key string, quota int) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
+	if quota == 0 {
+		return nil
+	}
+
+	var token Token
+	if err = DB.Model(&Token{}).Select("unlimited_quota").Where("id = ?", tokenId).First(&token).Error; err != nil {
+		return err
+	}
+
 	if common.BatchUpdateEnabled {
+		if token.UnlimitedQuota {
+			addNewRecord(BatchUpdateTypeUnlimitedTokenRefund, tokenId, quota)
+			invalidateRefundedTokenQuotaCache(key)
+			return nil
+		}
 		addNewRecord(BatchUpdateTypeTokenQuota, tokenId, quota)
+		// A cache miss during the batch window reads the old DB value, which is
+		// conservative. A successful flush rebuilds the complete token hash.
+		invalidateRefundedTokenQuotaCache(key)
+		return nil
+	}
+
+	if token.UnlimitedQuota {
+		if err = refundUnlimitedTokenQuota(tokenId, quota); err != nil {
+			return err
+		}
+		invalidateRefundedTokenQuotaCache(key)
 		return nil
 	}
 	if err = increaseTokenQuota(tokenId, quota); err != nil {
 		return err
 	}
-	if common.RedisEnabled {
-		gopool.Go(func() {
-			if err := cacheIncrTokenQuota(key, int64(quota)); err != nil {
-				common.SysLog("failed to increase token quota: " + err.Error())
-			}
-		})
-	}
+	invalidateRefundedTokenQuotaCache(key)
 	return nil
+}
+
+func refundUnlimitedTokenQuota(id int, quota int) error {
+	return DB.Model(&Token{}).Where("id = ?", id).Updates(
+		map[string]interface{}{
+			"used_quota":    gorm.Expr("used_quota - ?", quota),
+			"accessed_time": common.GetTimestamp(),
+		},
+	).Error
+}
+
+func invalidateRefundedTokenQuotaCache(key string) {
+	if !common.RedisEnabled {
+		return
+	}
+	if err := cacheDeleteToken(key); err != nil {
+		common.SysLog("failed to invalidate token cache after quota refund: " + err.Error())
+	}
+}
+
+func refreshTokenCacheById(id int) {
+	if !common.RedisEnabled {
+		return
+	}
+	var token Token
+	if err := DB.Where("id = ?", id).First(&token).Error; err != nil {
+		common.SysLog("failed to reload token after batch quota update: " + err.Error())
+		return
+	}
+	if err := cacheSetToken(token); err != nil {
+		common.SysLog("failed to refresh token cache after batch quota update: " + err.Error())
+	}
 }
 
 func increaseTokenQuota(id int, quota int) (err error) {

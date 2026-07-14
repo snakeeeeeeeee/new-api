@@ -31,6 +31,7 @@ func cpaImageHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rela
 	}
 
 	if usage, ok := tryHandleStandardOpenAIImageResponse(c, resp, responseBody); ok {
+		service.CaptureImageExecutionAuditFromJSON(c, responseBody, usage)
 		return usage, nil
 	}
 
@@ -44,6 +45,7 @@ func cpaImageHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rela
 		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 	}
 	service.IOCopyBytesGracefully(c, resp, jsonResponse)
+	service.CaptureImageExecutionAuditFromJSON(c, responseBody, usage)
 	return usage, nil
 }
 

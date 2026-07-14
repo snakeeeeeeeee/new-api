@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 	"net/http/httptest"
 	"testing"
@@ -390,6 +391,20 @@ func TestGetUsageStatsAggregatesAndFiltersConsumeLogs(t *testing.T) {
 	seedUsageStatsLog(t, &Log{
 		UserId:           1,
 		Username:         "alice",
+		CreatedAt:        base + 1801,
+		Type:             LogTypeConsume,
+		ModelName:        "gpt-4o",
+		Quota:            0,
+		PromptTokens:     500,
+		CompletionTokens: 600,
+		UseTime:          4,
+		ChannelId:        7,
+		Group:            "vip",
+		Other:            `{"billing_stage":"image_execution_audit","non_billing_audit":true}`,
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId:           1,
+		Username:         "alice",
 		CreatedAt:        base + 1800,
 		Type:             LogTypeConsume,
 		ModelName:        "gpt-4o",
@@ -485,6 +500,47 @@ func TestGetUsageStatsAggregatesAndFiltersConsumeLogs(t *testing.T) {
 	require.Equal(t, int64(15), stats.UserModelDetails[0].InputTokens)
 	require.Equal(t, int64(0), stats.UserModelDetails[0].CacheTokens)
 	require.Equal(t, int64(41), stats.UserModelDetails[0].TotalTokens)
+}
+
+func TestLogStatisticsExcludeNonBillingAuditRows(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+	now := time.Now().Unix()
+	seedUsageStatsLog(t, &Log{
+		UserId:           1,
+		Username:         "alice",
+		CreatedAt:        now,
+		Type:             LogTypeConsume,
+		ModelName:        "image-count",
+		Quota:            20000,
+		PromptTokens:     3,
+		CompletionTokens: 4,
+		Content:          "按张消费",
+		Other:            `{"billing_source":"wallet"}`,
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId:           1,
+		Username:         "alice",
+		CreatedAt:        now,
+		Type:             LogTypeConsume,
+		ModelName:        "image-count",
+		Quota:            0,
+		PromptTokens:     100,
+		CompletionTokens: 200,
+		Content:          "图片执行结果审计（不参与计费）",
+		Other:            `{"billing_stage":"image_execution_audit","non_billing_audit":true}`,
+	})
+
+	stat, err := SumUsedQuota(LogTypeConsume, now-1, now+1, "image-count", "alice", "", 0, "")
+	require.NoError(t, err)
+	require.Equal(t, 20000, stat.Quota)
+	require.Equal(t, 1, stat.Rpm)
+	require.Equal(t, 7, stat.Tpm)
+
+	dashboardLogs, err := GetLogsForDashboard(context.Background(), now-1, now+1)
+	require.NoError(t, err)
+	require.Len(t, dashboardLogs, 1)
+	require.Equal(t, "按张消费", dashboardLogs[0].Content)
 }
 
 func TestGetUsageStatsNormalizesCacheTokenBreakdown(t *testing.T) {

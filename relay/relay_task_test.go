@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"errors"
 	"io"
 	"math"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
@@ -66,6 +69,7 @@ func TestAsyncImagePrechargeQuotaPerImageSaturatesHugeAmount(t *testing.T) {
 
 func setupRelayTaskTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	service.InitHttpClient()
 	originalDB := model.DB
 	originalUsingSQLite := common.UsingSQLite
 	originalUsingMySQL := common.UsingMySQL
@@ -194,6 +198,146 @@ func TestRelayTaskSubmitImageHandleCreatesTaskAndLeaseBeforeSubmit(t *testing.T)
 	assert.NotContains(t, string(mustMarshalForTest(t, upstreamPayload)), "real-upstream-key")
 }
 
+func TestRelayTaskSubmitImagePricingNormalizesBeforeMappingAndPersistsSnapshot(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	originalImagePricing := ratio_setting.ImagePricing2JSONString()
+	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+		require.NoError(t, ratio_setting.UpdateImagePricingByJSONString(originalImagePricing))
+	})
+
+	const publicModel = "adobe-gpt-image-2-count"
+	require.NoError(t, ratio_setting.UpdateImagePricingByJSONString(`{
+		"version": 1,
+		"profiles": {
+			"adobe-quality-v1": {
+				"name": "ADOBE quality per image",
+				"parameter": "quality",
+				"default_tier": "economy",
+				"tiers": [
+					{"key":"economy","upstream_value":"low","aliases":["auto"],"unit_price":0.04},
+					{"key":"high","upstream_value":"high","aliases":[],"unit_price":0.15}
+				]
+			}
+		},
+		"model_bindings": {
+			"adobe-gpt-image-2-count": {"profile":"adobe-quality-v1","max_n":10}
+		}
+	}`))
+	require.NoError(t, db.Create(&model.User{
+		Id:       17,
+		Username: "u17",
+		Quota:    100000,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          177,
+		UserId:      17,
+		Key:         "relay-task-image-pricing-token",
+		Status:      common.TokenStatusEnabled,
+		Name:        "relay-task-image-pricing-token",
+		RemainQuota: 100000,
+		Group:       "default",
+	}).Error)
+
+	var upstreamPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.NoError(t, common.Unmarshal(body, &upstreamPayload))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"provider_task_id":"imgtask_image_pricing","client_task_id":"task_image_pricing","status":"queued"}`))
+	}))
+	defer server.Close()
+
+	// A deliberately different global precharge proves that bound image pricing
+	// remains authoritative for the async image-handle path.
+	*image_handle_setting.GetImageHandleSetting() = image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
+		BaseURL:                 server.URL,
+		APIKey:                  "provider-key",
+		InternalBaseURL:         "http://new-api:3000",
+		InternalSecretID:        "image_handle_1",
+		InternalSecret:          "internal-secret",
+		CallbackSecret:          "callback-secret",
+		UsagePrechargeEnabled:   true,
+		PrechargeAmountPerImage: 0.123456,
+	})
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", strings.NewReader(`{
+		"client_task_id":"task_image_pricing",
+		"model":"adobe-gpt-image-2-count",
+		"prompt":"mapped and normalized",
+		"size":"2048x2048",
+		"response_format":"url",
+		"metadata":{"resolution":"2k"}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("platform", "58")
+	c.Set("model_mapping", `{"adobe-gpt-image-2-count":"gpt-image-2"}`)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 223)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://real.example/v1")
+	common.SetContextKey(c, constant.ContextKeyChannelKey, "real-upstream-key")
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, publicModel)
+
+	result, taskErr := RelayTaskSubmit(c, &relaycommon.RelayInfo{
+		UserId:        17,
+		TokenId:       177,
+		TokenKey:      "relay-task-image-pricing-token",
+		UsingGroup:    "default",
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	})
+
+	require.Nil(t, taskErr)
+	require.NotNil(t, result)
+	expectedQuota := common.QuotaFromFloat(0.04 * common.QuotaPerUnit)
+	assert.Equal(t, expectedQuota, result.Quota)
+	assert.Equal(t, expectedQuota, result.CreatedTask.Quota)
+
+	require.Equal(t, "gpt-image-2", upstreamPayload["model"])
+	parameters, ok := upstreamPayload["parameters"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "low", parameters["quality"])
+	assert.Equal(t, "2048x2048", parameters["size"])
+	assert.Equal(t, "2k", parameters["resolution"])
+	assert.Equal(t, "url", parameters["response_format"])
+	assert.Equal(t, float64(1), parameters["n"])
+
+	var persisted model.Task
+	require.NoError(t, db.Where("task_id = ?", "task_image_pricing").First(&persisted).Error)
+	require.NotNil(t, persisted.PrivateData.BillingContext)
+	billingContext := persisted.PrivateData.BillingContext
+	assert.Equal(t, types.ImagePricingBillingMode, billingContext.BillingMode)
+	assert.Equal(t, types.ImagePricingBillingMode, billingContext.PrechargeStrategy)
+	assert.True(t, billingContext.PerCallBilling)
+	assert.Zero(t, billingContext.PrechargePerImage)
+	assert.Zero(t, billingContext.PrechargeAmountPerImage)
+	assert.NotContains(t, billingContext.OtherRatios, "async_image_precharge_quota_per_image")
+	require.NotNil(t, billingContext.ImagePricing)
+	assert.Equal(t, publicModel, billingContext.ImagePricing.PublicModel)
+	assert.Equal(t, "adobe-quality-v1", billingContext.ImagePricing.ProfileID)
+	assert.NotEmpty(t, billingContext.ImagePricing.ProfileHash)
+	assert.Equal(t, "", billingContext.ImagePricing.RawValue)
+	assert.Equal(t, "economy", billingContext.ImagePricing.EffectiveTier)
+	assert.Equal(t, "low", billingContext.ImagePricing.UpstreamValue)
+	assert.Equal(t, types.ImagePricingValueSourceDefault, billingContext.ImagePricing.ValueSource)
+	assert.Equal(t, 1, billingContext.ImagePricing.N)
+	assert.Equal(t, expectedQuota, billingContext.ImagePricing.FinalQuota)
+
+	var imageRequest map[string]any
+	require.NoError(t, common.Unmarshal(persisted.PrivateData.ImageRequest, &imageRequest))
+	assert.Equal(t, "gpt-image-2", imageRequest["model"])
+	assert.Equal(t, "low", imageRequest["quality"])
+	assert.Equal(t, "2048x2048", imageRequest["size"])
+	assert.Equal(t, "2k", imageRequest["resolution"])
+	assert.Equal(t, "url", imageRequest["response_format"])
+	assert.Equal(t, float64(1), imageRequest["n"])
+}
+
 func TestRelayTaskSubmitImageHandleMarksTaskAndLeaseFailedWhenSubmitFails(t *testing.T) {
 	db := setupRelayTaskTestDB(t)
 	originalSetting := *image_handle_setting.GetImageHandleSetting()
@@ -270,6 +414,144 @@ func TestRelayTaskSubmitImageHandleMarksTaskAndLeaseFailedWhenSubmitFails(t *tes
 	var lease model.ImageCredentialLease
 	require.NoError(t, db.Where("task_id = ?", "task_lease_fail").First(&lease).Error)
 	assert.Equal(t, model.ImageCredentialLeaseStatusFailed, lease.Status)
+}
+
+func newAsyncImageSubmitFailureTask(t *testing.T, db *gorm.DB, status model.TaskStatus, upstreamTaskID string) *model.Task {
+	t.Helper()
+	task := &model.Task{
+		TaskID:    "task_submit_failure_" + strings.ToLower(string(status)),
+		Platform:  constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeImageHandle)),
+		Status:    status,
+		Progress:  taskcommon.ProgressQueued,
+		Quota:     42,
+		CreatedAt: time.Now().Unix(),
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: upstreamTaskID,
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+	return task
+}
+
+func asyncImageSubmitFailureError() *dto.TaskError {
+	return service.TaskErrorWrapperLocal(errors.New("submit response lost"), "submit_failed", http.StatusBadGateway)
+}
+
+func TestResolveAsyncImageSubmitFailureRequiresCallbackTakeoverEvidence(t *testing.T) {
+	tests := []struct {
+		name             string
+		status           model.TaskStatus
+		upstreamTaskID   string
+		callbackOwnsTask bool
+	}{
+		{name: "queued without upstream id", status: model.TaskStatusQueued},
+		{name: "queued with whitespace upstream id", status: model.TaskStatusQueued, upstreamTaskID: "   "},
+		{name: "not start without upstream id", status: model.TaskStatusNotStart},
+		{name: "submitted without upstream id", status: model.TaskStatusSubmitted},
+		{name: "queued with upstream id", status: model.TaskStatusQueued, upstreamTaskID: "imgtask_queued", callbackOwnsTask: true},
+		{name: "submitted with upstream id", status: model.TaskStatusSubmitted, upstreamTaskID: "imgtask_submitted", callbackOwnsTask: true},
+		{name: "in progress without upstream id", status: model.TaskStatusInProgress, callbackOwnsTask: true},
+		{name: "success without upstream id", status: model.TaskStatusSuccess, callbackOwnsTask: true},
+		{name: "failure without upstream id", status: model.TaskStatusFailure, callbackOwnsTask: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupRelayTaskTestDB(t)
+			task := newAsyncImageSubmitFailureTask(t, db, test.status, test.upstreamTaskID)
+			taskErr := asyncImageSubmitFailureError()
+
+			result, gotErr := resolveAsyncImageSubmitFailure(nil, task, nil, taskErr)
+			var persisted model.Task
+			require.NoError(t, db.First(&persisted, task.ID).Error)
+			if test.callbackOwnsTask {
+				require.Nil(t, gotErr)
+				require.NotNil(t, result)
+				assert.EqualValues(t, test.status, persisted.Status)
+				assert.Equal(t, test.upstreamTaskID, result.UpstreamTaskID)
+				return
+			}
+
+			require.Same(t, taskErr, gotErr)
+			require.Nil(t, result)
+			assert.EqualValues(t, model.TaskStatusFailure, persisted.Status)
+			assert.Equal(t, taskErr.Message, persisted.FailReason)
+		})
+	}
+}
+
+func TestResolveAsyncImageSubmitFailureRetriesAfterStatusCASLoss(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	persisted := newAsyncImageSubmitFailureTask(t, db, model.TaskStatusQueued, "")
+	const callbackName = "test:race_async_image_submit_status"
+	raced := false
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table != "tasks" || raced {
+			return
+		}
+		raced = true
+		if err := tx.Session(&gorm.Session{NewDB: true}).Exec(
+			"UPDATE tasks SET status = ? WHERE id = ?",
+			model.TaskStatusSubmitted,
+			persisted.ID,
+		).Error; err != nil {
+			tx.AddError(err)
+		}
+	}))
+	t.Cleanup(func() {
+		_ = db.Callback().Update().Remove(callbackName)
+	})
+	taskErr := asyncImageSubmitFailureError()
+
+	result, gotErr := resolveAsyncImageSubmitFailure(nil, persisted, nil, taskErr)
+
+	require.True(t, raced)
+	require.Same(t, taskErr, gotErr)
+	require.Nil(t, result)
+	require.NoError(t, db.First(persisted, persisted.ID).Error)
+	assert.EqualValues(t, model.TaskStatusFailure, persisted.Status)
+	assert.Equal(t, taskErr.Message, persisted.FailReason)
+}
+
+func TestResolveAsyncImageSubmitFailureDoesNotOverwriteQueuedCallbackID(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	persisted := newAsyncImageSubmitFailureTask(t, db, model.TaskStatusQueued, "imgtask_callback")
+	stale := *persisted
+	stale.PrivateData.UpstreamTaskID = ""
+	taskErr := asyncImageSubmitFailureError()
+
+	result, gotErr := resolveAsyncImageSubmitFailure(nil, &stale, nil, taskErr)
+
+	require.Nil(t, gotErr)
+	require.NotNil(t, result)
+	require.NoError(t, db.First(persisted, persisted.ID).Error)
+	assert.EqualValues(t, model.TaskStatusQueued, persisted.Status)
+	assert.Equal(t, "imgtask_callback", persisted.PrivateData.UpstreamTaskID)
+	assert.Equal(t, "imgtask_callback", result.UpstreamTaskID)
+}
+
+func TestResolveAsyncImageSubmitFailureReturnsOriginalErrorWhenUpdateFails(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	task := newAsyncImageSubmitFailureTask(t, db, model.TaskStatusQueued, "")
+	injectedErr := errors.New("injected task update failure")
+	const callbackName = "test:fail_async_image_submit_update"
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "tasks" {
+			tx.AddError(injectedErr)
+		}
+	}))
+	t.Cleanup(func() {
+		_ = db.Callback().Update().Remove(callbackName)
+	})
+	taskErr := asyncImageSubmitFailureError()
+
+	result, gotErr := resolveAsyncImageSubmitFailure(nil, task, nil, taskErr)
+
+	require.Same(t, taskErr, gotErr)
+	require.Nil(t, result)
+	var persisted model.Task
+	require.NoError(t, db.First(&persisted, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusQueued, persisted.Status)
 }
 
 func mustMarshalForTest(t *testing.T, v any) []byte {

@@ -24,6 +24,7 @@ import {
   calculateModelPrice,
   formatRatioLabel,
   getModelPriceItems,
+  resolvePricingBillingType,
 } from '../../../../../helpers';
 
 const { Text } = Typography;
@@ -120,6 +121,23 @@ const ModelPricingTable = ({
           items: getModelPriceItems(tierPriceData, t, siteDisplayType),
         };
       });
+      const imageTierPrices = (modelData?.image_pricing?.tiers || []).map(
+        (tier) => ({
+          key: tier.key,
+          aliases: tier.aliases || [],
+          isDefault:
+            String(tier.key).toLowerCase() ===
+            String(modelData.image_pricing.default_tier).toLowerCase(),
+          price: displayPrice(
+            Number(tier.unit_price || 0) *
+              (Number.isFinite(Number(priceData.usedGroupRatio))
+                ? Number(priceData.usedGroupRatio)
+                : 1),
+          ),
+        }),
+      );
+      const isImagePricing =
+        resolvePricingBillingType(modelData) === 'per_image_parameter';
 
       return {
         key: group,
@@ -127,14 +145,18 @@ const ModelPricingTable = ({
         ratio: priceData.usedGroupRatio ?? groupRatioValue,
         ratioDetail: groupRatioDetail,
         isDynamicRouteMaximum: priceData.isDynamicRouteMaximum,
-        billingType:
-          modelData?.quota_type === 0
+        billingType: isImagePricing
+          ? t('图片参数计价')
+          : modelData?.quota_type === 0
             ? t('按量计费')
             : modelData?.quota_type === 1
               ? t('按次计费')
               : '-',
-        priceItems: getModelPriceItems(priceData, t, siteDisplayType),
+        priceItems: isImagePricing
+          ? []
+          : getModelPriceItems(priceData, t, siteDisplayType),
         tierPrices,
+        imageTierPrices,
       };
     });
 
@@ -184,6 +206,7 @@ const ModelPricingTable = ({
         let color = 'white';
         if (text === t('按量计费')) color = 'violet';
         else if (text === t('按次计费')) color = 'teal';
+        else if (text === t('图片参数计价')) color = 'orange';
         return (
           <Tag color={color} size='small' shape='circle'>
             {text || '-'}
@@ -238,6 +261,42 @@ const ModelPricingTable = ({
               <div className='text-xs text-gray-500 leading-relaxed'>
                 {t(
                   '档位由单次请求总输入 Token 数决定；命中更高档位后，本次请求全部输入和输出 Token 均按该档位计费。',
+                )}
+              </div>
+            </div>
+          ) : null}
+          {record.imageTierPrices.length > 0 ? (
+            <div className='space-y-2'>
+              {record.imageTierPrices.map((tier) => (
+                <div
+                  key={`${record.key}-image-${tier.key}`}
+                  className='flex items-center justify-between gap-3'
+                >
+                  <div className='flex items-center gap-2 min-w-0'>
+                    <Tag color={tier.isDefault ? 'orange' : 'white'}>
+                      {tier.key}
+                    </Tag>
+                    {tier.isDefault ? (
+                      <span className='text-xs text-gray-500'>{t('默认')}</span>
+                    ) : null}
+                    {tier.aliases.length > 0 ? (
+                      <span className='text-xs text-gray-500 truncate'>
+                        {t('别名')}：{tier.aliases.join(', ')}
+                      </span>
+                    ) : null}
+                  </div>
+                  <span className='font-semibold text-orange-600 whitespace-nowrap'>
+                    {tier.price} / {t('张')}
+                  </span>
+                </div>
+              ))}
+              <div className='text-xs text-gray-500 leading-relaxed pt-1'>
+                {t(
+                  '按请求中的 {{parameter}} 选择档位，n 为张数乘数，最大 {{max}}。',
+                  {
+                    parameter: modelData.image_pricing?.parameter || '-',
+                    max: modelData.image_pricing?.max_n || 1,
+                  },
                 )}
               </div>
             </div>

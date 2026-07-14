@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -455,8 +456,28 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 				if key == "model" {
 					continue
 				}
+				if info.PriceData.ImagePricing != nil && (key == "quality" || key == "size" || key == "resolution" || key == "n") {
+					continue
+				}
 				for _, value := range values {
 					writer.WriteField(key, value)
+				}
+			}
+			if info.PriceData.ImagePricing != nil {
+				if request.Quality != "" {
+					_ = writer.WriteField("quality", request.Quality)
+				}
+				if request.Size != "" {
+					_ = writer.WriteField("size", request.Size)
+				}
+				if request.N != nil {
+					_ = writer.WriteField("n", strconv.FormatUint(uint64(*request.N), 10))
+				}
+				if raw, ok := request.Extra["resolution"]; ok {
+					var resolution string
+					if err := common.Unmarshal(raw, &resolution); err == nil && resolution != "" {
+						_ = writer.WriteField("resolution", resolution)
+					}
 				}
 			}
 		}
@@ -558,6 +579,18 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	default:
 		if strings.HasPrefix(strings.ToLower(request.Model), "gpt-image-") {
 			request.ResponseFormat = ""
+		}
+		if rawResolution, ok := request.Extra[types.ImagePricingParameterResolution]; ok && len(rawResolution) > 0 {
+			data, err := common.Marshal(request)
+			if err != nil {
+				return nil, err
+			}
+			var payload map[string]json.RawMessage
+			if err := common.Unmarshal(data, &payload); err != nil {
+				return nil, err
+			}
+			payload[types.ImagePricingParameterResolution] = rawResolution
+			return payload, nil
 		}
 		return request, nil
 	}

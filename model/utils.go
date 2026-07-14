@@ -17,6 +17,9 @@ const (
 	BatchUpdateTypeUsedQuota
 	BatchUpdateTypeChannelUsedQuota
 	BatchUpdateTypeRequestCount
+	// BatchUpdateTypeUnlimitedTokenRefund keeps unlimited-token reversals
+	// separate from normal remain_quota refunds.
+	BatchUpdateTypeUnlimitedTokenRefund
 	BatchUpdateTypeCount // if you add a new type, you need to add a new map and a new lock
 )
 
@@ -84,6 +87,15 @@ func batchUpdate() {
 				err := increaseTokenQuota(key, value)
 				if err != nil {
 					common.SysLog("failed to batch update token quota: " + err.Error())
+				} else {
+					refreshTokenCacheById(key)
+				}
+			case BatchUpdateTypeUnlimitedTokenRefund:
+				err := refundUnlimitedTokenQuota(key, value)
+				if err != nil {
+					common.SysLog("failed to batch refund unlimited token quota: " + err.Error())
+				} else {
+					refreshTokenCacheById(key)
 				}
 			case BatchUpdateTypeUsedQuota:
 				updateUserUsedQuota(key, value)

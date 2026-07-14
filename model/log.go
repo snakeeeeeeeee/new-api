@@ -68,6 +68,11 @@ const (
 )
 
 const userFacingRelayErrorLog = "status_code=500, 系统异常，请稍后重试"
+const nonBillingAuditLogPattern = `%"non_billing_audit":true%`
+
+func excludeNonBillingAuditLogs(tx *gorm.DB, column string) *gorm.DB {
+	return tx.Where("COALESCE("+column+", '') NOT LIKE ?", nonBillingAuditLogPattern)
+}
 
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
@@ -174,6 +179,7 @@ func GetLogsForDashboard(ctx context.Context, startTimestamp int64, endTimestamp
 		Model(&Log{}).
 		Select("user_id, created_at, type, content, use_time, is_stream, channel_id, model_name, request_id, other, "+logGroupCol+" as log_group").
 		Where("type IN ?", []int{LogTypeConsume, LogTypeError})
+	query = excludeNonBillingAuditLogs(query, "logs.other")
 	if startTimestamp != 0 {
 		query = query.Where("created_at >= ?", startTimestamp)
 	}
@@ -263,12 +269,12 @@ type RecordConsumeLogParams struct {
 	Other            map[string]interface{} `json:"other"`
 }
 
-func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) *Log {
 	if !common.LogConsumeEnabled {
-		return
+		return nil
 	}
 	if common.IsLogConsumeExcludedUserID(userId) {
-		return
+		return nil
 	}
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
@@ -309,12 +315,14 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
+		return nil
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
 	}
+	return log
 }
 
 type RecordTaskBillingLogParams struct {
@@ -364,6 +372,45 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	if err != nil {
 		common.SysLog("failed to record task billing log: " + err.Error())
 	}
+}
+
+// MergeConsumeLogOther atomically appends metadata to a task's original
+// consume log. The task ID check prevents an incorrect log association even
+// if a stale or corrupted consume_log_id is present in task private data.
+func MergeConsumeLogOther(logId int, userId int, taskId string, updates map[string]interface{}) (bool, error) {
+	if logId <= 0 || userId <= 0 || strings.TrimSpace(taskId) == "" || len(updates) == 0 {
+		return false, nil
+	}
+
+	var logItem Log
+	if err := LOG_DB.Where("id = ? AND user_id = ? AND type = ?", logId, userId, LogTypeConsume).First(&logItem).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	other, err := common.StrToMap(logItem.Other)
+	if err != nil {
+		return false, err
+	}
+	storedTaskId, _ := other["task_id"].(string)
+	if strings.TrimSpace(storedTaskId) != strings.TrimSpace(taskId) {
+		return false, nil
+	}
+	for key, value := range updates {
+		other[key] = value
+	}
+	encoded, err := common.Marshal(other)
+	if err != nil {
+		return false, err
+	}
+	result := LOG_DB.Model(&Log{}).
+		Where("id = ? AND other = ?", logItem.Id, logItem.Other).
+		Update("other", string(encoded))
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
 }
 
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string) (logs []*Log, total int64, err error) {
@@ -1009,6 +1056,7 @@ func applyUsageStatsSubscriptionPurchaseFilters(tx *gorm.DB, query UsageStatsQue
 
 func applyUsageStatsFilters(tx *gorm.DB, query UsageStatsQuery) (*gorm.DB, error) {
 	tx = tx.Where("logs.type = ?", LogTypeConsume)
+	tx = excludeNonBillingAuditLogs(tx, "logs.other")
 	tx = tx.Where("logs.created_at >= ? AND logs.created_at <= ?", query.StartTimestamp, query.EndTimestamp)
 	if query.UserId > 0 {
 		tx = tx.Where("logs.user_id = ?", query.UserId)
@@ -1932,6 +1980,8 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 
 	tx = tx.Where("type = ?", LogTypeConsume)
 	rpmTpmQuery = rpmTpmQuery.Where("type = ?", LogTypeConsume)
+	tx = excludeNonBillingAuditLogs(tx, "logs.other")
+	rpmTpmQuery = excludeNonBillingAuditLogs(rpmTpmQuery, "logs.other")
 
 	// 只统计最近60秒的rpm和tpm
 	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())
@@ -1966,7 +2016,9 @@ func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	if modelName != "" {
 		tx = tx.Where("model_name = ?", modelName)
 	}
-	tx.Where("type = ?", LogTypeConsume).Scan(&token)
+	tx = tx.Where("type = ?", LogTypeConsume)
+	tx = excludeNonBillingAuditLogs(tx, "logs.other")
+	tx.Scan(&token)
 	return token
 }
 

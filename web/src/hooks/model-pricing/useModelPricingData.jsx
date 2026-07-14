@@ -28,6 +28,7 @@ import {
   filterVisibleGroupRatioMap,
   filterVisibleGroupRatioDetailsMap,
   filterVisibleGroupsMap,
+  matchesPricingBillingType,
 } from '../../helpers';
 import { Modal } from '@douyinfe/semi-ui';
 import { UserContext } from '../../context/User';
@@ -120,7 +121,9 @@ export const useModelPricingData = () => {
 
     // 计费类型筛选
     if (filterQuotaType !== 'all') {
-      result = result.filter((model) => model.quota_type === filterQuotaType);
+      result = result.filter((model) =>
+        matchesPricingBillingType(model, filterQuotaType),
+      );
     }
 
     // 端点类型筛选

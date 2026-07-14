@@ -31,10 +31,12 @@ func quotaUSDValue(quota int) float64 {
 
 // LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
 // 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
-func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
+func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) int {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
-	if c != nil && c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/image/tasks" {
+	if info.PriceData.ImagePricing != nil {
+		logContent = imagePricingLogContent(info.PriceData.ImagePricing)
+	} else if c != nil && c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/image/tasks" {
 		if amount, ok := info.PriceData.OtherRatios["async_image_precharge_amount_per_image_usd"]; ok && amount > 0 {
 			n := info.PriceData.OtherRatios["async_image_n"]
 			if n <= 0 {
@@ -72,11 +74,15 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	}
 	appendGroupRatioOverrideInfo(info, other)
 	appendBillingInfo(info, other)
+	appendImagePricingLogOther(other, info.PriceData.ImagePricing)
 	if info.IsModelMapped {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
-	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
+	if info.TaskRelayInfo != nil && strings.TrimSpace(info.PublicTaskID) != "" {
+		other["task_id"] = strings.TrimSpace(info.PublicTaskID)
+	}
+	consumeLog := model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.OriginModelName,
 		TokenName: tokenName,
@@ -88,6 +94,10 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+	if consumeLog == nil {
+		return 0
+	}
+	return consumeLog.Id
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +160,7 @@ func taskAdjustTokenQuotaWithDebtOption(ctx context.Context, task *model.Task, d
 			err = model.DecreaseTokenQuota(task.PrivateData.TokenId, tokenKey, delta)
 		}
 	} else {
-		err = model.IncreaseTokenQuota(task.PrivateData.TokenId, tokenKey, -delta)
+		err = model.RefundTokenQuota(task.PrivateData.TokenId, tokenKey, -delta)
 	}
 	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("调整令牌额度失败 (delta=%d, task=%s): %s", delta, task.TaskID, err.Error()))
@@ -179,6 +189,7 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 		if bc.ImageCount > 0 {
 			other["image_count"] = bc.ImageCount
 		}
+		appendImagePricingLogOther(other, bc.ImagePricing)
 		if bc.HasRatioOverride {
 			other["ratio_override"] = bc.RatioOverride
 			other["has_ratio_override"] = true
@@ -197,6 +208,7 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			}
 		}
 	}
+	appendImageExecutionAuditFromTask(task.Data, nil, other)
 	props := task.Properties
 	if props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
 		other["is_model_mapped"] = true
@@ -211,6 +223,23 @@ func taskModelName(task *model.Task) string {
 		return bc.OriginModelName
 	}
 	return task.Properties.OriginModelName
+}
+
+// adjustTaskUsedQuota preserves legacy task accounting while making
+// image-handle counters reflect the final settled quota instead of precharge.
+func adjustTaskUsedQuota(task *model.Task, quotaDelta int) {
+	if task == nil || quotaDelta == 0 {
+		return
+	}
+	if isImageHandleTask(task) {
+		model.UpdateUserUsedQuota(task.UserId, quotaDelta)
+		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
+		return
+	}
+	if quotaDelta > 0 {
+		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
+		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
+	}
 }
 
 // RefundTaskQuota 统一的任务失败退款逻辑。
@@ -229,14 +258,20 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 
 	// 2. 退还令牌额度
 	taskAdjustTokenQuota(ctx, task, -quota)
+	adjustTaskUsedQuota(task, -quota)
 
 	// 3. 记录日志
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID
 	other["reason"] = reason
 	content := ""
-	if task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.BillingMode == "async_image_usage_billing" {
-		content = fmt.Sprintf("异步图片失败，退还预扣费 %s", formatQuotaUSD(quota))
+	if task.PrivateData.BillingContext != nil {
+		switch task.PrivateData.BillingContext.BillingMode {
+		case types.ImagePricingBillingMode:
+			content = fmt.Sprintf("异步图片按张计费失败，退还预扣费 %s", formatQuotaUSD(quota))
+		case "async_image_usage_billing":
+			content = fmt.Sprintf("异步图片失败，退还预扣费 %s", formatQuotaUSD(quota))
+		}
 	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
@@ -302,12 +337,11 @@ func RecalculateTaskQuotaWithDebtOption(ctx context.Context, task *model.Task, a
 	if quotaDelta > 0 {
 		logType = model.LogTypeConsume
 		logQuota = quotaDelta
-		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
-		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 	} else {
 		logType = model.LogTypeRefund
 		logQuota = -quotaDelta
 	}
+	adjustTaskUsedQuota(task, quotaDelta)
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID
 	//other["reason"] = reason
@@ -390,6 +424,11 @@ func settleAsyncImageBillingOnComplete(ctx context.Context, task *model.Task, ta
 		return false
 	}
 	bc := task.PrivateData.BillingContext
+	if bc != nil && bc.BillingMode == types.ImagePricingBillingMode && bc.ImagePricing != nil {
+		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 图片参数按张计费，成功后保持请求快照额度 %s", task.TaskID, formatQuotaUSD(task.Quota)))
+		recordImagePricingExecutionAudit(task, taskResult)
+		return true
+	}
 	if bc == nil || bc.PerCallBilling || bc.UsePrice {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，成功后保持预扣费 %s", task.TaskID, formatQuotaUSD(task.Quota)))
 		return true
@@ -417,6 +456,60 @@ func settleAsyncImageBillingOnComplete(ctx context.Context, task *model.Task, ta
 		settleTaskQuotaDeltaWithUsage(ctx, task, summary, reason, true)
 	}
 	return true
+}
+
+func recordImagePricingExecutionAudit(task *model.Task, taskResult *relaycommon.TaskInfo) {
+	if task == nil || task.PrivateData.BillingContext == nil || task.PrivateData.BillingContext.ImagePricing == nil {
+		return
+	}
+	audit := imageExecutionAuditFromJSON(task.Data)
+	if taskResult != nil {
+		appendImageExecutionUsage(audit, taskResult.Usage)
+		if taskResult.ActualQuota > 0 {
+			audit["actual_quota"] = taskResult.ActualQuota
+		}
+	}
+	if len(audit) == 0 {
+		return
+	}
+	consumeLogId := task.PrivateData.BillingContext.ConsumeLogId
+	if consumeLogId <= 0 && task.ID > 0 {
+		var persistedTask model.Task
+		if err := model.DB.Select("private_data").Where("id = ?", task.ID).First(&persistedTask).Error; err == nil &&
+			persistedTask.PrivateData.BillingContext != nil {
+			consumeLogId = persistedTask.PrivateData.BillingContext.ConsumeLogId
+		}
+	}
+	merged, err := model.MergeConsumeLogOther(
+		consumeLogId,
+		task.UserId,
+		task.TaskID,
+		map[string]interface{}{imageExecutionAuditContextKey: audit},
+	)
+	if err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("合并图片执行审计失败 task %s: %s", task.TaskID, err.Error()))
+		return
+	}
+	if !merged {
+		logger.LogInfo(context.Background(), fmt.Sprintf("任务 %s 暂无可关联的消费日志，执行审计保留在任务结果中", task.TaskID))
+	}
+}
+
+// MergeCompletedImagePricingExecutionAudit closes the race where image-handle
+// completes before the submit request has persisted its consume log ID.
+func MergeCompletedImagePricingExecutionAudit(taskId int64) {
+	if taskId <= 0 {
+		return
+	}
+	var task model.Task
+	if err := model.DB.Where("id = ?", taskId).First(&task).Error; err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("读取图片任务审计信息失败 taskId=%d: %s", taskId, err.Error()))
+		return
+	}
+	if task.Status != model.TaskStatusSuccess {
+		return
+	}
+	recordImagePricingExecutionAudit(&task, nil)
 }
 
 func isImageHandleTask(task *model.Task) bool {
@@ -574,10 +667,7 @@ func settleTaskQuotaDelta(ctx context.Context, task *model.Task, actualQuota int
 			logger.LogWarn(ctx, fmt.Sprintf("更新任务实际额度失败 task %s: %s", task.TaskID, err.Error()))
 		}
 	}
-	if quotaDelta > 0 {
-		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
-		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
-	}
+	adjustTaskUsedQuota(task, quotaDelta)
 	if !recordLog {
 		return
 	}
@@ -649,12 +739,11 @@ func settleTaskQuotaDeltaWithUsage(ctx context.Context, task *model.Task, summar
 	if quotaDelta > 0 {
 		logType = model.LogTypeConsume
 		logQuota = quotaDelta
-		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
-		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 	} else {
 		logType = model.LogTypeRefund
 		logQuota = -quotaDelta
 	}
+	adjustTaskUsedQuota(task, quotaDelta)
 	content := ""
 	if quotaDelta > 0 {
 		content = fmt.Sprintf("异步图片按量真实结算：实际 %s，预扣 %s，补扣 %s",

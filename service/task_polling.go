@@ -37,6 +37,20 @@ type BatchTaskPollingAdaptor interface {
 	ParseBatchTaskResult(body []byte) (map[string]*relaycommon.TaskInfo, error)
 }
 
+const imageHandleMissingUpstreamIDGraceSeconds int64 = 60
+
+func resolveTaskPollingUpstreamID(task *model.Task, now int64) (upstreamID string, missing bool) {
+	if task == nil {
+		return "", true
+	}
+	if isImageHandleTask(task) && strings.TrimSpace(task.PrivateData.UpstreamTaskID) == "" {
+		withinSubmitGrace := task.SubmitTime > 0 && now-task.SubmitTime < imageHandleMissingUpstreamIDGraceSeconds
+		return "", !withinSubmitGrace
+	}
+	upstreamID = strings.TrimSpace(task.GetUpstreamTaskID())
+	return upstreamID, upstreamID == ""
+}
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -148,11 +162,20 @@ func TaskPollingLoop() {
 			taskChannelM := make(map[int][]string)
 			taskM := make(map[string]*model.Task)
 			nullTaskIds := make([]int64, 0)
+			nullImageHandleTasks := make([]*model.Task, 0)
+			now := time.Now().Unix()
 			for _, task := range tasks {
-				upstreamID := task.GetUpstreamTaskID()
+				upstreamID, missingUpstreamID := resolveTaskPollingUpstreamID(task, now)
 				if upstreamID == "" {
+					if !missingUpstreamID {
+						continue
+					}
 					// 统计失败的未完成任务
-					nullTaskIds = append(nullTaskIds, task.ID)
+					if isImageHandleTask(task) {
+						nullImageHandleTasks = append(nullImageHandleTasks, task)
+					} else {
+						nullTaskIds = append(nullTaskIds, task.ID)
+					}
 					continue
 				}
 				taskM[upstreamID] = task
@@ -168,6 +191,9 @@ func TaskPollingLoop() {
 				} else {
 					logger.LogInfo(ctx, fmt.Sprintf("Fix null task_id task success: %v", nullTaskIds))
 				}
+			}
+			for _, task := range nullImageHandleTasks {
+				failImageHandleTaskWithRefund(ctx, task, "image-handle task has no upstream task ID")
 			}
 			if len(taskChannelM) == 0 {
 				continue
@@ -346,6 +372,15 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	cacheGetChannel, err := model.CacheGetChannel(channelId)
 	if err != nil {
+		if platform == constant.TaskPlatform(fmt.Sprintf("%d", constant.ChannelTypeImageHandle)) {
+			reason := fmt.Sprintf("Failed to get channel info, channel ID: %d", channelId)
+			for _, upstreamID := range taskIds {
+				if task, ok := taskM[upstreamID]; ok {
+					failImageHandleTaskWithRefund(ctx, task, reason)
+				}
+			}
+			return fmt.Errorf("CacheGetChannel failed: %w", err)
+		}
 		// Collect DB primary key IDs for bulk update (taskIds are upstream IDs, not task_id column values)
 		var failedIDs []int64
 		for _, upstreamID := range taskIds {
@@ -387,6 +422,17 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 		time.Sleep(1 * time.Second)
 	}
 	return nil
+}
+
+func failImageHandleTaskWithRefund(ctx context.Context, task *model.Task, reason string) {
+	if !isImageHandleTask(task) {
+		return
+	}
+	ApplyTaskResult(ctx, nil, task, &relaycommon.TaskInfo{
+		Status:   model.TaskStatusFailure,
+		Progress: taskcommon.ProgressComplete,
+		Reason:   reason,
+	})
 }
 
 func updateVideoBatchTasks(ctx context.Context, adaptor TaskPollingAdaptor, batchAdaptor BatchTaskPollingAdaptor, ch *model.Channel, taskIds []string, taskM map[string]*model.Task) error {
@@ -531,11 +577,11 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 		task.Progress = taskcommon.ProgressSubmitted
 	case model.TaskStatusQueued:
 		task.Progress = taskcommon.ProgressQueued
-		case model.TaskStatusInProgress:
-			task.Progress = taskcommon.ProgressInProgress
-			if task.StartTime == 0 {
-				task.StartTime = now
-			}
+	case model.TaskStatusInProgress:
+		task.Progress = taskcommon.ProgressInProgress
+		if task.StartTime == 0 {
+			task.StartTime = now
+		}
 	case model.TaskStatusSuccess:
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {

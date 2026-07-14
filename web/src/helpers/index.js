@@ -32,3 +32,4 @@ export * from './passkey';
 export * from './statusCodeRules';
 export * from './subscriptionQuota';
 export * from './promptCacheUsage';
+export * from './imagePricing';

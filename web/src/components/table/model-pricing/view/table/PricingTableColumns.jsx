@@ -26,6 +26,7 @@ import {
   calculateModelPrice,
   getModelPriceItems,
   getLobeHubIcon,
+  resolvePricingBillingType,
 } from '../../../../../helpers';
 import {
   renderLimitedItems,
@@ -33,8 +34,15 @@ import {
 } from '../../../../common/ui/RenderUtils';
 import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
 
-function renderQuotaType(type, t) {
-  switch (type) {
+function renderQuotaType(record, t) {
+  if (resolvePricingBillingType(record) === 'per_image_parameter') {
+    return (
+      <Tag color='orange' shape='circle'>
+        {t('图片参数计价')}
+      </Tag>
+    );
+  }
+  switch (record.quota_type) {
     case 1:
       return (
         <Tag color='teal' shape='circle'>
@@ -160,7 +168,7 @@ export const getPricingTableColumns = ({
     title: t('计费类型'),
     dataIndex: 'quota_type',
     render: (text, record, index) => {
-      return renderQuotaType(parseInt(text), t);
+      return renderQuotaType(record, t);
     },
     sorter: (a, b) => a.quota_type - b.quota_type,
   };
@@ -234,7 +242,20 @@ export const getPricingTableColumns = ({
     ...(isMobile ? {} : { fixed: 'right' }),
     render: (text, record, index) => {
       const priceData = getPriceData(record);
-      const priceItems = getModelPriceItems(priceData, t, siteDisplayType);
+      const isImagePricing =
+        resolvePricingBillingType(record) === 'per_image_parameter';
+      const priceItems = isImagePricing
+        ? [
+            {
+              key: 'image-default',
+              label: t('默认档位 {{tier}}', {
+                tier: record.image_pricing?.default_tier || '-',
+              }),
+              value: priceData.price,
+              suffix: ` / ${t('张')}`,
+            },
+          ]
+        : getModelPriceItems(priceData, t, siteDisplayType);
 
       return (
         <div className='space-y-1'>
@@ -252,6 +273,21 @@ export const getPricingTableColumns = ({
                 })}
               </Tag>
               <span className='text-xs text-gray-500'>{t('基础价格起')}</span>
+            </div>
+          ) : null}
+          {isImagePricing ? (
+            <div className='flex items-center gap-2 flex-wrap pt-1'>
+              <Tag color='orange' size='small'>
+                {t('{{parameter}} · {{count}}档', {
+                  parameter: record.image_pricing?.parameter || '-',
+                  count: record.image_pricing?.tiers?.length || 0,
+                })}
+              </Tag>
+              <span className='text-xs text-gray-500'>
+                {t('最大 {{max}} 张', {
+                  max: record.image_pricing?.max_n || 1,
+                })}
+              </span>
             </div>
           ) : null}
         </div>

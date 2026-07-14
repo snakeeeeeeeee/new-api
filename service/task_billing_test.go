@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -185,6 +186,33 @@ func getTokenUsedQuota(t *testing.T, id int) int {
 	return token.UsedQuota
 }
 
+func setUserUsageCounters(t *testing.T, id int, usedQuota int, requestCount int) {
+	t.Helper()
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", id).Updates(map[string]any{
+		"used_quota":    usedQuota,
+		"request_count": requestCount,
+	}).Error)
+}
+
+func getUserUsageCounters(t *testing.T, id int) (int, int) {
+	t.Helper()
+	var user model.User
+	require.NoError(t, model.DB.Select("used_quota, request_count").Where("id = ?", id).First(&user).Error)
+	return user.UsedQuota, user.RequestCount
+}
+
+func setChannelUsedQuota(t *testing.T, id int, usedQuota int64) {
+	t.Helper()
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", id).Update("used_quota", usedQuota).Error)
+}
+
+func getChannelUsedQuota(t *testing.T, id int) int64 {
+	t.Helper()
+	var channel model.Channel
+	require.NoError(t, model.DB.Select("used_quota").Where("id = ?", id).First(&channel).Error)
+	return channel.UsedQuota
+}
+
 func getSubscriptionUsed(t *testing.T, id int) int64 {
 	t.Helper()
 	var sub model.UserSubscription
@@ -227,7 +255,7 @@ func TestLogTaskConsumptionIncludesSubscriptionBillingMetadata(t *testing.T) {
 		UserId:                                userID,
 		OriginModelName:                       "task-model",
 		ChannelMeta:                           &relaycommon.ChannelMeta{},
-		TaskRelayInfo:                         &relaycommon.TaskRelayInfo{Action: "generate"},
+		TaskRelayInfo:                         &relaycommon.TaskRelayInfo{Action: "generate", PublicTaskID: "task_log_link"},
 		UsingGroup:                            "default",
 		BillingSource:                         BillingSourceSubscription,
 		SubscriptionId:                        77,
@@ -242,11 +270,14 @@ func TestLogTaskConsumptionIncludesSubscriptionBillingMetadata(t *testing.T) {
 		},
 	}
 
-	LogTaskConsumption(ctx, info)
+	consumeLogId := LogTaskConsumption(ctx, info)
+	require.Positive(t, consumeLogId)
 	logItem := getLastLog(t)
 	require.NotNil(t, logItem)
+	require.Equal(t, consumeLogId, logItem.Id)
 	other, err := common.StrToMap(logItem.Other)
 	require.NoError(t, err)
+	require.Equal(t, "task_log_link", other["task_id"])
 	require.Equal(t, BillingSourceSubscription, other["billing_source"])
 	require.Equal(t, float64(77), other["subscription_id"])
 	require.Equal(t, float64(321), other["subscription_consumed"])
@@ -453,9 +484,41 @@ func TestBillingSessionSettleAllowsLegitimateRefundDelta(t *testing.T) {
 	session, apiErr := NewBillingSession(testGinContext(), relayInfo, 100)
 	require.Nil(t, apiErr)
 	require.NoError(t, session.Settle(60))
+	require.NoError(t, session.Settle(60))
 
 	assert.Equal(t, 940, getUserQuota(t, userID))
 	assert.Equal(t, 440, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, 60, getTokenUsedQuota(t, tokenID))
+}
+
+func TestBillingSessionSettleRefundDeltaDoesNotIncreaseUnlimitedTokenRemainQuota(t *testing.T) {
+	truncate(t)
+	const userID, tokenID = 112, 112
+	const tokenKey = "sk-unlimited-legitimate-refund-delta"
+	const initialUserQuota, initialTokenRemain = 1000, 777
+	seedUser(t, userID, initialUserQuota)
+	seedUnlimitedToken(t, tokenID, userID, tokenKey, initialTokenRemain)
+
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:         userID,
+		TokenId:        tokenID,
+		TokenKey:       tokenKey,
+		TokenUnlimited: true,
+		UsingGroup:     "default",
+		UserSetting:    dto.UserSetting{BillingPreference: "wallet_only"},
+	}
+	session, apiErr := NewBillingSession(testGinContext(), relayInfo, 100)
+	require.Nil(t, apiErr)
+	assert.Equal(t, initialUserQuota-100, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, 100, getTokenUsedQuota(t, tokenID))
+
+	require.NoError(t, session.Settle(60))
+	require.NoError(t, session.Settle(60))
+
+	assert.Equal(t, initialUserQuota-60, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, 60, getTokenUsedQuota(t, tokenID))
 }
 
 func TestRetryToHigherRouteRatioSettlesAdditionalQuotaOnlyOnce(t *testing.T) {
@@ -508,6 +571,8 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	seedUser(t, userID, initQuota)
 	seedToken(t, tokenID, userID, "sk-test-key", tokenRemain)
 	seedChannel(t, channelID)
+	setUserUsageCounters(t, userID, preConsumed, 1)
+	setChannelUsedQuota(t, channelID, preConsumed)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 
@@ -519,6 +584,10 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	// Token remain_quota should increase, used_quota should decrease
 	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, -preConsumed, getTokenUsedQuota(t, tokenID))
+	userUsedQuota, requestCount := getUserUsageCounters(t, userID)
+	assert.Equal(t, preConsumed, userUsedQuota)
+	assert.Equal(t, 1, requestCount)
+	assert.Equal(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
 
 	// A refund log should be created
 	log := getLastLog(t)
@@ -552,6 +621,31 @@ func TestRefundTaskQuota_Subscription(t *testing.T) {
 	// Token should also be refunded
 	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
 
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeRefund, log.Type)
+}
+
+func TestRefundTaskQuotaUnlimitedTokenDoesNotIncreaseRemainQuota(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 5, 5, 5
+	const initialUserQuota, initialTokenRemain, preConsumed = 10000, 1234, 3000
+	const tokenKey = "sk-task-unlimited-refund"
+
+	seedUser(t, userID, initialUserQuota)
+	seedUnlimitedToken(t, tokenID, userID, tokenKey, initialTokenRemain)
+	seedChannel(t, channelID)
+	require.NoError(t, model.DecreaseUserQuota(userID, preConsumed))
+	require.NoError(t, model.DecreaseTokenQuota(tokenID, tokenKey, preConsumed))
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+
+	RefundTaskQuota(ctx, task, "unlimited token task failed")
+
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Zero(t, getTokenUsedQuota(t, tokenID))
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
@@ -662,6 +756,8 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	seedUser(t, userID, initQuota)
 	seedToken(t, tokenID, userID, "sk-recalc-pos", tokenRemain)
 	seedChannel(t, channelID)
+	setUserUsageCounters(t, userID, preConsumed, 1)
+	setChannelUsedQuota(t, channelID, preConsumed)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 
@@ -681,6 +777,36 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeConsume, log.Type)
 	assert.Equal(t, actualQuota-preConsumed, log.Quota)
+	userUsedQuota, requestCount := getUserUsageCounters(t, userID)
+	assert.Equal(t, actualQuota, userUsedQuota)
+	assert.Equal(t, 2, requestCount)
+	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+}
+
+func TestRecalculateImageHandlePositiveDeltaAdjustsUsedQuotaWithoutExtraRequest(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 110, 110, 110
+	const initQuota, preConsumed, actualQuota = 10000, 2000, 3000
+	const tokenRemain = 5000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-image-recalc-pos", tokenRemain)
+	seedChannel(t, channelID)
+	setUserUsageCounters(t, userID, preConsumed, 1)
+	setChannelUsedQuota(t, channelID, preConsumed)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = imageHandleTaskPlatform()
+	task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
+
+	RecalculateTaskQuota(ctx, task, actualQuota, "image-handle actual_quota fallback")
+
+	userUsedQuota, requestCount := getUserUsageCounters(t, userID)
+	assert.Equal(t, actualQuota, userUsedQuota)
+	assert.Equal(t, 1, requestCount)
+	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
 }
 
 func TestRecalculate_LogKeepsAggregateRatioOverrideInfo(t *testing.T) {
@@ -804,6 +930,8 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	seedUser(t, userID, initQuota)
 	seedToken(t, tokenID, userID, "sk-recalc-neg", tokenRemain)
 	seedChannel(t, channelID)
+	setUserUsageCounters(t, userID, preConsumed, 1)
+	setChannelUsedQuota(t, channelID, preConsumed)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 
@@ -823,6 +951,40 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 	assert.Equal(t, preConsumed-actualQuota, log.Quota)
+	userUsedQuota, requestCount := getUserUsageCounters(t, userID)
+	assert.Equal(t, preConsumed, userUsedQuota)
+	assert.Equal(t, 1, requestCount)
+	assert.Equal(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
+}
+
+func TestSettleImageHandleUsageNegativeDeltaAdjustsUsedQuota(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 111, 111, 111
+	const initQuota, preConsumed, actualQuota = 10000, 5000, 3000
+	const tokenRemain = 5000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-image-usage-neg", tokenRemain)
+	seedChannel(t, channelID)
+	setUserUsageCounters(t, userID, preConsumed, 1)
+	setChannelUsedQuota(t, channelID, preConsumed)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = imageHandleTaskPlatform()
+	task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
+
+	settleTaskQuotaDeltaWithUsage(ctx, task, textQuotaSummary{
+		ModelName: "test-model",
+		Quota:     actualQuota,
+	}, "异步图片按量真实结算", false)
+
+	userUsedQuota, requestCount := getUserUsageCounters(t, userID)
+	assert.Equal(t, actualQuota, userUsedQuota)
+	assert.Equal(t, 1, requestCount)
+	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+	assert.Equal(t, actualQuota, task.Quota)
 }
 
 func TestRecalculate_ZeroDelta(t *testing.T) {
@@ -1217,6 +1379,271 @@ func TestSettle_ImageHandlePerCallSuccessKeepsPrecharge(t *testing.T) {
 	assert.Equal(t, initQuota, getUserQuota(t, userID))
 	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, preConsumed, task.Quota)
+}
+
+func TestSettle_ImageParameterPerCallKeepsFrozenSnapshotAndIgnoresExecutorUsage(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 35, 35, 35
+	const initQuota, preConsumed = 100000, 40000
+	const tokenRemain = 80000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-image-parameter-frozen", tokenRemain)
+	seedChannel(t, channelID)
+
+	originalImagePricing := ratio_setting.ImagePricing2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateImagePricingByJSONString(originalImagePricing))
+	})
+	require.NoError(t, ratio_setting.UpdateImagePricingByJSONString(`{
+		"version":1,
+		"profiles":{
+			"quality-v2":{
+				"name":"changed after submit",
+				"parameter":"quality",
+				"default_tier":"low",
+				"tiers":[{"key":"low","upstream_value":"low","aliases":[],"unit_price":0.99}]
+			}
+		},
+		"model_bindings":{"public-image-count":{"profile":"quality-v2","max_n":10}}
+	}`))
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatform("58")
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		OriginModelName: "public-image-count",
+		BillingMode:     types.ImagePricingBillingMode,
+		PerCallBilling:  true,
+		UsePrice:        true,
+		ImagePricing: &types.ImagePricingSnapshot{
+			PublicModel:   "public-image-count",
+			ProfileID:     "quality-v1",
+			ProfileHash:   "frozen-profile-hash",
+			Parameter:     types.ImagePricingParameterQuality,
+			RawValue:      "low",
+			EffectiveTier: "low",
+			UpstreamValue: "low",
+			ValueSource:   types.ImagePricingValueSourceRequest,
+			UnitPrice:     0.04,
+			N:             2,
+			Subtotal:      0.08,
+			GroupRatio:    1,
+			FinalQuota:    preConsumed,
+		},
+	}
+	originalOther := taskBillingOther(task)
+	originalOther["task_id"] = task.TaskID
+	originalLog := &model.Log{
+		UserId:    userID,
+		CreatedAt: task.CreatedAt,
+		Type:      model.LogTypeConsume,
+		Content:   imagePricingLogContent(task.PrivateData.BillingContext.ImagePricing),
+		ModelName: "public-image-count",
+		Quota:     preConsumed,
+		ChannelId: channelID,
+		TokenId:   tokenID,
+		Group:     task.Group,
+		Other:     common.MapToJsonStr(originalOther),
+	}
+	require.NoError(t, model.LOG_DB.Create(originalLog).Error)
+	task.PrivateData.BillingContext.ConsumeLogId = originalLog.Id
+	task.Data = json.RawMessage(`{
+		"result":{
+			"images":[{"url":"https://cdn.example.com/one.png"},{"url":"https://cdn.example.com/two.png"}],
+			"output":{"quality":"high","size":"2048x2048","resolution":"2k"}
+		},
+		"usage":{"total_tokens":123,"actual_quota":456}
+	}`)
+
+	// Both callback usage and executor-provided quota disagree with the frozen
+	// request snapshot. Neither may reprice image_parameter_per_call tasks.
+	taskResult := &relaycommon.TaskInfo{
+		Status:      model.TaskStatusSuccess,
+		ActualQuota: 990000,
+		TotalTokens: 9999,
+		Usage: &dto.Usage{
+			PromptTokens:     111,
+			CompletionTokens: 888,
+			TotalTokens:      999,
+		},
+	}
+	settleTaskBillingOnComplete(ctx, &mockAdaptor{adjustReturn: 880000}, task, taskResult)
+
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, preConsumed, task.Quota)
+	assert.Equal(t, int64(1), countLogs(t))
+	require.NotNil(t, task.PrivateData.BillingContext.ImagePricing)
+	assert.Equal(t, "quality-v1", task.PrivateData.BillingContext.ImagePricing.ProfileID)
+	assert.Equal(t, "frozen-profile-hash", task.PrivateData.BillingContext.ImagePricing.ProfileHash)
+	assert.Equal(t, 0.04, task.PrivateData.BillingContext.ImagePricing.UnitPrice)
+	assert.Equal(t, preConsumed, task.PrivateData.BillingContext.ImagePricing.FinalQuota)
+
+	consumeLog := getLastLog(t)
+	require.NotNil(t, consumeLog)
+	assert.Equal(t, originalLog.Id, consumeLog.Id)
+	assert.Equal(t, model.LogTypeConsume, consumeLog.Type)
+	assert.Equal(t, preConsumed, consumeLog.Quota)
+	assert.Contains(t, consumeLog.Content, "按张（图片）")
+	var auditOther map[string]interface{}
+	require.NoError(t, common.Unmarshal([]byte(consumeLog.Other), &auditOther))
+	assert.Nil(t, auditOther["non_billing_audit"])
+	assert.Nil(t, auditOther["billing_stage"])
+	assert.Equal(t, task.TaskID, auditOther["task_id"])
+	snapshot, ok := auditOther["image_pricing_snapshot"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "frozen-profile-hash", snapshot["profile_hash"])
+	assert.Equal(t, float64(preConsumed), snapshot["final_quota"])
+	audit, ok := auditOther["image_execution_audit"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "high", audit["quality"])
+	assert.Equal(t, "2048x2048", audit["size"])
+	assert.Equal(t, "2k", audit["resolution"])
+	assert.Equal(t, float64(2), audit["image_count"])
+	assert.Equal(t, float64(111), audit["input_tokens"])
+	assert.Equal(t, float64(888), audit["output_tokens"])
+	assert.Equal(t, float64(999), audit["total_tokens"])
+	assert.Equal(t, float64(990000), audit["actual_quota"])
+
+	liveProfile, _, _, found := ratio_setting.GetImagePricingForModel("public-image-count")
+	require.True(t, found)
+	require.Len(t, liveProfile.Tiers, 1)
+	assert.Equal(t, 0.99, liveProfile.Tiers[0].UnitPrice)
+}
+
+func TestRecordImagePricingExecutionAuditWithoutLinkedConsumeLogDoesNotCreateLog(t *testing.T) {
+	truncate(t)
+	task := makeTask(50, 50, 20000, 50, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
+	task.PrivateData.BillingContext.ImagePricing = &types.ImagePricingSnapshot{
+		PublicModel:   "public-image-count",
+		EffectiveTier: "low",
+		UnitPrice:     0.04,
+		N:             1,
+		FinalQuota:    20000,
+	}
+	task.Data = json.RawMessage(`{"result":{"images":[{"url":"https://cdn.example.com/one.png"}],"output":{"quality":"low"}}}`)
+
+	recordImagePricingExecutionAudit(task, nil)
+
+	assert.Zero(t, countLogs(t))
+}
+
+func TestMergeCompletedImagePricingExecutionAuditHandlesEarlyCallbackRace(t *testing.T) {
+	truncate(t)
+	task := makeTask(51, 51, 20000, 51, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusSuccess
+	task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
+	task.PrivateData.BillingContext.ImagePricing = &types.ImagePricingSnapshot{
+		PublicModel:   "public-image-count",
+		EffectiveTier: "low",
+		UnitPrice:     0.04,
+		N:             1,
+		FinalQuota:    20000,
+	}
+	task.Data = json.RawMessage(`{"result":{"images":[{"url":"https://cdn.example.com/one.png"}],"output":{"quality":"low","size":"1024x1024"}}}`)
+	require.NoError(t, model.DB.Create(task).Error)
+	originalLog := &model.Log{
+		UserId:    task.UserId,
+		CreatedAt: task.CreatedAt,
+		Type:      model.LogTypeConsume,
+		ModelName: "public-image-count",
+		Quota:     task.Quota,
+		Other:     common.MapToJsonStr(map[string]interface{}{"task_id": task.TaskID}),
+	}
+	require.NoError(t, model.LOG_DB.Create(originalLog).Error)
+	require.NoError(t, model.PersistTaskSubmitResult(task.ID, "imgtask_early", nil, originalLog.Id))
+
+	MergeCompletedImagePricingExecutionAudit(task.ID)
+
+	require.Equal(t, int64(1), countLogs(t))
+	consumeLog := getLastLog(t)
+	other, err := common.StrToMap(consumeLog.Other)
+	require.NoError(t, err)
+	audit, ok := other["image_execution_audit"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "low", audit["quality"])
+	require.Equal(t, "1024x1024", audit["size"])
+}
+
+func TestRecordImagePricingExecutionAuditReloadsConsumeLogIdForStaleCallbackTask(t *testing.T) {
+	truncate(t)
+	task := makeTask(52, 52, 20000, 52, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
+	task.PrivateData.BillingContext.ImagePricing = &types.ImagePricingSnapshot{
+		PublicModel:   "public-image-count",
+		EffectiveTier: "low",
+		UnitPrice:     0.04,
+		N:             1,
+		FinalQuota:    20000,
+	}
+	task.Data = json.RawMessage(`{"result":{"images":[{"url":"https://cdn.example.com/one.png"}],"output":{"quality":"low"}}}`)
+	require.NoError(t, model.DB.Create(task).Error)
+	originalLog := &model.Log{
+		UserId:    task.UserId,
+		CreatedAt: task.CreatedAt,
+		Type:      model.LogTypeConsume,
+		ModelName: "public-image-count",
+		Quota:     task.Quota,
+		Other:     common.MapToJsonStr(map[string]interface{}{"task_id": task.TaskID}),
+	}
+	require.NoError(t, model.LOG_DB.Create(originalLog).Error)
+	require.Zero(t, task.PrivateData.BillingContext.ConsumeLogId)
+	require.NoError(t, model.PersistTaskSubmitResult(task.ID, "imgtask_racing", nil, originalLog.Id))
+
+	// The callback still holds the task object loaded before PersistTaskSubmitResult.
+	recordImagePricingExecutionAudit(task, nil)
+
+	require.Equal(t, int64(1), countLogs(t))
+	consumeLog := getLastLog(t)
+	other, err := common.StrToMap(consumeLog.Other)
+	require.NoError(t, err)
+	audit, ok := other["image_execution_audit"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "low", audit["quality"])
+}
+
+func TestSettle_ImageHandleLegacyUsageTaskWithoutSnapshotUsesActualQuota(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 36, 36, 36
+	const initQuota, preConsumed, actualQuota = 10000, 5000, 3000
+	const tokenRemain = 8000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-image-legacy-actual-quota", tokenRemain)
+	seedChannel(t, channelID)
+	setUserUsageCounters(t, userID, preConsumed, 1)
+	setChannelUsedQuota(t, channelID, preConsumed)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatform("58")
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		OriginModelName: "gpt-image-2",
+		BillingMode:     "async_image_usage_billing",
+		ModelPrice:      -1,
+		GroupRatio:      1,
+	}
+
+	settleTaskBillingOnComplete(ctx, &mockAdaptor{}, task, &relaycommon.TaskInfo{
+		Status:      model.TaskStatusSuccess,
+		ActualQuota: actualQuota,
+	})
+
+	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, actualQuota, task.Quota)
+	userUsedQuota, requestCount := getUserUsageCounters(t, userID)
+	assert.Equal(t, actualQuota, userUsedQuota)
+	assert.Equal(t, 1, requestCount)
+	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeRefund, log.Type)
+	assert.Equal(t, preConsumed-actualQuota, log.Quota)
 }
 
 func TestSettle_ImageHandleUsageBillingUsesCallbackUsageAndCanDriveDebt(t *testing.T) {

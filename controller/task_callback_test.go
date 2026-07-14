@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -96,7 +97,8 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	require.NoError(t, db.Create(&model.User{Id: 1, Username: "u", Quota: 120, Status: common.UserStatusEnabled}).Error)
 	require.NoError(t, db.Create(&model.Token{Id: 11, UserId: 1, Key: "sk-callback-bill", Name: "callback token", Status: common.TokenStatusEnabled, RemainQuota: 50}).Error)
 
-	body := []byte(`{"events":[{"event_id":"evt_1","client_task_id":"task_image_success","provider_task_id":"imgtask_success","status":"succeeded","progress":"100%","result":{"images":[{"url":"https://cdn.example.com/a.webp","mime_type":"image/webp","format":"webp","width":1024,"height":768,"size_bytes":123456,"filename":"a.webp","revised_prompt":"revised prompt"}],"output":{"quality":"high","output_format":"webp","size":"1024x768"},"metadata":{"image_count":1,"input_image_count":0,"mask_used":false}},"usage":{"actual_quota":300}}]}`)
+	const signedURL = "https://cdn.example.com/a.webp?x=1&X-Amz-Credential=AKIA%2F20260714%2Fs3%2Faws4_request&X-Amz-Signature=abc123"
+	body := []byte(`{"events":[{"event_id":"evt_1","client_task_id":"task_image_success","provider_task_id":"imgtask_success","status":"succeeded","progress":"100%","result":{"images":[{"url":"https://cdn.example.com/a.webp?x=1\u0026X-Amz-Credential=AKIA%2F20260714%2Fs3%2Faws4_request\u0026X-Amz-Signature=abc123","mime_type":"image/webp","format":"webp","width":1024,"height":768,"size_bytes":123456,"filename":"a.webp","revised_prompt":"revised prompt"}],"output":{"quality":"high","output_format":"webp","size":"1024x768"},"metadata":{"image_count":1,"input_image_count":0,"mask_used":false}},"usage":{"actual_quota":300}}]}`)
 	ctx, recorder := makeCallbackRequest(t, body, secret)
 
 	ImageTaskCallbackBatch(ctx)
@@ -106,7 +108,7 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	var task model.Task
 	require.NoError(t, db.Where("task_id = ?", "task_image_success").First(&task).Error)
 	assert.EqualValues(t, model.TaskStatusSuccess, task.Status)
-	assert.Equal(t, "https://cdn.example.com/a.webp", task.PrivateData.ResultURL)
+	assert.Equal(t, signedURL, task.PrivateData.ResultURL)
 	assert.Equal(t, 100, task.Quota)
 	var user model.User
 	require.NoError(t, db.Select("quota").Where("id = ?", 1).First(&user).Error)
@@ -119,7 +121,7 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	assert.Contains(t, string(task.Data), `"output_format":"webp"`)
 	var asset model.Asset
 	require.NoError(t, db.Where("task_id = ?", "task_image_success").First(&asset).Error)
-	assert.Equal(t, "https://cdn.example.com/a.webp", asset.URL)
+	assert.Equal(t, signedURL, asset.URL)
 	assert.Equal(t, "image/webp", asset.MimeType)
 	assert.Equal(t, "a.webp", asset.Filename)
 	assert.EqualValues(t, 123456, asset.SizeBytes)
@@ -589,6 +591,249 @@ func TestImageTaskCallbackBatchAcceptsProviderTaskBeforeUpstreamIDPersisted(t *t
 	require.NoError(t, db.Where("task_id = ?", "task_fast_callback").First(&task).Error)
 	assert.EqualValues(t, model.TaskStatusSuccess, task.Status)
 	assert.Equal(t, "https://cdn.example.com/fast.webp", task.PrivateData.ResultURL)
+}
+
+type fastCallbackRelayOutcome struct {
+	Task         model.Task
+	User         model.User
+	Token        model.Token
+	Channel      model.Channel
+	Logs         []model.Log
+	ResponseCode int
+}
+
+func runRelayTaskWithFastCallback(t *testing.T, event imageCallbackEvent) fastCallbackRelayOutcome {
+	return runRelayTaskWithFastCallbackSubmitResponse(t, event, http.StatusOK,
+		`{"provider_task_id":"imgtask_controller_fast","client_task_id":"task_controller_fast","status":"queued"}`)
+}
+
+func runRelayTaskWithFastCallbackSubmitResponse(t *testing.T, event imageCallbackEvent, submitStatus int, submitBody string) fastCallbackRelayOutcome {
+	t.Helper()
+	db := setupInviteCodeControllerTestDB(t)
+	service.InitHttpClient()
+
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	originalImagePricing := ratio_setting.ImagePricing2JSONString()
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	originalBatchUpdateEnabled := common.BatchUpdateEnabled
+	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+		require.NoError(t, ratio_setting.UpdateImagePricingByJSONString(originalImagePricing))
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+		common.BatchUpdateEnabled = originalBatchUpdateEnabled
+	})
+	common.LogConsumeEnabled = true
+	common.BatchUpdateEnabled = false
+	require.NoError(t, ratio_setting.UpdateImagePricingByJSONString(`{
+		"version":1,
+		"profiles":{
+			"fast-callback-quality":{
+				"name":"fast callback test",
+				"parameter":"quality",
+				"default_tier":"low",
+				"tiers":[{"key":"low","upstream_value":"low","aliases":[],"unit_price":0.0002}]
+			}
+		},
+		"model_bindings":{"public-fast-image":{"profile":"fast-callback-quality","max_n":10}}
+	}`))
+
+	const callbackSecret = "callback-secret"
+	settings, err := common.Marshal(dto.ChannelOtherSettings{CallbackSecret: callbackSecret})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:            123,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "real-openai-image",
+		Key:           "real-upstream-key",
+		Status:        common.ChannelStatusEnabled,
+		OtherSettings: string(settings),
+	}).Error)
+	require.NoError(t, db.Create(&model.User{
+		Id:       1,
+		Username: "fast-callback-user",
+		Quota:    1000,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          11,
+		UserId:      1,
+		Key:         "sk-fast-callback",
+		Name:        "fast callback token",
+		Status:      common.TokenStatusEnabled,
+		RemainQuota: 1000,
+		Group:       "default",
+	}).Error)
+
+	event.EventID = "evt_controller_fast"
+	event.ClientTaskID = "task_controller_fast"
+	event.ProviderTaskID = "imgtask_controller_fast"
+	if event.Progress == "" {
+		event.Progress = "100%"
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callbackBody, marshalErr := common.Marshal(imageCallbackBatchRequest{Events: []imageCallbackEvent{event}})
+		require.NoError(t, marshalErr)
+		callbackCtx, callbackRecorder := makeCallbackRequest(t, callbackBody, callbackSecret)
+		ImageTaskCallbackBatch(callbackCtx)
+		require.Equal(t, http.StatusOK, callbackRecorder.Code)
+		require.Contains(t, callbackRecorder.Body.String(), `"status":"accepted"`)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(submitStatus)
+		_, _ = w.Write([]byte(submitBody))
+	}))
+	defer server.Close()
+
+	*image_handle_setting.GetImageHandleSetting() = image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
+		BaseURL:                 server.URL,
+		APIKey:                  "provider-key",
+		InternalBaseURL:         "http://new-api:3000",
+		InternalSecretID:        "image_handle_1",
+		InternalSecret:          "internal-secret",
+		CallbackSecret:          callbackSecret,
+		UsagePrechargeEnabled:   true,
+		PrechargeAmountPerImage: 0.5,
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", bytes.NewReader([]byte(`{
+		"client_task_id":"task_controller_fast",
+		"model":"public-fast-image",
+		"prompt":"finish before submit response"
+	}`)))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("platform", "58")
+	ctx.Set("model_mapping", `{"public-fast-image":"gpt-image-2"}`)
+	common.SetContextKey(ctx, constant.ContextKeyUserId, 1)
+	common.SetContextKey(ctx, constant.ContextKeyUserQuota, 1000)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 11)
+	common.SetContextKey(ctx, constant.ContextKeyTokenKey, "sk-fast-callback")
+	common.SetContextKey(ctx, constant.ContextKeyTokenGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyOriginalModel, "public-fast-image")
+	common.SetContextKey(ctx, constant.ContextKeyChannelId, 123)
+	common.SetContextKey(ctx, constant.ContextKeyChannelName, "real-openai-image")
+	common.SetContextKey(ctx, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(ctx, constant.ContextKeyChannelBaseUrl, "https://real.example/v1")
+	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "real-upstream-key")
+
+	RelayTask(ctx)
+
+	outcome := fastCallbackRelayOutcome{ResponseCode: recorder.Code}
+	require.NoError(t, db.Where("task_id = ?", "task_controller_fast").First(&outcome.Task).Error)
+	require.NoError(t, db.First(&outcome.User, 1).Error)
+	require.NoError(t, db.First(&outcome.Token, 11).Error)
+	require.NoError(t, db.First(&outcome.Channel, 123).Error)
+	require.NoError(t, db.Order("id asc").Find(&outcome.Logs).Error)
+	return outcome
+}
+
+func TestRelayTaskPreservesFastCallbackResultWhenPersistingUpstreamID(t *testing.T) {
+	outcome := runRelayTaskWithFastCallback(t, imageCallbackEvent{
+		Status: "succeeded",
+		Result: &imageCallbackResult{Images: []imageCallbackImage{{
+			URL: "https://cdn.example.com/controller-fast.webp",
+		}}},
+		Usage: &imageCallbackUsage{ActualQuota: 999},
+	})
+
+	require.Equal(t, http.StatusOK, outcome.ResponseCode)
+	assert.EqualValues(t, model.TaskStatusSuccess, outcome.Task.Status)
+	assert.Equal(t, "imgtask_controller_fast", outcome.Task.PrivateData.UpstreamTaskID)
+	assert.Equal(t, "https://cdn.example.com/controller-fast.webp", outcome.Task.PrivateData.ResultURL)
+	assert.Contains(t, string(outcome.Task.Data), "controller-fast.webp")
+	require.NotNil(t, outcome.Task.PrivateData.BillingContext)
+	require.NotNil(t, outcome.Task.PrivateData.BillingContext.ImagePricing)
+	assert.Equal(t, "public-fast-image", outcome.Task.PrivateData.BillingContext.ImagePricing.PublicModel)
+	expectedQuota := common.QuotaFromFloat(0.0002 * common.QuotaPerUnit)
+	assert.Equal(t, 1000-expectedQuota, outcome.User.Quota)
+	assert.Equal(t, 1000-expectedQuota, outcome.Token.RemainQuota)
+	assert.Equal(t, expectedQuota, outcome.Token.UsedQuota)
+}
+
+func TestRelayTaskFastFailureCallbackRefundsExactlyOnceBeforeSubmitSettlement(t *testing.T) {
+	outcome := runRelayTaskWithFastCallback(t, imageCallbackEvent{
+		Status: "failed",
+		Error: &imageCallbackError{
+			Code:    "render_failed",
+			Message: "render failed before submit response",
+		},
+		Usage: &imageCallbackUsage{ActualQuota: 999},
+	})
+
+	require.Equal(t, http.StatusOK, outcome.ResponseCode)
+	assert.EqualValues(t, model.TaskStatusFailure, outcome.Task.Status)
+	assert.Equal(t, "100%", outcome.Task.Progress)
+	assert.Equal(t, "render failed before submit response", outcome.Task.FailReason)
+	assert.Equal(t, "imgtask_controller_fast", outcome.Task.PrivateData.UpstreamTaskID)
+	assert.Contains(t, string(outcome.Task.Data), "render_failed")
+	require.NotNil(t, outcome.Task.PrivateData.BillingContext)
+	require.NotNil(t, outcome.Task.PrivateData.BillingContext.ImagePricing)
+	assert.Equal(t, "public-fast-image", outcome.Task.PrivateData.BillingContext.ImagePricing.PublicModel)
+
+	expectedQuota := common.QuotaFromFloat(0.0002 * common.QuotaPerUnit)
+	assert.Equal(t, expectedQuota, outcome.Task.Quota)
+	assert.Equal(t, 1000, outcome.User.Quota)
+	assert.Equal(t, 1000, outcome.Token.RemainQuota)
+	assert.Zero(t, outcome.Token.UsedQuota)
+
+	refundLogs := make([]model.Log, 0, 1)
+	for _, log := range outcome.Logs {
+		if log.Type == model.LogTypeRefund {
+			refundLogs = append(refundLogs, log)
+		}
+	}
+	require.Len(t, refundLogs, 1)
+	assert.Equal(t, expectedQuota, refundLogs[0].Quota)
+}
+
+func TestRelayTaskFastSuccessCallbackOwnsBillingWhenSubmitReturnsError(t *testing.T) {
+	outcome := runRelayTaskWithFastCallbackSubmitResponse(t, imageCallbackEvent{
+		Status: "succeeded",
+		Result: &imageCallbackResult{Images: []imageCallbackImage{{
+			URL: "https://cdn.example.com/controller-fast-error.webp",
+		}}},
+	}, http.StatusBadGateway, `{"error":"response lost after callback"}`)
+
+	require.Equal(t, http.StatusOK, outcome.ResponseCode)
+	assert.EqualValues(t, model.TaskStatusSuccess, outcome.Task.Status)
+	assert.Equal(t, "https://cdn.example.com/controller-fast-error.webp", outcome.Task.PrivateData.ResultURL)
+	expectedQuota := common.QuotaFromFloat(0.0002 * common.QuotaPerUnit)
+	assert.Equal(t, 1000-expectedQuota, outcome.User.Quota)
+	assert.Equal(t, 1000-expectedQuota, outcome.Token.RemainQuota)
+	assert.Equal(t, expectedQuota, outcome.Token.UsedQuota)
+
+	for _, log := range outcome.Logs {
+		assert.NotEqual(t, model.LogTypeRefund, log.Type)
+	}
+}
+
+func TestRelayTaskFastFailureCallbackDoesNotDoubleRefundWhenSubmitResponseIsMalformed(t *testing.T) {
+	outcome := runRelayTaskWithFastCallbackSubmitResponse(t, imageCallbackEvent{
+		Status: "failed",
+		Error: &imageCallbackError{
+			Code:    "render_failed",
+			Message: "render failed before malformed submit response",
+		},
+	}, http.StatusOK, `{"provider_task_id":`)
+
+	require.Equal(t, http.StatusOK, outcome.ResponseCode)
+	assert.EqualValues(t, model.TaskStatusFailure, outcome.Task.Status)
+	assert.Equal(t, 1000, outcome.User.Quota)
+	assert.Equal(t, 1000, outcome.Token.RemainQuota)
+	assert.Zero(t, outcome.Token.UsedQuota)
+
+	refundLogs := make([]model.Log, 0, 1)
+	for _, log := range outcome.Logs {
+		if log.Type == model.LogTypeRefund {
+			refundLogs = append(refundLogs, log)
+		}
+	}
+	require.Len(t, refundLogs, 1)
+	assert.Equal(t, common.QuotaFromFloat(0.0002*common.QuotaPerUnit), refundLogs[0].Quota)
 }
 
 func TestImageTaskCallbackBatchRejectsChannelMismatch(t *testing.T) {

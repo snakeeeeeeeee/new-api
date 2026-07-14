@@ -39,6 +39,7 @@ import {
   calculateModelPrice,
   formatPriceInfo,
   getLobeHubIcon,
+  resolvePricingBillingType,
 } from '../../../../../helpers';
 import PricingCardSkeleton from './PricingCardSkeleton';
 import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
@@ -161,7 +162,13 @@ const PricingCardView = ({
         -
       </Tag>
     );
-    if (record.quota_type === 1) {
+    if (resolvePricingBillingType(record) === 'per_image_parameter') {
+      billingTag = (
+        <Tag key='billing' shape='circle' color='orange' size='small'>
+          {t('图片参数计价')}
+        </Tag>
+      );
+    } else if (record.quota_type === 1) {
       billingTag = (
         <Tag key='billing' shape='circle' color='teal' size='small'>
           {t('按次计费')}
@@ -176,6 +183,7 @@ const PricingCardView = ({
     }
 
     const tierCount = record.token_tier_pricing?.rule?.tiers?.length || 0;
+    const imageTierCount = record.image_pricing?.tiers?.length || 0;
 
     // 自定义标签（右边）
     const customTags = [];
@@ -202,6 +210,14 @@ const PricingCardView = ({
           {tierCount > 0 ? (
             <Tag color='orange' shape='circle' size='small'>
               {t('阶梯计价 · {{count}}档', { count: tierCount })}
+            </Tag>
+          ) : null}
+          {imageTierCount > 0 ? (
+            <Tag color='orange' shape='circle' size='small'>
+              {t('{{parameter}} · {{count}}档', {
+                parameter: record.image_pricing.parameter,
+                count: imageTierCount,
+              })}
             </Tag>
           ) : null}
         </div>
@@ -278,7 +294,16 @@ const PricingCardView = ({
                         {model.model_name}
                       </h3>
                       <div className='flex flex-col gap-1 text-xs mt-1'>
-                        {formatPriceInfo(priceData, t, siteDisplayType)}
+                        {model.image_pricing ? (
+                          <span style={{ color: 'var(--semi-color-text-1)' }}>
+                            {t('默认档位 {{tier}}', {
+                              tier: model.image_pricing.default_tier,
+                            })}{' '}
+                            {priceData.price} / {t('张')}
+                          </span>
+                        ) : (
+                          formatPriceInfo(priceData, t, siteDisplayType)
+                        )}
                         {model.token_tier_pricing ? (
                           <span className='text-gray-500'>
                             {t('基础价格起')}

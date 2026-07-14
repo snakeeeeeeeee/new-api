@@ -17,6 +17,7 @@ type ImageRequest struct {
 	Model             string          `json:"model"`
 	Prompt            string          `json:"prompt" binding:"required"`
 	N                 *uint           `json:"n,omitempty"`
+	NExplicitZero     bool            `json:"-"`
 	Size              string          `json:"size,omitempty"`
 	Quality           string          `json:"quality,omitempty"`
 	ResponseFormat    string          `json:"response_format,omitempty"`
@@ -55,6 +56,9 @@ func (i *ImageRequest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*i = ImageRequest(known)
+	if i.N != nil && *i.N == 0 {
+		i.NExplicitZero = true
+	}
 
 	// 提取多余字段
 	i.Extra = make(map[string]json.RawMessage)

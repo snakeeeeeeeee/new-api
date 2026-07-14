@@ -14,8 +14,10 @@ import (
 
 func clonePricingItems(pricing []model.Pricing) []model.Pricing {
 	cloned := make([]model.Pricing, 0, len(pricing))
+	imagePricingSnapshot := ratio_setting.GetPublicImagePricingSnapshot()
 	for _, item := range pricing {
 		copied := item
+		cachedImagePricing := item.BillingType == types.ImagePricingBillingType || item.ImagePricing != nil
 		if len(item.EnableGroup) > 0 {
 			copied.EnableGroup = append([]string{}, item.EnableGroup...)
 		}
@@ -23,7 +25,31 @@ func clonePricingItems(pricing []model.Pricing) []model.Pricing {
 			copied.SupportedEndpointTypes = append([]constant.EndpointType{}, item.SupportedEndpointTypes...)
 		}
 		copied.TokenTierPricing = nil
-		if item.QuotaType == 0 {
+		copied.ImagePricing = nil
+
+		if imagePricing, ok := imagePricingSnapshot[item.ModelName]; ok {
+			copied.ModelPrice, _ = imagePricing.DefaultUnitPrice()
+			copied.ModelRatio = 0
+			copied.CompletionRatio = 0
+			copied.BillingType = types.ImagePricingBillingType
+			copied.ImagePricing = imagePricing
+			copied.QuotaType = 1
+		} else if cachedImagePricing {
+			copied.BillingType = ""
+			if modelPrice, ok := ratio_setting.GetModelPrice(item.ModelName, false); ok {
+				copied.ModelPrice = modelPrice
+				copied.ModelRatio = 0
+				copied.CompletionRatio = 0
+				copied.QuotaType = 1
+			} else {
+				copied.ModelPrice = 0
+				copied.ModelRatio, _, _ = ratio_setting.GetModelRatio(item.ModelName)
+				copied.CompletionRatio = ratio_setting.GetCompletionRatio(item.ModelName)
+				copied.QuotaType = 0
+			}
+		}
+
+		if copied.QuotaType == 0 {
 			if tierPricing, ok := ratio_setting.GetEffectiveTokenTierPricingRule(item.ModelName); ok {
 				tierPricing.Rule.Tiers = append([]types.TokenTier(nil), tierPricing.Rule.Tiers...)
 				copied.TokenTierPricing = &tierPricing

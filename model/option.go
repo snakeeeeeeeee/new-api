@@ -144,6 +144,7 @@ func InitOptionMap() {
 	common.OptionMap["ModelRequestRateLimitGroup"] = setting.ModelRequestRateLimitGroup2JSONString()
 	common.OptionMap["ModelRatio"] = ratio_setting.ModelRatio2JSONString()
 	common.OptionMap["ModelPrice"] = ratio_setting.ModelPrice2JSONString()
+	common.OptionMap["ImagePricing"] = ratio_setting.ImagePricing2JSONString()
 	common.OptionMap["CacheRatio"] = ratio_setting.CacheRatio2JSONString()
 	common.OptionMap["CreateCacheRatio"] = ratio_setting.CreateCacheRatio2JSONString()
 	common.OptionMap["TokenTierPricingRules"] = ratio_setting.TokenTierPricingRules2JSONString()
@@ -224,6 +225,11 @@ func SyncOptions(frequency int) {
 func UpdateOption(key string, value string) error {
 	if key == "TokenTierPricingRules" {
 		if err := ratio_setting.ValidateTokenTierPricingRulesJSON(value); err != nil {
+			return err
+		}
+	}
+	if key == "ImagePricing" {
+		if err := ratio_setting.ValidateImagePricingJSON(value); err != nil {
 			return err
 		}
 	}
@@ -563,6 +569,11 @@ func updateOptionMap(key string, value string) (err error) {
 		err = ratio_setting.UpdateCompletionRatioByJSONString(value)
 	case "ModelPrice":
 		err = ratio_setting.UpdateModelPriceByJSONString(value)
+	case "ImagePricing":
+		err = ratio_setting.UpdateImagePricingByJSONString(value)
+		if err == nil {
+			InvalidatePricing()
+		}
 	case "CacheRatio":
 		err = ratio_setting.UpdateCacheRatioByJSONString(value)
 	case "CreateCacheRatio":

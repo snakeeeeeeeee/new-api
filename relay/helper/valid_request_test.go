@@ -288,3 +288,76 @@ func TestGetAndValidOpenAIImageRequestNBounds(t *testing.T) {
 		require.Contains(t, err.Error(), boundErr)
 	})
 }
+
+func TestBoundLegacyImageModelsKeepTemplateDefaultsAuthoritative(t *testing.T) {
+	setupImagePricingResolverTest(t)
+
+	t.Run("gpt-image quality json", func(t *testing.T) {
+		request, err := GetAndValidOpenAIImageRequest(
+			newJSONValidationContext("/v1/images/generations", `{"model":"gpt-image-1","prompt":"cat"}`),
+			relayconstant.RelayModeImagesGenerations,
+		)
+		require.NoError(t, err)
+		require.Empty(t, request.Quality)
+
+		snapshot, bound, err := ResolveImageRequestPricing(request, "gpt-image-1", 1)
+		require.NoError(t, err)
+		require.True(t, bound)
+		require.Equal(t, types.ImagePricingValueSourceDefault, snapshot.ValueSource)
+		require.Equal(t, "low", snapshot.EffectiveTier)
+		require.Equal(t, "provider-low", request.Quality)
+	})
+
+	t.Run("dall-e size json", func(t *testing.T) {
+		request, err := GetAndValidOpenAIImageRequest(
+			newJSONValidationContext("/v1/images/generations", `{"model":"dall-e-3","prompt":"cat"}`),
+			relayconstant.RelayModeImagesGenerations,
+		)
+		require.NoError(t, err)
+		require.Empty(t, request.Size)
+		require.Equal(t, "standard", request.Quality, "unbound quality keeps legacy behavior")
+
+		snapshot, bound, err := ResolveImageRequestPricing(request, "dall-e-3", 1)
+		require.NoError(t, err)
+		require.True(t, bound)
+		require.Equal(t, types.ImagePricingValueSourceDefault, snapshot.ValueSource)
+		require.Equal(t, "1k", snapshot.EffectiveTier)
+		require.Equal(t, "1024x1024", request.Size)
+	})
+
+	t.Run("dall-e custom size tier bypasses legacy size whitelist", func(t *testing.T) {
+		request, err := GetAndValidOpenAIImageRequest(
+			newJSONValidationContext("/v1/images/generations", `{"model":"dall-e-3","prompt":"cat","size":"2k"}`),
+			relayconstant.RelayModeImagesGenerations,
+		)
+		require.NoError(t, err)
+		require.Equal(t, "2k", request.Size)
+
+		snapshot, bound, err := ResolveImageRequestPricing(request, "dall-e-3", 1)
+		require.NoError(t, err)
+		require.True(t, bound)
+		require.Equal(t, "2k", snapshot.EffectiveTier)
+		require.Equal(t, "2048x2048", request.Size)
+	})
+
+	t.Run("gpt-image quality multipart edit", func(t *testing.T) {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		require.NoError(t, writer.WriteField("model", "gpt-image-1"))
+		require.NoError(t, writer.WriteField("prompt", "edit cat"))
+		require.NoError(t, writer.Close())
+
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+		context.Request.Header.Set("Content-Type", writer.FormDataContentType())
+		request, err := GetAndValidOpenAIImageRequest(context, relayconstant.RelayModeImagesEdits)
+		require.NoError(t, err)
+		require.Empty(t, request.Quality)
+
+		snapshot, bound, err := ResolveImageRequestPricing(request, "gpt-image-1", 1)
+		require.NoError(t, err)
+		require.True(t, bound)
+		require.Equal(t, types.ImagePricingValueSourceDefault, snapshot.ValueSource)
+		require.Equal(t, "provider-low", request.Quality)
+	})
+}

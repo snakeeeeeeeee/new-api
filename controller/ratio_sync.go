@@ -470,6 +470,9 @@ func buildDifferences(localData map[string]any, successfulChannels []struct {
 	}
 
 	for modelName := range allModels {
+		if ratio_setting.IsImageParameterPricedModel(modelName) {
+			continue
+		}
 		for _, ratioType := range ratioTypes {
 			var localValue interface{} = nil
 			if localRatioAny, ok := localData[ratioType]; ok {

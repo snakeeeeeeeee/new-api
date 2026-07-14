@@ -34,6 +34,8 @@ type Pricing struct {
 	SupportedEndpointTypes []constant.EndpointType         `json:"supported_endpoint_types"`
 	PricingVersion         string                          `json:"pricing_version,omitempty"`
 	TokenTierPricing       *types.TokenTierPricingRuleMeta `json:"token_tier_pricing,omitempty"`
+	BillingType            string                          `json:"billing_type,omitempty"`
+	ImagePricing           *types.PublicImagePricing       `json:"image_pricing,omitempty"`
 }
 
 type PricingVendor struct {
@@ -275,6 +277,7 @@ func updatePricing() {
 	}
 
 	pricingMap = make([]Pricing, 0)
+	imagePricingSnapshot := ratio_setting.GetPublicImagePricingSnapshot()
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			ModelName:              model,
@@ -294,7 +297,12 @@ func updatePricing() {
 			pricing.VendorID = meta.VendorID
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
-		if findPrice {
+		if imagePricing, bound := imagePricingSnapshot[model]; bound {
+			pricing.ModelPrice, _ = imagePricing.DefaultUnitPrice()
+			pricing.QuotaType = 1
+			pricing.BillingType = types.ImagePricingBillingType
+			pricing.ImagePricing = imagePricing
+		} else if findPrice {
 			pricing.ModelPrice = modelPrice
 			pricing.QuotaType = 1
 		} else {

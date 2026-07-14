@@ -178,7 +178,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
 	if err != nil {
-		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError)
+		if helper.IsImagePricingRequestError(err) {
+			newAPIError = types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		} else {
+			newAPIError = types.NewError(err, types.ErrorCodeModelPriceError)
+		}
 		return
 	}
 
@@ -946,25 +950,19 @@ func RelayTask(c *gin.Context) {
 		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 			common.SysError("settle task billing error: " + settleErr.Error())
 		}
-		service.LogTaskConsumption(c, relayInfo)
+		consumeLogId := service.LogTaskConsumption(c, relayInfo)
 		if result != nil && result.CreatedTask != nil {
-			result.CreatedTask.PrivateData.UpstreamTaskID = result.UpstreamTaskID
-			result.CreatedTask.Data = result.TaskData
-			if updateErr := model.DB.Model(&model.Task{}).
-				Where("id = ?", result.CreatedTask.ID).
-				Updates(map[string]any{
-					"private_data": result.CreatedTask.PrivateData,
-					"data":         result.CreatedTask.Data,
-					"updated_at":   time.Now().Unix(),
-				}).Error; updateErr != nil {
+			if updateErr := model.PersistTaskSubmitResult(result.CreatedTask.ID, result.UpstreamTaskID, result.TaskData, consumeLogId); updateErr != nil {
 				common.SysError("update pre-created task error: " + updateErr.Error())
 			}
+			service.MergeCompletedImagePricingExecutionAudit(result.CreatedTask.ID)
 			return
 		}
 
 		task := model.InitTask(result.Platform, relayInfo)
 		perCallBilling := common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) ||
-			relayInfo.ChannelType == constant.ChannelTypeXai
+			relayInfo.ChannelType == constant.ChannelTypeXai ||
+			relayInfo.PriceData.ImagePricing != nil
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		if imageSnapshot, err := buildAsyncImageRequestSnapshot(c, relayInfo); err == nil && imageSnapshot != nil && len(imageSnapshot.request) > 0 {
 			task.PrivateData.ImageRequest = imageSnapshot.request
@@ -994,6 +992,12 @@ func RelayTask(c *gin.Context) {
 			OtherRatios:              relayInfo.PriceData.OtherRatios,
 			OriginModelName:          relayInfo.OriginModelName,
 			PerCallBilling:           perCallBilling,
+			UsePrice:                 relayInfo.PriceData.UsePrice,
+			ImagePricing:             cloneControllerImagePricingSnapshot(relayInfo.PriceData.ImagePricing),
+			ConsumeLogId:             consumeLogId,
+		}
+		if relayInfo.PriceData.ImagePricing != nil {
+			task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData
@@ -1050,6 +1054,12 @@ func buildAsyncImageRequestSnapshot(c *gin.Context, relayInfo *relaycommon.Relay
 		if v, ok := taskReq.Metadata["quality"].(string); ok {
 			imgReq.Quality = v
 		}
+		if raw, ok := rawMetadataValue(taskReq.Metadata["resolution"]); ok {
+			if imgReq.Extra == nil {
+				imgReq.Extra = map[string]json.RawMessage{}
+			}
+			imgReq.Extra["resolution"] = raw
+		}
 		if v, ok := taskReq.Metadata["response_format"].(string); ok {
 			imgReq.ResponseFormat = v
 		}
@@ -1076,11 +1086,32 @@ func buildAsyncImageRequestSnapshot(c *gin.Context, relayInfo *relaycommon.Relay
 	if err != nil {
 		return nil, err
 	}
+	if taskReq.Metadata != nil {
+		if raw, ok := rawMetadataValue(taskReq.Metadata["resolution"]); ok {
+			var auditRequest map[string]json.RawMessage
+			if err := common.Unmarshal(data, &auditRequest); err != nil {
+				return nil, err
+			}
+			auditRequest["resolution"] = raw
+			data, err = common.Marshal(auditRequest)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	return &asyncImageRequestSnapshot{
 		request: json.RawMessage(data),
 		images:  images,
 		mask:    mask,
 	}, nil
+}
+
+func cloneControllerImagePricingSnapshot(snapshot *types.ImagePricingSnapshot) *types.ImagePricingSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+	cloned := *snapshot
+	return &cloned
 }
 
 func numericMetadataToUint(value any) (uint, bool) {

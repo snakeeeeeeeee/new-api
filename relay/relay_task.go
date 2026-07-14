@@ -39,6 +39,14 @@ type TaskSubmitResult struct {
 	//PerCallPrice   types.PriceData
 }
 
+func cloneImagePricingSnapshot(snapshot *types.ImagePricingSnapshot) *types.ImagePricingSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+	cloned := *snapshot
+	return &cloned
+}
+
 // ResolveOriginTask 处理基于已有任务的提交（remix / continuation）：
 // 查找原始任务、从中提取模型名称、将渠道锁定到原始任务的渠道
 // （通过 info.LockedChannel，重试时复用同一渠道并轮换 key），
@@ -175,9 +183,22 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if modelName == "" {
 		modelName = service.CoverTaskActionToModelName(platform, info.Action)
 	}
+	info.OriginModelName = modelName
+
+	var imagePricingSnapshot *types.ImagePricingSnapshot
+	var imagePricingGroupRatioInfo types.GroupRatioInfo
+	if isAsyncImageTaskPath(c) {
+		imagePricingGroupRatioInfo = helper.HandleGroupRatio(c, info)
+		resolved, bound, resolveErr := helper.ResolveTaskImagePricing(c, modelName, imagePricingGroupRatioInfo.GroupRatio)
+		if resolveErr != nil {
+			return nil, service.TaskErrorWrapperLocal(resolveErr, "invalid_image_pricing_parameter", http.StatusBadRequest)
+		}
+		if bound {
+			imagePricingSnapshot = resolved
+		}
+	}
 
 	// 2.5 应用渠道的模型映射（与同步任务对齐）
-	info.OriginModelName = modelName
 	info.UpstreamModelName = modelName
 	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
@@ -221,11 +242,15 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 4. 价格计算：基础模型价格
 	info.OriginModelName = modelName
-	priceData, err := helper.ModelPriceHelperPerCall(c, info)
-	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+	if imagePricingSnapshot != nil {
+		info.PriceData = helper.ImagePricingPriceData(imagePricingSnapshot, imagePricingGroupRatioInfo, true)
+	} else {
+		priceData, err := helper.ModelPriceHelperPerCall(c, info)
+		if err != nil {
+			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+		}
+		info.PriceData = priceData
 	}
-	info.PriceData = priceData
 	if platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeImageHandle)) {
 		applyAsyncImageUsageBillingSnapshot(c, info)
 	}
@@ -240,7 +265,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 6. 将 OtherRatios 应用到基础额度
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
+	if info.PriceData.ImagePricing == nil && !common.StringsContains(constant.TaskPricePatches, modelName) {
 		quotaWithRatios := float64(info.PriceData.Quota)
 		for _, ra := range info.PriceData.OtherRatios {
 			if ra != 1.0 {
@@ -274,20 +299,20 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 8. 构建请求体
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
-		markAsyncImageSubmitFailed(createdTask, createdLease, err.Error())
-		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
+		return resolveAsyncImageSubmitFailure(c, createdTask, createdLease,
+			service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError))
 	}
 
 	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		markAsyncImageSubmitFailed(createdTask, createdLease, err.Error())
-		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
+		return resolveAsyncImageSubmitFailure(c, createdTask, createdLease,
+			service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError))
 	}
 	if resp != nil && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
 		responseBody, _ := io.ReadAll(resp.Body)
-		markAsyncImageSubmitFailed(createdTask, createdLease, string(responseBody))
-		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
+		return resolveAsyncImageSubmitFailure(c, createdTask, createdLease,
+			service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode))
 	}
 
 	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
@@ -301,13 +326,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 11. 解析响应
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
 	if taskErr != nil {
-		markAsyncImageSubmitFailed(createdTask, createdLease, taskErr.Message)
-		return nil, taskErr
+		return resolveAsyncImageSubmitFailure(c, createdTask, createdLease, taskErr)
 	}
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
-	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
+	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); info.PriceData.ImagePricing == nil && len(adjustedRatios) > 0 {
 		// 基于调整后的 ratios 重新计算 quota
 		finalQuota = recalcQuotaFromRatios(info, adjustedRatios)
 		info.PriceData.OtherRatios = adjustedRatios
@@ -328,6 +352,9 @@ func isAsyncImageTaskPath(c *gin.Context) bool {
 }
 
 func applyAsyncImageUsagePrecharge(c *gin.Context, info *relaycommon.RelayInfo) {
+	if info.PriceData.ImagePricing != nil {
+		return
+	}
 	cfg := service.GetImageHandleExecutorConfig()
 	prechargeQuotaPerImage := asyncImagePrechargeQuotaPerImage(cfg)
 	if !cfg.UsagePrechargeEnabled || prechargeQuotaPerImage <= 0 {
@@ -346,6 +373,9 @@ func applyAsyncImageUsagePrecharge(c *gin.Context, info *relaycommon.RelayInfo) 
 }
 
 func applyAsyncImageUsageBillingSnapshot(c *gin.Context, info *relaycommon.RelayInfo) {
+	if info.PriceData.ImagePricing != nil {
+		return
+	}
 	usageInfo := *info
 	usagePriceData, err := helper.ModelPriceHelper(c, &usageInfo, info.GetEstimatePromptTokens(), &types.TokenCountMeta{})
 	if err != nil {
@@ -426,11 +456,17 @@ func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, p
 		UsePrice:                 info.PriceData.UsePrice,
 		OtherRatios:              info.PriceData.OtherRatios,
 		OriginModelName:          info.OriginModelName,
+		ImagePricing:             cloneImagePricingSnapshot(info.PriceData.ImagePricing),
 		PerCallBilling: common.StringsContains(constant.TaskPricePatches, info.OriginModelName) ||
 			info.ChannelType == constant.ChannelTypeXai ||
-			info.PriceData.UsePrice,
+			info.PriceData.UsePrice ||
+			info.PriceData.ImagePricing != nil,
 	}
-	if cfg := service.GetImageHandleExecutorConfig(); cfg.UsagePrechargeEnabled {
+	if info.PriceData.ImagePricing != nil {
+		task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
+		task.PrivateData.BillingContext.PrechargeStrategy = types.ImagePricingBillingMode
+		task.PrivateData.BillingContext.ImageCount = info.PriceData.ImagePricing.N
+	} else if cfg := service.GetImageHandleExecutorConfig(); cfg.UsagePrechargeEnabled {
 		prechargeQuotaPerImage := asyncImagePrechargeQuotaPerImage(cfg)
 		task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
 		task.PrivateData.BillingContext.PrechargeStrategy = "per_image_x_n"
@@ -456,21 +492,120 @@ func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, p
 	return task, lease, nil
 }
 
-func markAsyncImageSubmitFailed(task *model.Task, lease *model.ImageCredentialLease, reason string) {
-	if lease != nil {
-		_ = model.MarkImageCredentialLeaseFailed(lease.LeaseID)
-	}
+func markAsyncImageSubmitFailed(task *model.Task, lease *model.ImageCredentialLease, reason string) (bool, error) {
 	if task == nil {
-		return
+		if lease != nil {
+			return true, model.MarkImageCredentialLeaseFailed(lease.LeaseID)
+		}
+		return true, nil
 	}
-	snap := task.Snapshot()
+	finishTime := task.FinishTime
+	if finishTime == 0 {
+		finishTime = time.Now().Unix()
+	}
+	query := model.DB.Model(&model.Task{}).
+		Where("id = ? AND status = ?", task.ID, task.Status)
+	switch {
+	case common.UsingPostgreSQL:
+		query = query.Where("TRIM(COALESCE(private_data ->> 'upstream_task_id', '')) = ''")
+	case common.UsingMySQL:
+		query = query.Where("TRIM(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(private_data, '$.upstream_task_id')), '')) = ''")
+	default:
+		query = query.Where("TRIM(COALESCE(json_extract(private_data, '$.upstream_task_id'), '')) = ''")
+	}
+	result := query.Updates(map[string]any{
+		"status":      model.TaskStatusFailure,
+		"progress":    taskcommon.ProgressComplete,
+		"fail_reason": reason,
+		"finish_time": finishTime,
+		"updated_at":  time.Now().Unix(),
+	})
+	if result.Error != nil || result.RowsAffected == 0 {
+		return false, result.Error
+	}
 	task.Status = model.TaskStatusFailure
 	task.Progress = taskcommon.ProgressComplete
 	task.FailReason = reason
-	if task.FinishTime == 0 {
-		task.FinishTime = time.Now().Unix()
+	task.FinishTime = finishTime
+	if lease != nil {
+		if err := model.MarkImageCredentialLeaseFailed(lease.LeaseID); err != nil {
+			return true, err
+		}
 	}
-	_, _ = task.UpdateWithStatus(snap.Status)
+	return true, nil
+}
+
+func asyncImageSubmitOwnedByCallback(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	switch task.Status {
+	case model.TaskStatusInProgress, model.TaskStatusSuccess, model.TaskStatusFailure:
+		return true
+	case model.TaskStatusSubmitted, model.TaskStatusQueued:
+		return strings.TrimSpace(task.PrivateData.UpstreamTaskID) != ""
+	default:
+		return false
+	}
+}
+
+func asyncImageSubmitTakeoverResult(c *gin.Context, task *model.Task) (*TaskSubmitResult, *dto.TaskError) {
+	if c != nil && !c.Writer.Written() {
+		c.JSON(http.StatusOK, gin.H{
+			"task_id": task.TaskID,
+			"status":  mapTaskStatusToSimple(task.Status),
+		})
+	}
+	return &TaskSubmitResult{
+		UpstreamTaskID: task.PrivateData.UpstreamTaskID,
+		TaskData:       task.Data,
+		Platform:       task.Platform,
+		Quota:          task.Quota,
+		CreatedTask:    task,
+	}, nil
+}
+
+// A callback can advance the task while the submit HTTP response is still in
+// flight. In that race the callback owns settlement; treating the later
+// transport/parse error as a fresh submit failure would refund the same
+// precharge again (or make a successful image free).
+func resolveAsyncImageSubmitFailure(c *gin.Context, task *model.Task, lease *model.ImageCredentialLease, taskErr *dto.TaskError) (*TaskSubmitResult, *dto.TaskError) {
+	if task == nil {
+		_, _ = markAsyncImageSubmitFailed(nil, lease, taskErr.Message)
+		return nil, taskErr
+	}
+
+	const maxAttempts = 3
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var latest model.Task
+		if err := model.DB.Where("id = ?", task.ID).First(&latest).Error; err != nil {
+			common.SysError("reload async image task after submit failure: " + err.Error())
+			return nil, taskErr
+		}
+		if asyncImageSubmitOwnedByCallback(&latest) {
+			return asyncImageSubmitTakeoverResult(c, &latest)
+		}
+
+		updated, updateErr := markAsyncImageSubmitFailed(&latest, lease, taskErr.Message)
+		if updateErr != nil {
+			common.SysError("mark async image submit failed: " + updateErr.Error())
+			return nil, taskErr
+		}
+		if updated {
+			return nil, taskErr
+		}
+	}
+
+	var latest model.Task
+	if err := model.DB.Where("id = ?", task.ID).First(&latest).Error; err != nil {
+		common.SysError("reload async image task after submit race: " + err.Error())
+		return nil, taskErr
+	}
+	if asyncImageSubmitOwnedByCallback(&latest) {
+		return asyncImageSubmitTakeoverResult(c, &latest)
+	}
+	common.SysError(fmt.Sprintf("async image task %d kept changing while marking submit failure", task.ID))
+	return nil, taskErr
 }
 
 type asyncImageTaskRequestSnapshot struct {
@@ -504,6 +639,12 @@ func buildAsyncImageTaskRequestSnapshot(c *gin.Context, info *relaycommon.RelayI
 		if v, ok := taskReq.Metadata["quality"].(string); ok {
 			imgReq.Quality = v
 		}
+		if raw, ok := taskRawMetadataValue(taskReq.Metadata["resolution"]); ok {
+			if imgReq.Extra == nil {
+				imgReq.Extra = map[string]json.RawMessage{}
+			}
+			imgReq.Extra["resolution"] = raw
+		}
 		if v, ok := taskReq.Metadata["response_format"].(string); ok {
 			imgReq.ResponseFormat = v
 		}
@@ -529,6 +670,19 @@ func buildAsyncImageTaskRequestSnapshot(c *gin.Context, info *relaycommon.RelayI
 	data, err := common.Marshal(imgReq)
 	if err != nil {
 		return nil, err
+	}
+	if taskReq.Metadata != nil {
+		if raw, ok := taskRawMetadataValue(taskReq.Metadata["resolution"]); ok {
+			var auditRequest map[string]json.RawMessage
+			if err := common.Unmarshal(data, &auditRequest); err != nil {
+				return nil, err
+			}
+			auditRequest["resolution"] = raw
+			data, err = common.Marshal(auditRequest)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	return &asyncImageTaskRequestSnapshot{
 		request: json.RawMessage(data),

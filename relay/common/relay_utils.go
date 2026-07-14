@@ -178,6 +178,9 @@ func validateTaskQuantityBounds(req TaskSubmitReq) *dto.TaskError {
 	if n, exists, err := taskImageCountMetadataValue(req.Metadata); err != nil || (exists && (n < 0 || n > dto.MaxImageN)) {
 		return createTaskError(fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN), "invalid_n", http.StatusBadRequest, true)
 	}
+	if req.N != nil && (*req.N < 0 || *req.N > dto.MaxImageN) {
+		return createTaskError(fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN), "invalid_n", http.StatusBadRequest, true)
+	}
 	return nil
 }
 
@@ -195,6 +198,25 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 		Image:    formData.Get("image"),
 		Size:     formData.Get("size"),
 		Metadata: make(map[string]interface{}),
+	}
+	if values, exists := formData["quality"]; exists && len(values) > 0 {
+		quality := values[0]
+		req.Quality = &quality
+	}
+	if values, exists := formData["resolution"]; exists && len(values) > 0 {
+		resolution := values[0]
+		req.Resolution = &resolution
+	}
+	if values, exists := formData["response_format"]; exists && len(values) > 0 {
+		responseFormat := values[0]
+		req.ResponseFormat = &responseFormat
+	}
+	if nValue := strings.TrimSpace(formData.Get("n")); nValue != "" {
+		n, err := strconv.Atoi(nValue)
+		if err != nil || n < 0 || n > dto.MaxImageN {
+			return req, createTaskError(fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN), "invalid_n", http.StatusBadRequest, true)
+		}
+		req.N = &n
 	}
 
 	if durationStr := strings.TrimSpace(formData.Get("seconds")); durationStr != "" {
@@ -305,6 +327,10 @@ func isKnownTaskField(field string) bool {
 		"image":           true,
 		"images":          true,
 		"size":            true,
+		"quality":         true,
+		"resolution":      true,
+		"response_format": true,
+		"n":               true,
 		"seconds":         true,
 		"duration":        true,
 		"input_reference": true, // Sora 特有字段

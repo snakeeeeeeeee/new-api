@@ -16,6 +16,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/samber/lo"
 
@@ -177,6 +178,7 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 					return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
 				}
 				imageRequest.N = common.GetPointer(uint(n))
+				imageRequest.NExplicitZero = n == 0
 			}
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
@@ -199,14 +201,20 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			setImageRawFormValue(&imageRequest.OutputCompression, "output_compression")
 			setImageRawFormValue(&imageRequest.Background, "background")
 			setImageRawFormValue(&imageRequest.Moderation, "moderation")
-			if inputFidelity := strings.TrimSpace(formData.Get("input_fidelity")); inputFidelity != "" {
-				imageRequest.Extra = map[string]json.RawMessage{}
-				data, _ := common.Marshal(inputFidelity)
-				imageRequest.Extra["input_fidelity"] = data
+			for _, key := range []string{"input_fidelity", "resolution"} {
+				value := strings.TrimSpace(formData.Get(key))
+				if value == "" {
+					continue
+				}
+				if imageRequest.Extra == nil {
+					imageRequest.Extra = map[string]json.RawMessage{}
+				}
+				data, _ := common.Marshal(value)
+				imageRequest.Extra[key] = data
 			}
 
 			if imageRequest.Model == "gpt-image-1" {
-				if imageRequest.Quality == "" {
+				if imageRequest.Quality == "" && !imagePricingOwnsRequestParameter(imageRequest.Model, types.ImagePricingParameterQuality) {
 					imageRequest.Quality = "standard"
 				}
 			}
@@ -243,24 +251,24 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 
 		// Not "256x256", "512x512", or "1024x1024"
 		if imageRequest.Model == "dall-e-2" || imageRequest.Model == "dall-e" {
-			if imageRequest.Size != "" && imageRequest.Size != "256x256" && imageRequest.Size != "512x512" && imageRequest.Size != "1024x1024" {
+			if imageRequest.Size != "" && !imagePricingOwnsRequestParameter(imageRequest.Model, types.ImagePricingParameterSize) && imageRequest.Size != "256x256" && imageRequest.Size != "512x512" && imageRequest.Size != "1024x1024" {
 				return nil, errors.New("size must be one of 256x256, 512x512, or 1024x1024 for dall-e-2 or dall-e")
 			}
-			if imageRequest.Size == "" {
+			if imageRequest.Size == "" && !imagePricingOwnsRequestParameter(imageRequest.Model, types.ImagePricingParameterSize) {
 				imageRequest.Size = "1024x1024"
 			}
 		} else if imageRequest.Model == "dall-e-3" {
-			if imageRequest.Size != "" && imageRequest.Size != "1024x1024" && imageRequest.Size != "1024x1792" && imageRequest.Size != "1792x1024" {
+			if imageRequest.Size != "" && !imagePricingOwnsRequestParameter(imageRequest.Model, types.ImagePricingParameterSize) && imageRequest.Size != "1024x1024" && imageRequest.Size != "1024x1792" && imageRequest.Size != "1792x1024" {
 				return nil, errors.New("size must be one of 1024x1024, 1024x1792 or 1792x1024 for dall-e-3")
 			}
-			if imageRequest.Quality == "" {
+			if imageRequest.Quality == "" && !imagePricingOwnsRequestParameter(imageRequest.Model, types.ImagePricingParameterQuality) {
 				imageRequest.Quality = "standard"
 			}
-			if imageRequest.Size == "" {
+			if imageRequest.Size == "" && !imagePricingOwnsRequestParameter(imageRequest.Model, types.ImagePricingParameterSize) {
 				imageRequest.Size = "1024x1024"
 			}
 		} else if imageRequest.Model == "gpt-image-1" {
-			if imageRequest.Quality == "" {
+			if imageRequest.Quality == "" && !imagePricingOwnsRequestParameter(imageRequest.Model, types.ImagePricingParameterQuality) {
 				imageRequest.Quality = "auto"
 			}
 		}
@@ -275,6 +283,11 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	}
 
 	return imageRequest, nil
+}
+
+func imagePricingOwnsRequestParameter(modelName string, parameter string) bool {
+	profile, _, _, bound := ratio_setting.GetImagePricingForModel(modelName)
+	return bound && profile.Parameter == parameter
 }
 
 func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest, err error) {

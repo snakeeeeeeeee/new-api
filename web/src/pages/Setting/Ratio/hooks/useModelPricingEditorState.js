@@ -714,6 +714,8 @@ export function useModelPricingEditorState({
       TokenTierPricingRulesMeta: parseOptionJSON(
         options.TokenTierPricingRulesMeta,
       ),
+      ImagePricingBindings:
+        parseOptionJSON(options.ImagePricing).model_bindings || {},
     };
 
     const names = new Set([
@@ -729,6 +731,7 @@ export function useModelPricingEditorState({
       ...Object.keys(sourceMaps.AudioCompletionRatio),
       ...Object.keys(sourceMaps.TokenTierPricingRules),
       ...Object.keys(sourceMaps.TokenTierPricingRulesMeta),
+      ...Object.keys(sourceMaps.ImagePricingBindings),
     ]);
 
     const nextModels = Array.from(names)

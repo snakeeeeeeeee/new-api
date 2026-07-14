@@ -50,6 +50,7 @@ import {
   useModelPricingEditorState,
 } from '../hooks/useModelPricingEditorState';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import { normalizeImagePricing } from '../../../../helpers';
 
 const { Text } = Typography;
 const EMPTY_CANDIDATE_MODEL_NAMES = [];
@@ -280,6 +281,14 @@ export default function ModelPricingEditor({
   const [addVisible, setAddVisible] = useState(false);
   const [batchVisible, setBatchVisible] = useState(false);
   const [newModelName, setNewModelName] = useState('');
+  const imagePricingConfig = useMemo(
+    () => normalizeImagePricing(options.ImagePricing),
+    [options.ImagePricing],
+  );
+  const imagePricedModels = useMemo(
+    () => new Set(Object.keys(imagePricingConfig.model_bindings)),
+    [imagePricingConfig.model_bindings],
+  );
 
   const {
     selectedModel,
@@ -351,6 +360,11 @@ export default function ModelPricingEditor({
                 {t('矛盾')}
               </Tag>
             ) : null}
+            {imagePricedModels.has(record.name) ? (
+              <Tag color='orange' shape='circle'>
+                {t('图片参数计价接管')}
+              </Tag>
+            ) : null}
           </Space>
         ),
       },
@@ -358,13 +372,18 @@ export default function ModelPricingEditor({
         title: t('计费方式'),
         dataIndex: 'billingMode',
         key: 'billingMode',
-        render: (_, record) => (
-          <Tag color={record.billingMode === 'per-request' ? 'teal' : 'violet'}>
-            {record.billingMode === 'per-request'
-              ? t('按次计费')
-              : t('按量计费')}
-          </Tag>
-        ),
+        render: (_, record) =>
+          imagePricedModels.has(record.name) ? (
+            <Tag color='orange'>{t('按张（图片）')}</Tag>
+          ) : (
+            <Tag
+              color={record.billingMode === 'per-request' ? 'teal' : 'violet'}
+            >
+              {record.billingMode === 'per-request'
+                ? t('按次计费')
+                : t('按量计费')}
+            </Tag>
+          ),
       },
       {
         title: t('价格摘要'),
@@ -392,6 +411,7 @@ export default function ModelPricingEditor({
     [
       allowDeleteModel,
       deleteModel,
+      imagePricedModels,
       selectedModelName,
       selectedModelNames,
       setSelectedModelName,
@@ -539,10 +559,18 @@ export default function ModelPricingEditor({
             title={selectedModel ? selectedModel.name : t('模型计费编辑器')}
             headerExtraContent={
               selectedModel ? (
-                <Tag color='blue'>
-                  {selectedModel.billingMode === 'per-request'
-                    ? t('按次计费')
-                    : t('按量计费')}
+                <Tag
+                  color={
+                    imagePricedModels.has(selectedModel.name)
+                      ? 'orange'
+                      : 'blue'
+                  }
+                >
+                  {imagePricedModels.has(selectedModel.name)
+                    ? t('按张（图片）')
+                    : selectedModel.billingMode === 'per-request'
+                      ? t('按次计费')
+                      : t('按量计费')}
                 </Tag>
               ) : null
             }
@@ -556,6 +584,19 @@ export default function ModelPricingEditor({
               />
             ) : (
               <div>
+                {imagePricedModels.has(selectedModel.name) ? (
+                  <Banner
+                    type='warning'
+                    bordered
+                    fullMode={false}
+                    closeIcon={null}
+                    style={{ marginBottom: 16 }}
+                    title={t('图片参数计价已接管当前模型')}
+                    description={t(
+                      '当前实际费用由图片参数计价模板计算。这里的固定价格和倍率仍会保存，解除图片计价绑定后自动恢复使用。',
+                    )}
+                  />
+                ) : null}
                 <div className='mb-4'>
                   <div className='mb-2 font-medium text-gray-700'>
                     {t('计费方式')}

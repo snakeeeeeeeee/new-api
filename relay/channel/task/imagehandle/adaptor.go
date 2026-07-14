@@ -146,6 +146,28 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			info.UpstreamModelName = info.OriginModelName
 		}
 	}
+	if req.Metadata == nil {
+		req.Metadata = map[string]interface{}{}
+	}
+	if _, exists := req.Metadata["quality"]; !exists && req.Quality != nil {
+		if quality := strings.TrimSpace(*req.Quality); quality != "" {
+			req.Metadata["quality"] = quality
+		}
+	}
+	if _, exists := req.Metadata["resolution"]; !exists && req.Resolution != nil {
+		if resolution := strings.TrimSpace(*req.Resolution); resolution != "" {
+			req.Metadata["resolution"] = resolution
+		}
+	}
+	if _, exists := req.Metadata["response_format"]; !exists && req.ResponseFormat != nil {
+		if responseFormat := strings.TrimSpace(*req.ResponseFormat); responseFormat != "" {
+			req.Metadata["response_format"] = responseFormat
+		}
+	}
+	if _, exists := req.Metadata["n"]; !exists && req.N != nil {
+		req.Metadata["n"] = *req.N
+	}
+	c.Set("task_request", req)
 	if strings.EqualFold(metadataString(req.Metadata, "result_data_format", "url"), "base64") {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("result_data_format=base64 is only supported by synchronous image-handle execution"), "unsupported_result_data_format", http.StatusBadRequest)
 	}
@@ -510,7 +532,7 @@ func extractParameters(req relaycommon.TaskSubmitReq, metadata map[string]interf
 	if req.Size != "" {
 		params["size"] = req.Size
 	}
-	for _, key := range []string{"quality", "n", "output_format", "output_compression"} {
+	for _, key := range []string{"quality", "resolution", "response_format", "n", "output_format", "output_compression"} {
 		if v, ok := metadata[key]; ok {
 			params[key] = v
 		}

@@ -46,7 +46,10 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 		"model":"gpt-image-2",
 		"prompt":"a clean product photo",
 		"size":"1024x1024",
-		"metadata":{"quality":"high","n":1,"output_format":"webp","provider":"openai"}
+		"quality":" high ",
+		"resolution":" 2k ",
+		"response_format":"url",
+		"metadata":{"n":1,"output_format":"webp","provider":"openai"}
 	}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set(common.RequestIdKey, "req_test")
@@ -89,6 +92,8 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	parameters := payload["parameters"].(map[string]any)
 	assert.Equal(t, "1024x1024", parameters["size"])
 	assert.Equal(t, "high", parameters["quality"])
+	assert.Equal(t, "2k", parameters["resolution"])
+	assert.Equal(t, "url", parameters["response_format"])
 	callback := payload["callback"].(map[string]any)
 	assert.Equal(t, "https://new-api.example/api/task/callback/external-image/task_external_id", callback["url"])
 	assert.Equal(t, "https://new-api.example/api/task/callback/external-image/batch", callback["batch_url"])
@@ -118,6 +123,60 @@ func TestValidateRequestRejectsAsyncBase64ResultFormat(t *testing.T) {
 	require.NotNil(t, taskErr)
 	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 	assert.Equal(t, "unsupported_result_data_format", taskErr.Code)
+}
+
+func TestValidateRequestPreservesResponseFormatContract(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "top-level url",
+			body: `{"model":"gpt-image-2","prompt":"test","response_format":"url"}`,
+			want: "url",
+		},
+		{
+			name: "top-level base64 json",
+			body: `{"model":"gpt-image-2","prompt":"test","response_format":"b64_json"}`,
+			want: "b64_json",
+		},
+		{
+			name: "metadata takes precedence",
+			body: `{"model":"gpt-image-2","prompt":"test","response_format":"url","metadata":{"response_format":"b64_json"}}`,
+			want: "b64_json",
+		},
+		{
+			name: "metadata only",
+			body: `{"model":"gpt-image-2","prompt":"test","metadata":{"response_format":"url"}}`,
+			want: "url",
+		},
+		{
+			name: "omitted",
+			body: `{"model":"gpt-image-2","prompt":"test"}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", strings.NewReader(tc.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+
+			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+			require.Nil(t, taskErr)
+			req, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			parameters := extractParameters(req, req.Metadata)
+			if tc.want == "" {
+				require.NotContains(t, parameters, "response_format")
+				return
+			}
+			require.Equal(t, tc.want, parameters["response_format"])
+		})
+	}
 }
 
 func TestValidateExecutorConfigUsesGlobalCallbackSecretFallback(t *testing.T) {
@@ -233,6 +292,23 @@ func TestParseTaskResultMapsImageHandleStatusAndUsage(t *testing.T) {
 	assert.Equal(t, float64(123456), image["size_bytes"])
 	assert.Equal(t, map[string]any{"quality": "high"}, result["output"])
 	assert.Equal(t, map[string]any{"image_count": float64(1)}, result["metadata"])
+}
+
+func TestParseTaskResultPreservesSignedImageURL(t *testing.T) {
+	const expectedURL = "https://signed.example.com/out.png?x=1&X-Amz-Credential=AKIA%2F20260714%2Fus-west-2%2Fs3%2Faws4_request&X-Amz-Signature=abc123"
+	info, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"provider_task_id":"imgtask_signed",
+		"status":"succeeded",
+		"result":{"images":[{"url":"https://signed.example.com/out.png?x=1\u0026X-Amz-Credential=AKIA%2F20260714%2Fus-west-2%2Fs3%2Faws4_request\u0026X-Amz-Signature=abc123"}]}
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, expectedURL, info.Url)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(info.Data, &payload))
+	result := payload["result"].(map[string]any)
+	images := result["images"].([]any)
+	require.Equal(t, expectedURL, images[0].(map[string]any)["url"])
 }
 
 func TestParseBatchTaskResultIndexesByProviderTaskID(t *testing.T) {

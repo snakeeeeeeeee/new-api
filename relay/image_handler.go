@@ -60,7 +60,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	var requestBody io.Reader
 
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if info.PriceData.ImagePricing == nil && (model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -87,6 +87,10 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 				jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 				if err != nil {
 					return newAPIErrorFromParamOverride(err)
+				}
+				jsonData, err = restoreImagePricingParameters(jsonData, info.PriceData.ImagePricing)
+				if err != nil {
+					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 				}
 			}
 
@@ -136,6 +140,19 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), imageLogContent(request, imageN))
 	return nil
+}
+
+func restoreImagePricingParameters(data []byte, snapshot *types.ImagePricingSnapshot) ([]byte, error) {
+	if snapshot == nil {
+		return data, nil
+	}
+	var payload map[string]any
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return nil, fmt.Errorf("decode parameter-priced image request: %w", err)
+	}
+	payload[snapshot.Parameter] = snapshot.UpstreamValue
+	payload["n"] = snapshot.N
+	return common.Marshal(payload)
 }
 
 func imageLogQuality(quality string) string {

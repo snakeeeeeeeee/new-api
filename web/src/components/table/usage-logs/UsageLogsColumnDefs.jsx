@@ -32,6 +32,8 @@ import {
   stringToColor,
   getLogOther,
   normalizePromptCacheUsage,
+  getImageExecutionAuditSummary,
+  getImagePricingLogSummary,
   renderModelTag,
   renderModelPriceSimple,
 } from '../../../helpers';
@@ -95,7 +97,15 @@ function buildChannelAffinityTooltip(affinity, t) {
 }
 
 // Render functions
-function renderType(type, t) {
+function renderType(type, t, record) {
+  const other = getLogOther(record?.other);
+  if (other?.non_billing_audit === true) {
+    return (
+      <Tag color='blue' shape='circle'>
+        {t('审计')}
+      </Tag>
+    );
+  }
   switch (type) {
     case 1:
       return (
@@ -336,6 +346,34 @@ function getUsageLogGroupSummary(groupRatio, userGroupRatio, t) {
   return `${useUserGroupRatio ? t('专属倍率') : t('分组')} ${formatRatio(ratio)}x`;
 }
 
+function getImageExecutionAuditParts(executionAudit) {
+  if (!executionAudit) {
+    return [];
+  }
+  return [
+    executionAudit.quality ? `quality=${executionAudit.quality}` : null,
+    executionAudit.size ? `size=${executionAudit.size}` : null,
+    executionAudit.resolution
+      ? `resolution=${executionAudit.resolution}`
+      : null,
+    executionAudit.image_count !== null
+      ? `images=${executionAudit.image_count}`
+      : null,
+    executionAudit.total_tokens !== null
+      ? `tokens=${executionAudit.total_tokens}`
+      : null,
+    executionAudit.input_tokens !== null
+      ? `input_tokens=${executionAudit.input_tokens}`
+      : null,
+    executionAudit.output_tokens !== null
+      ? `output_tokens=${executionAudit.output_tokens}`
+      : null,
+    executionAudit.actual_quota !== null
+      ? `actual_quota=${executionAudit.actual_quota}`
+      : null,
+  ].filter(Boolean);
+}
+
 function renderCompactDetailSummary(summarySegments) {
   const segments = Array.isArray(summarySegments)
     ? summarySegments.filter((segment) => segment?.text)
@@ -409,6 +447,26 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
     return null;
   }
 
+  if (other?.non_billing_audit === true) {
+    const executionAuditParts = getImageExecutionAuditParts(
+      getImageExecutionAuditSummary(other),
+    );
+    return {
+      segments: [
+        {
+          text: t('图片执行结果审计（不参与计费）'),
+          tone: 'primary',
+        },
+        executionAuditParts.length > 0
+          ? {
+              text: `${t('返回审计')}：${executionAuditParts.join(' · ')}`,
+              tone: 'secondary',
+            }
+          : null,
+      ].filter(Boolean),
+    };
+  }
+
   if (
     other?.violation_fee === true ||
     Boolean(other?.violation_fee_code) ||
@@ -429,6 +487,43 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
           tone: 'secondary',
         },
         text ? { text: `${t('详情')}：${text}`, tone: 'secondary' } : null,
+      ].filter(Boolean),
+    };
+  }
+
+  const imagePricing = getImagePricingLogSummary(other);
+  if (imagePricing) {
+    const executionAudit = getImageExecutionAuditSummary(other);
+    const executionAuditParts = getImageExecutionAuditParts(executionAudit);
+    const unitPrice = Number(imagePricing.unit_price);
+    const total = Number(imagePricing.total);
+    const groupText = getUsageLogGroupSummary(
+      imagePricing.group_ratio,
+      other?.user_group_ratio,
+      t,
+    );
+    return {
+      segments: [
+        { text: t('按张（图片）'), tone: 'primary' },
+        {
+          text: t('{{n}} 张 / {{parameter}}={{tier}}', {
+            n: imagePricing.n,
+            parameter: imagePricing.parameter || '-',
+            tier: imagePricing.effective_value || '-',
+          }),
+          tone: 'primary',
+        },
+        {
+          text: `${Number.isFinite(unitPrice) ? `$${unitPrice.toFixed(6)}` : '-'} / ${t('张')} × ${imagePricing.n} × ${imagePricing.group_ratio} = ${Number.isFinite(total) ? `$${total.toFixed(6)}` : '-'}`,
+          tone: 'secondary',
+        },
+        executionAuditParts.length > 0
+          ? {
+              text: `${t('返回审计')}：${executionAuditParts.join(' · ')}`,
+              tone: 'secondary',
+            }
+          : null,
+        groupText ? { text: groupText, tone: 'secondary' } : null,
       ].filter(Boolean),
     };
   }
@@ -684,7 +779,7 @@ export const getLogsColumns = ({
       title: t('类型'),
       dataIndex: 'type',
       render: (text, record, index) => {
-        return <>{renderType(text, t)}</>;
+        return <>{renderType(text, t, record)}</>;
       },
     },
     {
@@ -825,6 +920,13 @@ export const getLogsColumns = ({
           return <></>;
         }
         const other = getLogOther(record.other);
+        if (other?.non_billing_audit === true) {
+          return (
+            <Tooltip content={t('不参与计费')}>
+              <span>-</span>
+            </Tooltip>
+          );
+        }
         const isSubscription = other?.billing_source === 'subscription';
         if (isSubscription) {
           // Subscription billed: show only tag (no $0), but keep tooltip for equivalent cost.

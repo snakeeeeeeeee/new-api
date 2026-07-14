@@ -519,7 +519,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		summary.Quota = common.QuotaFromDecimalRound(quotaCalculateDecimal)
 	}
 
-	if summary.TotalTokens == 0 {
+	if relayInfo.PriceData.ImagePricing != nil {
+		summary.Quota = relayInfo.PriceData.ImagePricing.FinalQuota
+	} else if summary.TotalTokens == 0 {
 		summary.Quota = 0
 	} else if (!ratio.IsZero() || summary.TokenTierPricing != nil) && summary.Quota == 0 {
 		summary.Quota = 1
@@ -586,6 +588,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+	if imagePricingContent := imagePricingLogContent(relayInfo.PriceData.ImagePricing); imagePricingContent != "" {
+		extraContent = append(extraContent, imagePricingContent)
+	}
 	if tierContent := tokenTierPricingContent(summary.TokenTierPricing); tierContent != "" {
 		extraContent = append(extraContent, tierContent)
 	}
@@ -616,7 +621,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		))
 	}
 
-	if summary.TotalTokens == 0 {
+	if summary.TotalTokens == 0 && relayInfo.PriceData.ImagePricing == nil {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
@@ -660,6 +665,8 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.TokenTierPricing != nil {
 		other["token_tier_pricing"] = summary.TokenTierPricing
 	}
+	appendImagePricingLogOther(other, relayInfo.PriceData.ImagePricing)
+	appendImageExecutionAuditFromContext(ctx, other)
 	if summary.ImageTokens != 0 {
 		other["image"] = true
 		other["image_ratio"] = summary.ImageRatio

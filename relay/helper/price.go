@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -81,9 +82,20 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
-	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
-
 	groupRatioInfo := HandleGroupRatio(c, info)
+	if imageRequest, ok := info.Request.(*dto.ImageRequest); ok {
+		snapshot, bound, err := ResolveImageRequestPricing(imageRequest, info.OriginModelName, groupRatioInfo.GroupRatio)
+		if err != nil {
+			return types.PriceData{}, err
+		}
+		if bound {
+			priceData := ImagePricingPriceData(snapshot, groupRatioInfo, false)
+			info.PriceData = priceData
+			return priceData, nil
+		}
+	}
+
+	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
 
 	var preConsumedQuota int
 	var modelRatio float64

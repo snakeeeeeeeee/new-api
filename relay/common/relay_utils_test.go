@@ -152,3 +152,25 @@ func TestMultipartTaskQuantityBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestMultipartTaskPreservesResponseFormat(t *testing.T) {
+	c, info := newMultipartTaskValidationContext(t, map[string]string{
+		"model":           "gpt-image-2",
+		"prompt":          "edit test",
+		"quality":         "high",
+		"resolution":      "2k",
+		"response_format": "b64_json",
+	})
+
+	taskErr := ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	require.Nil(t, taskErr)
+	req, err := GetTaskRequest(c)
+	require.NoError(t, err)
+	require.NotNil(t, req.Quality)
+	require.Equal(t, "high", *req.Quality)
+	require.NotNil(t, req.Resolution)
+	require.Equal(t, "2k", *req.Resolution)
+	require.NotNil(t, req.ResponseFormat)
+	require.Equal(t, "b64_json", *req.ResponseFormat)
+	require.NotContains(t, req.Metadata, "response_format")
+}

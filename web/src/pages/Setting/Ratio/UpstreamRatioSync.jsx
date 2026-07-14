@@ -43,6 +43,7 @@ import {
   showSuccess,
   showWarning,
   stringToColor,
+  normalizeImagePricing,
 } from '../../../helpers';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import { DEFAULT_ENDPOINT } from '../../../constants';
@@ -134,6 +135,15 @@ export default function UpstreamRatioSync(props) {
   const [conflictItems, setConflictItems] = useState([]); // {channel, model, current, newVal, ratioType}
 
   const channelSelectorRef = React.useRef(null);
+  const imagePricedModels = useMemo(
+    () =>
+      new Set(
+        Object.keys(
+          normalizeImagePricing(props.options.ImagePricing).model_bindings,
+        ),
+      ),
+    [props.options.ImagePricing],
+  );
 
   useEffect(() => {
     setCurrentPage(1);
@@ -237,6 +247,14 @@ export default function UpstreamRatioSync(props) {
       }
 
       const { differences = {}, test_results = [] } = res.data.data;
+      const filteredDifferences = Object.fromEntries(
+        Object.entries(differences).filter(
+          ([model]) => !imagePricedModels.has(model),
+        ),
+      );
+      const skippedCount =
+        Object.keys(differences).length -
+        Object.keys(filteredDifferences).length;
 
       const errorResults = test_results.filter((r) => r.status === 'error');
       if (errorResults.length > 0) {
@@ -246,11 +264,19 @@ export default function UpstreamRatioSync(props) {
         );
       }
 
-      setDifferences(differences);
+      setDifferences(filteredDifferences);
       setResolutions({});
       setHasSynced(true);
 
-      if (Object.keys(differences).length === 0) {
+      if (skippedCount > 0) {
+        showWarning(
+          t('已跳过 {{count}} 个由图片参数计价接管的模型', {
+            count: skippedCount,
+          }),
+        );
+      }
+
+      if (Object.keys(filteredDifferences).length === 0) {
         showSuccess(t('未找到差异化倍率，无需同步'));
       }
     } catch (e) {
@@ -266,6 +292,7 @@ export default function UpstreamRatioSync(props) {
 
   const selectValue = useCallback(
     (model, ratioType, value) => {
+      if (imagePricedModels.has(model)) return;
       const category = getBillingCategory(ratioType);
 
       setResolutions((prev) => {
@@ -285,7 +312,7 @@ export default function UpstreamRatioSync(props) {
         };
       });
     },
-    [setResolutions],
+    [imagePricedModels],
   );
 
   const applySync = async () => {
@@ -370,6 +397,7 @@ export default function UpstreamRatioSync(props) {
       };
 
       Object.entries(resolutions).forEach(([model, ratios]) => {
+        if (imagePricedModels.has(model)) return;
         const selectedTypes = Object.keys(ratios);
         const hasPrice = selectedTypes.includes('model_price');
         const hasRatio = selectedTypes.some((rt) => rt !== 'model_price');
@@ -435,7 +463,7 @@ export default function UpstreamRatioSync(props) {
         setLoading(false);
       }
     },
-    [resolutions, props.options, props.refresh],
+    [imagePricedModels, resolutions, props.options, props.refresh, t],
   );
 
   const getCurrentPageData = (dataSource) => {

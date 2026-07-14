@@ -274,6 +274,7 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 		_ = model.MarkImageCredentialLeaseFailed(lease.LeaseID)
 		return nil, imageHandleSyncErrorResponse("image_handle_empty_result", "image-handle sync returned empty result", http.StatusBadGateway)
 	}
+	service.CaptureImageExecutionAuditFromJSON(c, responseBody, imageResp.Usage)
 	imageN := uint(1)
 	if request.N != nil {
 		imageN = *request.N
@@ -318,7 +319,7 @@ func buildImageHandleSyncPayload(c *gin.Context, info *relaycommon.RelayInfo, re
 	if err != nil {
 		return nil, err
 	}
-	parameters := imageHandleSyncParameters(request, info.UpstreamModelName)
+	parameters := imageHandleSyncParameters(request)
 	cfg := service.GetImageHandleExecutorConfig()
 	payload := imageHandleSyncRequest{
 		RequestID:        c.GetString(common.RequestIdKey),
@@ -753,7 +754,7 @@ func isImageHandleSyncURL(value string) bool {
 	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://")
 }
 
-func imageHandleSyncParameters(request dto.ImageRequest, upstreamModelName string) map[string]any {
+func imageHandleSyncParameters(request dto.ImageRequest) map[string]any {
 	params := map[string]any{}
 	if request.Size != "" {
 		params["size"] = request.Size
@@ -764,6 +765,9 @@ func imageHandleSyncParameters(request dto.ImageRequest, upstreamModelName strin
 	if request.N != nil {
 		params["n"] = *request.N
 	}
+	if len(request.Extra) > 0 {
+		addRawImageParam(params, "resolution", request.Extra["resolution"])
+	}
 	addRawImageParam(params, "output_format", request.OutputFormat)
 	addRawImageParam(params, "output_compression", request.OutputCompression)
 	addRawImageParam(params, "background", request.Background)
@@ -771,20 +775,10 @@ func imageHandleSyncParameters(request dto.ImageRequest, upstreamModelName strin
 	if len(request.Extra) > 0 {
 		addRawImageParam(params, "input_fidelity", request.Extra["input_fidelity"])
 	}
-	if imageHandleSyncShouldForwardResponseFormat(request, upstreamModelName) {
-		switch imageHandleSyncResultDataFormat(request) {
-		case imageHandleResultFormatBase64:
-			params["response_format"] = "b64_json"
-		case imageHandleResultFormatURL:
-			params["response_format"] = "url"
-		}
+	if responseFormat := strings.TrimSpace(request.ResponseFormat); responseFormat != "" {
+		params["response_format"] = responseFormat
 	}
 	return params
-}
-
-func imageHandleSyncShouldForwardResponseFormat(request dto.ImageRequest, upstreamModelName string) bool {
-	modelName := firstNonEmpty(upstreamModelName, request.Model)
-	return !strings.HasPrefix(strings.ToLower(modelName), "gpt-image-")
 }
 
 func imageHandleSyncProviderOptions(request dto.ImageRequest, upstreamModelName string) map[string]any {

@@ -605,6 +605,7 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 		}
 	}
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
+	service.CaptureImageExecutionAuditFromJSON(c, responseBody, &usageResp.Usage)
 	return &usageResp.Usage, nil
 }
 
