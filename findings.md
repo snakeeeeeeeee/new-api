@@ -1,3 +1,30 @@
+# Image-handle Channel Override and Signed URL Findings (2026-07-15)
+
+- Channel-level `response_format=url` must reach Adobe when execution is delegated to image-handle.
+- A signed URL returned by image-handle must be emitted with literal `&` separators in the raw client JSON response.
+- `relay.ImageHelper` maps the model and takes the image-handle sync branch before adapter conversion and the normal channel parameter-override block.
+- The distributor has already selected the concrete channel and populated `RelayInfo.ParamOverride`; image-handle does not need to identify Adobe.
+- `imageHandleSyncParameters` only includes `response_format` when it exists on the normalized request, so the final `result_data_format=url` policy does not force the provider request format.
+- image-handle already normalizes residual literal `\\u0026`, validates HTTP(S), and directly passes URL sources without downloading or uploading them.
+- new-api unmarshals the image-handle response correctly, but `common.Marshal` HTML-escapes `&` when rebuilding the OpenAI-compatible client response.
+- Reuse the established channel override engine before image-handle payload construction; do not add Adobe names, domains, or model heuristics to image-handle.
+- Add no-HTML-escape encoding to `common/json.go` and limit its use to the image-handle sync client response.
+- Preserve Base64-to-R2 fallback for providers that do not return URL data.
+- The admin screenshot shows `跟随请求参数` with default `URL`; this currently governs the final image-handle result, not the upstream provider's `response_format`.
+- A second screenshot placed `response_format` under request-header override, which is the wrong protocol location; Adobe expects it in the JSON body.
+- Payload-level tests prove the same selected-channel override reaches both generation and edit requests after a public alias in the `aggregate` group maps to upstream `gpt-image-2`.
+- image-handle receives only the upstream model, normalized parameters, and a credential lease; it has no need to recognize Adobe by provider name, URL, or model heuristic.
+- The full Go suite passes with the selected-channel override and signed-URL serialization changes.
+- Local channels 89 and 90 now both persist `{"response_format":"url"}` as request parameter overrides; the temporary upstream debug option was restored to `false`.
+- A count-mode request that omitted `response_format` returned HTTP 200 from `pre-signed-firefly-prod.s3-accelerate.amazonaws.com`, with no Base64 data and no `img.supertoken.cc` reference.
+- The count-mode raw client JSON contains six literal ampersands and zero `\\u0026` sequences; a one-byte range request to the signed URL returned HTTP 206 with `image/png`.
+- The successful count log records channel 90, upstream model `gpt-image-2`, `image_handle_sync`, and the expected low-tier per-image charge of 20,000 quota.
+- Token-mode image-handle tasks also persisted `response_format=url`, the mapped `gpt-image-2`, and the correct channel-89 lease, proving the new contract is applied there too.
+- The token upstream disconnected before any HTTP response on two image-handle attempts (`fetch failed` after roughly 97 and 113 seconds). A separate host-direct request failed with curl HTTP status 000 and an HTTP/2 framing-layer error, isolating the remaining failure outside the new-api override/serialization changes.
+- Integration artifacts and container logs are retained under the four new `tmp/image-handle-channel-override-*` and `tmp/adobe-token-direct-upstream-*` directories.
+
+---
+
 # Image Parameter Pricing Findings (2026-07-14)
 
 - Current implementation spans direct image relay, synchronous image-handle execution, and asynchronous `/v1/image/tasks` with one shared single-dimension pricing resolver.

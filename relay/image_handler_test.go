@@ -178,10 +178,10 @@ func TestImageHandleSyncPreservesSignedURLAcrossJSONBoundaries(t *testing.T) {
 	require.Len(t, imageResp.Data, 1)
 	require.Equal(t, expectedURL, imageResp.Data[0].Url)
 
-	clientJSON, err := common.Marshal(imageHandleSyncClientImageResponse(imageResp))
+	clientJSON, err := marshalImageHandleSyncClientResponse(imageResp)
 	require.NoError(t, err)
-	require.Contains(t, string(clientJSON), `\u0026`)
-	require.NotContains(t, string(clientJSON), `\\u0026`)
+	require.Contains(t, string(clientJSON), expectedURL)
+	require.NotContains(t, string(clientJSON), `\u0026`)
 	var clientRoundTrip imageHandleSyncOpenAIImageResponse
 	require.NoError(t, common.Unmarshal(clientJSON, &clientRoundTrip))
 	require.Equal(t, expectedURL, clientRoundTrip.Data[0].Url)
@@ -191,6 +191,74 @@ func TestImageHandleSyncPreservesSignedURLAcrossJSONBoundaries(t *testing.T) {
 	result := taskData["result"].(map[string]any)
 	images := result["images"].([]any)
 	require.Equal(t, expectedURL, images[0].(map[string]any)["url"])
+}
+
+func TestApplyImageHandleSyncParamOverrideUsesSelectedChannel(t *testing.T) {
+	t.Parallel()
+
+	n := uint(2)
+	request := dto.ImageRequest{
+		Model:          "gpt-image-2",
+		Prompt:         "test prompt",
+		N:              &n,
+		Quality:        "low",
+		ResponseFormat: "b64_json",
+		Extra: map[string]json.RawMessage{
+			"resolution": []byte(`"2k"`),
+		},
+	}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ParamOverride: map[string]interface{}{
+				"response_format": "url",
+			},
+		},
+	}
+
+	overridden, err := applyImageHandleSyncParamOverride(info, request)
+	require.NoError(t, err)
+	require.Equal(t, "url", overridden.ResponseFormat)
+	require.Equal(t, "gpt-image-2", overridden.Model)
+	require.Equal(t, "test prompt", overridden.Prompt)
+	require.NotNil(t, overridden.N)
+	require.Equal(t, uint(2), *overridden.N)
+	require.Equal(t, "low", overridden.Quality)
+	require.JSONEq(t, `"2k"`, string(overridden.Extra["resolution"]))
+}
+
+func TestApplyImageHandleSyncParamOverrideKeepsImagePricingParameters(t *testing.T) {
+	t.Parallel()
+
+	n := uint(2)
+	request := dto.ImageRequest{
+		Model:   "gpt-image-2",
+		Prompt:  "test prompt",
+		N:       &n,
+		Quality: "high",
+	}
+	info := &relaycommon.RelayInfo{
+		PriceData: types.PriceData{
+			ImagePricing: &types.ImagePricingSnapshot{
+				Parameter:     types.ImagePricingParameterQuality,
+				UpstreamValue: "high",
+				N:             2,
+			},
+		},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ParamOverride: map[string]interface{}{
+				"quality":         "low",
+				"n":               1,
+				"response_format": "url",
+			},
+		},
+	}
+
+	overridden, err := applyImageHandleSyncParamOverride(info, request)
+	require.NoError(t, err)
+	require.Equal(t, "url", overridden.ResponseFormat)
+	require.Equal(t, "high", overridden.Quality)
+	require.NotNil(t, overridden.N)
+	require.Equal(t, uint(2), *overridden.N)
 }
 
 func TestImageHandleSyncClientImageResponseUsesSingleImageUsageVocabulary(t *testing.T) {
@@ -707,6 +775,76 @@ func TestBuildImageHandleSyncPayloadUsesLeaseAndKeepsImageParams(t *testing.T) {
 	require.Equal(t, "transparent", params["background"])
 
 	require.NotContains(t, payload, "provider_options")
+}
+
+func TestBuildImageHandleSyncPayloadUsesSelectedChannelParamOverride(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+	image_handle_setting.GetImageHandleSetting().InternalBaseURL = "http://new-api.internal"
+	image_handle_setting.GetImageHandleSetting().InternalSecretID = "image_handle_1"
+
+	for _, testCase := range []struct {
+		name      string
+		operation string
+		relayMode int
+		image     json.RawMessage
+	}{
+		{
+			name:      "generation",
+			operation: "generation",
+			relayMode: relayconstant.RelayModeImagesGenerations,
+		},
+		{
+			name:      "edit",
+			operation: "edit",
+			relayMode: relayconstant.RelayModeImagesEdits,
+			image:     []byte(`"https://cdn.example.com/input.png"`),
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Set(common.RequestIdKey, "req-sync-channel-override-"+testCase.name)
+
+			request := dto.ImageRequest{
+				Prompt:         "test prompt",
+				Image:          testCase.image,
+				ResponseFormat: "b64_json",
+				Extra: map[string]json.RawMessage{
+					"resolution": []byte(`"2k"`),
+				},
+			}
+			info := &relaycommon.RelayInfo{
+				UserId:          44,
+				OriginModelName: "adobe-gpt-image-2-count",
+				UsingGroup:      "aggregate",
+				RelayMode:       testCase.relayMode,
+				ChannelMeta: &relaycommon.ChannelMeta{
+					ChannelId:         123,
+					UpstreamModelName: "gpt-image-2",
+					ParamOverride: map[string]interface{}{
+						"response_format": "url",
+					},
+				},
+			}
+
+			overridden, err := applyImageHandleSyncParamOverride(info, request)
+			require.NoError(t, err)
+			body, err := buildImageHandleSyncPayload(ctx, info, overridden, "task_sync", "lease_sync", testCase.operation)
+			require.NoError(t, err)
+
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(body, &payload))
+			require.Equal(t, "gpt-image-2", payload["model"])
+			require.Equal(t, testCase.operation, payload["operation"])
+			require.Equal(t, "url", payload["result_data_format"])
+			params := imageHandleSyncPayloadParams(payload)
+			require.Equal(t, "url", params["response_format"])
+			require.Equal(t, "2k", params["resolution"])
+		})
+	}
 }
 
 func TestBuildImageHandleSyncPayloadKeepsProviderOptionsForNonGPTImage(t *testing.T) {

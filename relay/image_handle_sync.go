@@ -216,6 +216,10 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 		action = constant.TaskActionImageEdit
 		operation = "edit"
 	}
+	request, err := applyImageHandleSyncParamOverride(info, request)
+	if err != nil {
+		return nil, newAPIErrorFromParamOverride(err)
+	}
 	task := initImageHandleSyncTask(info, request, clientTaskID, action)
 	lease := model.NewImageCredentialLease(task, operation, info.UpstreamModelName, 1800)
 	lease.TaskRecordID = 0
@@ -280,7 +284,7 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 		imageN = *request.N
 	}
 	normalizeImageUsage(imageResp.Usage, imageN)
-	jsonResponse, err := common.Marshal(imageHandleSyncClientImageResponse(imageResp))
+	jsonResponse, err := marshalImageHandleSyncClientResponse(imageResp)
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
 	}
@@ -303,6 +307,47 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 	c.Set("image_handle_sync_provider_task_id", task.PrivateData.UpstreamTaskID)
 	c.Set("image_handle_sync_lease_id", lease.LeaseID)
 	return usage, nil
+}
+
+func applyImageHandleSyncParamOverride(info *relaycommon.RelayInfo, request dto.ImageRequest) (dto.ImageRequest, error) {
+	if info == nil || info.ChannelMeta == nil || len(info.ParamOverride) == 0 {
+		return request, nil
+	}
+
+	requestJSON, err := common.Marshal(request)
+	if err != nil {
+		return request, err
+	}
+	var requestFields map[string]json.RawMessage
+	if err := common.Unmarshal(requestJSON, &requestFields); err != nil {
+		return request, err
+	}
+	for key, value := range request.Extra {
+		if len(value) == 0 {
+			continue
+		}
+		if _, exists := requestFields[key]; !exists {
+			requestFields[key] = value
+		}
+	}
+	requestJSON, err = common.Marshal(requestFields)
+	if err != nil {
+		return request, err
+	}
+	requestJSON, err = relaycommon.ApplyParamOverrideWithRelayInfo(requestJSON, info)
+	if err != nil {
+		return request, err
+	}
+	requestJSON, err = restoreImagePricingParameters(requestJSON, info.PriceData.ImagePricing)
+	if err != nil {
+		return request, err
+	}
+
+	overridden := dto.ImageRequest{}
+	if err := common.Unmarshal(requestJSON, &overridden); err != nil {
+		return request, err
+	}
+	return overridden, nil
 }
 
 func buildImageHandleSyncPayload(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest, clientTaskID string, leaseID string, operation string) ([]byte, error) {
@@ -916,6 +961,10 @@ func imageHandleSyncClientImageResponse(resp *dto.ImageResponse) imageHandleSync
 		Usage:        imageHandleSyncClientUsage(resp.Usage),
 		Metadata:     resp.Metadata,
 	}
+}
+
+func marshalImageHandleSyncClientResponse(resp *dto.ImageResponse) ([]byte, error) {
+	return common.MarshalNoEscapeHTML(imageHandleSyncClientImageResponse(resp))
 }
 
 func imageHandleSyncClientUsage(usage *dto.Usage) *imageHandleSyncOpenAICompatibleUsage {

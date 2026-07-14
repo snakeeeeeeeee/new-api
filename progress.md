@@ -1,3 +1,28 @@
+# Image-handle Channel Override and Signed URL Progress (2026-07-15)
+
+- Traced the sync generation flow from model mapping through credential lease, image-handle execution, URL extraction, and client response serialization.
+- Confirmed omitted `response_format` allows Base64 upstream output and R2 fallback, while explicit `url` produces direct signed-URL passthrough.
+- Confirmed the selected channel's parameter override is available in new-api but bypassed by the early image-handle sync branch.
+- Confirmed image-handle remains provider-agnostic; new-api will apply the selected Adobe channel's override before task submission.
+- Planned modifications: `common/json.go`, `relay/image_handle_sync.go`, and focused tests.
+- Initial combined planning-file patch failed because the findings heading differed from the template; no partial write occurred, and the insertions were retried against actual file headers.
+- Added `common.MarshalNoEscapeHTML` and limited its production use to the image-handle sync client response.
+- Added selected-channel parameter override application before sync task/lease construction, then restored image-pricing-owned parameters from the immutable pricing snapshot.
+- Added focused coverage for signed URL raw output, channel response-format override, unknown-field preservation, and pricing parameter protection.
+- Focused relay tests passed; `gofmt` and `git diff --check` passed.
+- Added payload-level generation/edit coverage for an aggregate-group public alias mapped to upstream `gpt-image-2`.
+- Added independent `MarshalNoEscapeHTML` coverage and a nil channel-metadata compatibility guard.
+- Focused `common`, `relay`, `relay/common`, and `relay/helper` tests pass.
+- Full `go test ./... -count=1` passes.
+- Configured both local Adobe channels with request parameter override `response_format=url` and rebuilt `new-api-local:dev` as image `sha256:45f7cb878333...`.
+- Recreated `new-api-dev`; the count alias succeeded without a client `response_format`, returned a directly accessible Adobe signed URL, skipped R2, and emitted literal `&` separators.
+- Confirmed the successful count request retained image-parameter billing and the mapped upstream model in the consume log.
+- Token alias contract verification passed through task persistence and debug logs, but two image-handle executions disconnected before an upstream HTTP response.
+- A host-direct token-upstream diagnostic also failed at the transport layer (`HTTP2 framing layer`, status 000); stopped after the third failure instead of issuing more paid requests.
+- Restored `image_handle_setting.debug_upstream=false`, retained both Adobe channel overrides, and preserved all generated request/response/container logs under `tmp/`.
+
+---
+
 # Image Parameter Pricing Progress (2026-07-14)
 
 - Resumed the approved implementation after context recovery; no paid/local generation request has been sent yet.

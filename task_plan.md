@@ -1,3 +1,55 @@
+# Task Plan: Image-handle channel overrides and signed URL output
+
+## Goal
+Make image-handle sync execution honor channel request-parameter overrides and return signed image URLs with literal query separators, while preserving provider compatibility and existing R2 fallback behavior.
+
+## Current Phase
+Complete with external token-upstream failure documented
+
+### Phase 1: Design and discovery
+- [x] Trace the effective result-format policy, upstream request construction, URL passthrough, and final JSON serialization.
+- [x] Confirm channel parameter overrides are currently bypassed by the early image-handle sync branch.
+- **Status:** complete
+
+### Phase 2: Implementation
+- [x] Apply the selected channel's existing parameter override before building the image-handle sync payload.
+- [x] Add a JSON wrapper that disables HTML escaping and use it only for the image-handle client response.
+- **Status:** complete
+
+### Phase 3: Verification
+- [x] Cover channel override, pricing-owned parameters, signed URL passthrough, and literal ampersand output with focused unit tests.
+- [x] Add payload-level coverage and confirm generation/edit compatibility.
+- [x] Run focused Go tests, broader affected-package tests, formatting, and diff review.
+- **Status:** complete
+
+### Phase 4: Docker and live local integration
+- [x] Rebuild local new-api Docker from the verified source.
+- [x] Confirm both selected Adobe channels have `response_format=url` in request parameter overrides.
+- [x] Call the count Adobe model without client `response_format` and verify Adobe URL passthrough plus literal `&` output.
+- [x] Confirm the token Adobe model also receives `response_format=url`; its upstream currently disconnects before returning an HTTP response.
+- [x] Retain generated request/application/image-handle logs.
+- **Status:** complete_with_external_token_upstream_failure
+
+## Locked Decisions
+| Decision | Rationale |
+| --- | --- |
+| Reuse channel parameter overrides instead of a global GPT-image default | Adobe and official providers can expose the same upstream model name but differ in accepted parameters. |
+| Let new-api identify and lock the channel; keep image-handle provider-agnostic | The selected channel already owns its base URL, credentials, model mapping, and parameter override. |
+| Preserve the existing override semantics | Operators can force Adobe URL output without introducing a second provider-specific configuration surface. |
+| Disable HTML escaping only for the image-handle sync client response | Makes signed URLs copyable without changing unrelated API JSON behavior. |
+| Keep Base64-to-R2 conversion as fallback | Providers that do not return URLs remain compatible. |
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Combined planning-file patch expected a template heading that the existing findings file did not use | 1 | Re-read each file header and apply independent insertions using its actual first line. |
+| Health polling used zsh's read-only `status` variable | 1 | Use a direct health endpoint check and a non-reserved variable on subsequent checks. |
+| Initial image-handle PostgreSQL inspection assumed a `postgres` role | 1 | Read the container connection configuration and use the actual `image_handle` role. |
+| A diagnostic query treated the new-api log `other` TEXT column as JSONB | 1 | Cast `other::jsonb` before extracting structured error fields. |
+| Adobe token upstream disconnected twice through image-handle and once directly | 3 | Stop paid retries; retain the `fetch failed` and HTTP/2 framing evidence for upstream investigation. |
+
+---
+
 # Task Plan: Image parameter per-call pricing and image-handle compatibility
 
 ## Goal
