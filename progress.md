@@ -1,3 +1,34 @@
+# Image Parameter Pricing Progress (2026-07-14)
+
+- Resumed the approved implementation after context recovery; no paid/local generation request has been sent yet.
+- Existing diff contains backend configuration, billing snapshots, sync/async image relay handling, marketplace/log presentation, frontend settings, and focused tests.
+- Started three independent workstreams: backend pricing review, frontend audit/verification, and image-handle/live-contract audit.
+- Local runtime audit found count/token token records but missing channel abilities, mappings, group ratios, and `ImagePricing`; these will be corrected only after code review and Docker rebuild.
+- Focused `go test ./relay -count=1` passed in the preceding implementation session.
+- Recovered and reviewed the active plan plus core configuration/resolver/snapshot types.
+- Confirmed the running Docker stack is healthy but not yet rebuilt from the final implementation.
+- Confirmed image-handle has a scoped dirty diff for parameter forwarding/audit tests; no unrelated files were reverted.
+- Audited local container availability: new-api and the complete image-handle execution stack are running and reachable by their published ports.
+- Initial whitespace checks pass in both repositories.
+- Focused new-api tests passed: `setting/ratio_setting`, `relay/helper`, image-handle adaptor, `relay`, `service`, `controller`, and `model`.
+- image-handle `npm test` passed all 61 tests after its TypeScript build, including leased execution, sync/async paths, generation/edit forwarding, and callback contracts.
+- Audited runtime aliases/mappings/profile without reading or printing secrets.
+- Verified existing live sync count and token executions succeeded through image-handle with the expected distinct billing modes.
+- Verified async count snapshot/mapping/lease correctness and terminal failure refund behavior; failure source is an external `fetch failed` inside image-handle execution.
+- Monitoring the existing async token request to terminal state; no duplicate request has been sent.
+- Existing async token request completed successfully with exact usage settlement, one stored asset, and correct precharge-difference refund.
+- Verified `/api/pricing` and authenticated polling contracts for both aliases without exposing token values.
+- Asked backend review to classify or fix cumulative used-quota counters that retain async precharge amounts after refunds.
+- Compared async task accounting with the standard synchronous billing session and narrowed a possible counter fix to image-handle terminal refund/negative-delta paths only.
+- Frontend independent review is complete: helper unit tests, targeted lint/format, production build, and diff checks pass; full i18n retains only the known repository baseline.
+- Full backend regression `go test -count=1 ./...` passed across every package.
+- Reviewed the complete image-handle source/test diff and confirmed it stays within resolution passthrough and audit-contract scope.
+- Fixed synchronous and asynchronous image-handle `response_format` passthrough, including JSON, multipart, metadata precedence, mapped async persistence, and force/default result-policy separation.
+- `go test -count=1 ./relay/common ./relay/channel/task/imagehandle ./relay` and `git diff --check` pass after the contract fix.
+- Converted async top-level `quality` and `resolution` to optional pointers, updated the pricing resolver/writeback contract, and trimmed synchronous `response_format` before forwarding; focused tests now include `relay/helper` and pass.
+
+---
+
 # Multi-level Token Tier Pricing Progress (2026-07-13)
 
 ## Phase 1: Configuration and billing core
@@ -303,3 +334,28 @@
 - Mobile browser verification passed for tab fit, selected state, populated ranking, and absence of document-level horizontal overflow.
 - Full `go test ./model`, final whitespace audit, Docker health/status check, and temporary-account residue check passed.
 - Phase 6 is complete; unrelated untracked files remain untouched.
+# Claude `Content block not found` Analysis Progress (2026-07-14)
+
+- **Status:** complete
+- Started repository and external-protocol investigation.
+- Preserved the existing dirty worktree and added only scoped planning notes.
+- Searched the complete repository for the literal error, `claude-fable-5`, Claude channel files, and content-block event handling.
+- Initial result: local code does not originate the literal error; investigation is now tracing relay event ordering and alias routing.
+- Read the native Claude adaptor, both response-conversion directions, stream state structures, focused tests, and relevant git history.
+- Identified one concrete invalid-sequence candidate: tool argument delta emitted before a tool block start when an OpenAI-compatible upstream streams arguments before the function name.
+- Searched the web for the exact error and current official Fable 5 documentation.
+- Found an official Claude Code client fix, official confirmation that Fable 5 is a real GA model, a detailed Ollama invalid-index reproduction, and a same-repository issue pointing at OpenAI-channel conversion.
+- Confirmed the Claude Code client-side fix landed in v2.1.186 and read new-api issues #4389, #5102, and #5126 via the public GitHub API.
+- Distinguished request-block compatibility (#5126) from the response-stream state error, and identified missing converter test cases for sparse/unstarted tool blocks.
+- Reproduced an invalid `delta(index=1)` before `start(index=1)` directly against the current converter using a temporary external diagnostic, then removed the diagnostic file.
+- Confirmed the local app is healthy in Docker and mapped the risky `/v1/messages` OpenAI-channel round trip to the exact adaptor/helper functions.
+- Searched 48 hours of local container logs; no matching Fable/error record was present. Logged two harmless SQL quoting failures before a safer metadata-query retry.
+- Audited safe local DB metadata: Fable uses an Anthropic-type third-party channel, and available historical calls are successful non-streaming June tests.
+- Ruled out ping/data interleaving after confirming both writers share a mutex; added Fable's signature-only thinking block shape to the compatibility analysis.
+- Checked the local Claude Code version (2.1.209) and searched its debug directory for the exact error; no matching trace was retained.
+- Incorporated the user's exact channel/request metadata and corrected the direct-path attribution from OpenAI-response synthesis to OpenAI-request/Claude-response conversion.
+- Proved with a temporary round-trip diagnostic that OpenAI message thinking signatures are discarded before the Claude tool continuation is sent upstream; removed the diagnostic afterward.
+- Focused service and Claude-channel tests passed, as did planning-file diff checks. No product code was changed.
+- Product code changes: none.
+
+---

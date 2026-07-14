@@ -1,3 +1,58 @@
+# Task Plan: Image parameter per-call pricing and image-handle compatibility
+
+## Goal
+Add configurable single-dimension per-image pricing for public models, preserve legacy/token billing for unbound models, keep pricing snapshots stable across sync/async execution, and validate the count/token aliases end to end with local new-api and image-handle.
+
+## Current Phase
+Implementation review and local integration
+
+### Phase 1: Configuration and billing core
+- [x] Add atomic `ImagePricing` option, profile/binding validation, normalization, immutable snapshots, decimal quota calculation, and legacy fallback.
+- [x] Resolve public-model pricing before existing model mapping and make `n` the shared multiplier.
+- **Status:** complete
+
+### Phase 2: Direct, sync image-handle, and async task paths
+- [x] Apply shared normalization to generations, edits, sync image-handle, and `/v1/image/tasks`.
+- [x] Persist async snapshots, bypass usage repricing for count mode, and preserve token-mode usage settlement.
+- [x] Add targeted image-handle polling/refund fixes and async submit race protection.
+- **Status:** complete
+
+### Phase 3: Management UI, marketplace, and logs
+- [x] Add profile CRUD/copy, tier editing, bulk model binding, `max_n`, preview, takeover hints, marketplace metadata/filter/details, and log snapshot display.
+- [x] Complete independent frontend review and focused i18n/lint/build verification.
+- **Status:** complete
+
+### Phase 4: Automated regression
+- [ ] Complete independent backend review; focused and full Go tests plus current diff checks already pass.
+- [x] Complete image-handle contract tests for `quality`, `size`, `resolution`, `n`, and leased upstream model.
+- **Status:** pending
+
+### Phase 5: Docker and live local integration
+- [ ] Rebuild local Docker dev from the final source.
+- [ ] Configure isolated count/token public aliases, channel mappings/groups, group ratios, and the Adobe quality profile without exposing secrets.
+- [ ] Run count and token async tasks through local image-handle; poll terminal state and verify task, lease, wallet/subscription, log, and snapshot behavior.
+- [ ] Restore or retain only the explicitly requested durable local configuration and document any environment blocker.
+- **Status:** pending
+
+## Locked Decisions
+| Decision | Rationale |
+| --- | --- |
+| V1 has one pricing dimension: `quality`, `size`, or `resolution` | Avoids a combinatorial matrix while covering the stated providers. |
+| `n` is a universal multiplier and normalized before mapping | Ensures aliases can map to one upstream model without losing count billing. |
+| Pricing belongs to model settings in new-api | Channels execute requests; image-handle owns neither prices nor aliases. |
+| Request-time snapshot is authoritative | Responses and config hot updates are audit data only and cannot reprice an in-flight task. |
+| Unbound and snapshot-less legacy tasks stay on old billing | Maintains backward compatibility and makes unbinding restore the old configuration. |
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Planning files did not contain the active image-pricing task after context recovery | 1 | Added this task section and resumed from the existing diff and independent reviews. |
+| Local count/token token groups currently have no matching abilities/mappings/group ratios or `ImagePricing` option | Runtime audit | Treat as an environment/configuration phase after code review; configure atomically before sending any paid generation request. |
+| Initial combined response-format patch used stale test assertion context | 1 | Split the patch into current-file hunks; no partial write occurred, then focused tests passed. |
+| Pointer conversion exposed image-pricing resolver and assertion type mismatches | 1 | Updated fallback handling, normalized writeback pointers, and pointer-aware tests; all focused packages pass. |
+
+---
+
 # Task Plan: Multi-level token tier pricing
 
 ## Goal
@@ -349,3 +404,41 @@ Complete
 | Channel `force_on` did not appear to work during first SQL test | Docker联调 | Test SQL wrote `image_handle_sync_mode` to legacy `channels.other`; corrected to `channels.settings`, matching frontend/backend field usage. |
 | image-handle 202 processing could not be triggered safely in Docker | Docker联调 | Current local `SYNC_TASK_TIMEOUT_MS` is 300s. Added unit coverage for HTTP 202 -> `image_handle_sync_timeout`; did not wait 300s in Docker. |
 | Local mock upstream does not support multipart `/v1/images/edits` | Docker联调 | Verified new-api upload-to-URL and image-handle sync task submission; final edit result fails in worker with 415 because mock-new-api Fastify lacks multipart content parser for edits. |
+# Task Plan: Claude `Content block not found` analysis
+
+## Goal
+Determine why requests using `claude-fable-5` frequently fail with `API Error: Content block not found`, correlate the failure with this repository's Claude relay implementation and public/official protocol evidence, and give evidence-backed diagnosis and mitigation guidance without changing product code.
+
+## Current Phase
+Complete
+
+### Phase 1: Repository discovery
+- [x] Find the exact error string and all Claude request/stream conversion paths.
+- [x] Trace `claude-fable-5` model mapping, channel selection, retries, and tool/content-block handling.
+- **Status:** complete
+
+### Phase 2: Protocol and public-source research
+- [x] Compare the implementation with Anthropic official Messages and streaming event invariants.
+- [x] Check public reports for the same error and identify provider/proxy-specific patterns.
+- **Status:** complete
+
+### Phase 3: Synthesis and verification
+- [x] Rank likely root causes and distinguish upstream/provider errors from local conversion errors.
+- [x] Identify concrete logs or request/response evidence that can confirm each hypothesis.
+- [x] Deliver mitigations and, if warranted, scoped code-fix suggestions without modifying code.
+- **Status:** complete
+
+## Key Questions
+1. Which component emits the literal `Content block not found` message?
+2. What invalid event/content-block sequence can produce it?
+3. Is `claude-fable-5` an official Anthropic model name or a mapped/provider alias?
+4. Which repository behaviors can make the issue frequent rather than random?
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Existing planning files contain unrelated active work | 1 | Append a separate scoped task section and preserve all prior content. |
+| `git status` was passed a deleted `/tmp` path outside the repository | 1 | Treat as a harmless diagnostic command error and inspect only repository paths thereafter. |
+| Initial read-only PostgreSQL metadata queries lost SQL string quoting through nested shell quoting | 1 | Log the error and retry with quote-free metadata queries, filtering safe output outside `psql`. |
+
+---

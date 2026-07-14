@@ -1,3 +1,39 @@
+# Image Parameter Pricing Findings (2026-07-14)
+
+- Current implementation spans direct image relay, synchronous image-handle execution, and asynchronous `/v1/image/tasks` with one shared single-dimension pricing resolver.
+- Public-model pricing is resolved before model mapping; this allows `adobe-gpt-image-2-count` and `adobe-gpt-image-2-token` to both map to upstream `gpt-image-2` while retaining different billing modes.
+- Count snapshots use `image_parameter_per_call`; token aliases continue `async_image_usage_billing` and must not contain an image-pricing snapshot.
+- The local tokens named/groups `adobe-image-2-count` and `adobe-image-2-token` exist, but the current channels still expose only `gpt-image-2` in unrelated groups and have no alias mapping or abilities for those token groups.
+- `ImagePricing` is absent locally. Count acceptance therefore requires a configured Adobe quality profile (`low=0.04`, `medium=0.07`, `high=0.15`, default `low`) bound to the public count alias.
+- Local integration must never print token values or upstream keys. Resolve secrets inside the request command/container and report only HTTP/task/billing evidence.
+- Async submit returns the public/client task ID. Polling terminal state is `data.status == SUCCESS|FAILURE`; the image-handle provider task ID stays in task private data.
+- For a count request with `quality=high`, `n=2`, group ratio `1`, and default `QuotaPerUnit=500000`, expected snapshot subtotal is `0.30` and expected final quota is `150000`.
+- The resolver writes a missing profile parameter's default `upstream_value` back into the request, normalizes `n`, and calculates final quota with `shopspring/decimal` plus the repository quota-rounding helper.
+- Local Compose currently has healthy `new-api-dev`, PostgreSQL, and Redis services; the app container predates the final review and must be rebuilt before acceptance.
+- The adjacent image-handle repository contains in-progress parameter-forwarding and audit changes in its worker, runner, server, and contract tests; those changes must be preserved and verified rather than recreated.
+- Local image-handle API, worker, notifier, PostgreSQL, and Redis containers are already running; API is exposed on port `8787`. New-api remains exposed on port `3001`.
+- Both repository diffs currently pass `git diff --check`; image-handle's product diff is limited to three source files and three contract-test files.
+- Runtime configuration is now present: both aliases map to upstream `gpt-image-2`; `adobe-quality-v1` binds only the count alias with low/medium/high prices, default low, and `max_n=10`.
+- Live synchronous image-handle evidence exists for both billing modes on the current container: count defaulted to `low` and charged `20000` quota for one image; token mode used returned usage and charged `2958` quota. Both logs retain the public alias and upstream mapped model.
+- Async count task `task_codex_count_async_1783981346` froze `quality=high`, `n=2`, unit price `0.15`, subtotal `0.30`, group ratio `1`, and final quota `150000`; its lease resolved model `gpt-image-2`.
+- That async count execution ended `FAILURE` with image-handle `fetch failed`; callback delivery succeeded and new-api ran the failure refund path. The evidence does not identify whether the failed fetch was the upstream POST or a returned image URL download.
+- Async token task `task_codex_token_async_1783981671` was still `IN_PROGRESS` at audit time with legacy usage billing, `50000` precharge, no image-pricing snapshot, and a resolved `gpt-image-2` lease.
+- The token async task later reached `SUCCESS` with one asset and usage `8 input + 196 output`; `(8 + 196 * 6) * 2.5 = 2960` exactly matches task quota. Its `50000` precharge produced a `47040` refund log.
+- `/api/pricing` exposes the count alias as `quota_type=1`, `model_price=0.04`, `billing_type=per_image_parameter`, and redacted tier data; the token alias remains `quota_type=0`, ratio `2.5`, and has no image-pricing field.
+- Authenticated polling returns uppercase terminal states and a result URL for the successful token task; the count failure returns `FAILURE`, `100%`, and `fetch failed` without a result URL.
+- Runtime accounting audit found refund deltas restore spendable wallet/subscription/token quota but do not decrement cumulative `users.used_quota` or `channels.used_quota`. This needs an explicit compatibility decision against the plan's full-refund/net-settlement language.
+- Standard synchronous `BillingSession` accounting records used quota only after final settlement. Async task accounting records the precharge at submission, then updates used counters only for positive deltas; therefore a failed/over-precharged image-handle task leaves gross precharge in cumulative counters even though logs and spendable balances are net-correct.
+- A safe correction, if adopted, should be image-handle billing-mode scoped, decrement only used-quota counters (not request count), and remain behind the existing CAS-owned terminal settlement so duplicate callbacks cannot double-adjust.
+- Frontend focused verification passed: image-pricing helper tests `10/10` (21 assertions), targeted ESLint/Prettier, production build, and frontend whitespace checks. Full i18n lint still reports the repository's existing 421 hardcoded-string findings; none point at the new image-pricing files.
+- Browser interaction coverage remains outstanding. Static review covers profile CRUD/copy, bulk binding, `max_n`, preview, marketplace rendering, and log snapshot helpers, but there are no React component tests for the settings editor.
+- image-handle product code only extends the existing parameter/audit allowlists with `resolution`; `quality`, `size`, and `n` remain existing passthrough fields. No pricing or model-mapping logic was added there.
+- image-handle tests explicitly prove public alias task input is replaced by lease model `gpt-image-2` before upstream generation/edit calls, with all four normalized parameters present in JSON and multipart contracts.
+- `response_format` had two independent contract gaps: sync image-handle dropped it for `gpt-image-*` and derived it from result policy for other models, while async image-handle lacked a top-level DTO field and parameter allowlist entry.
+- Async top-level image fields also exposed a context-copy bug: when metadata was initially absent, the adaptor created a new map without storing the updated request back into Gin context. Persisting the normalized request fixes top-level `quality`, `resolution`, `n`, and `response_format` together.
+- The corrected contract forwards only an explicit client `response_format`; `result_data_format` force/default policy remains independent and omission never synthesizes an upstream parameter.
+
+---
+
 # Multi-level Token Tier Pricing Findings (2026-07-13)
 
 - Official GPT-5.6 Standard pricing uses a whole-request threshold: requests above 272,000 total input tokens charge all input at 2x and all output at 1.5x; this is not marginal pricing on only the excess tokens.
@@ -336,3 +372,91 @@
 - Wallet ranking is demonstrably independent: its first user has `$0.26` wallet usage, while the total ranking first user has `$0.53` combined usage.
 - Wallet drill-down title is `按量消耗明细`; the selected user shows `$0.26` wallet, `$0.00` subscription, and one wallet-only model row.
 - At 375px all three secondary tabs remain visible, document width stays 375px, and the table uses its existing bounded 580px internal scroll width.
+# Claude `Content block not found` Analysis Findings (2026-07-14)
+
+## Requirements
+- Analyze the frequent `API Error: Content block not found` failure observed with `claude-fable-5`.
+- Ground the answer in this repository's code, public web material, and official documentation.
+- Diagnose only; do not change product code unless separately requested.
+
+## Initial Context
+- The worktree contains unrelated user changes; this investigation is read-only except for these planning records.
+- Primary questions are the error's emitter, protocol invariant being violated, alias/provider routing, and practical confirmation steps.
+
+## Repository Discovery
+- A repository-wide case-insensitive search found no product-code emitter for the literal `Content block not found`; matches were only this investigation's planning text. The visible error therefore enters from an upstream body/SSE error event or is produced by a downstream client consuming the relayed stream.
+- Claude SSE handling and format conversion are concentrated in `relay/channel/claude/relay-claude.go` and `service/convert.go`. The latter explicitly tracks open block indices and documents the required `content_block_start -> content_block_delta* -> content_block_stop` ordering.
+- `claude-fable-5` occurs in compatibility tests and model-family predicates in `relay/common/claude_compat.go`; no local provider implementation or official model declaration was found in the first search. Its repository presence alone indicates an accepted alias/family string, not an official Anthropic model ID.
+- Existing conversion tests focus on emitting exactly one block start/stop and keeping deltas aligned to a block index, which confirms that content-block lifecycle mismatches are a known interoperability risk in this codebase.
+- The native Anthropic adaptor sends Claude-format input to `{channel_base_url}/v1/messages`, defaults `anthropic-version` to `2023-06-01`, and returns native streams through `ClaudeStreamHandler`. OpenAI-format requests routed to a Claude channel are converted by `RequestOpenAI2ClaudeMessage` first.
+- `relay/channel/claude/constants.go` does not list `claude-fable-5`; its newest listed public Claude model is `claude-sonnet-4-6`. A configured channel can still expose arbitrary models, but `fable` is not built into this adaptor's official/default list.
+- The OpenAI-to-Claude stream converter maintains per-index start/stop maps. It starts tool blocks only when a tool name is present, then emits argument deltas by index. A nonstandard upstream chunk that sends tool arguments before the name can therefore create a delta without a prior start; this is a concrete local path capable of causing a consumer-side “block not found” state error.
+- The same converter explicitly contains prior hardening for “Mismatched content block type,” showing that nonstandard interleaving of thinking, text, and tool calls has previously required lifecycle repairs.
+- Native Claude SSE data is unmarshaled and checked with `GetClaudeError`; an upstream `type:error` event is turned into a new-api error. For native Claude-format clients, ordinary non-error events are otherwise relayed after usage-field patching, so new-api does not itself validate that every delta references an open block.
+- Git history for `service/convert.go` contains repeated protocol repairs, including `fix: Claude stream block index/type transitions` and the 2026-05-19 commit `d9c1dfcaf` (`fix: 修复 Claude 流式工具调用转换状态异常`). This supports treating stream-shape interoperability as the leading code-level area, not a generic HTTP/network failure.
+- The native Claude-to-OpenAI converter maps block indices into OpenAI tool-call indices but does not maintain a downstream block table; therefore “block not found” is more naturally emitted by an Anthropic-style stream consumer or upstream proxy state machine than by this conversion function.
+
+## External Research
+- Correction to the initial alias hypothesis: Anthropic's current official model overview documents `claude-fable-5` as an official Claude API ID/alias, generally available beginning 2026-06-09. The local adaptor's static model list is stale/incomplete, while the compatibility predicate added Fable support on 2026-06-11.
+- Anthropic documents Fable 5 as always using adaptive thinking, with up to 128k output. Manual extended-thinking budgets, `thinking: {type:"disabled"}`, and assistant prefill are unsupported. It may therefore exercise thinking-to-tool stream transitions much more often than older/non-thinking models.
+- The exact string is documented in the official Claude Code changelog: a client bug caused streaming requests to fail with `Content block not found` (or JSON parse errors) after a machine woke from sleep. This establishes at least one independent client-side cause unrelated to model validity or new-api request conversion.
+- Ollama issue `ollama/ollama#14816` provides a concrete reproduction and SSE trace: a converter reused block index 0 when transitioning directly from thinking to tool use, then emitted a stop for index 1 that had never started. Claude Code logged `Error streaming, falling back to non-streaming mode: Content block not found`. The fix was to close thinking and advance the index before starting `tool_use`.
+- new-api issue `QuantumNous/new-api#4389` reports the exact symptom with Claude Code v2.1.117 and OpenAI-compatible non-Anthropic models. Reports say older Claude Code worked and changing the channel from OpenAI type to Anthropic type avoided the failure, directly implicating the OpenAI-to-Anthropic stream conversion path rather than the official Anthropic model itself.
+- Public reports also show the same symptom with local/open models (Kimi, llama.cpp), reinforcing that the phrase is a Claude Code stream-assembly error surfaced when a provider emits an invalid or unexpected content-block lifecycle.
+- Anthropic's official streaming spec is explicit: after `message_start`, each content block has `content_block_start`, zero or more deltas, and `content_block_stop`; its `index` is the position in the final message `content` array. A delta or stop for an index with no live start, an index reuse, or a block-type change without close/advance violates this contract.
+- Official Fable 5 migration guidance says adaptive thinking is always on and, with default `thinking.display:"omitted"`, a thinking block can contain only a `signature_delta` before closing. Proxies must preserve even these visually empty thinking blocks and their lifecycle; dropping them or treating “no text” as “no block” can desynchronize subsequent tool indices.
+- The official spec permits `ping`, mid-stream `error`, and future unknown event types. Consumers should tolerate the former/unknown events, but this does not relax content-block index ordering.
+- The public new-api search did not yet identify a single upstream PR tied directly to issue #4389; local history is more useful because the checkout already includes later block-state fixes through May 2026.
+- Official Claude Code `CHANGELOG.md` identifies the sleep/wake fix specifically in version `2.1.186`. Any affected client older than 2.1.186 should be upgraded before attributing every occurrence to the relay.
+- new-api issue #4389 was closed for insufficient reproduction details, not as definitively fixed. The only configuration-specific report says `/v1/messages` through an OpenAI-type channel failed while an Anthropic-type channel worked. This is useful corroboration but not maintainer-confirmed root-cause proof.
+- Issue #5126 is adjacent but distinct: newer Claude Code may send `document` request blocks that non-Anthropic upstreams reject or lose during conversion. That produces request-side 400/invalid request behavior, not the stream accumulator's `Content block not found`; it should not be presented as the primary cause of this exact error.
+- The OpenAI channel response path calls `StreamResponseOpenAI2Claude` for every upstream chat-completion chunk and emits every synthesized Claude event immediately. There is no later validator/repair layer, so any missing start, invalid stop, or reused index produced there reaches Claude Code unchanged.
+- Current stream tests cover repeated tool names, final arguments before stop, dense parallel indices 0/1, and text/thinking transitions. They do not cover sparse tool indices, a tool fragment whose arguments arrive before its name/start, or asserting that a stop is emitted only for indices that actually started.
+- `helper.ClaudeData` serializes each synthesized event with `event: <resp.Type>` and its JSON data immediately. The native path similarly rebuilds the event name from the JSON `type`; it does not preserve an independent upstream SSE event name, but official events require those values to match anyway.
+- `StreamScannerHandler` adds SSE comment pings (`: PING`) during idle periods. These are valid keepalive comments and are not content blocks, so they are not a primary explanation for a block lookup failure.
+- The February block-transition fix introduced `stopOpenBlocks`, but its tools branch closes every offset from zero through the maximum seen offset. The May deduplication fix prevents duplicate stops but still does not require `ContentBlockStartSent[idx]` before stopping. Sparse/missing-start tool indices therefore remain a plausible current defect.
+- A temporary diagnostic program invoked the current `StreamResponseOpenAI2Claude` with this legal-to-parse but nonstandard OpenAI chunk order: empty initial chunk -> thinking -> tool arguments without name -> tool name/final arguments. The emitted Claude sequence was `start(0 thinking), delta(0), stop(0), delta(1), start(1 tool), delta(1), stop(1)`. The first delta for index 1 has no preceding start and deterministically violates Anthropic's official state machine. This is a confirmed current code defect, not just a hypothesis.
+- The temporary diagnostic file was deleted after execution; no product code was changed.
+- The local Docker app is running and healthy. The OpenAI adaptor's `ConvertClaudeRequest` explicitly performs Claude -> OpenAI request conversion, and its response helper then performs OpenAI -> Claude SSE synthesis. This is the exact risky round trip when an OpenAI-type channel serves `/v1/messages`.
+- `claude-fable-5` remains absent from product model lists/default configuration in this checkout outside the compatibility predicates/tests; actual availability is therefore supplied by runtime channel/model configuration or sync data.
+
+## Issues Encountered
+- A scoped `git status` command included the already-deleted `/tmp` diagnostic path, which Git rejected because it is outside the repository. This had no filesystem effect; repository paths were inspected separately.
+- The first PostgreSQL metadata commands failed because nested shell quoting stripped SQL string literals. No query executed and no data changed; the next attempt uses quote-free metadata output plus external filtering.
+
+## Local Runtime Evidence
+- The last 48 hours of `new-api-dev` container stdout contain no match for `Content block not found`, `claude-fable-5`, or related block-mismatch phrases. Runtime attribution therefore needs database logs/channel configuration or a fresh captured reproduction.
+- Runtime configuration exposes Fable only on channel 63, type 14 (`Anthropic`), whose base URL is the third-party endpoint `https://www.doubingo.com`; it is not a direct `api.anthropic.com` connection. Native `/v1/messages` traffic therefore trusts that provider's Anthropic-compatible SSE implementation.
+- Six stored Fable calls on 2026-06-11 were successful consume logs, not errors. They were non-streaming test calls over both `/v1/messages` and `/v1/chat/completions`, so they do not validate Claude Code's streaming/tool-use path.
+- No error logs were stored for Fable/channel 63 in the queried local data. A client-side accumulator failure after HTTP 200 can leave only a server-side success/consume log, so absence of a new-api error record does not disprove malformed SSE.
+- Correction: the suspected local ping/data write race is not present. `StreamScannerHandler` acquires the same `writeMutex` around both the ping writer and the entire data handler, so `event:`/`data:` pairs emitted by one handler call cannot be split by its synthetic ping.
+- Public Fable-specific reports confirm its common leading shape: `content_block_start(index 0, thinking)` -> `signature_delta` only -> stop -> visible text/tool at the next index. Clients/proxies that discard an empty-looking thinking block lose index alignment. new-api's native Claude path relays this block unchanged; the third-party endpoint and Claude Code version remain the two likely points for the local type-14 route.
+- The installed local Claude Code is `2.1.209`, newer than the official `2.1.186` sleep/wake fix. If the reported failures are occurring on this same installation, the known post-sleep client bug is unlikely to be the primary remaining cause.
+- No `Content block not found` match exists in the currently available `~/.claude/debug` files, and no active shell environment override identified a different base URL/model. There is therefore no captured client event trace to compare against the server for this specific occurrence.
+- An exact web search for `claude-fable-5` plus the error found no public Fable-specific reproduction beyond the general Claude Code sleep bug. This argues against claiming an Anthropic-confirmed Fable service defect.
+- Anthropic's official Fable/extended-thinking docs precisely confirm the high-risk stream shape: default `display:"omitted"` still opens a `thinking` block, sends a `signature_delta`, closes it, then starts text at index 1. Empty thinking blocks must be passed back unchanged, including their signature.
+- A low `max_tokens` can yield a successful response ending with `stop_reason:"max_tokens"`, potentially before visible text, but the official protocol still requires well-formed block start/stop events. Raising `max_tokens` may reduce empty/truncated turns; it is not a protocol-level explanation for the specific block lookup error.
+- Request-side `thinking:disabled`, manual budgets, assistant prefill, ZDR eligibility, or malformed preserved thinking blocks produce documented 400/refusal/history problems. They are separate from a client accumulator saying a streamed block index does not exist.
+
+## User-Supplied Request Evidence (2026-07-14)
+- Request ID `20260714085229927488967BnZHA7jW` used channel 132 (`gemini91_claude-max`), path `/v1/chat/completions`, and conversion `OpenAI Compatible -> Claude Messages`. The call was billed for 2,476 uncached input, 2,788 cached input, and 338 completion tokens.
+- This path sends an OpenAI-style request through `RequestOpenAI2ClaudeMessage`, receives a Claude Messages response, and converts it back with `StreamResponseClaude2OpenAI`. It does not use `StreamResponseOpenAI2Claude`, so the earlier confirmed delta-before-start defect is real but not the direct response path for this request.
+- Channel 132 and this request ID do not exist in the local dev database/container logs; they belong to another deployment, so the raw upstream SSE cannot be recovered from this workspace.
+- A code audit found a path-specific round-trip defect: Claude -> OpenAI response conversion emits Fable's thinking signature as `reasoning_signature`/`signature`, and the OpenAI request DTO accepts both fields, but `RequestOpenAI2ClaudeMessage` ignores all per-message `ReasoningContent`, `ReasoningSignature`, `Thinking`, and `Signature` fields when rebuilding Claude history.
+- A temporary diagnostic passed an OpenAI assistant message containing `opaque-signature` plus a tool call and following tool result through the current converter. The resulting Claude history contained only `tool_use` and `tool_result`; the required preceding `thinking` block and signature were absent. The diagnostic file was then deleted.
+- Anthropic officially requires the complete, unmodified thinking block (including signature) to be returned with tool-use cycles. Since Fable 5 always uses adaptive thinking and defaults to signature-only omitted thinking, this one-way mapping is a strong explanation for why `/v1/chat/completions` agent/tool workflows fail frequently after otherwise successful turns.
+- The literal error is still not generated locally. The likely chain is: new-api drops Fable thinking state during OpenAI -> Claude history conversion; channel 132's upstream/proxy rejects or mishandles the resulting tool continuation and returns `Content block not found` (possibly mid-stream); new-api preserves that upstream error message.
+
+## Ranked Conclusion
+1. For the supplied Request ID, the literal error came from channel 132's upstream/proxy or its streamed error event; new-api has no emitter for it. The nonzero completion usage makes a mid-stream upstream error especially plausible.
+2. The exact `/v1/chat/completions -> Claude Messages` path has a confirmed new-api compatibility defect: Fable thinking signatures are exposed on the response but discarded on the next request. This can trigger the upstream failure during tool-use continuations and explains the model-specific frequency.
+3. Independently, third-party Anthropic-compatible providers have documented block-index bugs around thinking -> tool transitions. Raw channel-132 SSE is required to distinguish a malformed response sequence from a request-history rejection with certainty.
+4. The Claude Code post-sleep bug is real but secondary here: this request uses Chat Completions, and the local Claude Code version already contains the official fix.
+
+## Verification Results
+- `go test ./service -run '^TestStreamResponseOpenAI2Claude' -count=1` passed.
+- `go test ./relay/channel/claude -run 'Test(RequestOpenAI2ClaudeMessage|StreamResponseClaude2OpenAI|ResponseClaude2OpenAI)' -count=1` passed.
+- The passing tests do not cover OpenAI assistant thinking/signature -> Claude thinking-block reconstruction; the temporary diagnostic proves that gap.
+- `git diff --check` passed for the planning records. Product code was not modified.
+
+---
