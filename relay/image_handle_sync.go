@@ -1496,7 +1496,7 @@ func imageHandleSyncHTTPErrorMetadata(statusCode int, responseBody []byte) json.
 	}
 	metadata, err := common.Marshal(map[string]any{
 		"image_handle_status": statusCode,
-		"image_handle_body":   body,
+		"image_handle_body":   common.MaskSensitiveValue(body),
 	})
 	if err != nil {
 		return nil
@@ -1574,7 +1574,7 @@ func imageHandleSyncRawResponseSummary(raw any) any {
 	if len(data) <= maxBytes {
 		var value any
 		if err := common.Unmarshal(data, &value); err == nil {
-			return value
+			return common.MaskSensitiveValue(value)
 		}
 		return string(data)
 	}
@@ -1594,7 +1594,8 @@ func imageHandleSyncErrorDetailToMap(detail imageHandleSyncErrorDetail) map[stri
 	if err := common.Unmarshal(data, &result); err != nil {
 		return nil
 	}
-	return result
+	masked, _ := common.MaskSensitiveValue(result).(map[string]any)
+	return masked
 }
 
 func firstPositiveSyncInt(values ...int) int {

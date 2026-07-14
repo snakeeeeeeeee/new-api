@@ -689,12 +689,12 @@ func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError, internalRetry b
 			other["execution_mode"] = executionMode
 		}
 		if detail, ok := common.GetContextKey(c, constant.ContextKeyImageHandleSyncErrorDetail); ok && detail != nil {
-			other["image_handle_sync_error"] = detail
+			other["image_handle_sync_error"] = common.MaskSensitiveValue(detail)
 		}
 		if len(err.Metadata) > 0 {
 			var metadata map[string]interface{}
 			if unmarshalErr := common.Unmarshal(err.Metadata, &metadata); unmarshalErr == nil && len(metadata) > 0 {
-				other["error_metadata"] = metadata
+				other["error_metadata"] = common.MaskSensitiveValue(metadata)
 			}
 		}
 		if internalRetry {

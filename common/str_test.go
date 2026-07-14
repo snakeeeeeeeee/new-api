@@ -28,6 +28,60 @@ func TestMaskSensitiveInfoStillMasksDomainsAndIPs(t *testing.T) {
 	require.Contains(t, result, "***.***.***.***")
 }
 
+func TestMaskSensitiveInfoFullyMasksURLIPsAndPorts(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "ipv4",
+			input: `Post "http://192.0.2.236:28787/v1/image/tasks/sync": context canceled`,
+		},
+		{
+			name:  "ipv6",
+			input: `Post "http://[2001:db8::236]:28787/v1/image/tasks/sync": context canceled`,
+		},
+		{
+			name:  "domain with port",
+			input: `Post "https://internal.example.com:28787/v1/image/tasks/sync": context canceled`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := MaskSensitiveInfo(test.input)
+			require.NotContains(t, result, "192.0.2.236")
+			require.NotContains(t, result, "2001:db8::236")
+			require.NotContains(t, result, "internal.example.com")
+			require.NotContains(t, result, "28787")
+			require.NotContains(t, result, "/v1/image/tasks/sync")
+			require.Contains(t, result, "context canceled")
+		})
+	}
+}
+
+func TestMaskSensitiveValueRecursivelyMasksNestedErrorDetails(t *testing.T) {
+	input := map[string]any{
+		"message": `Post "http://192.0.2.236:28787/v1/image/tasks/sync": context canceled`,
+		"nested": []any{
+			map[string]any{"url": "https://internal.example.com:9443/private/result"},
+			42,
+		},
+	}
+
+	masked := MaskSensitiveValue(input).(map[string]any)
+	serialized, err := Marshal(masked)
+	require.NoError(t, err)
+	result := string(serialized)
+	require.NotContains(t, result, "192.0.2.236")
+	require.NotContains(t, result, "28787")
+	require.NotContains(t, result, "internal.example.com")
+	require.NotContains(t, result, "9443")
+	require.NotContains(t, result, "private")
+	require.Contains(t, result, "context canceled")
+	require.Contains(t, result, "42")
+}
+
 func TestMaskSensitiveInfoPreservesCommonNestedParams(t *testing.T) {
 	fields := []string{
 		"tools.0.input_schema.properties.path.type",

@@ -539,6 +539,49 @@ func TestRecordImageHandleSyncErrorDetailStoresContextMap(t *testing.T) {
 	require.Equal(t, float64(400), detail["upstream_status"])
 }
 
+func TestRecordImageHandleSyncErrorDetailMasksNestedNetworkLocations(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+
+	recordImageHandleSyncErrorDetail(ctx, imageHandleSyncResponse{
+		TaskID:       "imgtask_masked",
+		ClientTaskID: "task_masked",
+		Error: &imageHandleSyncError{
+			Code:                 "upstream_error",
+			ProviderErrorMessage: `Post "http://192.0.2.236:28787/v1/images/edits": context canceled`,
+			UpstreamError: map[string]any{
+				"endpoint": "https://internal.example.com:9443/private/upstream",
+			},
+		},
+		RawResponse: map[string]any{
+			"debug_url": "http://198.51.100.9:8080/raw/response",
+		},
+	})
+
+	value, ok := common.GetContextKey(ctx, constant.ContextKeyImageHandleSyncErrorDetail)
+	require.True(t, ok)
+	serialized, err := common.Marshal(value)
+	require.NoError(t, err)
+	result := string(serialized)
+	for _, secret := range []string{
+		"192.0.2.236",
+		"198.51.100.9",
+		"internal.example.com",
+		"28787",
+		"9443",
+		"8080",
+		"/v1/images/edits",
+		"/private/upstream",
+		"/raw/response",
+	} {
+		require.NotContains(t, result, secret)
+	}
+	require.Contains(t, result, "context canceled")
+}
+
 func TestImageHandleSyncToOpenAIResponseFallsBackToRawResponseUsage(t *testing.T) {
 	t.Parallel()
 

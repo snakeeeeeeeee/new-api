@@ -3,6 +3,7 @@ package common
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -152,6 +153,12 @@ func maskHostTail(parts []string) []string {
 // maskHostForURL collapses subdomains and keeps only masked prefix + preserved tail.
 // Example: api.openai.com -> ***.com, sub.domain.co.uk -> ***.co.uk
 func maskHostForURL(host string) string {
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.To4() != nil {
+			return "***.***.***.***"
+		}
+		return "[***]"
+	}
 	parts := strings.Split(host, ".")
 	if len(parts) < 2 {
 		return "***"
@@ -223,7 +230,7 @@ func MaskSensitiveInfo(str string) string {
 			return urlStr
 		}
 
-		host := u.Host
+		host := u.Hostname()
 		if host == "" {
 			return urlStr
 		}
@@ -284,4 +291,26 @@ func MaskSensitiveInfo(str string) string {
 	str = maskApiKeyPattern.ReplaceAllString(str, "${1}api_key:***${3}")
 
 	return str
+}
+
+// MaskSensitiveValue recursively masks sensitive strings in JSON-compatible data.
+func MaskSensitiveValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return MaskSensitiveInfo(typed)
+	case map[string]any:
+		masked := make(map[string]any, len(typed))
+		for key, item := range typed {
+			masked[key] = MaskSensitiveValue(item)
+		}
+		return masked
+	case []any:
+		masked := make([]any, len(typed))
+		for index, item := range typed {
+			masked[index] = MaskSensitiveValue(item)
+		}
+		return masked
+	default:
+		return value
+	}
 }
