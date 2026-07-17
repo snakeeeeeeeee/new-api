@@ -33,7 +33,7 @@ const (
 	WebhookEventImageTaskSucceeded = "image.task.succeeded"
 	WebhookEventImageTaskFailed    = "image.task.failed"
 	WebhookEventTest               = "webhook.test"
-	webhookKeyPrefix               = "wk-"
+	webhookKeyPrefix               = "sk-"
 	webhookKeyEnvelopeVersion      = "v1"
 	webhookDeliveryTimeout         = 10 * time.Second
 )
@@ -109,6 +109,17 @@ func generateWebhookKey() (string, error) {
 	return webhookKeyPrefix + value, nil
 }
 
+func normalizeWebhookKey(value string) (string, bool, error) {
+	if strings.HasPrefix(value, webhookKeyPrefix) {
+		return value, false, nil
+	}
+	if strings.HasPrefix(value, "wk-") && len(value) > len("wk-") {
+		return webhookKeyPrefix + strings.TrimPrefix(value, "wk-"), true, nil
+	}
+	keyValue, err := generateWebhookKey()
+	return keyValue, true, err
+}
+
 func accountWebhookToPublic(endpoint *model.WebhookEndpoint, keyConfigured bool) *dto.AccountWebhookPublic {
 	if endpoint == nil {
 		return &dto.AccountWebhookPublic{Status: model.WebhookEndpointDisabled}
@@ -164,11 +175,22 @@ func MigrateAccountWebhookConfigs() error {
 				return err
 			}
 			encryptedKey := selected.AuthKeyEncrypted
-			if encryptedKey == "" && selected.SecretSalt != "" && selected.SecretVersion > 0 {
-				var err error
-				encryptedKey, err = encryptWebhookKey(deriveLegacyWebhookSecret(selected.EndpointID, selected.SecretSalt, selected.SecretVersion))
+			keyValue := ""
+			if encryptedKey != "" {
+				keyValue, _ = decryptWebhookKey(encryptedKey)
+			} else if selected.SecretSalt != "" && selected.SecretVersion > 0 {
+				keyValue = deriveLegacyWebhookSecret(selected.EndpointID, selected.SecretSalt, selected.SecretVersion)
+			}
+			if keyValue != "" {
+				normalizedKey, changed, err := normalizeWebhookKey(keyValue)
 				if err != nil {
 					return err
+				}
+				if changed || encryptedKey == "" {
+					encryptedKey, err = encryptWebhookKey(normalizedKey)
+					if err != nil {
+						return err
+					}
 				}
 			}
 			status := selected.Status
@@ -208,6 +230,25 @@ func GetAccountWebhookConfig(userID int) (*dto.AccountWebhookPublic, error) {
 		endpoint.UpdatedAt = now
 		return accountWebhookToPublic(endpoint, false), nil
 	}
+	normalizedKey, changed, err := normalizeWebhookKey(keyValue)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		encryptedKey, err := encryptWebhookKey(normalizedKey)
+		if err != nil {
+			return nil, err
+		}
+		now := time.Now().Unix()
+		if err := model.DB.Model(endpoint).Updates(map[string]any{
+			"auth_key_encrypted": encryptedKey, "updated_at": now,
+		}).Error; err != nil {
+			return nil, err
+		}
+		endpoint.AuthKeyEncrypted = encryptedKey
+		endpoint.UpdatedAt = now
+		keyValue = normalizedKey
+	}
 	response := accountWebhookToPublic(endpoint, true)
 	response.Key = keyValue
 	return response, nil
@@ -215,8 +256,13 @@ func GetAccountWebhookConfig(userID int) (*dto.AccountWebhookPublic, error) {
 
 func PutAccountWebhookConfig(userID int, request dto.AccountWebhookUpdateRequest) (*dto.AccountWebhookPublic, error) {
 	request.URL = strings.TrimSpace(request.URL)
-	if err := ValidateWebhookEndpointURL(context.Background(), request.URL); err != nil {
-		return nil, err
+	if request.URL != "" {
+		if err := ValidateWebhookEndpointURL(context.Background(), request.URL); err != nil {
+			return nil, err
+		}
+	}
+	if request.Enabled != nil && *request.Enabled && request.URL == "" {
+		return nil, errors.New("Webhook URL is required when enabling Webhook")
 	}
 	var result *model.WebhookEndpoint
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
@@ -247,12 +293,24 @@ func PutAccountWebhookConfig(userID int, request dto.AccountWebhookUpdateRequest
 			endpoint.AuthKeyEncrypted = encrypted
 		}
 
+		status := model.WebhookEndpointDisabled
+		if !creating {
+			status = endpoint.Status
+		}
+		if request.Enabled != nil {
+			if *request.Enabled {
+				status = model.WebhookEndpointEnabled
+			} else {
+				status = model.WebhookEndpointDisabled
+			}
+		}
+
 		now := time.Now().Unix()
 		ownerID := userID
 		if creating {
 			endpoint = model.WebhookEndpoint{
 				EndpointID: model.NewWebhookEndpointID(), UserID: userID, ConfigOwnerID: &ownerID,
-				Name: "Task events", URL: request.URL, Status: model.WebhookEndpointEnabled,
+				Name: "Task events", URL: request.URL, Status: status,
 				EventTypes: accountWebhookEventTypesJSON(), APIVersion: WebhookAPIVersion,
 				AuthKeyEncrypted: endpoint.AuthKeyEncrypted, CreatedAt: now, UpdatedAt: now,
 			}
@@ -261,7 +319,7 @@ func PutAccountWebhookConfig(userID int, request dto.AccountWebhookUpdateRequest
 			}
 		} else {
 			updates := map[string]any{
-				"url": request.URL, "status": model.WebhookEndpointEnabled,
+				"url": request.URL, "status": status,
 				"event_types": accountWebhookEventTypesJSON(), "api_version": WebhookAPIVersion,
 				"auth_key_encrypted": endpoint.AuthKeyEncrypted, "updated_at": now,
 			}
@@ -269,7 +327,7 @@ func PutAccountWebhookConfig(userID int, request dto.AccountWebhookUpdateRequest
 				return err
 			}
 			endpoint.URL = request.URL
-			endpoint.Status = model.WebhookEndpointEnabled
+			endpoint.Status = status
 			endpoint.UpdatedAt = now
 		}
 		result = &endpoint

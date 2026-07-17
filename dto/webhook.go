@@ -3,6 +3,7 @@ package dto
 type AccountWebhookUpdateRequest struct {
 	URL           string `json:"url"`
 	RegenerateKey bool   `json:"regenerate_key,omitempty"`
+	Enabled       *bool  `json:"enabled,omitempty"`
 }
 
 type AccountWebhookPublic struct {

@@ -42,6 +42,12 @@ type tokenKeyResponse struct {
 	Key string `json:"key"`
 }
 
+type tokenCreateResponse struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Key  string `json:"key"`
+}
+
 func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 
@@ -310,6 +316,13 @@ func TestAddTokenAllowsVisibleAggregateGroup(t *testing.T) {
 	response := decodeAPIResponse(t, recorder)
 	if !response.Success {
 		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+	var createResponse tokenCreateResponse
+	if err := common.Unmarshal(response.Data, &createResponse); err != nil {
+		t.Fatalf("failed to decode create token response: %v", err)
+	}
+	if createResponse.ID == 0 || createResponse.Name != "aggregate-token" || !strings.HasPrefix(createResponse.Key, "sk-") {
+		t.Fatalf("unexpected create token response: %+v", createResponse)
 	}
 
 	var created model.Token

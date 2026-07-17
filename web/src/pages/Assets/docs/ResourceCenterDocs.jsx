@@ -163,7 +163,7 @@ const ASSET_LIST_RESPONSE = `{
 }`;
 
 const WEBHOOK_HEADERS = `POST https://your-service.example.com/webhooks/new-api HTTP/1.1
-Authorization: Bearer wk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 Content-Type: application/json`;
 
 const WEBHOOK_SUCCEEDED_PAYLOAD = `{
@@ -361,15 +361,27 @@ function EndpointTable({ tags, apiKey, t }) {
   );
 }
 
-function OverviewDocs({ t }) {
+function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
   return (
     <div>
       <DocumentationSection
-        title={t('所有接口统一使用一个 API Key')}
+        title={t('API 调用统一使用一个 API Key')}
         description={t(
           '异步任务、预上传和资源 API 统一使用同一个普通 API Key（sk-...）。',
         )}
       >
+        <Space wrap className='mb-3'>
+          <Button
+            type='primary'
+            icon={<ExternalLink size={16} />}
+            onClick={onOpenApiKeys}
+          >
+            {t('生成 API Key')}
+          </Button>
+          <Button icon={<ExternalLink size={16} />} onClick={onOpenWebhook}>
+            {t('配置 Webhook')}
+          </Button>
+        </Space>
         <DocsTable
           columns={[t('使用场景'), t('API Key'), t('Authorization')]}
           rows={[
@@ -381,7 +393,9 @@ function OverviewDocs({ t }) {
           ]}
         />
         <Text type='tertiary'>
-          {t('Webhook 的 wk- Key 只是回调验证密钥，不具备 API 调用权限。')}
+          {t(
+            'Webhook 使用单独生成的 sk- 验证 Key，它只用于校验回调，不具备 API 调用权限。',
+          )}
         </Text>
       </DocumentationSection>
 
@@ -566,7 +580,9 @@ function WebhookDocs({ onOpenWebhook, t }) {
             {t('打开 Webhook 配置')}
           </Button>
           <Text type='tertiary'>
-            {t('在资源中心生成 wk- Key，并在接收端校验 Authorization 请求头。')}
+            {t(
+              '在资源中心生成 Webhook 验证 Key，并在接收端校验 Authorization 请求头。',
+            )}
           </Text>
         </div>
         <CodeExample title={t('回调请求头')}>{WEBHOOK_HEADERS}</CodeExample>
@@ -594,7 +610,9 @@ function WebhookDocs({ onOpenWebhook, t }) {
           </Collapse.Panel>
           <Collapse.Panel header={t('webhook.test')} itemKey='test'>
             <Text type='tertiary' className='mb-3 block'>
-              {t('点击“发送测试”后会收到该事件，用于验证地址和 wk- Key。')}
+              {t(
+                '点击“发送测试”后会收到该事件，用于验证地址和 Webhook 验证 Key。',
+              )}
             </Text>
             <CodeExample title={t('测试事件')}>
               {WEBHOOK_TEST_PAYLOAD}
@@ -617,7 +635,7 @@ function WebhookDocs({ onOpenWebhook, t }) {
             [t('发送失败'), t('连接失败或超时后直接结束，不会再次发送')],
             [
               t('安全'),
-              t('校验 Authorization: Bearer wk-...，不要记录完整 Key'),
+              t('校验 Authorization: Bearer sk-...，不要记录完整 Key'),
             ],
           ]}
         />
@@ -626,7 +644,7 @@ function WebhookDocs({ onOpenWebhook, t }) {
   );
 }
 
-export default function ResourceCenterDocs({ onOpenWebhook }) {
+export default function ResourceCenterDocs({ onOpenApiKeys, onOpenWebhook }) {
   const { t } = useTranslation();
   const [activeSection, setActiveSection] = useState('overview');
   const [showOpenAPI, setShowOpenAPI] = useState(false);
@@ -681,7 +699,13 @@ export default function ResourceCenterDocs({ onOpenWebhook }) {
         ]}
       />
 
-      {activeSection === 'overview' && <OverviewDocs t={t} />}
+      {activeSection === 'overview' && (
+        <OverviewDocs
+          onOpenApiKeys={onOpenApiKeys}
+          onOpenWebhook={onOpenWebhook}
+          t={t}
+        />
+      )}
       {activeSection === 'async-images' && <AsyncImageDocs t={t} />}
       {activeSection === 'assets' && <AssetApiDocs t={t} />}
       {activeSection === 'webhook' && (

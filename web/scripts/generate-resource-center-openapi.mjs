@@ -460,7 +460,7 @@ const spec = {
         operationId: 'receiveImageTaskSucceededWebhook',
         summary: 'image.task.succeeded callback',
         description:
-          'Sent once with Authorization: Bearer wk-.... The receiver response is ignored and failed connections are not retried.',
+          'Sent once with Authorization: Bearer sk-.... This is a separately generated Webhook verification key, not an API calling credential. The receiver response is ignored and failed connections are not retried.',
         security: webhookSecurity,
         parameters: [],
         requestBody: {
@@ -485,7 +485,7 @@ const spec = {
         operationId: 'receiveImageTaskFailedWebhook',
         summary: 'image.task.failed callback',
         description:
-          'Sent once with Authorization: Bearer wk-.... The receiver response is ignored and failed connections are not retried.',
+          'Sent once with Authorization: Bearer sk-.... This is a separately generated Webhook verification key, not an API calling credential. The receiver response is ignored and failed connections are not retried.',
         security: webhookSecurity,
         parameters: [],
         requestBody: {
@@ -518,9 +518,9 @@ const spec = {
       WebhookBearerAuth: {
         type: 'http',
         scheme: 'bearer',
-        bearerFormat: 'wk-...',
+        bearerFormat: 'sk-...',
         description:
-          'new-api generates this Key for the account-level task Webhook. The account owner can reveal, copy, or regenerate it in the Resource Center.',
+          'new-api generates this separate verification Key for the account-level task Webhook. It shares the sk- prefix but cannot call new-api APIs.',
       },
     },
     schemas: {

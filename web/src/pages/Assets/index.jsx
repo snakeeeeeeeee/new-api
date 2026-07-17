@@ -58,6 +58,7 @@ import { ITEMS_PER_PAGE } from '../../constants';
 import { DATE_RANGE_PRESETS } from '../../constants/console.constants';
 import ResourceCenterDocs from './docs/ResourceCenterDocs';
 import WebhookTab from './webhooks/WebhookTab';
+import ApiKeyTab from './keys/ApiKeyTab';
 
 const { Text, Title } = Typography;
 const DIRECT_DOWNLOAD_LIMIT = 20;
@@ -659,14 +660,17 @@ export default function AssetsPage() {
           onChange={setActiveMainTab}
           tabList={[
             { tab: t('资源列表'), itemKey: 'assets' },
+            { tab: 'API Key', itemKey: 'api-keys' },
             { tab: 'Webhook', itemKey: 'webhooks' },
             { tab: t('使用文档'), itemKey: 'docs' },
           ]}
         />
         {activeMainTab === 'assets' && renderAssetsTab()}
+        {activeMainTab === 'api-keys' && <ApiKeyTab />}
         {activeMainTab === 'webhooks' && <WebhookTab />}
         {activeMainTab === 'docs' && (
           <ResourceCenterDocs
+            onOpenApiKeys={() => setActiveMainTab('api-keys')}
             onOpenWebhook={() => setActiveMainTab('webhooks')}
           />
         )}

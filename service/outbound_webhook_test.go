@@ -62,7 +62,9 @@ func setupOutboundWebhookTestDB(t *testing.T) *gorm.DB {
 
 func putWebhookTestConfig(t *testing.T, targetURL string) *dto.AccountWebhookPublic {
 	t.Helper()
-	config, err := PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{URL: targetURL})
+	config, err := PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
+		URL: targetURL, Enabled: common.GetPointer(true),
+	})
 	require.NoError(t, err)
 	require.NotEmpty(t, config.Key)
 	return config
@@ -121,7 +123,9 @@ func TestAccountWebhookConfigLifecycleAndEncryptedKey(t *testing.T) {
 	_, err = CreateAccountWebhookTestDelivery(501)
 	assert.ErrorContains(t, err, "disabled")
 
-	_, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{URL: "http://127.0.0.1:18081/new"})
+	_, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
+		URL: "http://127.0.0.1:18081/new", Enabled: common.GetPointer(true),
+	})
 	require.NoError(t, err)
 	reenabled, err := GetAccountWebhookConfig(501)
 	require.NoError(t, err)
@@ -157,7 +161,9 @@ func TestAccountWebhookKeyGenerationAndCryptoSecretFailure(t *testing.T) {
 
 	_, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{URL: "http://127.0.0.1:18080"})
 	assert.ErrorIs(t, err, ErrWebhookStoredKeyUnavailable)
-	config, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{URL: "http://127.0.0.1:18080", RegenerateKey: true})
+	config, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
+		URL: "http://127.0.0.1:18080", RegenerateKey: true, Enabled: common.GetPointer(true),
+	})
 	require.NoError(t, err)
 	assert.True(t, config.KeyConfigured)
 	assert.Equal(t, model.WebhookEndpointEnabled, config.Status)
@@ -187,7 +193,7 @@ func TestAccountWebhookMigrationCollapsesLegacyEndpoints(t *testing.T) {
 	assert.Equal(t, "we_new_enabled", selected.EndpointID)
 	decrypted, err := decryptWebhookKey(selected.AuthKeyEncrypted)
 	require.NoError(t, err)
-	assert.Equal(t, deriveLegacyWebhookSecret("we_new_enabled", "salt-new", 2), decrypted)
+	assert.True(t, strings.HasPrefix(decrypted, webhookKeyPrefix))
 	assert.Equal(t, accountWebhookEventTypesJSON(), selected.EventTypes)
 
 	var enabledCount, deliveryCount int64
@@ -196,6 +202,36 @@ func TestAccountWebhookMigrationCollapsesLegacyEndpoints(t *testing.T) {
 	assert.EqualValues(t, 1, enabledCount)
 	assert.EqualValues(t, 1, deliveryCount)
 	require.NoError(t, MigrateAccountWebhookConfigs())
+}
+
+func TestAccountWebhookRequiresURLOnlyWhenEnabled(t *testing.T) {
+	setupOutboundWebhookTestDB(t)
+
+	config, err := PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
+		RegenerateKey: true, Enabled: common.GetPointer(false),
+	})
+	require.NoError(t, err)
+	assert.True(t, config.Configured)
+	assert.Empty(t, config.URL)
+	assert.Equal(t, model.WebhookEndpointDisabled, config.Status)
+	assert.True(t, strings.HasPrefix(config.Key, webhookKeyPrefix))
+
+	_, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
+		Enabled: common.GetPointer(true),
+	})
+	assert.ErrorContains(t, err, "URL is required")
+
+	config, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
+		URL: "http://127.0.0.1:18080/hook", Enabled: common.GetPointer(true),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, model.WebhookEndpointEnabled, config.Status)
+
+	config, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
+		URL: config.URL, Enabled: common.GetPointer(false),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, model.WebhookEndpointDisabled, config.Status)
 }
 
 func TestImageTaskTerminalEventCreatesOneAccountDelivery(t *testing.T) {
