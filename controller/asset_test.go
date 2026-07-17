@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -122,6 +123,7 @@ func TestExportUserAssetsCSV(t *testing.T) {
 
 func TestCreateAndListAssetKeyReturnsFullKey(t *testing.T) {
 	setupInviteCodeControllerTestDB(t)
+	require.NoError(t, model.DB.Create(&model.User{Id: 11, Username: "asset-key-user"}).Error)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/assets/keys", bytes.NewReader([]byte(`{"name":"asset-reader","expired_at":-1}`)))
@@ -135,6 +137,24 @@ func TestCreateAndListAssetKeyReturnsFullKey(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &createResp))
 	require.True(t, createResp.Success)
 	require.Contains(t, string(createResp.Data), `"key":"ak_`)
+	var firstKey dto.AssetKeyDto
+	require.NoError(t, common.Unmarshal(createResp.Data, &firstKey))
+
+	rotateRecorder := httptest.NewRecorder()
+	rotateCtx, _ := gin.CreateTestContext(rotateRecorder)
+	rotateCtx.Request = httptest.NewRequest(http.MethodPost, "/api/assets/keys", bytes.NewReader([]byte(`{"name":"resource-center","expired_at":-1}`)))
+	rotateCtx.Request.Header.Set("Content-Type", "application/json")
+	rotateCtx.Set("id", 11)
+	CreateUserAssetKey(rotateCtx)
+
+	require.Equal(t, http.StatusOK, rotateRecorder.Code)
+	var rotateResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(rotateRecorder.Body.Bytes(), &rotateResp))
+	require.True(t, rotateResp.Success)
+	var rotatedKey dto.AssetKeyDto
+	require.NoError(t, common.Unmarshal(rotateResp.Data, &rotatedKey))
+	assert.Equal(t, firstKey.ID, rotatedKey.ID)
+	assert.NotEqual(t, firstKey.Key, rotatedKey.Key)
 
 	listRecorder := httptest.NewRecorder()
 	listCtx, _ := gin.CreateTestContext(listRecorder)
@@ -144,8 +164,10 @@ func TestCreateAndListAssetKeyReturnsFullKey(t *testing.T) {
 	GetUserAssetKeys(listCtx)
 
 	require.Equal(t, http.StatusOK, listRecorder.Code)
-	assert.Contains(t, listRecorder.Body.String(), "asset-reader")
-	assert.Contains(t, listRecorder.Body.String(), "ak_")
+	assert.Contains(t, listRecorder.Body.String(), "resource-center")
+	assert.Contains(t, listRecorder.Body.String(), rotatedKey.Key)
+	assert.NotContains(t, listRecorder.Body.String(), firstKey.Key)
+	assert.Contains(t, listRecorder.Body.String(), `"total":1`)
 }
 
 func TestListAssetsByAPIKeyOnlyReturnsOwnVisibleAssets(t *testing.T) {

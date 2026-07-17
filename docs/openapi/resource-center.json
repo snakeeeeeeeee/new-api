@@ -4,7 +4,7 @@
     "title": "new-api Resource Center API",
     "version": "2026-07-17",
     "summary": "Assets, asynchronous image tasks, uploads, and Webhooks.",
-    "description": "Public Resource Center API. Async image tasks, uploads, and assets use the same normal new-api token. Account-level task Webhooks are configured in the Resource Center console."
+    "description": "Public Resource Center API. Async image tasks, existing video task APIs, uploads, assets, and outbound Webhook verification use the same Resource Center API Key. This document focuses on normalized image and asset operations."
   },
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "servers": [
@@ -21,7 +21,7 @@
   "tags": [
     {
       "name": "Assets",
-      "description": "Read generated assets with a normal new-api token."
+      "description": "Read generated assets with a Resource Center API Key."
     },
     {
       "name": "Async Images",
@@ -43,7 +43,7 @@
         "description": "Lists only assets owned by the API token user.",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "parameters": [
@@ -203,7 +203,7 @@
         "summary": "Get an asset",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "parameters": [
@@ -255,7 +255,7 @@
         "summary": "Query assets in a JSON body",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "requestBody": {
@@ -303,7 +303,7 @@
         "summary": "Get asset URLs in bulk",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "requestBody": {
@@ -352,7 +352,7 @@
         "description": "Exports at most 10,000 matching assets.",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "parameters": [
@@ -487,7 +487,7 @@
         "description": "Returns immediately after the task, billing reservation, credential lease, and durable dispatch are stored. Reusing an Idempotency-Key with the same normalized request returns the original task.",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "parameters": [
@@ -568,7 +568,7 @@
         "summary": "List asynchronous image tasks",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "parameters": [
@@ -678,7 +678,7 @@
         "summary": "Get an asynchronous image task",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "parameters": [
@@ -731,7 +731,7 @@
         "description": "Returned tasks preserve request order. Unknown or unauthorized IDs are listed in missing.",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "requestBody": {
@@ -780,7 +780,7 @@
         "description": "Accepts up to 10 repeated image files and one mask. Each PNG, JPEG, or WebP file is limited to 20 MiB and the request to 100 MiB. Temporary URLs should be submitted to a task promptly.",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "requestBody": {
@@ -844,7 +844,7 @@
         "description": "Accepts plain base64 or data URLs. Use images plus optional mask, or uploads with an optional field value of image or mask.",
         "security": [
           {
-            "TokenAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "requestBody": {
@@ -898,10 +898,10 @@
       "post": {
         "operationId": "receiveImageTaskSucceededWebhook",
         "summary": "image.task.succeeded callback",
-        "description": "Sent once with Authorization: Bearer sk-.... This is a separately generated Webhook verification key, not an API calling credential. The receiver response is ignored and failed connections are not retried.",
+        "description": "Sent once with Authorization: Bearer ak_.... This is the same Resource Center API Key used to create and query tasks. The receiver response is ignored and failed connections are not retried.",
         "security": [
           {
-            "WebhookBearerAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "parameters": [],
@@ -965,10 +965,10 @@
       "post": {
         "operationId": "receiveImageTaskFailedWebhook",
         "summary": "image.task.failed callback",
-        "description": "Sent once with Authorization: Bearer sk-.... This is a separately generated Webhook verification key, not an API calling credential. The receiver response is ignored and failed connections are not retried.",
+        "description": "Sent once with Authorization: Bearer ak_.... This is the same Resource Center API Key used to create and query tasks. The receiver response is ignored and failed connections are not retried.",
         "security": [
           {
-            "WebhookBearerAuth": []
+            "ResourceCenterAuth": []
           }
         ],
         "parameters": [],
@@ -1022,17 +1022,11 @@
   },
   "components": {
     "securitySchemes": {
-      "TokenAuth": {
+      "ResourceCenterAuth": {
         "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "new-api token",
-        "description": "A normal new-api token authorized for the requested image model."
-      },
-      "WebhookBearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "sk-...",
-        "description": "new-api generates this separate verification Key for the account-level task Webhook. It shares the sk- prefix but cannot call new-api APIs."
+        "bearerFormat": "ak_...",
+        "description": "A Resource Center API Key generated on the Resource Center API Key tab. The same key authorizes async image and video tasks, uploads, asset reads, and outbound Webhook verification."
       }
     },
     "schemas": {

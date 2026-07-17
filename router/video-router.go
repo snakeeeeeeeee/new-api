@@ -10,7 +10,7 @@ import (
 func SetVideoRouter(router *gin.Engine) {
 	assetV1Router := router.Group("/v1")
 	assetV1Router.Use(middleware.RouteTag("relay"))
-	assetV1Router.Use(middleware.AssetOrTokenAuth())
+	assetV1Router.Use(middleware.AssetKeyAuth())
 	{
 		assetV1Router.GET("/assets", controller.ListAssetsByAPIKey)
 		assetV1Router.POST("/assets/query", controller.QueryAssetsByAPIKey)
@@ -29,7 +29,7 @@ func SetVideoRouter(router *gin.Engine) {
 
 	imageTaskQueryRouter := router.Group("/v1")
 	imageTaskQueryRouter.Use(middleware.RouteTag("relay"))
-	imageTaskQueryRouter.Use(middleware.TokenAuth())
+	imageTaskQueryRouter.Use(middleware.AssetKeyAuth())
 	{
 		imageTaskQueryRouter.GET("/image/tasks", controller.ListImageTasks)
 		imageTaskQueryRouter.GET("/image/tasks/:task_id", controller.GetImageTask)
@@ -40,12 +40,11 @@ func SetVideoRouter(router *gin.Engine) {
 
 	videoV1Router := router.Group("/v1")
 	videoV1Router.Use(middleware.RouteTag("relay"))
-	videoV1Router.Use(middleware.TokenAuth(), middleware.Distribute())
+	videoV1Router.Use(middleware.AssetOrTokenAuth(), middleware.Distribute())
 	{
 		videoV1Router.POST("/video/generations", controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
 		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
-		videoV1Router.POST("/image/tasks", controller.PrepareImageTaskRequest, controller.RelayTask)
 	}
 	// openai compatible API video routes
 	// docs: https://platform.openai.com/docs/api-reference/videos/create
@@ -55,6 +54,13 @@ func SetVideoRouter(router *gin.Engine) {
 		videoV1Router.POST("/videos/extensions", controller.RelayTask)
 		videoV1Router.POST("/videos", controller.RelayTask)
 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
+	}
+
+	imageTaskCreateRouter := router.Group("/v1")
+	imageTaskCreateRouter.Use(middleware.RouteTag("relay"))
+	imageTaskCreateRouter.Use(middleware.AssetKeyAuth(), middleware.Distribute())
+	{
+		imageTaskCreateRouter.POST("/image/tasks", controller.PrepareImageTaskRequest, controller.RelayTask)
 	}
 
 	klingV1Router := router.Group("/kling/v1")

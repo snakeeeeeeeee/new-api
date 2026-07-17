@@ -163,7 +163,7 @@ const ASSET_LIST_RESPONSE = `{
 }`;
 
 const WEBHOOK_HEADERS = `POST https://your-service.example.com/webhooks/new-api HTTP/1.1
-Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+Authorization: Bearer ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 Content-Type: application/json`;
 
 const WEBHOOK_SUCCEEDED_PAYLOAD = `{
@@ -365,9 +365,9 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
   return (
     <div>
       <DocumentationSection
-        title={t('API 调用统一使用一个 API Key')}
+        title={t('资源中心统一使用一个 API Key')}
         description={t(
-          '异步任务、预上传和资源 API 统一使用同一个普通 API Key（sk-...）。',
+          '异步图片、视频任务、预上传、资源查询和 Webhook 回调统一使用同一个资源 API Key（ak_...）。',
         )}
       >
         <Space wrap className='mb-3'>
@@ -386,15 +386,22 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
           columns={[t('使用场景'), t('API Key'), t('Authorization')]}
           rows={[
             [
-              t('创建和查询异步任务、预上传图片，以及查询和导出生成资源'),
-              t('普通 API Key（sk-...）'),
-              'Bearer sk-...',
+              t(
+                '创建和查询异步图片/视频任务、预上传图片，以及查询和导出生成资源',
+              ),
+              t('资源 API Key（ak_...）'),
+              'Bearer ak_...',
             ],
           ]}
         />
         <Text type='tertiary'>
           {t(
-            'Webhook 使用单独生成的 sk- 验证 Key，它只用于校验回调，不具备 API 调用权限。',
+            'Webhook 回调使用同一个资源 API Key，不需要再生成单独的验证密钥。',
+          )}
+        </Text>
+        <Text type='tertiary'>
+          {t(
+            '现有视频任务接口也接受该资源 API Key；本页重点列出规范化异步图片与资源接口。',
           )}
         </Text>
       </DocumentationSection>
@@ -457,11 +464,11 @@ function AsyncImageDocs({ t }) {
     <div>
       <DocumentationSection
         title={t('接口列表')}
-        description={t('这些接口统一使用普通 API Key（sk-...）。')}
+        description={t('这些接口统一使用资源 API Key（ak_...）。')}
       >
         <EndpointTable
           tags={['Async Images', 'Image Uploads']}
-          apiKey={t('普通 API Key')}
+          apiKey={t('资源 API Key')}
           t={t}
         />
       </DocumentationSection>
@@ -523,9 +530,9 @@ function AssetApiDocs({ t }) {
     <div>
       <DocumentationSection
         title={t('接口列表')}
-        description={t('资源 API 使用同一个普通 API Key（sk-...）。')}
+        description={t('资源 API 使用同一个资源 API Key（ak_...）。')}
       >
-        <EndpointTable tags={['Assets']} apiKey={t('普通 API Key')} t={t} />
+        <EndpointTable tags={['Assets']} apiKey={t('资源 API Key')} t={t} />
       </DocumentationSection>
 
       <DocumentationSection
@@ -581,7 +588,7 @@ function WebhookDocs({ onOpenWebhook, t }) {
           </Button>
           <Text type='tertiary'>
             {t(
-              '在资源中心生成 Webhook 验证 Key，并在接收端校验 Authorization 请求头。',
+              'Webhook 使用 API Key 页签中的资源 API Key；接收端校验 Authorization 请求头即可。',
             )}
           </Text>
         </div>
@@ -610,9 +617,7 @@ function WebhookDocs({ onOpenWebhook, t }) {
           </Collapse.Panel>
           <Collapse.Panel header={t('webhook.test')} itemKey='test'>
             <Text type='tertiary' className='mb-3 block'>
-              {t(
-                '点击“发送测试”后会收到该事件，用于验证地址和 Webhook 验证 Key。',
-              )}
+              {t('点击“发送测试”后会收到该事件，用于验证地址和资源 API Key。')}
             </Text>
             <CodeExample title={t('测试事件')}>
               {WEBHOOK_TEST_PAYLOAD}
@@ -635,7 +640,7 @@ function WebhookDocs({ onOpenWebhook, t }) {
             [t('发送失败'), t('连接失败或超时后直接结束，不会再次发送')],
             [
               t('安全'),
-              t('校验 Authorization: Bearer sk-...，不要记录完整 Key'),
+              t('校验 Authorization: Bearer ak_...，不要记录完整 Key'),
             ],
           ]}
         />

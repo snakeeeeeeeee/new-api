@@ -324,6 +324,9 @@ func migrateDB() error {
 	if err := NormalizeExistingAssetKeyScopes(); err != nil {
 		return err
 	}
+	if err := NormalizeExistingAssetKeys(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -415,6 +418,9 @@ func migrateDBFast() error {
 		common.SysLog(fmt.Sprintf("Warning: failed to backfill admin menu permissions: %v", err))
 	}
 	if err := NormalizeExistingAssetKeyScopes(); err != nil {
+		return err
+	}
+	if err := NormalizeExistingAssetKeys(); err != nil {
 		return err
 	}
 	common.SysLog("database migrated")

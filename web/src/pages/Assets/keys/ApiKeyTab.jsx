@@ -20,8 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useEffect, useState } from 'react';
 import {
   Button,
-  Input,
-  Pagination,
+  Popconfirm,
   Space,
   Spin,
   Tag,
@@ -30,12 +29,13 @@ import {
 } from '@douyinfe/semi-ui';
 import {
   Copy,
-  ExternalLink,
   Eye,
   EyeOff,
   KeyRound,
-  Plus,
+  Power,
+  PowerOff,
   RefreshCcw,
+  Trash2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -47,284 +47,244 @@ import {
 } from '../../../helpers';
 
 const { Text, Title } = Typography;
-const PAGE_SIZE = 10;
+const KEY_STATUS_ENABLED = 1;
+const KEY_STATUS_DISABLED = 2;
 
-function fullAPIKey(value) {
+function maskResourceKey(value) {
   if (!value) return '';
-  return value.startsWith('sk-') ? value : `sk-${value}`;
-}
-
-function tokenStatus(status, t) {
-  switch (status) {
-    case 1:
-      return <Tag color='green'>{t('启用')}</Tag>;
-    case 2:
-      return <Tag color='grey'>{t('禁用')}</Tag>;
-    case 3:
-      return <Tag color='orange'>{t('已过期')}</Tag>;
-    case 4:
-      return <Tag color='red'>{t('额度已用尽')}</Tag>;
-    default:
-      return <Tag>{t('未知')}</Tag>;
-  }
-}
-
-function defaultTokenName() {
-  const now = new Date();
-  const date = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-  ].join('');
-  const time = [
-    String(now.getHours()).padStart(2, '0'),
-    String(now.getMinutes()).padStart(2, '0'),
-    String(now.getSeconds()).padStart(2, '0'),
-  ].join('');
-  return `resource-center-${date}-${time}`;
+  if (value.length <= 12) return `${value.slice(0, 4)}••••${value.slice(-2)}`;
+  return `${value.slice(0, 7)}••••••••••${value.slice(-4)}`;
 }
 
 export default function ApiKeyTab() {
   const { t } = useTranslation();
-  const [tokens, setTokens] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [name, setName] = useState('');
+  const [resourceKey, setResourceKey] = useState(null);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [resolvedKeys, setResolvedKeys] = useState({});
-  const [visibleKeys, setVisibleKeys] = useState({});
-  const [keyLoading, setKeyLoading] = useState({});
+  const [visible, setVisible] = useState(false);
+  const [actionKeyID, setActionKeyID] = useState(0);
 
-  const loadTokens = async (targetPage = page) => {
+  const loadKey = async () => {
     setLoading(true);
     try {
-      const response = await API.get(
-        `/api/token/?p=${targetPage}&size=${PAGE_SIZE}`,
-      );
+      const response = await API.get('/api/assets/keys?p=1&page_size=1');
       const { success, data, message } = response.data || {};
       if (!success) {
-        showError(message || t('加载 API Key 失败'));
+        showError(message || t('加载资源 API Key 失败'));
         return;
       }
-      setTokens(data?.items || []);
-      setTotal(data?.total || 0);
-      setPage(data?.page || targetPage);
+      setResourceKey(data?.items?.[0] || null);
+      setVisible(false);
     } catch (error) {
-      showError(error?.message || t('加载 API Key 失败'));
+      showError(error?.message || t('加载资源 API Key 失败'));
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadTokens(1);
+    loadKey();
   }, []);
 
-  const createAPIKey = async () => {
+  const generateKey = async () => {
     setCreating(true);
     try {
-      const response = await API.post('/api/token/', {
-        name: name.trim() || defaultTokenName(),
-        expired_time: -1,
-        remain_quota: 0,
-        unlimited_quota: true,
-        model_limits_enabled: false,
-        model_limits: '',
+      const response = await API.post('/api/assets/keys', {
+        name: 'resource-center',
+        expired_at: -1,
         allow_ips: '',
-        group: '',
-        cross_group_retry: false,
       });
       const { success, data, message } = response.data || {};
-      if (!success) {
-        showError(message || t('生成 API Key 失败'));
+      if (!success || !data?.key) {
+        showError(message || t('生成资源 API Key 失败'));
         return;
       }
-      await loadTokens(1);
-      if (data?.id && data?.key) {
-        setResolvedKeys((current) => ({
-          ...current,
-          [data.id]: fullAPIKey(data.key),
-        }));
-        setVisibleKeys((current) => ({ ...current, [data.id]: true }));
-      }
-      setName('');
-      showSuccess(t('API Key 已生成'));
+      setResourceKey(data);
+      setVisible(true);
+      showSuccess(t('资源 API Key 已生成'));
     } catch (error) {
-      showError(error?.message || t('生成 API Key 失败'));
+      showError(error?.message || t('生成资源 API Key 失败'));
     } finally {
       setCreating(false);
     }
   };
 
-  const resolveKey = async (token) => {
-    if (resolvedKeys[token.id]) return resolvedKeys[token.id];
-    setKeyLoading((current) => ({ ...current, [token.id]: true }));
+  const changeStatus = async () => {
+    if (!resourceKey) return;
+    const nextStatus =
+      resourceKey.status === KEY_STATUS_ENABLED
+        ? KEY_STATUS_DISABLED
+        : KEY_STATUS_ENABLED;
+    setActionKeyID(resourceKey.id);
     try {
-      const response = await API.post(`/api/token/${token.id}/key`);
-      const { success, data, message } = response.data || {};
-      if (!success || !data?.key) {
-        throw new Error(message || t('获取 API Key 失败'));
+      const response = await API.put(
+        `/api/assets/keys/${resourceKey.id}/status`,
+        { status: nextStatus },
+      );
+      const { success, message } = response.data || {};
+      if (!success) {
+        showError(message || t('更新资源 API Key 状态失败'));
+        return;
       }
-      const key = fullAPIKey(data.key);
-      setResolvedKeys((current) => ({ ...current, [token.id]: key }));
-      return key;
+      setResourceKey((current) => ({ ...current, status: nextStatus }));
+      showSuccess(
+        nextStatus === KEY_STATUS_ENABLED
+          ? t('资源 API Key 已启用')
+          : t('资源 API Key 已停用'),
+      );
     } catch (error) {
-      showError(error?.message || t('获取 API Key 失败'));
-      return '';
+      showError(error?.message || t('更新资源 API Key 状态失败'));
     } finally {
-      setKeyLoading((current) => ({ ...current, [token.id]: false }));
+      setActionKeyID(0);
     }
   };
 
-  const toggleKey = async (token) => {
-    if (visibleKeys[token.id]) {
-      setVisibleKeys((current) => ({ ...current, [token.id]: false }));
-      return;
-    }
-    const key = await resolveKey(token);
-    if (key) {
-      setVisibleKeys((current) => ({ ...current, [token.id]: true }));
+  const deleteKey = async () => {
+    if (!resourceKey) return;
+    setActionKeyID(resourceKey.id);
+    try {
+      const response = await API.delete(`/api/assets/keys/${resourceKey.id}`);
+      const { success, message } = response.data || {};
+      if (!success) {
+        showError(message || t('删除资源 API Key 失败'));
+        return;
+      }
+      setResourceKey(null);
+      setVisible(false);
+      showSuccess(t('资源 API Key 已删除'));
+    } catch (error) {
+      showError(error?.message || t('删除资源 API Key 失败'));
+    } finally {
+      setActionKeyID(0);
     }
   };
 
-  const copyKey = async (token) => {
-    const key = await resolveKey(token);
-    if (key && (await copy(key))) showSuccess(t('API Key 已复制'));
+  const copyKey = async () => {
+    if (resourceKey && (await copy(resourceKey.key))) {
+      showSuccess(t('资源 API Key 已复制'));
+    }
   };
+
+  const enabled = resourceKey?.status === KEY_STATUS_ENABLED;
 
   return (
-    <section className='flex max-w-4xl flex-col gap-5'>
-      <div className='flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between'>
-        <div className='min-w-0'>
-          <Title heading={5} className='!mb-1'>
-            {t('API Key')}
-          </Title>
-          <Text type='tertiary'>
-            {t('用于创建和查询异步任务、预上传文件以及访问生成资源')}
-          </Text>
-        </div>
-        <Button
-          icon={<ExternalLink size={16} />}
-          onClick={() => window.open('/console/token', '_self')}
-        >
-          {t('管理全部 API Key')}
-        </Button>
-      </div>
-
-      <div className='flex flex-col gap-2 sm:flex-row sm:items-end'>
-        <label className='flex min-w-0 flex-1 flex-col gap-2'>
-          <Text strong>{t('名称（可选）')}</Text>
-          <Input
-            value={name}
-            onChange={setName}
-            prefix={<KeyRound size={16} />}
-            placeholder={t('留空将自动生成名称')}
-            maxLength={50}
-            showClear
-          />
-        </label>
-        <Button
-          type='primary'
-          icon={<Plus size={16} />}
-          loading={creating}
-          onClick={createAPIKey}
-        >
-          {t('生成 API Key')}
-        </Button>
+    <section className='flex max-w-3xl flex-col gap-5'>
+      <div className='min-w-0'>
+        <Title heading={5} className='!mb-1'>
+          {t('资源 API Key')}
+        </Title>
+        <Text type='tertiary'>
+          {t(
+            '一把资源 API Key 可用于异步生图、生视频、任务查询、预上传、资源访问和 Webhook 回调验证。',
+          )}
+        </Text>
       </div>
 
       <Text type='tertiary' size='small'>
         {t(
-          '生成后可在此随时查看和复制；权限、额度和有效期可在令牌管理中修改。',
+          '资源 API Key 以 ak_ 开头，与令牌管理中的普通 sk- Token 相互独立。一把资源 Key 即可调用资源中心 API，Webhook 也使用同一个 Key 验证回调。',
         )}
       </Text>
 
-      <div className='border-y border-semi-color-border'>
+      <div className='border-y border-semi-color-border py-5'>
         {loading ? (
-          <div className='flex min-h-32 items-center justify-center'>
+          <div className='flex min-h-36 items-center justify-center'>
             <Spin />
           </div>
-        ) : tokens.length === 0 ? (
-          <div className='flex min-h-32 items-center justify-center'>
-            <Text type='tertiary'>{t('暂无 API Key')}</Text>
+        ) : !resourceKey ? (
+          <div className='flex min-h-36 flex-col items-center justify-center gap-3 text-center'>
+            <KeyRound size={26} className='text-semi-color-tertiary' />
+            <Text type='tertiary'>{t('尚未生成资源 API Key')}</Text>
+            <Button
+              type='primary'
+              icon={<KeyRound size={16} />}
+              loading={creating}
+              onClick={generateKey}
+            >
+              {t('生成资源 API Key')}
+            </Button>
           </div>
         ) : (
-          <div className='divide-y divide-semi-color-border'>
-            {tokens.map((token) => {
-              const visible = Boolean(visibleKeys[token.id]);
-              const displayKey = visible
-                ? resolvedKeys[token.id]
-                : fullAPIKey(token.key);
-              return (
-                <div
-                  key={token.id}
-                  className='grid grid-cols-1 gap-3 py-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] sm:items-center sm:gap-4'
-                >
-                  <div className='min-w-0'>
-                    <div className='flex flex-wrap items-center gap-2'>
-                      <Text strong ellipsis={{ showTooltip: true }}>
-                        {token.name}
-                      </Text>
-                      {tokenStatus(token.status, t)}
-                    </div>
-                    <Text type='tertiary' size='small'>
-                      {timestamp2string(token.created_time)}
-                    </Text>
-                  </div>
-                  <Text code className='min-w-0 break-all'>
-                    {displayKey}
-                  </Text>
-                  <Space spacing={4}>
-                    <Tooltip
-                      content={visible ? t('隐藏 API Key') : t('显示 API Key')}
-                    >
-                      <Button
-                        theme='borderless'
-                        type='tertiary'
-                        icon={
-                          visible ? <EyeOff size={17} /> : <Eye size={17} />
-                        }
-                        loading={Boolean(keyLoading[token.id])}
-                        aria-label={
-                          visible ? t('隐藏 API Key') : t('显示 API Key')
-                        }
-                        onClick={() => toggleKey(token)}
-                      />
-                    </Tooltip>
-                    <Tooltip content={t('复制 API Key')}>
-                      <Button
-                        theme='borderless'
-                        type='tertiary'
-                        icon={<Copy size={17} />}
-                        loading={Boolean(keyLoading[token.id])}
-                        aria-label={t('复制 API Key')}
-                        onClick={() => copyKey(token)}
-                      />
-                    </Tooltip>
-                  </Space>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+          <div className='flex flex-col gap-4'>
+            <div className='flex flex-wrap items-center justify-between gap-2'>
+              <div className='flex flex-wrap items-center gap-2'>
+                <Text strong>{t('资源 API Key')}</Text>
+                <Tag color={enabled ? 'green' : 'grey'}>
+                  {enabled ? t('启用') : t('停用')}
+                </Tag>
+              </div>
+              <Text type='tertiary' size='small'>
+                {resourceKey.last_used_at > 0
+                  ? `${t('最近使用')} ${timestamp2string(resourceKey.last_used_at)}`
+                  : `${t('创建于')} ${timestamp2string(resourceKey.created_at)}`}
+              </Text>
+            </div>
 
-      <div className='flex flex-wrap items-center justify-between gap-2'>
-        <Button
-          icon={<RefreshCcw size={16} />}
-          loading={loading}
-          onClick={() => loadTokens(page)}
-        >
-          {t('刷新')}
-        </Button>
-        {total > PAGE_SIZE && (
-          <Pagination
-            currentPage={page}
-            pageSize={PAGE_SIZE}
-            total={total}
-            onPageChange={loadTokens}
-          />
+            <div className='flex min-w-0 items-start gap-2'>
+              <Text
+                code
+                className='min-w-0 flex-1 break-all rounded-sm bg-semi-color-fill-0 px-3 py-2'
+              >
+                {visible ? resourceKey.key : maskResourceKey(resourceKey.key)}
+              </Text>
+              <Tooltip
+                content={
+                  visible ? t('隐藏资源 API Key') : t('显示资源 API Key')
+                }
+              >
+                <Button
+                  icon={visible ? <EyeOff size={17} /> : <Eye size={17} />}
+                  aria-label={
+                    visible ? t('隐藏资源 API Key') : t('显示资源 API Key')
+                  }
+                  onClick={() => setVisible((current) => !current)}
+                />
+              </Tooltip>
+              <Tooltip content={t('复制资源 API Key')}>
+                <Button
+                  icon={<Copy size={17} />}
+                  aria-label={t('复制资源 API Key')}
+                  onClick={copyKey}
+                />
+              </Tooltip>
+            </div>
+
+            <Space spacing={8} wrap>
+              <Tooltip content={enabled ? t('停用') : t('启用')}>
+                <Button
+                  icon={enabled ? <PowerOff size={16} /> : <Power size={16} />}
+                  loading={actionKeyID === resourceKey.id}
+                  onClick={changeStatus}
+                >
+                  {enabled ? t('停用') : t('启用')}
+                </Button>
+              </Tooltip>
+              <Popconfirm
+                title={t('确定重新生成资源 API Key？')}
+                content={t('重新生成后，旧 Key 会立即失效。')}
+                onConfirm={generateKey}
+              >
+                <Button icon={<RefreshCcw size={16} />} loading={creating}>
+                  {t('重新生成')}
+                </Button>
+              </Popconfirm>
+              <Popconfirm
+                title={t('确定删除资源 API Key？')}
+                content={t(
+                  '删除后使用该 Key 的 API 调用和 Webhook 验证会立即失效。',
+                )}
+                onConfirm={deleteKey}
+              >
+                <Button
+                  type='danger'
+                  icon={<Trash2 size={16} />}
+                  loading={actionKeyID === resourceKey.id}
+                >
+                  {t('删除')}
+                </Button>
+              </Popconfirm>
+            </Space>
+          </div>
         )}
       </div>
     </section>

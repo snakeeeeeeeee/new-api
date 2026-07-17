@@ -85,6 +85,10 @@ func TestAssetKeyAuthAcceptsEnabledKey(t *testing.T) {
 	require.True(t, called)
 	require.Equal(t, 41, ctx.GetInt("id"))
 	require.Equal(t, key.ID, ctx.GetInt64("asset_key_id"))
+	require.Equal(t, key.Name, ctx.GetString("token_name"))
+	require.True(t, ctx.GetBool("token_unlimited_quota"))
+	require.False(t, ctx.GetBool("token_model_limit_enabled"))
+	require.Zero(t, ctx.GetInt("token_id"))
 }
 
 func TestAssetKeyAuthRejectsDisabledKey(t *testing.T) {

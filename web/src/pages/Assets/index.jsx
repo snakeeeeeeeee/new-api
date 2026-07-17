@@ -667,7 +667,9 @@ export default function AssetsPage() {
         />
         {activeMainTab === 'assets' && renderAssetsTab()}
         {activeMainTab === 'api-keys' && <ApiKeyTab />}
-        {activeMainTab === 'webhooks' && <WebhookTab />}
+        {activeMainTab === 'webhooks' && (
+          <WebhookTab onOpenApiKeys={() => setActiveMainTab('api-keys')} />
+        )}
         {activeMainTab === 'docs' && (
           <ResourceCenterDocs
             onOpenApiKeys={() => setActiveMainTab('api-keys')}

@@ -34,6 +34,10 @@ type BillingSession struct {
 	mu               sync.Mutex
 }
 
+func (s *BillingSession) usesTokenQuota() bool {
+	return !s.relayInfo.IsPlayground && s.relayInfo.TokenId > 0 && s.relayInfo.TokenKey != ""
+}
+
 // Settle 根据实际消耗额度进行结算。
 // 资金来源和令牌额度分两步提交：若资金来源已提交但令牌调整失败，
 // 会标记 fundingSettled 防止 Refund 对已提交的资金来源执行退款。
@@ -60,7 +64,7 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	}
 	// 2) 调整令牌额度
 	var tokenErr error
-	if !s.relayInfo.IsPlayground {
+	if s.usesTokenQuota() {
 		if delta > 0 {
 			tokenErr = model.DecreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, delta)
 		} else {
@@ -99,7 +103,7 @@ func (s *BillingSession) Refund(c *gin.Context) {
 	// 复制需要的值到闭包中
 	tokenId := s.relayInfo.TokenId
 	tokenKey := s.relayInfo.TokenKey
-	isPlayground := s.relayInfo.IsPlayground
+	usesTokenQuota := s.usesTokenQuota()
 	tokenConsumed := s.tokenConsumed
 	funding := s.funding
 
@@ -109,7 +113,7 @@ func (s *BillingSession) Refund(c *gin.Context) {
 			common.SysLog("error refunding billing source: " + err.Error())
 		}
 		// 2) 退还令牌额度
-		if tokenConsumed > 0 && !isPlayground {
+		if tokenConsumed > 0 && usesTokenQuota {
 			if err := model.RefundTokenQuota(tokenId, tokenKey, tokenConsumed); err != nil {
 				common.SysLog("error refunding token quota: " + err.Error())
 			}
@@ -162,7 +166,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 	}
 
 	// ---- 1) 预扣令牌额度 ----
-	if effectiveQuota > 0 {
+	if effectiveQuota > 0 && s.usesTokenQuota() {
 		if err := PreConsumeTokenQuota(s.relayInfo, effectiveQuota); err != nil {
 			if errors.Is(err, model.ErrQuotaInsufficient) {
 				return types.NewErrorWithStatusCode(err, types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
@@ -175,7 +179,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 	// ---- 2) 预扣资金来源 ----
 	if err := s.funding.PreConsume(effectiveQuota); err != nil {
 		// 预扣费失败，回滚令牌额度
-		if s.tokenConsumed > 0 && !s.relayInfo.IsPlayground {
+		if s.tokenConsumed > 0 && s.usesTokenQuota() {
 			if rollbackErr := model.RefundTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, s.tokenConsumed); rollbackErr != nil {
 				common.SysLog(fmt.Sprintf("error rolling back token quota (userId=%d, tokenId=%d, amount=%d, fundingErr=%s): %s",
 					s.relayInfo.UserId, s.relayInfo.TokenId, s.tokenConsumed, err.Error(), rollbackErr.Error()))

@@ -57,16 +57,12 @@ func writeAccountWebhookError(c *gin.Context, err error) {
 		writeWebhookAPIError(c, http.StatusNotFound, "webhook_not_configured", "Webhook is not configured", "")
 		return
 	}
-	if errors.Is(err, service.ErrWebhookStoredKeyUnavailable) {
-		writeWebhookAPIError(c, http.StatusBadRequest, "webhook_key_regeneration_required", err.Error(), "regenerate_key")
-		return
-	}
 	message := err.Error()
 	param := ""
 	if strings.Contains(message, "URL") || strings.Contains(message, "HTTPS") || strings.Contains(message, "DNS") || strings.Contains(message, "IP") {
 		param = "url"
-	} else if strings.Contains(message, "key") {
-		param = "regenerate_key"
+	} else if strings.Contains(message, "Resource Center API Key") {
+		param = "resource_api_key"
 	}
 	writeWebhookAPIError(c, http.StatusBadRequest, "invalid_request", message, param)
 }

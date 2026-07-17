@@ -63,14 +63,17 @@ func AssetKeyAuth() func(c *gin.Context) {
 		c.Set("asset_key_id", assetKey.ID)
 		c.Set("asset_key_name", assetKey.Name)
 		c.Set("asset_key_scopes", assetKey.Scopes)
+		c.Set("token_name", assetKey.Name)
+		c.Set("token_unlimited_quota", true)
+		c.Set("token_model_limit_enabled", false)
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userCache.Group)
 		model.TouchAssetKeyLastUsed(assetKey.ID)
 		c.Next()
 	}
 }
 
-// AssetOrTokenAuth keeps existing read-only resource keys working while making
-// the normal API token the default credential for Resource Center APIs.
+// AssetOrTokenAuth allows resource APIs that predate the dedicated key to keep
+// accepting normal tokens while also supporting Resource Center keys.
 func AssetOrTokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		keyValue := c.GetHeader("Authorization")

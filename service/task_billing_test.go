@@ -441,6 +441,27 @@ func TestPreConsumeBillingRejectsNegativeQuota(t *testing.T) {
 	assert.Equal(t, 500, getTokenRemainQuota(t, tokenID))
 }
 
+func TestResourceKeyBillingConsumesOnlyAccountQuota(t *testing.T) {
+	truncate(t)
+	const userID = 113
+	seedUser(t, userID, 1000)
+
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          userID,
+		OriginModelName: "gpt-image-2",
+		UsingGroup:      "default",
+		UserSetting:     dto.UserSetting{BillingPreference: "wallet_only"},
+	}
+	session, apiErr := NewBillingSession(testGinContext(), relayInfo, 100)
+	require.Nil(t, apiErr)
+	assert.Equal(t, 900, getUserQuota(t, userID))
+
+	require.NoError(t, session.Settle(60))
+	assert.Equal(t, 940, getUserQuota(t, userID))
+	assert.Zero(t, relayInfo.TokenId)
+	assert.Empty(t, relayInfo.TokenKey)
+}
+
 func TestSettleBillingRejectsNegativeActualQuota(t *testing.T) {
 	truncate(t)
 	const userID, tokenID = 108, 108

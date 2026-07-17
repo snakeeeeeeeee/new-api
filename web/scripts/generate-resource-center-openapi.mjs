@@ -26,9 +26,7 @@ const queryParameter = (name, schema, description) => ({
   description,
   schema,
 });
-const tokenSecurity = [{ TokenAuth: [] }];
-const assetSecurity = tokenSecurity;
-const webhookSecurity = [{ WebhookBearerAuth: [] }];
+const resourceSecurity = [{ ResourceCenterAuth: [] }];
 
 const webhookSucceededExample = {
   id: 'evt_xxx',
@@ -186,7 +184,7 @@ const spec = {
     version: '2026-07-17',
     summary: 'Assets, asynchronous image tasks, uploads, and Webhooks.',
     description:
-      'Public Resource Center API. Async image tasks, uploads, and assets use the same normal new-api token. Account-level task Webhooks are configured in the Resource Center console.',
+      'Public Resource Center API. Async image tasks, existing video task APIs, uploads, assets, and outbound Webhook verification use the same Resource Center API Key. This document focuses on normalized image and asset operations.',
   },
   jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
   servers: [
@@ -203,7 +201,7 @@ const spec = {
   tags: [
     {
       name: 'Assets',
-      description: 'Read generated assets with a normal new-api token.',
+      description: 'Read generated assets with a Resource Center API Key.',
     },
     {
       name: 'Async Images',
@@ -221,7 +219,7 @@ const spec = {
         operationId: 'listAssets',
         summary: 'List assets',
         description: 'Lists only assets owned by the API token user.',
-        security: assetSecurity,
+        security: resourceSecurity,
         parameters: [
           ...assetFilterParameters,
           queryParameter(
@@ -246,7 +244,7 @@ const spec = {
         tags: ['Assets'],
         operationId: 'getAsset',
         summary: 'Get an asset',
-        security: assetSecurity,
+        security: resourceSecurity,
         parameters: [pathParameter('asset_id', 'Asset ID such as asset_xxx.')],
         responses: {
           200: jsonResponse('Asset.', ref('Asset')),
@@ -260,7 +258,7 @@ const spec = {
         tags: ['Assets'],
         operationId: 'queryAssets',
         summary: 'Query assets in a JSON body',
-        security: assetSecurity,
+        security: resourceSecurity,
         requestBody: {
           required: true,
           content: jsonContent(ref('AssetQueryRequest')),
@@ -276,7 +274,7 @@ const spec = {
         tags: ['Assets'],
         operationId: 'getAssetURLs',
         summary: 'Get asset URLs in bulk',
-        security: assetSecurity,
+        security: resourceSecurity,
         requestBody: {
           required: true,
           content: jsonContent(ref('AssetBatchURLRequest')),
@@ -293,7 +291,7 @@ const spec = {
         operationId: 'exportAssets',
         summary: 'Export asset URLs as CSV',
         description: 'Exports at most 10,000 matching assets.',
-        security: assetSecurity,
+        security: resourceSecurity,
         parameters: assetFilterParameters,
         responses: {
           200: {
@@ -314,7 +312,7 @@ const spec = {
         summary: 'Create an asynchronous image task',
         description:
           'Returns immediately after the task, billing reservation, credential lease, and durable dispatch are stored. Reusing an Idempotency-Key with the same normalized request returns the original task.',
-        security: tokenSecurity,
+        security: resourceSecurity,
         parameters: [
           {
             name: 'Idempotency-Key',
@@ -352,7 +350,7 @@ const spec = {
         tags: ['Async Images'],
         operationId: 'listImageTasks',
         summary: 'List asynchronous image tasks',
-        security: tokenSecurity,
+        security: resourceSecurity,
         parameters: imageTaskListParameters,
         responses: {
           200: jsonResponse(
@@ -368,7 +366,7 @@ const spec = {
         tags: ['Async Images'],
         operationId: 'getImageTask',
         summary: 'Get an asynchronous image task',
-        security: tokenSecurity,
+        security: resourceSecurity,
         parameters: [
           pathParameter('task_id', 'Public task ID such as task_xxx.'),
         ],
@@ -386,7 +384,7 @@ const spec = {
         summary: 'Query up to 100 image tasks',
         description:
           'Returned tasks preserve request order. Unknown or unauthorized IDs are listed in missing.',
-        security: tokenSecurity,
+        security: resourceSecurity,
         requestBody: {
           required: true,
           content: jsonContent(ref('ImageTaskBatchQueryRequest')),
@@ -407,7 +405,7 @@ const spec = {
         summary: 'Upload image inputs as multipart data',
         description:
           'Accepts up to 10 repeated image files and one mask. Each PNG, JPEG, or WebP file is limited to 20 MiB and the request to 100 MiB. Temporary URLs should be submitted to a task promptly.',
-        security: tokenSecurity,
+        security: resourceSecurity,
         requestBody: {
           required: true,
           content: {
@@ -436,7 +434,7 @@ const spec = {
         summary: 'Upload base64 image inputs',
         description:
           'Accepts plain base64 or data URLs. Use images plus optional mask, or uploads with an optional field value of image or mask.',
-        security: tokenSecurity,
+        security: resourceSecurity,
         requestBody: {
           required: true,
           content: jsonContent(ref('ImageBase64UploadRequest')),
@@ -460,8 +458,8 @@ const spec = {
         operationId: 'receiveImageTaskSucceededWebhook',
         summary: 'image.task.succeeded callback',
         description:
-          'Sent once with Authorization: Bearer sk-.... This is a separately generated Webhook verification key, not an API calling credential. The receiver response is ignored and failed connections are not retried.',
-        security: webhookSecurity,
+          'Sent once with Authorization: Bearer ak_.... This is the same Resource Center API Key used to create and query tasks. The receiver response is ignored and failed connections are not retried.',
+        security: resourceSecurity,
         parameters: [],
         requestBody: {
           required: true,
@@ -485,8 +483,8 @@ const spec = {
         operationId: 'receiveImageTaskFailedWebhook',
         summary: 'image.task.failed callback',
         description:
-          'Sent once with Authorization: Bearer sk-.... This is a separately generated Webhook verification key, not an API calling credential. The receiver response is ignored and failed connections are not retried.',
-        security: webhookSecurity,
+          'Sent once with Authorization: Bearer ak_.... This is the same Resource Center API Key used to create and query tasks. The receiver response is ignored and failed connections are not retried.',
+        security: resourceSecurity,
         parameters: [],
         requestBody: {
           required: true,
@@ -508,19 +506,12 @@ const spec = {
   },
   components: {
     securitySchemes: {
-      TokenAuth: {
+      ResourceCenterAuth: {
         type: 'http',
         scheme: 'bearer',
-        bearerFormat: 'new-api token',
+        bearerFormat: 'ak_...',
         description:
-          'A normal new-api token authorized for the requested image model.',
-      },
-      WebhookBearerAuth: {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'sk-...',
-        description:
-          'new-api generates this separate verification Key for the account-level task Webhook. It shares the sk- prefix but cannot call new-api APIs.',
+          'A Resource Center API Key generated on the Resource Center API Key tab. The same key authorizes async image and video tasks, uploads, asset reads, and outbound Webhook verification.',
       },
     },
     schemas: {

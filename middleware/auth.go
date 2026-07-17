@@ -191,7 +191,7 @@ func WssAuth(c *gin.Context) {
 
 }
 
-// TokenOrUserAuth allows either session-based user auth or API token auth.
+// TokenOrUserAuth allows session auth, a Resource Center key, or a normal API token.
 // Used for endpoints that need to be accessible from both the dashboard and API clients.
 func TokenOrUserAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
@@ -204,8 +204,8 @@ func TokenOrUserAuth() func(c *gin.Context) {
 				return
 			}
 		}
-		// Fall back to token auth (API clients)
-		TokenAuth()(c)
+		// Fall back to Resource Center key or token auth (API clients).
+		AssetOrTokenAuth()(c)
 	}
 }
 
