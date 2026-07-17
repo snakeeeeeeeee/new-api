@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -31,71 +33,93 @@ const (
 	maxImageUploadCount        = 10
 )
 
+type imageTaskAPIProblem struct {
+	status  int
+	code    string
+	message string
+	param   string
+}
+
+type multipartImageTaskPreparation struct {
+	request           dto.ImageTaskCreateRequest
+	fingerprint       string
+	uploadContentType string
+	uploadBody        []byte
+	imageCount        int
+	hasMask           bool
+}
+
+type multipartImageTaskFingerprint struct {
+	Transport string                     `json:"transport"`
+	Request   dto.ImageTaskCreateRequest `json:"request"`
+}
+
+type imagePrefixWriter struct {
+	data []byte
+}
+
+func (w *imagePrefixWriter) Write(value []byte) (int, error) {
+	remaining := 512 - len(w.data)
+	if remaining > len(value) {
+		remaining = len(value)
+	}
+	if remaining > 0 {
+		w.data = append(w.data, value[:remaining]...)
+	}
+	return len(value), nil
+}
+
 func PrepareImageTaskRequest(c *gin.Context) {
+	idempotencyKey, problem := imageTaskIdempotencyKey(c)
+	if problem != nil {
+		abortImageTaskAPIProblem(c, problem)
+		return
+	}
+
 	var request dto.ImageTaskCreateRequest
-	storage, err := common.GetBodyStorage(c)
-	if err != nil {
-		writeImageTaskAPIError(c, http.StatusBadRequest, "invalid_request", "Invalid JSON request body", "")
-		c.Abort()
-		return
+	var canonical []byte
+	var fingerprint string
+	var err error
+	if isMultipartImageTaskRequest(c.GetHeader("Content-Type")) {
+		preparation, parseProblem := parseMultipartImageTaskRequest(c)
+		if parseProblem != nil {
+			abortImageTaskAPIProblem(c, parseProblem)
+			return
+		}
+		fingerprint = preparation.fingerprint
+		if replayImageTaskRequest(c, idempotencyKey, fingerprint) {
+			return
+		}
+		upload, uploadProblem := forwardImageTaskUpload(c.Request.Context(), preparation.uploadContentType, "/v1/image/uploads", preparation.uploadBody)
+		if uploadProblem != nil {
+			abortImageTaskAPIProblem(c, uploadProblem)
+			return
+		}
+		request, problem = applyMultipartImageTaskUpload(preparation, upload)
+		if problem != nil {
+			abortImageTaskAPIProblem(c, problem)
+			return
+		}
+		canonical, err = common.Marshal(request)
+		if err != nil {
+			abortImageTaskAPIProblem(c, &imageTaskAPIProblem{status: http.StatusInternalServerError, code: "server_error", message: "Failed to normalize request"})
+			return
+		}
+	} else {
+		var parseProblem *imageTaskAPIProblem
+		request, canonical, fingerprint, parseProblem = parseJSONImageTaskRequest(c)
+		if parseProblem != nil {
+			abortImageTaskAPIProblem(c, parseProblem)
+			return
+		}
+		if replayImageTaskRequest(c, idempotencyKey, fingerprint) {
+			return
+		}
 	}
-	rawBody, err := storage.Bytes()
-	if err != nil || common.UnmarshalStrict(rawBody, &request) != nil {
-		writeImageTaskAPIError(c, http.StatusBadRequest, "invalid_request", "Invalid JSON request body", "")
-		c.Abort()
-		return
-	}
-	if param, message := validateImageTaskCreateRequest(&request); message != "" {
-		writeImageTaskAPIError(c, http.StatusBadRequest, "invalid_request", message, param)
-		c.Abort()
-		return
-	}
-	canonical, err := common.Marshal(request)
-	if err != nil {
+	if len(canonical) == 0 {
 		writeImageTaskAPIError(c, http.StatusInternalServerError, "server_error", "Failed to normalize request", "")
 		c.Abort()
 		return
-	}
-	fingerprintBytes := sha256.Sum256(canonical)
-	fingerprint := hex.EncodeToString(fingerprintBytes[:])
-	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
-	if len(idempotencyKey) > maxImageTaskIdempotencyKeyLength {
-		writeImageTaskAPIError(c, http.StatusBadRequest, "invalid_idempotency_key", "Idempotency-Key must not exceed 128 characters", "Idempotency-Key")
-		c.Abort()
-		return
-	}
-	if idempotencyKey != "" {
-		existing, exists, lookupErr := model.GetImageTaskRequestByIdempotencyKey(c.GetInt("id"), idempotencyKey)
-		if lookupErr != nil {
-			writeImageTaskAPIError(c, http.StatusInternalServerError, "server_error", "Failed to resolve Idempotency-Key", "Idempotency-Key")
-			c.Abort()
-			return
-		}
-		if exists {
-			if existing.RequestFingerprint != fingerprint {
-				writeImageTaskAPIError(c, http.StatusConflict, "idempotency_key_conflict", "Idempotency-Key was already used with a different request", "Idempotency-Key")
-				c.Abort()
-				return
-			}
-			task, taskExists, taskErr := model.GetPublicImageTask(c.GetInt("id"), existing.TaskID, imageHandleTaskPlatform())
-			if taskErr != nil || !taskExists {
-				writeImageTaskAPIError(c, http.StatusInternalServerError, "server_error", "Idempotent task could not be loaded", "")
-				c.Abort()
-				return
-			}
-			publicTask, buildErr := service.BuildPublicImageTask(task)
-			if buildErr != nil {
-				writeImageTaskAPIError(c, http.StatusInternalServerError, "server_error", "Failed to build task response", "")
-				c.Abort()
-				return
-			}
-			c.Header("Idempotent-Replayed", "true")
-			c.Header("Location", "/v1/image/tasks/"+task.TaskID)
-			c.Header("Retry-After", "2")
-			c.JSON(http.StatusAccepted, publicTask)
-			c.Abort()
-			return
-		}
 	}
 
 	legacy := normalizedImageTaskToLegacy(request)
@@ -115,6 +139,319 @@ func PrepareImageTaskRequest(c *gin.Context) {
 	c.Request.ContentLength = int64(len(legacyBody))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Next()
+}
+
+func imageTaskIdempotencyKey(c *gin.Context) (string, *imageTaskAPIProblem) {
+	key := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if len(key) > maxImageTaskIdempotencyKeyLength {
+		return "", &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_idempotency_key", message: "Idempotency-Key must not exceed 128 characters", param: "Idempotency-Key"}
+	}
+	return key, nil
+}
+
+func parseJSONImageTaskRequest(c *gin.Context) (dto.ImageTaskCreateRequest, []byte, string, *imageTaskAPIProblem) {
+	var request dto.ImageTaskCreateRequest
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return request, nil, "", &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: "Invalid JSON request body"}
+	}
+	rawBody, err := storage.Bytes()
+	if err != nil || common.UnmarshalStrict(rawBody, &request) != nil {
+		return request, nil, "", &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: "Invalid JSON request body"}
+	}
+	if param, message := validateImageTaskCreateRequest(&request); message != "" {
+		return request, nil, "", &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: message, param: param}
+	}
+	canonical, err := common.Marshal(request)
+	if err != nil {
+		return request, nil, "", &imageTaskAPIProblem{status: http.StatusInternalServerError, code: "server_error", message: "Failed to normalize request"}
+	}
+	return request, canonical, imageTaskRequestFingerprint(canonical), nil
+}
+
+func isMultipartImageTaskRequest(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err == nil {
+		return mediaType == "multipart/form-data"
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "multipart/form-data")
+}
+
+func parseMultipartImageTaskRequest(c *gin.Context) (multipartImageTaskPreparation, *imageTaskAPIProblem) {
+	var preparation multipartImageTaskPreparation
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		status := http.StatusBadRequest
+		code := "invalid_multipart_body"
+		if common.IsRequestBodyTooLargeError(err) {
+			status = http.StatusRequestEntityTooLarge
+			code = "upload_request_too_large"
+		}
+		return preparation, &imageTaskAPIProblem{status: status, code: code, message: "Invalid multipart request body"}
+	}
+	if storage.Size() > maxImageUploadRequestBytes {
+		return preparation, &imageTaskAPIProblem{status: http.StatusRequestEntityTooLarge, code: "upload_request_too_large", message: "Upload request exceeds 100 MiB"}
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_multipart_body", message: "Failed to read multipart request body"}
+	}
+	_, params, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+	if err != nil || params["boundary"] == "" {
+		return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_multipart_body", message: "request body must be multipart/form-data"}
+	}
+
+	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
+	fields := make(map[string]string)
+	allowedFields := map[string]bool{
+		"model": true, "operation": true, "prompt": true, "n": true, "size": true,
+		"quality": true, "output_format": true, "output_compression": true,
+		"background": true, "client_reference_id": true, "metadata": true,
+	}
+	var uploadBody bytes.Buffer
+	uploadWriter := multipart.NewWriter(&uploadBody)
+	imageHashes := make([]string, 0, maxImageUploadCount)
+	maskHash := ""
+
+	for {
+		part, nextErr := reader.NextPart()
+		if nextErr == io.EOF {
+			break
+		}
+		if nextErr != nil {
+			return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_multipart_body", message: "Invalid multipart request body"}
+		}
+		field := part.FormName()
+		filename := part.FileName()
+		if filename == "" {
+			if !allowedFields[field] {
+				_ = part.Close()
+				if field == "image" || field == "mask" {
+					return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_upload_field", message: field + " must be an uploaded file", param: field}
+				}
+				return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_multipart_field", message: "Unknown multipart field", param: field}
+			}
+			if _, exists := fields[field]; exists {
+				_ = part.Close()
+				return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "duplicate_multipart_field", message: "Multipart field must not be repeated", param: field}
+			}
+			value, readErr := io.ReadAll(part)
+			_ = part.Close()
+			if readErr != nil {
+				return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_multipart_body", message: "Failed to read multipart field", param: field}
+			}
+			fields[field] = string(value)
+			continue
+		}
+
+		if field != "image" && field != "mask" {
+			_ = part.Close()
+			return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_upload_field", message: "File field must be image or mask", param: field}
+		}
+		if field == "image" {
+			preparation.imageCount++
+			if preparation.imageCount > maxImageUploadCount {
+				_ = part.Close()
+				return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "too_many_uploads", message: fmt.Sprintf("At most %d images may be uploaded", maxImageUploadCount), param: "image"}
+			}
+		} else {
+			if preparation.hasMask {
+				_ = part.Close()
+				return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "too_many_uploads", message: "Only one mask may be uploaded", param: "mask"}
+			}
+			preparation.hasMask = true
+		}
+
+		uploadHeader := make(textproto.MIMEHeader)
+		uploadHeader.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": field, "filename": filename}))
+		if fileContentType := strings.TrimSpace(part.Header.Get("Content-Type")); fileContentType != "" {
+			uploadHeader.Set("Content-Type", fileContentType)
+		} else {
+			uploadHeader.Set("Content-Type", "application/octet-stream")
+		}
+		uploadPart, createErr := uploadWriter.CreatePart(uploadHeader)
+		if createErr != nil {
+			_ = part.Close()
+			return preparation, &imageTaskAPIProblem{status: http.StatusInternalServerError, code: "server_error", message: "Failed to prepare image upload"}
+		}
+		hasher := sha256.New()
+		prefix := &imagePrefixWriter{}
+		written, copyErr := io.Copy(io.MultiWriter(uploadPart, hasher, prefix), io.LimitReader(part, maxImageUploadFileBytes+1))
+		_ = part.Close()
+		if copyErr != nil {
+			return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_multipart_body", message: "Failed to read uploaded image", param: field}
+		}
+		if written > maxImageUploadFileBytes {
+			return preparation, &imageTaskAPIProblem{status: http.StatusRequestEntityTooLarge, code: "upload_file_too_large", message: "Uploaded image exceeds 20 MiB", param: field}
+		}
+		if imageErr := validateUploadedImageBytes(prefix.data); imageErr != nil {
+			return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_upload_image", message: imageErr.Error(), param: field}
+		}
+		digest := hex.EncodeToString(hasher.Sum(nil))
+		if field == "image" {
+			imageHashes = append(imageHashes, digest)
+		} else {
+			maskHash = digest
+		}
+	}
+	if preparation.imageCount == 0 {
+		return preparation, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "missing_upload_file", message: "At least one image file is required", param: "image"}
+	}
+	if err := uploadWriter.Close(); err != nil {
+		return preparation, &imageTaskAPIProblem{status: http.StatusInternalServerError, code: "server_error", message: "Failed to prepare image upload"}
+	}
+
+	request, fieldProblem := multipartImageTaskRequestFromFields(fields, imageHashes, maskHash)
+	if fieldProblem != nil {
+		return preparation, fieldProblem
+	}
+	canonicalFingerprint, err := common.Marshal(multipartImageTaskFingerprint{Transport: "multipart", Request: request})
+	if err != nil {
+		return preparation, &imageTaskAPIProblem{status: http.StatusInternalServerError, code: "server_error", message: "Failed to normalize request"}
+	}
+	preparation.request = request
+	preparation.fingerprint = imageTaskRequestFingerprint(canonicalFingerprint)
+	preparation.uploadContentType = uploadWriter.FormDataContentType()
+	preparation.uploadBody = uploadBody.Bytes()
+	return preparation, nil
+}
+
+func multipartImageTaskRequestFromFields(fields map[string]string, imageHashes []string, maskHash string) (dto.ImageTaskCreateRequest, *imageTaskAPIProblem) {
+	request := dto.ImageTaskCreateRequest{
+		Model:     fields["model"],
+		Operation: "edit",
+		Input:     dto.ImageTaskInputRequest{Prompt: fields["prompt"]},
+	}
+	if operation, exists := fields["operation"]; exists {
+		request.Operation = strings.ToLower(strings.TrimSpace(operation))
+		if request.Operation != "edit" {
+			return request, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: "operation must be edit for multipart requests", param: "operation"}
+		}
+	}
+	for _, digest := range imageHashes {
+		request.Input.Images = append(request.Input.Images, dto.ImageTaskSource{URL: "https://multipart.invalid/image/" + digest})
+	}
+	if maskHash != "" {
+		request.Input.Mask = &dto.ImageTaskSource{URL: "https://multipart.invalid/mask/" + maskHash}
+	}
+	request.ClientReferenceID = fields["client_reference_id"]
+	if value, exists := fields["n"]; exists {
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return request, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: "n must be an integer", param: "n"}
+		}
+		request.Output.Count = &parsed
+	}
+	if value, exists := fields["size"]; exists {
+		value = strings.TrimSpace(value)
+		request.Output.Size = &value
+	}
+	if value, exists := fields["quality"]; exists {
+		value = strings.TrimSpace(value)
+		request.Output.Quality = &value
+	}
+	if value, exists := fields["output_format"]; exists {
+		value = strings.TrimSpace(value)
+		request.Output.Format = &value
+	}
+	if value, exists := fields["output_compression"]; exists {
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return request, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: "output_compression must be an integer", param: "output_compression"}
+		}
+		request.Output.Compression = &parsed
+	}
+	if value, exists := fields["background"]; exists {
+		value = strings.TrimSpace(value)
+		request.Output.Background = &value
+	}
+	if value, exists := fields["metadata"]; exists {
+		if strings.TrimSpace(value) == "" || !strings.HasPrefix(strings.TrimSpace(value), "{") || common.UnmarshalStrict([]byte(value), &request.Metadata) != nil || request.Metadata == nil {
+			return request, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: "metadata must be a JSON object", param: "metadata"}
+		}
+	}
+	if param, message := validateImageTaskCreateRequest(&request); message != "" {
+		return request, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: message, param: multipartImageTaskParam(param)}
+	}
+	return request, nil
+}
+
+func multipartImageTaskParam(param string) string {
+	switch param {
+	case "input.prompt":
+		return "prompt"
+	case "input.images":
+		return "image"
+	case "output.count":
+		return "n"
+	case "output.compression":
+		return "output_compression"
+	default:
+		return param
+	}
+}
+
+func applyMultipartImageTaskUpload(preparation multipartImageTaskPreparation, upload dto.ImageUploadListResponse) (dto.ImageTaskCreateRequest, *imageTaskAPIProblem) {
+	request := preparation.request
+	if len(upload.Images) != preparation.imageCount || (preparation.hasMask && upload.Mask == nil) || (!preparation.hasMask && upload.Mask != nil) {
+		return request, &imageTaskAPIProblem{status: http.StatusBadGateway, code: "invalid_upload_response", message: "Image upload service returned incomplete inputs"}
+	}
+	request.Input.Images = make([]dto.ImageTaskSource, 0, len(upload.Images))
+	for _, imageURL := range upload.Images {
+		request.Input.Images = append(request.Input.Images, dto.ImageTaskSource{URL: imageURL})
+	}
+	request.Input.Mask = nil
+	if upload.Mask != nil {
+		request.Input.Mask = &dto.ImageTaskSource{URL: *upload.Mask}
+	}
+	if param, message := validateImageTaskCreateRequest(&request); message != "" {
+		return request, &imageTaskAPIProblem{status: http.StatusBadGateway, code: "invalid_upload_response", message: message, param: multipartImageTaskParam(param)}
+	}
+	return request, nil
+}
+
+func imageTaskRequestFingerprint(canonical []byte) string {
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:])
+}
+
+func replayImageTaskRequest(c *gin.Context, idempotencyKey, fingerprint string) bool {
+	if idempotencyKey == "" {
+		return false
+	}
+	existing, exists, lookupErr := model.GetImageTaskRequestByIdempotencyKey(c.GetInt("id"), idempotencyKey)
+	if lookupErr != nil {
+		abortImageTaskAPIProblem(c, &imageTaskAPIProblem{status: http.StatusInternalServerError, code: "server_error", message: "Failed to resolve Idempotency-Key", param: "Idempotency-Key"})
+		return true
+	}
+	if !exists {
+		return false
+	}
+	if existing.RequestFingerprint != fingerprint {
+		abortImageTaskAPIProblem(c, &imageTaskAPIProblem{status: http.StatusConflict, code: "idempotency_key_conflict", message: "Idempotency-Key was already used with a different request", param: "Idempotency-Key"})
+		return true
+	}
+	task, taskExists, taskErr := model.GetPublicImageTask(c.GetInt("id"), existing.TaskID, imageHandleTaskPlatform())
+	if taskErr != nil || !taskExists {
+		abortImageTaskAPIProblem(c, &imageTaskAPIProblem{status: http.StatusInternalServerError, code: "server_error", message: "Idempotent task could not be loaded"})
+		return true
+	}
+	publicTask, buildErr := service.BuildPublicImageTask(task)
+	if buildErr != nil {
+		abortImageTaskAPIProblem(c, &imageTaskAPIProblem{status: http.StatusInternalServerError, code: "server_error", message: "Failed to build task response"})
+		return true
+	}
+	c.Header("Idempotent-Replayed", "true")
+	c.Header("Location", "/v1/image/tasks/"+task.TaskID)
+	c.Header("Retry-After", "2")
+	c.JSON(http.StatusAccepted, publicTask)
+	c.Abort()
+	return true
+}
+
+func abortImageTaskAPIProblem(c *gin.Context, problem *imageTaskAPIProblem) {
+	writeImageTaskAPIError(c, problem.status, problem.code, problem.message, problem.param)
+	c.Abort()
 }
 
 func validateImageTaskCreateRequest(request *dto.ImageTaskCreateRequest) (string, string) {
@@ -295,10 +632,6 @@ func internalImageTaskOperation(value string) (string, error) {
 }
 
 func ProxyImageTaskUpload(c *gin.Context) {
-	if err := service.ValidateImageHandleSubmitConfig(); err != nil {
-		writeImageTaskAPIError(c, http.StatusServiceUnavailable, "image_upload_unavailable", "Image upload service is not configured", "")
-		return
-	}
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		status := http.StatusBadRequest
@@ -329,28 +662,41 @@ func ProxyImageTaskUpload(c *gin.Context) {
 		writeImageTaskAPIError(c, status, code, validationErr.Error(), param)
 		return
 	}
-	request, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, strings.TrimRight(service.GetImageHandleSubmitBaseURL(), "/")+path, bytes.NewReader(body))
-	if err != nil {
-		writeImageTaskAPIError(c, http.StatusInternalServerError, "server_error", "Failed to create upload request", "")
+	result, problem := forwardImageTaskUpload(c.Request.Context(), c.GetHeader("Content-Type"), path, body)
+	if problem != nil {
+		writeImageTaskAPIError(c, problem.status, problem.code, problem.message, problem.param)
 		return
 	}
-	request.Header.Set("Authorization", "Bearer "+service.GetImageHandleSubmitAPIKey())
-	request.Header.Set("Content-Type", c.GetHeader("Content-Type"))
-	response, err := service.GetHttpClient().Do(request)
+	c.JSON(http.StatusOK, result)
+}
+
+func forwardImageTaskUpload(ctx context.Context, contentType, path string, body []byte) (dto.ImageUploadListResponse, *imageTaskAPIProblem) {
+	var result dto.ImageUploadListResponse
+	if err := service.ValidateImageHandleSubmitConfig(); err != nil {
+		return result, &imageTaskAPIProblem{status: http.StatusServiceUnavailable, code: "image_upload_unavailable", message: "Image upload service is not configured"}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(service.GetImageHandleSubmitBaseURL(), "/")+path, bytes.NewReader(body))
 	if err != nil {
-		writeImageTaskAPIError(c, http.StatusBadGateway, "image_upload_failed", "Image upload service is unavailable", "")
-		return
+		return result, &imageTaskAPIProblem{status: http.StatusInternalServerError, code: "server_error", message: "Failed to create upload request"}
+	}
+	request.Header.Set("Authorization", "Bearer "+service.GetImageHandleSubmitAPIKey())
+	request.Header.Set("Content-Type", contentType)
+	client := service.GetHttpClient()
+	if client == nil {
+		client = http.DefaultClient
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return result, &imageTaskAPIProblem{status: http.StatusBadGateway, code: "image_upload_failed", message: "Image upload service is unavailable"}
 	}
 	defer response.Body.Close()
 	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 2<<20))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var upstream dto.ImageTaskAPIErrorResponse
 		if common.Unmarshal(responseBody, &upstream) == nil && upstream.Error.Code != "" {
-			writeImageTaskAPIError(c, response.StatusCode, upstream.Error.Code, upstream.Error.Message, upstream.Error.Param)
-			return
+			return result, &imageTaskAPIProblem{status: response.StatusCode, code: upstream.Error.Code, message: upstream.Error.Message, param: upstream.Error.Param}
 		}
-		writeImageTaskAPIError(c, response.StatusCode, "image_upload_failed", "Image upload failed", "")
-		return
+		return result, &imageTaskAPIProblem{status: response.StatusCode, code: "image_upload_failed", message: "Image upload failed"}
 	}
 	var upstream struct {
 		Uploads []struct {
@@ -368,17 +714,16 @@ func ProxyImageTaskUpload(c *gin.Context) {
 		Mask   *string  `json:"mask"`
 	}
 	if err := common.Unmarshal(responseBody, &upstream); err != nil {
-		writeImageTaskAPIError(c, http.StatusBadGateway, "invalid_upload_response", "Image upload service returned an invalid response", "")
-		return
+		return result, &imageTaskAPIProblem{status: http.StatusBadGateway, code: "invalid_upload_response", message: "Image upload service returned an invalid response"}
 	}
-	result := dto.ImageUploadListResponse{Object: "image.upload.list", Images: upstream.Images, Mask: upstream.Mask}
+	result = dto.ImageUploadListResponse{Object: "image.upload.list", Images: upstream.Images, Mask: upstream.Mask}
 	for _, upload := range upstream.Uploads {
 		result.Data = append(result.Data, dto.ImageUploadPublic{
 			ID: upload.ID, Object: "image.upload", Field: upload.Field, URL: upload.URL, MimeType: upload.MimeType,
 			SizeBytes: upload.Bytes, Width: upload.Width, Height: upload.Height, Format: upload.Format, Temporary: true,
 		})
 	}
-	c.JSON(http.StatusOK, result)
+	return result, nil
 }
 
 func validateImageUploadRequest(contentType, path string, body []byte) (string, string, error) {

@@ -42,6 +42,8 @@ const { Text, Title } = Typography;
 const DEFAULT_OPTIONS = {
   'async_task_setting.default_timeout_minutes': 30,
   'async_task_setting.query_limit': 1000,
+  'async_task_setting.webhook_max_attempts': 3,
+  'async_task_setting.webhook_retry_interval_seconds': 30,
   'async_task_setting.timeout_overrides': '[]',
 };
 
@@ -297,6 +299,16 @@ const AsyncTask = () => {
           value: String(options['async_task_setting.query_limit']),
         },
         {
+          key: 'async_task_setting.webhook_max_attempts',
+          value: String(options['async_task_setting.webhook_max_attempts']),
+        },
+        {
+          key: 'async_task_setting.webhook_retry_interval_seconds',
+          value: String(
+            options['async_task_setting.webhook_retry_interval_seconds'],
+          ),
+        },
+        {
           key: 'async_task_setting.timeout_overrides',
           value: JSON.stringify(overrides),
         },
@@ -525,7 +537,7 @@ const AsyncTask = () => {
         <Card style={{ marginTop: 12 }}>
           <Title heading={5}>{t('调度设置')}</Title>
           <Row gutter={16}>
-            <Col xs={24} md={8}>
+            <Col xs={24} md={6}>
               <Text>{t('默认超时时间')}</Text>
               <InputNumber
                 min={1}
@@ -543,7 +555,7 @@ const AsyncTask = () => {
                 }
               />
             </Col>
-            <Col xs={24} md={8}>
+            <Col xs={24} md={6}>
               <Text>{t('每轮查询任务数')}</Text>
               <InputNumber
                 min={1}
@@ -554,6 +566,43 @@ const AsyncTask = () => {
                   updateOption(
                     'async_task_setting.query_limit',
                     parseInt(value || 1000),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} md={6}>
+              <Text>{t('Webhook 最大尝试次数（含首次）')}</Text>
+              <InputNumber
+                min={1}
+                max={10}
+                step={1}
+                style={{ width: '100%', marginTop: 8 }}
+                value={Number(
+                  options['async_task_setting.webhook_max_attempts'],
+                )}
+                onChange={(value) =>
+                  updateOption(
+                    'async_task_setting.webhook_max_attempts',
+                    parseInt(value || 3),
+                  )
+                }
+              />
+            </Col>
+            <Col xs={24} md={6}>
+              <Text>{t('Webhook 重试间隔')}</Text>
+              <InputNumber
+                min={1}
+                max={3600}
+                step={1}
+                suffix={t('秒')}
+                style={{ width: '100%', marginTop: 8 }}
+                value={Number(
+                  options['async_task_setting.webhook_retry_interval_seconds'],
+                )}
+                onChange={(value) =>
+                  updateOption(
+                    'async_task_setting.webhook_retry_interval_seconds',
+                    parseInt(value || 30),
                   )
                 }
               />
@@ -622,7 +671,9 @@ const AsyncTask = () => {
                   'callback_secret',
                   t('Callback 兜底 Secret'),
                   '',
-                  t('建议填写。作为 image-handle callback 默认验签密钥；单个图片渠道可用 settings.callback_secret 覆盖'),
+                  t(
+                    '建议填写。作为 image-handle callback 默认验签密钥；单个图片渠道可用 settings.callback_secret 覆盖',
+                  ),
                 )}
               </Col>
               <Col xs={24} md={12}>
@@ -661,7 +712,9 @@ const AsyncTask = () => {
                     <Col xs={24} md={8}>
                       <Form.Slot label={t('经 image-handle 执行')}>
                         <Switch
-                          checked={Boolean(imageHandleConfig.sync_image_enabled)}
+                          checked={Boolean(
+                            imageHandleConfig.sync_image_enabled,
+                          )}
                           onChange={(value) =>
                             updateImageHandleConfig('sync_image_enabled', value)
                           }
@@ -696,9 +749,7 @@ const AsyncTask = () => {
                     <Col xs={24} md={8}>
                       <Form.Slot
                         label={t('未指定时默认格式')}
-                        extraText={t(
-                          '仅在返回格式策略为跟随请求参数时生效。',
-                        )}
+                        extraText={t('仅在返回格式策略为跟随请求参数时生效。')}
                       >
                         <Select
                           style={{ width: '100%' }}
@@ -807,7 +858,10 @@ const AsyncTask = () => {
           </div>
           <Table
             columns={overrideColumns}
-            dataSource={overrides.map((item, index) => ({ ...item, key: index }))}
+            dataSource={overrides.map((item, index) => ({
+              ...item,
+              key: index,
+            }))}
             pagination={false}
             size='small'
           />

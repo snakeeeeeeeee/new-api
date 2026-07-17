@@ -46,6 +46,24 @@ func resetOptionMapForConfigControllerTest(t *testing.T) {
 	})
 }
 
+func TestNormalizeAsyncTaskWebhookOptions(t *testing.T) {
+	value, err := validateAndNormalizeAsyncTaskOptionUpdate("async_task_setting.webhook_max_attempts", "0")
+	require.NoError(t, err)
+	assert.Equal(t, "3", value)
+
+	value, err = validateAndNormalizeAsyncTaskOptionUpdate("async_task_setting.webhook_max_attempts", "99")
+	require.NoError(t, err)
+	assert.Equal(t, "10", value)
+
+	value, err = validateAndNormalizeAsyncTaskOptionUpdate("async_task_setting.webhook_retry_interval_seconds", "0")
+	require.NoError(t, err)
+	assert.Equal(t, "30", value)
+
+	value, err = validateAndNormalizeAsyncTaskOptionUpdate("async_task_setting.webhook_retry_interval_seconds", "7200")
+	require.NoError(t, err)
+	assert.Equal(t, "3600", value)
+}
+
 func TestGetAsyncTaskStatsReturnsAdminMonitoringData(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	resetAsyncTaskControllerSettingForTest(t)

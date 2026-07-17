@@ -108,6 +108,17 @@ const ASYNC_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
     "output": {"size": "1024x1024", "format": "png"}
   }'`;
 
+const ASYNC_MULTIPART_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
+  -X POST \\
+  -H "Authorization: Bearer $API_KEY" \\
+  -H "Idempotency-Key: edit-order-123" \\
+  -F "model=gpt-image-2" \\
+  -F "prompt=Replace the background with a studio wall" \\
+  -F "image=@input.png" \\
+  -F "mask=@mask.png" \\
+  -F "size=1024x1024" \\
+  -F "output_format=png"`;
+
 const IMAGE_UPLOAD_REQUEST = `curl "$BASE_URL/v1/image/uploads" \\
   -X POST \\
   -H "Authorization: Bearer $API_KEY" \\
@@ -409,7 +420,7 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
       <DocumentationSection
         title={t('异步图片调用流程')}
         description={t(
-          '编辑任务需要图片 URL；本地文件可先通过预上传换成临时 URL。',
+          '编辑任务可直接通过 multipart 上传本地图片，也可先预上传后使用 URL。',
         )}
       >
         <DocsTable
@@ -497,10 +508,17 @@ function AsyncImageDocs({ t }) {
       <DocumentationSection
         title={t('创建编辑任务')}
         description={t(
-          '编辑任务必须提供 prompt 和至少一个图片 URL，mask 可选。',
+          '编辑任务必须提供 prompt 和至少一张图片；可直接上传本地文件，也可使用 URL JSON，mask 可选。',
         )}
       >
-        <CodeExample title={t('请求示例')}>{ASYNC_EDIT_REQUEST}</CodeExample>
+        <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
+          <CodeExample title={t('JSON 图片 URL')}>
+            {ASYNC_EDIT_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('multipart 本地文件')}>
+            {ASYNC_MULTIPART_EDIT_REQUEST}
+          </CodeExample>
+        </div>
       </DocumentationSection>
 
       <DocumentationSection
@@ -627,17 +645,19 @@ function WebhookDocs({ onOpenWebhook, t }) {
       </DocumentationSection>
 
       <DocumentationSection
-        title={t('单次通知规则')}
-        description={t('每个事件只发送一次，发送后不会重试。')}
+        title={t('投递与重试')}
+        description={t(
+          'HTTP 2xx 即投递成功；网络错误或非 2xx 默认最多尝试 3 次，次数和固定间隔由管理员在异步任务管理中配置。',
+        )}
       >
         <DocsTable
           columns={[t('行为'), t('处理方式')]}
           rows={[
+            [t('成功'), t('接收端返回任意 2xx 即停止投递，响应体内容会被忽略')],
             [
-              t('响应'),
-              t('接收端无需返回指定状态码，new-api 会忽略 HTTP 响应结果'),
+              t('发送失败'),
+              t('网络错误、超时或非 2xx 按固定间隔重试，达到最大次数后结束'),
             ],
-            [t('发送失败'), t('连接失败或超时后直接结束，不会再次发送')],
             [
               t('安全'),
               t('校验 Authorization: Bearer ak_...，不要记录完整 Key'),

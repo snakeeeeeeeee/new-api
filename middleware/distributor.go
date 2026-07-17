@@ -296,6 +296,12 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		if _, ok := c.Get("relay_mode"); !ok {
 			c.Set("relay_mode", relayMode)
 		}
+	} else if c.Request.Method == http.MethodPost && c.Request.URL.Path == "/v1/image/tasks" && strings.Contains(strings.ToLower(c.Request.Header.Get("Content-Type")), "multipart/form-data") {
+		req, requestErr := getModelFromRequest(c)
+		if requestErr != nil {
+			return nil, false, requestErr
+		}
+		modelRequest.Model = req.Model
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1beta/models/") || strings.HasPrefix(c.Request.URL.Path, "/v1/models/") {
 		// Gemini API 路径处理: /v1beta/models/gemini-2.0-flash:generateContent
 		relayMode := relayconstant.RelayModeGemini

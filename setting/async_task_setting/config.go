@@ -8,8 +8,12 @@ import (
 )
 
 const (
-	DefaultTimeoutMinutes = 30
-	DefaultQueryLimit     = 1000
+	DefaultTimeoutMinutes              = 30
+	DefaultQueryLimit                  = 1000
+	DefaultWebhookMaxAttempts          = 3
+	DefaultWebhookRetryIntervalSeconds = 30
+	MaxWebhookMaxAttempts              = 10
+	MaxWebhookRetryIntervalSeconds     = 3600
 )
 
 type TimeoutOverride struct {
@@ -20,15 +24,19 @@ type TimeoutOverride struct {
 }
 
 type AsyncTaskSetting struct {
-	DefaultTimeoutMinutes int               `json:"default_timeout_minutes"`
-	QueryLimit            int               `json:"query_limit"`
-	TimeoutOverrides      []TimeoutOverride `json:"timeout_overrides"`
+	DefaultTimeoutMinutes       int               `json:"default_timeout_minutes"`
+	QueryLimit                  int               `json:"query_limit"`
+	WebhookMaxAttempts          int               `json:"webhook_max_attempts"`
+	WebhookRetryIntervalSeconds int               `json:"webhook_retry_interval_seconds"`
+	TimeoutOverrides            []TimeoutOverride `json:"timeout_overrides"`
 }
 
 var asyncTaskSetting = AsyncTaskSetting{
-	DefaultTimeoutMinutes: DefaultTimeoutMinutes,
-	QueryLimit:            DefaultQueryLimit,
-	TimeoutOverrides:      []TimeoutOverride{},
+	DefaultTimeoutMinutes:       DefaultTimeoutMinutes,
+	QueryLimit:                  DefaultQueryLimit,
+	WebhookMaxAttempts:          DefaultWebhookMaxAttempts,
+	WebhookRetryIntervalSeconds: DefaultWebhookRetryIntervalSeconds,
+	TimeoutOverrides:            []TimeoutOverride{},
 }
 
 func init() {
@@ -53,6 +61,26 @@ func NormalizeQueryLimit(v int) int {
 	return v
 }
 
+func NormalizeWebhookMaxAttempts(v int) int {
+	if v <= 0 {
+		return DefaultWebhookMaxAttempts
+	}
+	if v > MaxWebhookMaxAttempts {
+		return MaxWebhookMaxAttempts
+	}
+	return v
+}
+
+func NormalizeWebhookRetryIntervalSeconds(v int) int {
+	if v <= 0 {
+		return DefaultWebhookRetryIntervalSeconds
+	}
+	if v > MaxWebhookRetryIntervalSeconds {
+		return MaxWebhookRetryIntervalSeconds
+	}
+	return v
+}
+
 func NormalizeOverride(override TimeoutOverride) TimeoutOverride {
 	override.Platform = strings.TrimSpace(override.Platform)
 	override.Action = strings.TrimSpace(override.Action)
@@ -65,6 +93,8 @@ func NormalizeOverride(override TimeoutOverride) TimeoutOverride {
 func NormalizeSetting(setting AsyncTaskSetting) AsyncTaskSetting {
 	setting.DefaultTimeoutMinutes = NormalizeDefaultTimeoutMinutes(setting.DefaultTimeoutMinutes)
 	setting.QueryLimit = NormalizeQueryLimit(setting.QueryLimit)
+	setting.WebhookMaxAttempts = NormalizeWebhookMaxAttempts(setting.WebhookMaxAttempts)
+	setting.WebhookRetryIntervalSeconds = NormalizeWebhookRetryIntervalSeconds(setting.WebhookRetryIntervalSeconds)
 	overrides := make([]TimeoutOverride, 0, len(setting.TimeoutOverrides))
 	for _, override := range setting.TimeoutOverrides {
 		override = NormalizeOverride(override)
@@ -86,6 +116,8 @@ func ApplyNormalization() {
 func ApplyEnvFallback() {
 	asyncTaskSetting.DefaultTimeoutMinutes = NormalizeDefaultTimeoutMinutes(constant.TaskTimeoutMinutes)
 	asyncTaskSetting.QueryLimit = NormalizeQueryLimit(constant.TaskQueryLimit)
+	asyncTaskSetting.WebhookMaxAttempts = NormalizeWebhookMaxAttempts(asyncTaskSetting.WebhookMaxAttempts)
+	asyncTaskSetting.WebhookRetryIntervalSeconds = NormalizeWebhookRetryIntervalSeconds(asyncTaskSetting.WebhookRetryIntervalSeconds)
 	asyncTaskSetting.TimeoutOverrides = NormalizeSetting(asyncTaskSetting).TimeoutOverrides
 	ApplyNormalization()
 }

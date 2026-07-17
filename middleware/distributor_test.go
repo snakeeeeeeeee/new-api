@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"bytes"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -174,4 +176,27 @@ func TestDistributeClaudeInvalidRequestUsesCompatError(t *testing.T) {
 	require.Equal(t, relaycommon.ClaudeCompatCodeInvalidRequestSchema, payload.Error.Code)
 	require.Equal(t, http.StatusBadRequest, payload.Error.Status)
 	require.Contains(t, payload.Error.Message, "request body")
+}
+
+func TestGetModelRequestReadsAsyncImageMultipartModel(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "gpt-image-2"))
+	require.NoError(t, writer.WriteField("prompt", "edit"))
+	part, err := writer.CreateFormFile("image", "input.png")
+	require.NoError(t, err)
+	_, err = part.Write([]byte("image bytes are not parsed by the distributor"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", bytes.NewReader(body.Bytes()))
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	request, shouldSelectChannel, err := getModelRequest(c)
+	require.NoError(t, err)
+	require.True(t, shouldSelectChannel)
+	require.Equal(t, "gpt-image-2", request.Model)
+	common.CleanupBodyStorage(c)
 }

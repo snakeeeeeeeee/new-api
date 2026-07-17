@@ -866,6 +866,18 @@ func validateAndNormalizeAsyncTaskOptionUpdate(key string, value string) (string
 			return "", err
 		}
 		return strconv.Itoa(async_task_setting.NormalizeQueryLimit(intValue)), nil
+	case "webhook_max_attempts":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeWebhookMaxAttempts(intValue)), nil
+	case "webhook_retry_interval_seconds":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeWebhookRetryIntervalSeconds(intValue)), nil
 	case "timeout_overrides":
 		var overrides []async_task_setting.TimeoutOverride
 		if strings.TrimSpace(value) == "" {

@@ -124,7 +124,9 @@ export default function WebhookTab({ onOpenApiKeys }) {
             {t('图片任务完成后发送成功或失败事件；后续任务类型共用此配置')}
           </Text>
           <Text type='tertiary' size='small' className='mt-1 block'>
-            {t('每个事件只发送一次，不检查响应，也不会重试')}
+            {t(
+              'HTTP 2xx 即投递成功；网络错误或非 2xx 默认最多尝试 3 次，次数和固定间隔由管理员在异步任务管理中配置。',
+            )}
           </Text>
         </div>
         <div className='flex min-h-11 shrink-0 items-center gap-3'>

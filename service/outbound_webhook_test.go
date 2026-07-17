@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -280,8 +281,9 @@ func TestImageTaskTerminalEventCreatesOneAccountDelivery(t *testing.T) {
 	assert.EqualValues(t, 1, deliveryCount)
 }
 
-func TestWebhookDeliveryUsesBearerOnceAndIgnoresHTTPStatus(t *testing.T) {
+func TestWebhookDeliveryRetriesNon2xxUntilSuccess(t *testing.T) {
 	setupOutboundWebhookTestDB(t)
+	configureWebhookRetryTest(t, 3, 30)
 	var mu sync.Mutex
 	var authorizations, bodies, signatures, timestamps []string
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -291,8 +293,13 @@ func TestWebhookDeliveryUsesBearerOnceAndIgnoresHTTPStatus(t *testing.T) {
 		bodies = append(bodies, string(body))
 		signatures = append(signatures, r.Header.Get("Webhook-Signature"))
 		timestamps = append(timestamps, r.Header.Get("Webhook-Timestamp"))
+		attempt := len(bodies)
 		mu.Unlock()
-		w.WriteHeader(http.StatusInternalServerError)
+		if attempt < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer receiver.Close()
 	putWebhookTestConfig(t, receiver.URL)
@@ -306,24 +313,34 @@ func TestWebhookDeliveryUsesBearerOnceAndIgnoresHTTPStatus(t *testing.T) {
 	var delivery model.WebhookDelivery
 	require.NoError(t, model.DB.Joins("JOIN webhook_events ON webhook_events.id = webhook_deliveries.event_record_id").
 		Where("webhook_events.event_id = ?", result.EventID).First(&delivery).Error)
-	assert.Equal(t, model.WebhookDeliveryDelivered, delivery.Status)
+	assert.Equal(t, model.WebhookDeliveryPending, delivery.Status)
 	assert.Equal(t, 1, delivery.Attempts)
 	assert.Equal(t, http.StatusInternalServerError, delivery.LastHTTPStatus)
+	require.NoError(t, makeWebhookDeliveryDue(delivery.ID))
 	processDueWebhookDeliveries(context.Background())
-
+	require.NoError(t, model.DB.First(&delivery, delivery.ID).Error)
+	assert.Equal(t, model.WebhookDeliveryPending, delivery.Status)
+	assert.Equal(t, 2, delivery.Attempts)
+	require.NoError(t, makeWebhookDeliveryDue(delivery.ID))
+	processDueWebhookDeliveries(context.Background())
 	require.NoError(t, model.DB.First(&delivery, delivery.ID).Error)
 	assert.Equal(t, model.WebhookDeliveryDelivered, delivery.Status)
+	assert.Equal(t, 3, delivery.Attempts)
+	assert.Equal(t, http.StatusNoContent, delivery.LastHTTPStatus)
+	processDueWebhookDeliveries(context.Background())
 	mu.Lock()
-	require.Len(t, bodies, 1)
-	assert.Equal(t, "Bearer "+resourceKey.Key, authorizations[0])
-	assert.Empty(t, signatures[0])
-	assert.Empty(t, timestamps[0])
-	assert.Contains(t, bodies[0], `"id":"`+result.EventID+`"`)
+	require.Len(t, bodies, 3)
+	for index := range bodies {
+		assert.Equal(t, "Bearer "+resourceKey.Key, authorizations[index])
+		assert.Empty(t, signatures[index])
+		assert.Empty(t, timestamps[index])
+		assert.Contains(t, bodies[index], `"id":"`+result.EventID+`"`)
+	}
 	mu.Unlock()
 
 	var attempts []model.WebhookDeliveryAttempt
 	require.NoError(t, model.DB.Where("delivery_record_id = ?", delivery.ID).Find(&attempts).Error)
-	require.Len(t, attempts, 1)
+	require.Len(t, attempts, 3)
 	for _, attempt := range attempts {
 		assert.NotContains(t, attempt.Error, resourceKey.Key)
 		assert.NotContains(t, attempt.ResponseBody, resourceKey.Key)
@@ -382,6 +399,7 @@ func TestDeleteResourceCenterKeyRemovesLegacyRecords(t *testing.T) {
 
 func TestWebhookDeliveryDoesNotDisableConfigOn410(t *testing.T) {
 	setupOutboundWebhookTestDB(t)
+	configureWebhookRetryTest(t, 3, 30)
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusGone)
 	}))
@@ -394,10 +412,15 @@ func TestWebhookDeliveryDoesNotDisableConfigOn410(t *testing.T) {
 	config, err := GetAccountWebhookConfig(501)
 	require.NoError(t, err)
 	assert.Equal(t, model.WebhookEndpointEnabled, config.Status)
+	var delivery model.WebhookDelivery
+	require.NoError(t, model.DB.Order("id DESC").First(&delivery).Error)
+	assert.Equal(t, model.WebhookDeliveryPending, delivery.Status)
+	assert.Equal(t, 1, delivery.Attempts)
 }
 
-func TestWebhookDeliveryConnectionFailureIsNotRetried(t *testing.T) {
+func TestWebhookDeliveryConnectionFailureStopsAtConfiguredAttempts(t *testing.T) {
 	setupOutboundWebhookTestDB(t)
+	configureWebhookRetryTest(t, 3, 30)
 	receiver := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	targetURL := receiver.URL
 	putWebhookTestConfig(t, targetURL)
@@ -410,11 +433,39 @@ func TestWebhookDeliveryConnectionFailureIsNotRetried(t *testing.T) {
 	var delivery model.WebhookDelivery
 	require.NoError(t, model.DB.Joins("JOIN webhook_events ON webhook_events.id = webhook_deliveries.event_record_id").
 		Where("webhook_events.event_id = ?", result.EventID).First(&delivery).Error)
-	assert.Equal(t, model.WebhookDeliveryFailed, delivery.Status)
+	assert.Equal(t, model.WebhookDeliveryPending, delivery.Status)
 	assert.Equal(t, 1, delivery.Attempts)
+	require.NoError(t, makeWebhookDeliveryDue(delivery.ID))
 	processDueWebhookDeliveries(context.Background())
 	require.NoError(t, model.DB.First(&delivery, delivery.ID).Error)
-	assert.Equal(t, 1, delivery.Attempts)
+	assert.Equal(t, model.WebhookDeliveryPending, delivery.Status)
+	assert.Equal(t, 2, delivery.Attempts)
+	require.NoError(t, makeWebhookDeliveryDue(delivery.ID))
+	processDueWebhookDeliveries(context.Background())
+	require.NoError(t, model.DB.First(&delivery, delivery.ID).Error)
+	assert.Equal(t, model.WebhookDeliveryFailed, delivery.Status)
+	assert.Equal(t, 3, delivery.Attempts)
+	processDueWebhookDeliveries(context.Background())
+	require.NoError(t, model.DB.First(&delivery, delivery.ID).Error)
+	assert.Equal(t, 3, delivery.Attempts)
+}
+
+func configureWebhookRetryTest(t *testing.T, maxAttempts, intervalSeconds int) {
+	t.Helper()
+	setting := async_task_setting.GetAsyncTaskSetting()
+	original := *setting
+	t.Cleanup(func() {
+		*setting = original
+		async_task_setting.ApplyNormalization()
+	})
+	setting.WebhookMaxAttempts = maxAttempts
+	setting.WebhookRetryIntervalSeconds = intervalSeconds
+	async_task_setting.ApplyNormalization()
+}
+
+func makeWebhookDeliveryDue(deliveryID int64) error {
+	return model.DB.Model(&model.WebhookDelivery{}).Where("id = ?", deliveryID).
+		Update("next_attempt_at", time.Now().Add(-time.Second).Unix()).Error
 }
 
 func TestClaimedWebhookDeliveryIsNeverReclaimed(t *testing.T) {

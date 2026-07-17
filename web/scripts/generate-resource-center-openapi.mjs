@@ -311,7 +311,7 @@ const spec = {
         operationId: 'createImageTask',
         summary: 'Create an asynchronous image task',
         description:
-          'Returns immediately after the task, billing reservation, credential lease, and durable dispatch are stored. Reusing an Idempotency-Key with the same normalized request returns the original task.',
+          'Accepts the normalized JSON contract for generation or edit tasks, or synchronous-style multipart local files for edit tasks. Returns immediately after the task, billing reservation, credential lease, and durable dispatch are stored. Reusing an Idempotency-Key with the same normalized fields and file contents returns the original task.',
         security: resourceSecurity,
         parameters: [
           {
@@ -325,7 +325,13 @@ const spec = {
         ],
         requestBody: {
           required: true,
-          content: jsonContent(ref('ImageTaskCreateRequest')),
+          content: {
+            ...jsonContent(ref('ImageTaskCreateRequest')),
+            'multipart/form-data': {
+              schema: ref('ImageTaskMultipartCreateRequest'),
+              encoding: { image: { style: 'form', explode: true } },
+            },
+          },
         },
         responses: {
           202: jsonResponse('Task accepted.', ref('ImageTask'), {
@@ -343,6 +349,9 @@ const spec = {
             },
           }),
           409: responseRef('Conflict'),
+          413: responseRef('PayloadTooLarge'),
+          502: responseRef('BadGateway'),
+          503: responseRef('ServiceUnavailable'),
           ...commonErrorResponses,
         },
       },
@@ -458,7 +467,7 @@ const spec = {
         operationId: 'receiveImageTaskSucceededWebhook',
         summary: 'image.task.succeeded callback',
         description:
-          'Sent once with Authorization: Bearer ak_.... This is the same Resource Center API Key used to create and query tasks. The receiver response is ignored and failed connections are not retried.',
+          'Sent with Authorization: Bearer ak_.... This is the same Resource Center API Key used to create and query tasks. Any 2xx response succeeds and its body is ignored. Network errors and non-2xx responses are retried using the administrator-configured fixed interval and maximum attempts (defaults: 3 total attempts, 30 seconds).',
         security: resourceSecurity,
         parameters: [],
         requestBody: {
@@ -471,9 +480,12 @@ const spec = {
           },
         },
         responses: {
+          '2XX': {
+            description: 'Delivery accepted. The response body is ignored.',
+          },
           default: {
             description:
-              'Optional receiver response. new-api ignores the status and body.',
+              'Delivery failed and is retried until the configured maximum attempt count is reached.',
           },
         },
       },
@@ -483,7 +495,7 @@ const spec = {
         operationId: 'receiveImageTaskFailedWebhook',
         summary: 'image.task.failed callback',
         description:
-          'Sent once with Authorization: Bearer ak_.... This is the same Resource Center API Key used to create and query tasks. The receiver response is ignored and failed connections are not retried.',
+          'Sent with Authorization: Bearer ak_.... This is the same Resource Center API Key used to create and query tasks. Any 2xx response succeeds and its body is ignored. Network errors and non-2xx responses are retried using the administrator-configured fixed interval and maximum attempts (defaults: 3 total attempts, 30 seconds).',
         security: resourceSecurity,
         parameters: [],
         requestBody: {
@@ -496,9 +508,12 @@ const spec = {
           },
         },
         responses: {
+          '2XX': {
+            description: 'Delivery accepted. The response body is ignored.',
+          },
           default: {
             description:
-              'Optional receiver response. new-api ignores the status and body.',
+              'Delivery failed and is retried until the configured maximum attempt count is reached.',
           },
         },
       },
@@ -707,6 +722,41 @@ const spec = {
             },
           },
         ],
+      },
+      ImageTaskMultipartCreateRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['model', 'prompt', 'image'],
+        properties: {
+          model: { type: 'string', minLength: 1 },
+          operation: {
+            type: 'string',
+            const: 'edit',
+            default: 'edit',
+            description:
+              'Optional. Multipart requests always create edit tasks.',
+          },
+          prompt: { type: 'string', minLength: 1 },
+          image: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 10,
+            items: { type: 'string', format: 'binary' },
+          },
+          mask: { type: 'string', format: 'binary' },
+          n: { type: 'integer', minimum: 1, maximum: 10 },
+          size: { type: 'string', examples: ['1024x1024'] },
+          quality: { type: 'string', examples: ['high'] },
+          output_format: { type: 'string', examples: ['png'] },
+          output_compression: { type: 'integer', minimum: 0, maximum: 100 },
+          background: { type: 'string', examples: ['auto'] },
+          client_reference_id: { type: 'string', maxLength: 191 },
+          metadata: {
+            type: 'string',
+            description: 'A JSON-encoded object.',
+            examples: ['{"order_id":"order_123"}'],
+          },
+        },
       },
       ImageTaskResultImage: {
         type: 'object',

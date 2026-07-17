@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -368,7 +369,7 @@ func processDueWebhookDeliveries(ctx context.Context) {
 func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery) {
 	delivery, event, endpoint, err := model.LoadWebhookDeliveryContext(claimed.ID)
 	if err != nil {
-		completeWebhookFailure(ctx, claimed, "load webhook delivery context: "+err.Error(), 0)
+		completeWebhookFailure(ctx, claimed, 0, "load webhook delivery context: "+err.Error(), 0)
 		return
 	}
 	if delivery.LockToken != claimed.LockToken {
@@ -385,23 +386,23 @@ func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery)
 	}
 	resourceKey, exists, err := model.GetActiveUserAssetKey(endpoint.UserID)
 	if err != nil {
-		completeWebhookFailure(ctx, delivery, "load Resource Center API Key: "+err.Error(), 0)
+		completeWebhookFailure(ctx, delivery, 0, "load Resource Center API Key: "+err.Error(), 0)
 		return
 	}
 	if !exists {
-		completeWebhookFailure(ctx, delivery, "enabled Resource Center API Key is unavailable", 0)
+		completeWebhookFailure(ctx, delivery, 0, "enabled Resource Center API Key is unavailable", 0)
 		return
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, webhookDeliveryTimeout)
 	defer cancel()
 	client, err := newWebhookHTTPClient(requestCtx, endpoint.URL)
 	if err != nil {
-		completeWebhookFailure(ctx, delivery, err.Error(), 0)
+		completeWebhookFailure(ctx, delivery, 0, err.Error(), 0)
 		return
 	}
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint.URL, bytes.NewBufferString(event.Payload))
 	if err != nil {
-		completeWebhookFailure(ctx, delivery, err.Error(), 0)
+		completeWebhookFailure(ctx, delivery, 0, err.Error(), 0)
 		return
 	}
 	request.Header.Set("Authorization", "Bearer "+resourceKey.Key)
@@ -411,10 +412,14 @@ func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery)
 	response, err := client.Do(request)
 	durationMS := time.Since(started).Milliseconds()
 	if err != nil {
-		completeWebhookFailure(ctx, delivery, err.Error(), durationMS)
+		completeWebhookFailure(ctx, delivery, 0, err.Error(), durationMS)
 		return
 	}
 	_ = response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		completeWebhookFailure(ctx, delivery, response.StatusCode, fmt.Sprintf("webhook receiver returned HTTP %d", response.StatusCode), durationMS)
+		return
+	}
 	_, err = model.CompleteWebhookDeliveryAttempt(delivery, model.WebhookDeliveryResult{
 		Status: model.WebhookDeliveryDelivered, HTTPStatus: response.StatusCode, DurationMS: durationMS,
 	})
@@ -423,9 +428,20 @@ func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery)
 	}
 }
 
-func completeWebhookFailure(ctx context.Context, delivery *model.WebhookDelivery, reason string, durationMS int64) {
+func completeWebhookFailure(ctx context.Context, delivery *model.WebhookDelivery, httpStatus int, reason string, durationMS int64) {
+	settings := async_task_setting.NormalizeSetting(*async_task_setting.GetAsyncTaskSetting())
+	status := model.WebhookDeliveryFailed
+	nextAttemptAt := int64(0)
+	if delivery != nil && delivery.Attempts < settings.WebhookMaxAttempts {
+		status = model.WebhookDeliveryPending
+		nextAttemptAt = time.Now().Add(time.Duration(settings.WebhookRetryIntervalSeconds) * time.Second).Unix()
+		if delivery.RetryDeadline > 0 && nextAttemptAt > delivery.RetryDeadline {
+			status = model.WebhookDeliveryFailed
+			nextAttemptAt = 0
+		}
+	}
 	_, err := model.CompleteWebhookDeliveryAttempt(delivery, model.WebhookDeliveryResult{
-		Status: model.WebhookDeliveryFailed, LastError: reason, DurationMS: durationMS,
+		Status: status, NextAttemptAt: nextAttemptAt, HTTPStatus: httpStatus, LastError: reason, DurationMS: durationMS,
 	})
 	if err != nil {
 		logger.LogError(ctx, "record webhook delivery failure failed: "+err.Error())
