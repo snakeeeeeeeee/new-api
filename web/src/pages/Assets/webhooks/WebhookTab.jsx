@@ -174,6 +174,9 @@ export default function WebhookTab() {
           <Text type='tertiary'>
             {t('图片任务完成后发送成功或失败事件；后续任务类型共用此配置')}
           </Text>
+          <Text type='tertiary' size='small' className='mt-1 block'>
+            {t('每个事件只发送一次，不检查响应，也不会重试')}
+          </Text>
         </div>
         <Tag color={enabled ? 'green' : 'grey'} style={{ flexShrink: 0 }}>
           {enabled ? t('启用') : t('停用')}
@@ -226,7 +229,7 @@ export default function WebhookTab() {
               </Tooltip>
             </div>
             <div className='grid grid-cols-1 sm:grid-cols-[140px_minmax(0,1fr)_auto] gap-2 sm:gap-4 sm:items-center py-4'>
-              <Text type='tertiary'>{t('Webhook 密钥')}</Text>
+              <Text type='tertiary'>{t('Webhook 验证 Key')}</Text>
               <div className='min-w-0'>
                 <Text code className='break-all'>
                   {api.config.key_configured

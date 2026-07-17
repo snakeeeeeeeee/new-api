@@ -4698,6 +4698,19 @@
     "OpenAPI 3.1": "OpenAPI 3.1",
     "image.task.succeeded": "image.task.succeeded",
     "image.task.failed": "image.task.failed",
-    "webhook.test": "webhook.test"
+    "webhook.test": "webhook.test",
+    "所有接口统一使用一个 API Key": "Une seule API Key pour tous les endpoints",
+    "异步任务、预上传和资源 API 统一使用同一个普通 API Key（sk-...）。": "Les tâches asynchrones, les envois et l'API des ressources utilisent la même API Key standard (sk-...).",
+    "创建和查询异步任务、预上传图片，以及查询和导出生成资源": "Créer et consulter des tâches asynchrones, envoyer des images et consulter ou exporter les ressources générées",
+    "Webhook 的 wk- Key 只是回调验证密钥，不具备 API 调用权限。": "La Key wk- sert uniquement à vérifier le Webhook et ne permet pas d'appeler l'API.",
+    "资源 API 使用同一个普通 API Key（sk-...）。": "L'API des ressources utilise la même API Key standard (sk-...).",
+    "data.object 与任务查询接口返回的对象一致，event id 可用于记录和排查。": "data.object correspond à la réponse de la tâche ; utilisez l'event id pour la journalisation et le diagnostic.",
+    "单次通知规则": "Règles d'envoi unique",
+    "每个事件只发送一次，发送后不会重试。": "Chaque événement est envoyé une seule fois, sans nouvel essai.",
+    "接收端无需返回指定状态码，new-api 会忽略 HTTP 响应结果": "Le récepteur n'a pas besoin de renvoyer un statut précis ; new-api ignore la réponse HTTP",
+    "连接失败或超时后直接结束，不会再次发送": "Un échec de connexion ou un délai dépassé met fin à l'envoi sans nouvel essai",
+    "管理异步任务生成的图片、视频和 Webhook 通知": "Gérer les images et vidéos générées par les tâches asynchrones et les notifications Webhook",
+    "每个事件只发送一次，不检查响应，也不会重试": "Chaque événement est envoyé une seule fois ; la réponse n'est pas vérifiée et aucun nouvel essai n'est effectué",
+    "Webhook 验证 Key": "Key de vérification Webhook"
   }
 }

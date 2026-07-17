@@ -68,3 +68,19 @@ func AssetKeyAuth() func(c *gin.Context) {
 		c.Next()
 	}
 }
+
+// AssetOrTokenAuth keeps existing read-only resource keys working while making
+// the normal API token the default credential for Resource Center APIs.
+func AssetOrTokenAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		keyValue := c.GetHeader("Authorization")
+		if strings.HasPrefix(keyValue, "Bearer ") || strings.HasPrefix(keyValue, "bearer ") {
+			keyValue = strings.TrimSpace(keyValue[7:])
+		}
+		if strings.HasPrefix(keyValue, model.AssetKeyPrefix) {
+			AssetKeyAuth()(c)
+			return
+		}
+		TokenAuth()(c)
+	}
+}

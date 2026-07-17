@@ -33,12 +33,17 @@ func setupAssetKeyAuthTestDB(t *testing.T) {
 	require.NoError(t, err)
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AssetKey{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.AssetKey{}))
 	require.NoError(t, db.Create(&model.User{
 		Id:       41,
 		Username: "asset_key_user",
 		Status:   common.UserStatusEnabled,
 		Group:    "default",
+		Quota:    1000,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id: 51, UserId: 41, Key: "normalassetkey", Name: "resource-api",
+		Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true,
 	}).Error)
 
 	t.Cleanup(func() {
@@ -113,6 +118,40 @@ func TestAssetKeyAuthRejectsNormalTokenFormat(t *testing.T) {
 
 	require.False(t, called)
 	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+}
+
+func TestAssetOrTokenAuthAcceptsNormalToken(t *testing.T) {
+	setupAssetKeyAuthTestDB(t)
+
+	_, ctx, called := runAssetOrTokenAuthRequest("sk-normalassetkey")
+
+	require.True(t, called)
+	require.Equal(t, 41, ctx.GetInt("id"))
+	require.Equal(t, 51, ctx.GetInt("token_id"))
+}
+
+func TestAssetOrTokenAuthKeepsLegacyAssetKeyCompatible(t *testing.T) {
+	setupAssetKeyAuthTestDB(t)
+	key, err := model.CreateAssetKey(41, "legacy-resource-reader", -1, "")
+	require.NoError(t, err)
+
+	_, ctx, called := runAssetOrTokenAuthRequest(key.Key)
+
+	require.True(t, called)
+	require.Equal(t, 41, ctx.GetInt("id"))
+	require.Equal(t, key.ID, ctx.GetInt64("asset_key_id"))
+}
+
+func runAssetOrTokenAuthRequest(keyValue string) (*httptest.ResponseRecorder, *gin.Context, bool) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
+	if keyValue != "" {
+		ctx.Request.Header.Set("Authorization", "Bearer "+keyValue)
+	}
+	handler := AssetOrTokenAuth()
+	handler(ctx)
+	return recorder, ctx, !ctx.IsAborted()
 }
 
 func TestRequireAssetKeyScopeKeepsLegacyKeysReadOnly(t *testing.T) {

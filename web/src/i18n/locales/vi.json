@@ -5205,6 +5205,19 @@
     "OpenAPI 3.1": "OpenAPI 3.1",
     "image.task.succeeded": "image.task.succeeded",
     "image.task.failed": "image.task.failed",
-    "webhook.test": "webhook.test"
+    "webhook.test": "webhook.test",
+    "所有接口统一使用一个 API Key": "Dùng một API Key cho tất cả endpoint",
+    "异步任务、预上传和资源 API 统一使用同一个普通 API Key（sk-...）。": "Tác vụ bất đồng bộ, tải lên và API tài nguyên dùng cùng một API Key thông thường (sk-...).",
+    "创建和查询异步任务、预上传图片，以及查询和导出生成资源": "Tạo và truy vấn tác vụ bất đồng bộ, tải ảnh lên, truy vấn và xuất tài nguyên đã tạo",
+    "Webhook 的 wk- Key 只是回调验证密钥，不具备 API 调用权限。": "Key wk- chỉ dùng để xác minh Webhook và không có quyền gọi API.",
+    "资源 API 使用同一个普通 API Key（sk-...）。": "API tài nguyên dùng cùng một API Key thông thường (sk-...).",
+    "data.object 与任务查询接口返回的对象一致，event id 可用于记录和排查。": "data.object khớp với phản hồi truy vấn tác vụ; event id có thể dùng để ghi log và xử lý sự cố.",
+    "单次通知规则": "Quy tắc gửi một lần",
+    "每个事件只发送一次，发送后不会重试。": "Mỗi sự kiện chỉ được gửi một lần và không thử lại.",
+    "接收端无需返回指定状态码，new-api 会忽略 HTTP 响应结果": "Bên nhận không cần trả về mã trạng thái cụ thể; new-api bỏ qua phản hồi HTTP",
+    "连接失败或超时后直接结束，不会再次发送": "Kết nối thất bại hoặc hết thời gian sẽ kết thúc mà không gửi lại",
+    "管理异步任务生成的图片、视频和 Webhook 通知": "Quản lý ảnh, video do tác vụ bất đồng bộ tạo và thông báo Webhook",
+    "每个事件只发送一次，不检查响应，也不会重试": "Mỗi sự kiện chỉ được gửi một lần; phản hồi không được kiểm tra và không gửi lại",
+    "Webhook 验证 Key": "Key xác minh Webhook"
   }
 }

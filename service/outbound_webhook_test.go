@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -253,10 +252,8 @@ func TestImageTaskTerminalEventCreatesOneAccountDelivery(t *testing.T) {
 	assert.EqualValues(t, 1, deliveryCount)
 }
 
-func TestWebhookDeliveryUsesBearerAndRetryKeepsEventID(t *testing.T) {
+func TestWebhookDeliveryUsesBearerOnceAndIgnoresHTTPStatus(t *testing.T) {
 	setupOutboundWebhookTestDB(t)
-	var responseStatus atomic.Int64
-	responseStatus.Store(http.StatusInternalServerError)
 	var mu sync.Mutex
 	var authorizations, bodies, signatures, timestamps []string
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -267,8 +264,7 @@ func TestWebhookDeliveryUsesBearerAndRetryKeepsEventID(t *testing.T) {
 		signatures = append(signatures, r.Header.Get("Webhook-Signature"))
 		timestamps = append(timestamps, r.Header.Get("Webhook-Timestamp"))
 		mu.Unlock()
-		w.Header().Set("Retry-After", "120")
-		w.WriteHeader(int(responseStatus.Load()))
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer receiver.Close()
 	config := putWebhookTestConfig(t, receiver.URL)
@@ -279,34 +275,31 @@ func TestWebhookDeliveryUsesBearerAndRetryKeepsEventID(t *testing.T) {
 	var delivery model.WebhookDelivery
 	require.NoError(t, model.DB.Joins("JOIN webhook_events ON webhook_events.id = webhook_deliveries.event_record_id").
 		Where("webhook_events.event_id = ?", result.EventID).First(&delivery).Error)
-	assert.Equal(t, model.WebhookDeliveryPending, delivery.Status)
+	assert.Equal(t, model.WebhookDeliveryDelivered, delivery.Status)
 	assert.Equal(t, 1, delivery.Attempts)
-	require.NoError(t, model.DB.Model(&delivery).Update("next_attempt_at", time.Now().Unix()).Error)
-	responseStatus.Store(http.StatusNoContent)
+	assert.Equal(t, http.StatusInternalServerError, delivery.LastHTTPStatus)
 	processDueWebhookDeliveries(context.Background())
 
 	require.NoError(t, model.DB.First(&delivery, delivery.ID).Error)
 	assert.Equal(t, model.WebhookDeliveryDelivered, delivery.Status)
 	mu.Lock()
-	require.Len(t, bodies, 2)
+	require.Len(t, bodies, 1)
 	assert.Equal(t, "Bearer "+config.Key, authorizations[0])
-	assert.Equal(t, authorizations[0], authorizations[1])
 	assert.Empty(t, signatures[0])
 	assert.Empty(t, timestamps[0])
-	assert.Equal(t, bodies[0], bodies[1])
 	assert.Contains(t, bodies[0], `"id":"`+result.EventID+`"`)
 	mu.Unlock()
 
 	var attempts []model.WebhookDeliveryAttempt
 	require.NoError(t, model.DB.Where("delivery_record_id = ?", delivery.ID).Find(&attempts).Error)
-	require.Len(t, attempts, 2)
+	require.Len(t, attempts, 1)
 	for _, attempt := range attempts {
 		assert.NotContains(t, attempt.Error, config.Key)
 		assert.NotContains(t, attempt.ResponseBody, config.Key)
 	}
 }
 
-func TestWebhookDeliveryDisablesConfigOn410(t *testing.T) {
+func TestWebhookDeliveryDoesNotDisableConfigOn410(t *testing.T) {
 	setupOutboundWebhookTestDB(t)
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusGone)
@@ -319,12 +312,45 @@ func TestWebhookDeliveryDisablesConfigOn410(t *testing.T) {
 
 	config, err := GetAccountWebhookConfig(501)
 	require.NoError(t, err)
-	assert.Equal(t, model.WebhookEndpointDisabled, config.Status)
-	_, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{URL: receiver.URL})
-	require.NoError(t, err)
-	config, err = GetAccountWebhookConfig(501)
-	require.NoError(t, err)
 	assert.Equal(t, model.WebhookEndpointEnabled, config.Status)
+}
+
+func TestWebhookDeliveryConnectionFailureIsNotRetried(t *testing.T) {
+	setupOutboundWebhookTestDB(t)
+	receiver := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	targetURL := receiver.URL
+	putWebhookTestConfig(t, targetURL)
+	receiver.Close()
+
+	result, err := CreateAccountWebhookTestDelivery(501)
+	require.NoError(t, err)
+	processDueWebhookDeliveries(context.Background())
+
+	var delivery model.WebhookDelivery
+	require.NoError(t, model.DB.Joins("JOIN webhook_events ON webhook_events.id = webhook_deliveries.event_record_id").
+		Where("webhook_events.event_id = ?", result.EventID).First(&delivery).Error)
+	assert.Equal(t, model.WebhookDeliveryFailed, delivery.Status)
+	assert.Equal(t, 1, delivery.Attempts)
+	processDueWebhookDeliveries(context.Background())
+	require.NoError(t, model.DB.First(&delivery, delivery.ID).Error)
+	assert.Equal(t, 1, delivery.Attempts)
+}
+
+func TestClaimedWebhookDeliveryIsNeverReclaimed(t *testing.T) {
+	setupOutboundWebhookTestDB(t)
+	putWebhookTestConfig(t, "http://127.0.0.1:18080/hook")
+	_, err := CreateAccountWebhookTestDelivery(501)
+	require.NoError(t, err)
+
+	claimed, err := model.ClaimDueWebhookDeliveries(20, 30)
+	require.NoError(t, err)
+	require.Len(t, claimed, 1)
+	require.NoError(t, model.DB.Model(&model.WebhookDelivery{}).Where("id = ?", claimed[0].ID).
+		Update("locked_until", time.Now().Add(-time.Minute).Unix()).Error)
+
+	reclaimed, err := model.ClaimDueWebhookDeliveries(20, 30)
+	require.NoError(t, err)
+	assert.Empty(t, reclaimed)
 }
 
 func TestWebhookValidationRejectsInsecureAndPrivateTargetsByDefault(t *testing.T) {

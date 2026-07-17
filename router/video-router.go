@@ -10,8 +10,7 @@ import (
 func SetVideoRouter(router *gin.Engine) {
 	assetV1Router := router.Group("/v1")
 	assetV1Router.Use(middleware.RouteTag("relay"))
-	assetV1Router.Use(middleware.AssetKeyAuth())
-	assetV1Router.Use(middleware.RequireAssetKeyScope("assets:read"))
+	assetV1Router.Use(middleware.AssetOrTokenAuth())
 	{
 		assetV1Router.GET("/assets", controller.ListAssetsByAPIKey)
 		assetV1Router.POST("/assets/query", controller.QueryAssetsByAPIKey)

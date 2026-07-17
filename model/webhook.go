@@ -158,8 +158,7 @@ func ClaimDueWebhookDeliveries(limit int, leaseSeconds int64) ([]*WebhookDeliver
 	}
 	now := time.Now().Unix()
 	var candidates []WebhookDelivery
-	if err := DB.Where("next_attempt_at <= ? AND retry_deadline >= ? AND (locked_until = 0 OR locked_until < ?) AND status IN ?", now, now, now,
-		[]string{WebhookDeliveryPending, WebhookDeliveryProcessing}).
+	if err := DB.Where("next_attempt_at <= ? AND status = ?", now, WebhookDeliveryPending).
 		Order("next_attempt_at ASC, id ASC").Limit(limit * 2).Find(&candidates).Error; err != nil {
 		return nil, err
 	}
@@ -174,8 +173,7 @@ func ClaimDueWebhookDeliveries(limit int, leaseSeconds int64) ([]*WebhookDeliver
 			return nil, err
 		}
 		result := DB.Model(&WebhookDelivery{}).
-			Where("id = ? AND next_attempt_at <= ? AND retry_deadline >= ? AND (locked_until = 0 OR locked_until < ?) AND status IN ?", candidate.ID, now, now, now,
-				[]string{WebhookDeliveryPending, WebhookDeliveryProcessing}).
+			Where("id = ? AND next_attempt_at <= ? AND status = ?", candidate.ID, now, WebhookDeliveryPending).
 			Updates(map[string]any{
 				"status":       WebhookDeliveryProcessing,
 				"attempts":     gorm.Expr("attempts + 1"),

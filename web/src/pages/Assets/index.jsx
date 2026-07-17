@@ -24,7 +24,6 @@ import {
   Form,
   ImagePreview,
   Pagination,
-  Popconfirm,
   Select,
   SideSheet,
   Space,
@@ -41,14 +40,8 @@ import {
   FileSpreadsheet,
   Grid3X3,
   Image as ImageIcon,
-  Eye,
-  EyeOff,
   List,
-  Plus,
-  Power,
-  PowerOff,
   RefreshCcw,
-  Trash2,
   Video,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -68,8 +61,6 @@ import WebhookTab from './webhooks/WebhookTab';
 
 const { Text, Title } = Typography;
 const DIRECT_DOWNLOAD_LIMIT = 20;
-const ASSET_KEY_ENABLED = 1;
-const ASSET_KEY_DISABLED = 2;
 
 const assetTypeOptions = [
   { value: '', label: '全部' },
@@ -136,17 +127,6 @@ function triggerDownload(url, filename) {
   document.body.removeChild(a);
 }
 
-function maskAssetKey(key) {
-  if (!key) return '';
-  if (key.length <= 14) return `${key.slice(0, 4)}********`;
-  return `${key.slice(0, 6)}************${key.slice(-6)}`;
-}
-
-function formatExpireTime(expiredAt, t) {
-  if (!expiredAt || expiredAt === -1) return t('永不过期');
-  return timestamp2string(expiredAt);
-}
-
 function AssetPreview({ asset, className = '' }) {
   if (!asset) return null;
   if (asset.asset_type === 'video') {
@@ -181,18 +161,9 @@ export default function AssetsPage() {
   const { t } = useTranslation();
   const adminUser = isAdmin();
   const [formApi, setFormApi] = useState(null);
-  const [keyFormApi, setKeyFormApi] = useState(null);
   const [activeMainTab, setActiveMainTab] = useState('assets');
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [assetKeys, setAssetKeys] = useState([]);
-  const [keysLoading, setKeysLoading] = useState(false);
-  const [keyActivePage, setKeyActivePage] = useState(1);
-  const [keyPageSize, setKeyPageSize] = useState(ITEMS_PER_PAGE);
-  const [keyTotal, setKeyTotal] = useState(0);
-  const [revealedKeyIds, setRevealedKeyIds] = useState([]);
-  const [showCreateKeySheet, setShowCreateKeySheet] = useState(false);
-  const [createKeyLoading, setCreateKeyLoading] = useState(false);
   const [activePage, setActivePage] = useState(1);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
   const [total, setTotal] = useState(0);
@@ -280,35 +251,9 @@ export default function AssetsPage() {
     }
   };
 
-  const loadAssetKeys = async (page = keyActivePage, size = keyPageSize) => {
-    setKeysLoading(true);
-    try {
-      const res = await API.get(`/api/assets/keys?p=${page}&page_size=${size}`);
-      const { success, data, message } = res.data;
-      if (!success) {
-        showError(message);
-        return;
-      }
-      setAssetKeys(data.items || []);
-      setKeyTotal(data.total || 0);
-      setKeyActivePage(data.page || page);
-      setKeyPageSize(data.page_size || size);
-    } catch (error) {
-      showError(t('加载失败'));
-    } finally {
-      setKeysLoading(false);
-    }
-  };
-
   useEffect(() => {
     loadAssets(1, pageSize);
   }, [assetType]);
-
-  useEffect(() => {
-    if (activeMainTab === 'keys') {
-      loadAssetKeys(1, keyPageSize);
-    }
-  }, [activeMainTab]);
 
   const exportCsv = async () => {
     const endpoint = adminUser
@@ -343,90 +288,6 @@ export default function AssetsPage() {
     selectedAssets.forEach((asset) => {
       triggerDownload(asset.url, buildDownloadName(asset));
     });
-  };
-
-  const createAssetKey = async () => {
-    const values = keyFormApi?.getValues() || {};
-    const name = (values.name || '').trim();
-    if (!name) {
-      showError(t('请输入名称'));
-      return;
-    }
-    let expiredAt = -1;
-    if (values.expired_at && values.expired_at !== -1) {
-      const parsed = Date.parse(values.expired_at);
-      if (Number.isNaN(parsed)) {
-        showError(t('过期时间格式错误！'));
-        return;
-      }
-      expiredAt = Math.ceil(parsed / 1000);
-      if (expiredAt <= Math.floor(Date.now() / 1000)) {
-        showError(t('过期时间不能早于当前时间！'));
-        return;
-      }
-    }
-    setCreateKeyLoading(true);
-    try {
-      const res = await API.post('/api/assets/keys', {
-        name,
-        expired_at: expiredAt,
-        allow_ips: values.allow_ips || '',
-      });
-      const { success, message } = res.data;
-      if (!success) {
-        showError(message);
-        return;
-      }
-      showSuccess(t('创建成功'));
-      setShowCreateKeySheet(false);
-      keyFormApi?.reset();
-      loadAssetKeys(1, keyPageSize);
-    } catch (error) {
-      showError(t('创建失败'));
-    } finally {
-      setCreateKeyLoading(false);
-    }
-  };
-
-  const updateAssetKeyStatus = async (record, status) => {
-    try {
-      const res = await API.put(`/api/assets/keys/${record.id}/status`, {
-        status,
-      });
-      const { success, message } = res.data;
-      if (!success) {
-        showError(message);
-        return;
-      }
-      showSuccess(t('更新成功'));
-      loadAssetKeys(keyActivePage, keyPageSize);
-    } catch (error) {
-      showError(t('更新失败'));
-    }
-  };
-
-  const deleteAssetKey = async (record) => {
-    try {
-      const res = await API.delete(`/api/assets/keys/${record.id}`);
-      const { success, message } = res.data;
-      if (!success) {
-        showError(message);
-        return;
-      }
-      showSuccess(t('删除成功'));
-      setRevealedKeyIds((current) => current.filter((id) => id !== record.id));
-      loadAssetKeys(keyActivePage, keyPageSize);
-    } catch (error) {
-      showError(t('删除失败'));
-    }
-  };
-
-  const toggleRevealKey = (id) => {
-    setRevealedKeyIds((current) =>
-      current.includes(id)
-        ? current.filter((item) => item !== id)
-        : [...current, id],
-    );
   };
 
   const columns = [
@@ -506,101 +367,6 @@ export default function AssetsPage() {
       ),
     },
   ].filter(Boolean);
-
-  const keyColumns = [
-    {
-      title: t('名称'),
-      dataIndex: 'name',
-      render: (text) => <Text ellipsis={{ showTooltip: true }}>{text}</Text>,
-    },
-    {
-      title: t('API Key'),
-      dataIndex: 'key',
-      render: (text, record) => {
-        const revealed = revealedKeyIds.includes(record.id);
-        return (
-          <Space>
-            <Text code ellipsis={{ showTooltip: true }}>
-              {revealed ? text : maskAssetKey(text)}
-            </Text>
-            <Tooltip content={revealed ? t('隐藏') : t('显示')}>
-              <Button
-                size='small'
-                icon={revealed ? <EyeOff size={14} /> : <Eye size={14} />}
-                onClick={() => toggleRevealKey(record.id)}
-              />
-            </Tooltip>
-            <Tooltip content={t('复制')}>
-              <Button
-                size='small'
-                icon={<Copy size={14} />}
-                onClick={() =>
-                  copy(text).then((ok) => ok && showSuccess(t('已复制')))
-                }
-              />
-            </Tooltip>
-          </Space>
-        );
-      },
-    },
-    {
-      title: t('状态'),
-      dataIndex: 'status',
-      render: (status) =>
-        status === ASSET_KEY_ENABLED ? (
-          <Tag color='green'>{t('启用')}</Tag>
-        ) : (
-          <Tag color='grey'>{t('禁用')}</Tag>
-        ),
-    },
-    {
-      title: t('过期时间'),
-      dataIndex: 'expired_at',
-      render: (expiredAt) => formatExpireTime(expiredAt, t),
-    },
-    {
-      title: t('最后使用'),
-      dataIndex: 'last_used_at',
-      render: (lastUsedAt) => (lastUsedAt ? timestamp2string(lastUsedAt) : '-'),
-    },
-    {
-      title: t('创建时间'),
-      dataIndex: 'created_at',
-      render: (createdAt) => timestamp2string(createdAt),
-    },
-    {
-      title: t('操作'),
-      dataIndex: 'actions',
-      render: (_, record) => (
-        <Space>
-          {record.status === ASSET_KEY_ENABLED ? (
-            <Tooltip content={t('禁用')}>
-              <Button
-                size='small'
-                icon={<PowerOff size={14} />}
-                onClick={() => updateAssetKeyStatus(record, ASSET_KEY_DISABLED)}
-              />
-            </Tooltip>
-          ) : (
-            <Tooltip content={t('启用')}>
-              <Button
-                size='small'
-                icon={<Power size={14} />}
-                onClick={() => updateAssetKeyStatus(record, ASSET_KEY_ENABLED)}
-              />
-            </Tooltip>
-          )}
-          <Popconfirm
-            title={t('确定删除该 API Key？')}
-            content={t('删除后使用该 Key 的程序将无法继续访问资源接口')}
-            onConfirm={() => deleteAssetKey(record)}
-          >
-            <Button size='small' type='danger' icon={<Trash2 size={14} />} />
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
 
   const renderAssetsTab = () => (
     <div className='flex flex-col gap-3'>
@@ -876,55 +642,6 @@ export default function AssetsPage() {
     </div>
   );
 
-  const renderKeysTab = () => (
-    <div className='flex flex-col gap-3'>
-      <div className='flex flex-col md:flex-row md:items-center md:justify-between gap-2'>
-        <div>
-          <Title heading={5} className='!mb-1'>
-            {t('API Key')}
-          </Title>
-          <Text type='tertiary'>
-            {t('生成专用于资源查询的只读 Key，可随时查看、复制、禁用或删除')}
-          </Text>
-        </div>
-        <Space wrap>
-          <Button
-            icon={<RefreshCcw size={14} />}
-            onClick={() => loadAssetKeys(1, keyPageSize)}
-            loading={keysLoading}
-          >
-            {t('刷新')}
-          </Button>
-          <Button
-            icon={<Plus size={14} />}
-            type='primary'
-            onClick={() => setShowCreateKeySheet(true)}
-          >
-            {t('创建 Key')}
-          </Button>
-        </Space>
-      </div>
-      <Table
-        columns={keyColumns}
-        dataSource={assetKeys}
-        rowKey='id'
-        loading={keysLoading}
-        pagination={false}
-      />
-      <div className='flex justify-end'>
-        <Pagination
-          currentPage={keyActivePage}
-          pageSize={keyPageSize}
-          total={keyTotal}
-          showSizeChanger
-          pageSizeOptions={[10, 20, 50, 100]}
-          onPageChange={(page) => loadAssetKeys(page, keyPageSize)}
-          onPageSizeChange={(size) => loadAssetKeys(1, size)}
-        />
-      </div>
-    </div>
-  );
-
   return (
     <div className='p-2'>
       <div className='flex flex-col gap-3'>
@@ -933,7 +650,7 @@ export default function AssetsPage() {
             {t('资源管理中心')}
           </Title>
           <Text type='tertiary'>
-            {t('管理异步任务生成的图片、视频和资源访问 Key')}
+            {t('管理异步任务生成的图片、视频和 Webhook 通知')}
           </Text>
         </div>
         <Tabs
@@ -942,13 +659,11 @@ export default function AssetsPage() {
           onChange={setActiveMainTab}
           tabList={[
             { tab: t('资源列表'), itemKey: 'assets' },
-            { tab: t('API Key'), itemKey: 'keys' },
             { tab: 'Webhook', itemKey: 'webhooks' },
             { tab: t('使用文档'), itemKey: 'docs' },
           ]}
         />
         {activeMainTab === 'assets' && renderAssetsTab()}
-        {activeMainTab === 'keys' && renderKeysTab()}
         {activeMainTab === 'webhooks' && <WebhookTab />}
         {activeMainTab === 'docs' && (
           <ResourceCenterDocs
@@ -1045,94 +760,6 @@ export default function AssetsPage() {
               )}
           </div>
         )}
-      </SideSheet>
-
-      <SideSheet
-        placement='right'
-        title={t('创建资源 API Key')}
-        visible={showCreateKeySheet}
-        onCancel={() => setShowCreateKeySheet(false)}
-        width='min(520px, 100vw)'
-        footer={
-          <Space>
-            <Button onClick={() => setShowCreateKeySheet(false)}>
-              {t('取消')}
-            </Button>
-            <Button
-              type='primary'
-              loading={createKeyLoading}
-              onClick={createAssetKey}
-            >
-              {t('创建')}
-            </Button>
-          </Space>
-        }
-      >
-        <Form
-          getFormApi={setKeyFormApi}
-          initValues={{
-            name: '',
-            expired_at: -1,
-            allow_ips: '',
-          }}
-          layout='vertical'
-          allowEmpty
-          autoComplete='off'
-        >
-          <Form.Input
-            field='name'
-            label={t('名称')}
-            placeholder={t('例如：本地下载脚本')}
-            showClear
-          />
-          <Form.DatePicker
-            field='expired_at'
-            label={t('过期时间')}
-            type='dateTime'
-            placeholder={t('留空或设为永不过期')}
-            showClear
-            className='w-full'
-          />
-          <Form.Slot label={t('快捷设置')}>
-            <Space wrap>
-              <Button
-                type='tertiary'
-                onClick={() => keyFormApi?.setValue('expired_at', -1)}
-              >
-                {t('永不过期')}
-              </Button>
-              <Button
-                type='tertiary'
-                onClick={() =>
-                  keyFormApi?.setValue(
-                    'expired_at',
-                    timestamp2string(Date.now() / 1000 + 86400 * 30),
-                  )
-                }
-              >
-                {t('一个月')}
-              </Button>
-              <Button
-                type='tertiary'
-                onClick={() =>
-                  keyFormApi?.setValue(
-                    'expired_at',
-                    timestamp2string(Date.now() / 1000 + 86400),
-                  )
-                }
-              >
-                {t('一天')}
-              </Button>
-            </Space>
-          </Form.Slot>
-          <Form.TextArea
-            field='allow_ips'
-            label={t('允许 IP')}
-            placeholder={t('每行一个 IP 或 CIDR，留空表示不限制')}
-            autosize
-            showClear
-          />
-        </Form>
       </SideSheet>
 
       <ImagePreview

@@ -4673,6 +4673,19 @@
     "OpenAPI 3.1": "OpenAPI 3.1",
     "image.task.succeeded": "image.task.succeeded",
     "image.task.failed": "image.task.failed",
-    "webhook.test": "webhook.test"
+    "webhook.test": "webhook.test",
+    "所有接口统一使用一个 API Key": "所有 API 統一使用一個 API Key",
+    "异步任务、预上传和资源 API 统一使用同一个普通 API Key（sk-...）。": "非同步任務、預先上傳和資源 API 統一使用同一個普通 API Key（sk-...）。",
+    "创建和查询异步任务、预上传图片，以及查询和导出生成资源": "建立和查詢非同步任務、預先上傳圖片，以及查詢和匯出產生的資源",
+    "Webhook 的 wk- Key 只是回调验证密钥，不具备 API 调用权限。": "Webhook 的 wk- Key 僅是回呼驗證密鑰，不具備 API 呼叫權限。",
+    "资源 API 使用同一个普通 API Key（sk-...）。": "資源 API 使用同一個普通 API Key（sk-...）。",
+    "data.object 与任务查询接口返回的对象一致，event id 可用于记录和排查。": "data.object 與任務查詢 API 回傳的物件一致，event id 可用於記錄和排查。",
+    "单次通知规则": "單次通知規則",
+    "每个事件只发送一次，发送后不会重试。": "每個事件只發送一次，發送後不會重試。",
+    "接收端无需返回指定状态码，new-api 会忽略 HTTP 响应结果": "接收端無需回傳指定狀態碼，new-api 會忽略 HTTP 回應結果",
+    "连接失败或超时后直接结束，不会再次发送": "連線失敗或逾時後直接結束，不會再次發送",
+    "管理异步任务生成的图片、视频和 Webhook 通知": "管理非同步任務產生的圖片、影片和 Webhook 通知",
+    "每个事件只发送一次，不检查响应，也不会重试": "每個事件只發送一次，不檢查回應，也不會重試",
+    "Webhook 验证 Key": "Webhook 驗證 Key"
   }
 }

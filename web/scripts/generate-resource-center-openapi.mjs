@@ -26,8 +26,8 @@ const queryParameter = (name, schema, description) => ({
   description,
   schema,
 });
-const assetSecurity = [{ AssetKeyAuth: [] }];
 const tokenSecurity = [{ TokenAuth: [] }];
+const assetSecurity = tokenSecurity;
 const webhookSecurity = [{ WebhookBearerAuth: [] }];
 
 const webhookSucceededExample = {
@@ -186,7 +186,7 @@ const spec = {
     version: '2026-07-17',
     summary: 'Assets, asynchronous image tasks, uploads, and Webhooks.',
     description:
-      'Public Resource Center API. Async image tasks and uploads use a normal new-api token. Assets use an ak_ resource key. Account-level task Webhooks are configured in the Resource Center console.',
+      'Public Resource Center API. Async image tasks, uploads, and assets use the same normal new-api token. Account-level task Webhooks are configured in the Resource Center console.',
   },
   jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
   servers: [
@@ -203,7 +203,7 @@ const spec = {
   tags: [
     {
       name: 'Assets',
-      description: 'Read generated assets with an ak_ key and assets:read.',
+      description: 'Read generated assets with a normal new-api token.',
     },
     {
       name: 'Async Images',
@@ -220,7 +220,7 @@ const spec = {
         tags: ['Assets'],
         operationId: 'listAssets',
         summary: 'List assets',
-        description: 'Lists only assets owned by the resource key user.',
+        description: 'Lists only assets owned by the API token user.',
         security: assetSecurity,
         parameters: [
           ...assetFilterParameters,
@@ -460,7 +460,7 @@ const spec = {
         operationId: 'receiveImageTaskSucceededWebhook',
         summary: 'image.task.succeeded callback',
         description:
-          'Delivered at least once with Authorization: Bearer wk-.... Return any 2xx within 10 seconds and deduplicate retries by the stable event id.',
+          'Sent once with Authorization: Bearer wk-.... The receiver response is ignored and failed connections are not retried.',
         security: webhookSecurity,
         parameters: [],
         requestBody: {
@@ -473,7 +473,10 @@ const spec = {
           },
         },
         responses: {
-          200: { description: 'Any 2xx response acknowledges delivery.' },
+          default: {
+            description:
+              'Optional receiver response. new-api ignores the status and body.',
+          },
         },
       },
     },
@@ -482,7 +485,7 @@ const spec = {
         operationId: 'receiveImageTaskFailedWebhook',
         summary: 'image.task.failed callback',
         description:
-          'Delivered at least once with Authorization: Bearer wk-.... Return any 2xx within 10 seconds and deduplicate retries by the stable event id.',
+          'Sent once with Authorization: Bearer wk-.... The receiver response is ignored and failed connections are not retried.',
         security: webhookSecurity,
         parameters: [],
         requestBody: {
@@ -495,7 +498,10 @@ const spec = {
           },
         },
         responses: {
-          200: { description: 'Any 2xx response acknowledges delivery.' },
+          default: {
+            description:
+              'Optional receiver response. new-api ignores the status and body.',
+          },
         },
       },
     },
@@ -508,13 +514,6 @@ const spec = {
         bearerFormat: 'new-api token',
         description:
           'A normal new-api token authorized for the requested image model.',
-      },
-      AssetKeyAuth: {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'ak_*',
-        description:
-          'A Resource Center API Key used only to query and export assets.',
       },
       WebhookBearerAuth: {
         type: 'http',

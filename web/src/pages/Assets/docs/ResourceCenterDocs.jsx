@@ -134,7 +134,7 @@ const TASK_QUERY_REQUEST = `curl "$BASE_URL/v1/image/tasks/task_xxx" \\
   -H "Authorization: Bearer $API_KEY"`;
 
 const ASSET_LIST_REQUEST = `curl "$BASE_URL/v1/assets?asset_type=image&page=1&page_size=20" \\
-  -H "Authorization: Bearer $RESOURCE_API_KEY"`;
+  -H "Authorization: Bearer $API_KEY"`;
 
 const ASSET_LIST_RESPONSE = `{
   "object": "list",
@@ -365,29 +365,24 @@ function OverviewDocs({ t }) {
   return (
     <div>
       <DocumentationSection
-        title={t('选择正确的 API Key')}
-        description={t('三类 Key 用途不同，不能互相替换。')}
+        title={t('所有接口统一使用一个 API Key')}
+        description={t(
+          '异步任务、预上传和资源 API 统一使用同一个普通 API Key（sk-...）。',
+        )}
       >
         <DocsTable
           columns={[t('使用场景'), t('API Key'), t('Authorization')]}
           rows={[
             [
-              t('创建和查询异步图片任务、预上传图片'),
+              t('创建和查询异步任务、预上传图片，以及查询和导出生成资源'),
               t('普通 API Key（sk-...）'),
               'Bearer sk-...',
             ],
-            [
-              t('查询和导出已生成资源'),
-              t('资源 API Key（ak_...）'),
-              'Bearer ak_...',
-            ],
-            [
-              t('接收任务完成回调'),
-              t('Webhook Key（wk-...）'),
-              t('由 new-api 发给接收端'),
-            ],
           ]}
         />
+        <Text type='tertiary'>
+          {t('Webhook 的 wk- Key 只是回调验证密钥，不具备 API 调用权限。')}
+        </Text>
       </DocumentationSection>
 
       <DocumentationSection
@@ -514,9 +509,9 @@ function AssetApiDocs({ t }) {
     <div>
       <DocumentationSection
         title={t('接口列表')}
-        description={t('资源 API 只接受资源中心生成的 ak_ API Key。')}
+        description={t('资源 API 使用同一个普通 API Key（sk-...）。')}
       >
-        <EndpointTable tags={['Assets']} apiKey={t('资源 API Key')} t={t} />
+        <EndpointTable tags={['Assets']} apiKey={t('普通 API Key')} t={t} />
       </DocumentationSection>
 
       <DocumentationSection
@@ -580,7 +575,7 @@ function WebhookDocs({ onOpenWebhook, t }) {
       <DocumentationSection
         title={t('回调 Payload')}
         description={t(
-          'data.object 与任务查询接口返回的对象一致；使用稳定的 event id 去重。',
+          'data.object 与任务查询接口返回的对象一致，event id 可用于记录和排查。',
         )}
       >
         <Collapse defaultActiveKey={['succeeded']}>
@@ -609,28 +604,23 @@ function WebhookDocs({ onOpenWebhook, t }) {
       </DocumentationSection>
 
       <DocumentationSection
-        title={t('确认、重试与去重')}
-        description={t('Webhook 采用至少一次投递，接收端必须支持重复事件。')}
+        title={t('单次通知规则')}
+        description={t('每个事件只发送一次，发送后不会重试。')}
       >
         <DocsTable
           columns={[t('行为'), t('处理方式')]}
           rows={[
-            [t('确认成功'), t('在 10 秒内返回任意 2xx；建议直接返回 204')],
             [
-              t('自动重试'),
-              t('网络错误、429 或非 2xx 会自动重试，event id 保持不变'),
+              t('响应'),
+              t('接收端无需返回指定状态码，new-api 会忽略 HTTP 响应结果'),
             ],
-            [t('停用'), t('接收端返回 410 时自动停用配置')],
-            [t('去重'), t('保存已处理的 event id，重复收到时直接返回 2xx')],
+            [t('发送失败'), t('连接失败或超时后直接结束，不会再次发送')],
             [
               t('安全'),
               t('校验 Authorization: Bearer wk-...，不要记录完整 Key'),
             ],
           ]}
         />
-        <CodeExample
-          title={t('推荐响应')}
-        >{`HTTP/1.1 204 No Content`}</CodeExample>
       </DocumentationSection>
     </div>
   );

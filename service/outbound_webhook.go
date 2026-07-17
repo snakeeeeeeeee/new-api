@@ -29,14 +29,13 @@ import (
 )
 
 const (
-	WebhookAPIVersion               = "2026-07-17"
-	WebhookEventImageTaskSucceeded  = "image.task.succeeded"
-	WebhookEventImageTaskFailed     = "image.task.failed"
-	WebhookEventTest                = "webhook.test"
-	webhookKeyPrefix                = "wk-"
-	webhookKeyEnvelopeVersion       = "v1"
-	webhookDeliveryTimeout          = 10 * time.Second
-	webhookDeliveryResponseBodySize = 4 << 10
+	WebhookAPIVersion              = "2026-07-17"
+	WebhookEventImageTaskSucceeded = "image.task.succeeded"
+	WebhookEventImageTaskFailed    = "image.task.failed"
+	WebhookEventTest               = "webhook.test"
+	webhookKeyPrefix               = "wk-"
+	webhookKeyEnvelopeVersion      = "v1"
+	webhookDeliveryTimeout         = 10 * time.Second
 )
 
 var (
@@ -432,7 +431,7 @@ func processDueWebhookDeliveries(ctx context.Context) {
 func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery) {
 	delivery, event, endpoint, err := model.LoadWebhookDeliveryContext(claimed.ID)
 	if err != nil {
-		completeWebhookFailure(ctx, claimed, 0, "load webhook delivery context: "+err.Error(), "", 0, "")
+		completeWebhookFailure(ctx, claimed, "load webhook delivery context: "+err.Error(), 0)
 		return
 	}
 	if delivery.LockToken != claimed.LockToken {
@@ -461,12 +460,12 @@ func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery)
 	defer cancel()
 	client, err := newWebhookHTTPClient(requestCtx, endpoint.URL)
 	if err != nil {
-		completeWebhookFailure(ctx, delivery, 0, err.Error(), "", 0, "")
+		completeWebhookFailure(ctx, delivery, err.Error(), 0)
 		return
 	}
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint.URL, bytes.NewBufferString(event.Payload))
 	if err != nil {
-		completeWebhookFailure(ctx, delivery, 0, err.Error(), "", 0, "")
+		completeWebhookFailure(ctx, delivery, err.Error(), 0)
 		return
 	}
 	request.Header.Set("Authorization", "Bearer "+authKey)
@@ -476,81 +475,25 @@ func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery)
 	response, err := client.Do(request)
 	durationMS := time.Since(started).Milliseconds()
 	if err != nil {
-		completeWebhookFailure(ctx, delivery, 0, err.Error(), "", durationMS, "")
+		completeWebhookFailure(ctx, delivery, err.Error(), durationMS)
 		return
 	}
-	defer response.Body.Close()
-	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, webhookDeliveryResponseBodySize+1))
-	if len(responseBody) > webhookDeliveryResponseBodySize {
-		responseBody = responseBody[:webhookDeliveryResponseBodySize]
+	_ = response.Body.Close()
+	_, err = model.CompleteWebhookDeliveryAttempt(delivery, model.WebhookDeliveryResult{
+		Status: model.WebhookDeliveryDelivered, HTTPStatus: response.StatusCode, DurationMS: durationMS,
+	})
+	if err != nil {
+		logger.LogError(ctx, "complete webhook delivery failed: "+err.Error())
 	}
-	if response.StatusCode >= 200 && response.StatusCode < 300 {
-		_, err := model.CompleteWebhookDeliveryAttempt(delivery, model.WebhookDeliveryResult{
-			Status: model.WebhookDeliveryDelivered, HTTPStatus: response.StatusCode,
-			ResponseBody: string(responseBody), DurationMS: durationMS,
-		})
-		if err != nil {
-			logger.LogError(ctx, "complete webhook delivery failed: "+err.Error())
-		}
-		return
-	}
-	if response.StatusCode == http.StatusGone {
-		_, err := model.CompleteWebhookDeliveryAttempt(delivery, model.WebhookDeliveryResult{
-			Status: model.WebhookDeliveryDiscarded, HTTPStatus: response.StatusCode,
-			LastError: "endpoint returned 410 Gone", ResponseBody: string(responseBody), DurationMS: durationMS,
-			DisableEndpoint: true,
-		})
-		if err != nil {
-			logger.LogError(ctx, "disable gone webhook endpoint failed: "+err.Error())
-		}
-		return
-	}
-	completeWebhookFailure(ctx, delivery, response.StatusCode,
-		fmt.Sprintf("endpoint returned HTTP %d", response.StatusCode), string(responseBody), durationMS, response.Header.Get("Retry-After"))
 }
 
-func completeWebhookFailure(ctx context.Context, delivery *model.WebhookDelivery, httpStatus int, reason, responseBody string, durationMS int64, retryAfter string) {
-	delays := []time.Duration{time.Minute, 5 * time.Minute, 30 * time.Minute, 2 * time.Hour, 6 * time.Hour, 12 * time.Hour}
-	now := time.Now()
-	status := model.WebhookDeliveryFailed
-	nextAttemptAt := int64(0)
-	if delivery.Attempts <= len(delays) && now.Unix() < delivery.RetryDeadline {
-		delay := delays[delivery.Attempts-1]
-		if requested := parseWebhookRetryAfter(retryAfter, now); requested > delay {
-			delay = requested
-		}
-		if delay > 12*time.Hour {
-			delay = 12 * time.Hour
-		}
-		if next := now.Add(delay).Unix(); next <= delivery.RetryDeadline {
-			status = model.WebhookDeliveryPending
-			nextAttemptAt = next
-		}
-	}
+func completeWebhookFailure(ctx context.Context, delivery *model.WebhookDelivery, reason string, durationMS int64) {
 	_, err := model.CompleteWebhookDeliveryAttempt(delivery, model.WebhookDeliveryResult{
-		Status: status, NextAttemptAt: nextAttemptAt, HTTPStatus: httpStatus,
-		LastError: reason, ResponseBody: responseBody, DurationMS: durationMS,
+		Status: model.WebhookDeliveryFailed, LastError: reason, DurationMS: durationMS,
 	})
 	if err != nil {
 		logger.LogError(ctx, "record webhook delivery failure failed: "+err.Error())
 	}
-}
-
-func parseWebhookRetryAfter(value string, now time.Time) time.Duration {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0
-	}
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil {
-		if seconds <= 0 {
-			return 0
-		}
-		return time.Duration(seconds) * time.Second
-	}
-	if parsed, err := http.ParseTime(value); err == nil && parsed.After(now) {
-		return parsed.Sub(now)
-	}
-	return 0
 }
 
 func webhookAllowsInsecureLocal() bool {
