@@ -114,3 +114,23 @@ func TestAssetKeyAuthRejectsNormalTokenFormat(t *testing.T) {
 	require.False(t, called)
 	require.Equal(t, http.StatusUnauthorized, recorder.Code)
 }
+
+func TestRequireAssetKeyScopeKeepsLegacyKeysReadOnly(t *testing.T) {
+	setupAssetKeyAuthTestDB(t)
+	legacy, err := model.CreateAssetKey(41, "legacy", -1, "")
+	require.NoError(t, err)
+	_, ctx, called := runAssetKeyAuthRequest(legacy.Key)
+	require.True(t, called)
+
+	RequireAssetKeyScope(model.AssetKeyScopeRead)(ctx)
+	require.False(t, ctx.IsAborted())
+	RequireAssetKeyScope("webhooks:read")(ctx)
+	require.True(t, ctx.IsAborted())
+	require.Equal(t, http.StatusForbidden, ctx.Writer.Status())
+}
+
+func TestAssetKeyRejectsRemovedWebhookScopes(t *testing.T) {
+	setupAssetKeyAuthTestDB(t)
+	_, err := model.CreateAssetKeyWithScopes(41, "webhooks", -1, "", []string{"webhooks:write"})
+	require.ErrorContains(t, err, "invalid asset key scope")
+}

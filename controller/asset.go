@@ -48,7 +48,7 @@ func CreateUserAssetKey(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	key, err := model.CreateAssetKey(c.GetInt("id"), req.Name, req.ExpiredAt, req.AllowIPs)
+	key, err := model.CreateAssetKeyWithScopes(c.GetInt("id"), req.Name, req.ExpiredAt, req.AllowIPs, req.Scopes)
 	if err != nil {
 		common.ApiError(c, err)
 		return

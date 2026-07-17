@@ -313,6 +313,16 @@ func GetUserAssetsByAssetIDs(userID int, assetIDs []string) ([]*Asset, error) {
 	return assets, err
 }
 
+func GetUserAssetsByTaskIDs(userID int, taskIDs []string) ([]*Asset, error) {
+	if len(taskIDs) == 0 {
+		return nil, nil
+	}
+	var assets []*Asset
+	err := visibleAssetQuery(DB.Where("user_id = ? AND task_id IN ?", userID, taskIDs)).
+		Order("task_id ASC, asset_index ASC").Find(&assets).Error
+	return assets, err
+}
+
 func UpdateAssetBlocked(assetID string, blocked bool) (*Asset, bool, error) {
 	asset, exists, err := GetAssetByAssetID(assetID, true)
 	if err != nil || !exists {

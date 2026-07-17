@@ -937,7 +937,7 @@ func TestImageTaskCallbackBatchTruncatesOversizedRawResponse(t *testing.T) {
 
 func TestQueryImageTasksReturnsOnlyCurrentUserTasks(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
-	require.NoError(t, db.Create(&model.Task{
+	currentTask := &model.Task{
 		TaskID:    "task_current_user",
 		Platform:  constant.TaskPlatform("58"),
 		Action:    constant.TaskActionImageGeneration,
@@ -948,8 +948,15 @@ func TestQueryImageTasksReturnsOnlyCurrentUserTasks(t *testing.T) {
 		PrivateData: model.TaskPrivateData{
 			ResultURL: "https://cdn.example.com/current.webp",
 		},
-	}).Error)
-	require.NoError(t, db.Create(&model.Task{
+	}
+	require.NoError(t, db.Create(currentTask).Error)
+	currentRequest, err := common.Marshal(dto.ImageTaskCreateRequest{
+		Model: "gpt-image-2", Operation: "generation", Input: dto.ImageTaskInputRequest{Prompt: "draw"},
+		ClientReferenceID: "order_current",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(model.NewImageTaskRequest(currentTask, 1, nil, "fingerprint-current", "order_current", currentRequest)).Error)
+	otherTask := &model.Task{
 		TaskID:    "task_other_user",
 		Platform:  constant.TaskPlatform("58"),
 		Action:    constant.TaskActionImageGeneration,
@@ -960,7 +967,13 @@ func TestQueryImageTasksReturnsOnlyCurrentUserTasks(t *testing.T) {
 		PrivateData: model.TaskPrivateData{
 			ResultURL: "https://cdn.example.com/other.webp",
 		},
-	}).Error)
+	}
+	require.NoError(t, db.Create(otherTask).Error)
+	otherRequest, err := common.Marshal(dto.ImageTaskCreateRequest{
+		Model: "gpt-image-2", Operation: "generation", Input: dto.ImageTaskInputRequest{Prompt: "other"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(model.NewImageTaskRequest(otherTask, 2, nil, "fingerprint-other", "", otherRequest)).Error)
 	require.NoError(t, db.Create(&model.Task{
 		TaskID:    "task_video_same_user",
 		Platform:  constant.TaskPlatform("48"),
@@ -983,12 +996,14 @@ func TestQueryImageTasksReturnsOnlyCurrentUserTasks(t *testing.T) {
 	QueryImageTasks(ctx)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), `"task_id":"task_current_user"`)
-	assert.Contains(t, recorder.Body.String(), `"channel_id":123`)
-	assert.Contains(t, recorder.Body.String(), `"result_url":"https://cdn.example.com/current.webp"`)
-	assert.NotContains(t, recorder.Body.String(), "task_other_user")
+	assert.Contains(t, recorder.Body.String(), `"id":"task_current_user"`)
+	assert.Contains(t, recorder.Body.String(), `"object":"image.task"`)
+	assert.Contains(t, recorder.Body.String(), `"client_reference_id":"order_current"`)
+	assert.Contains(t, recorder.Body.String(), `"missing":["task_other_user","task_video_same_user"]`)
+	assert.NotContains(t, recorder.Body.String(), "channel_id")
+	assert.NotContains(t, recorder.Body.String(), "user_id")
+	assert.NotContains(t, recorder.Body.String(), "quota")
 	assert.NotContains(t, recorder.Body.String(), "other.webp")
-	assert.NotContains(t, recorder.Body.String(), "task_video_same_user")
 	assert.NotContains(t, recorder.Body.String(), "video.mp4")
 }
 
@@ -1009,8 +1024,9 @@ func TestQueryImageTasksRejectsMoreThanOneHundredIDs(t *testing.T) {
 
 	QueryImageTasks(ctx)
 
-	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "task_ids max size is 100")
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"code":"invalid_request"`)
+	assert.Contains(t, recorder.Body.String(), "between 1 and 100")
 }
 
 func TestGetImageTaskRejectsNonImageHandleTask(t *testing.T) {
@@ -1033,8 +1049,8 @@ func TestGetImageTaskRejectsNonImageHandleTask(t *testing.T) {
 
 	GetImageTask(ctx)
 
-	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "task_not_exist")
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"code":"task_not_found"`)
 }
 
 func TestVerifyImageCallbackRejectsInvalidSignature(t *testing.T) {

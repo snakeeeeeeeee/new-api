@@ -274,9 +274,15 @@ func migrateDB() error {
 		&TopUp{},
 		&QuotaData{},
 		&Task{},
+		&ImageTaskRequest{},
+		&ImageTaskDispatch{},
 		&ImageCredentialLease{},
 		&Asset{},
 		&AssetKey{},
+		&WebhookEndpoint{},
+		&WebhookEvent{},
+		&WebhookDelivery{},
+		&WebhookDeliveryAttempt{},
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},
@@ -315,6 +321,9 @@ func migrateDB() error {
 	if err := BackfillAdminMenuPermissionsForExistingAdmins(); err != nil {
 		common.SysLog(fmt.Sprintf("Warning: failed to backfill admin menu permissions: %v", err))
 	}
+	if err := NormalizeExistingAssetKeyScopes(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -338,9 +347,15 @@ func migrateDBFast() error {
 		{&TopUp{}, "TopUp"},
 		{&QuotaData{}, "QuotaData"},
 		{&Task{}, "Task"},
+		{&ImageTaskRequest{}, "ImageTaskRequest"},
+		{&ImageTaskDispatch{}, "ImageTaskDispatch"},
 		{&ImageCredentialLease{}, "ImageCredentialLease"},
 		{&Asset{}, "Asset"},
 		{&AssetKey{}, "AssetKey"},
+		{&WebhookEndpoint{}, "WebhookEndpoint"},
+		{&WebhookEvent{}, "WebhookEvent"},
+		{&WebhookDelivery{}, "WebhookDelivery"},
+		{&WebhookDeliveryAttempt{}, "WebhookDeliveryAttempt"},
 		{&Model{}, "Model"},
 		{&Vendor{}, "Vendor"},
 		{&PrefillGroup{}, "PrefillGroup"},
@@ -398,6 +413,9 @@ func migrateDBFast() error {
 	}
 	if err := BackfillAdminMenuPermissionsForExistingAdmins(); err != nil {
 		common.SysLog(fmt.Sprintf("Warning: failed to backfill admin menu permissions: %v", err))
+	}
+	if err := NormalizeExistingAssetKeyScopes(); err != nil {
+		return err
 	}
 	common.SysLog("database migrated")
 	return nil

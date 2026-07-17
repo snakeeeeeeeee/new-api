@@ -83,7 +83,7 @@ func setupRelayTaskTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	model.DB = db
-	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.ImageCredentialLease{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.Log{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}))
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.ImageCredentialLease{}, &model.ImageTaskRequest{}, &model.ImageTaskDispatch{}, &model.Asset{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.Log{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}))
 	t.Cleanup(func() {
 		model.DB = originalDB
 		common.UsingSQLite = originalUsingSQLite

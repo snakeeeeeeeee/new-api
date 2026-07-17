@@ -30,11 +30,22 @@ services:
       - TZ=Asia/Shanghai
       - ERROR_LOG_ENABLED=true
       - BATCH_UPDATE_ENABLED=true
+      - NODE_TYPE=master
+      - SESSION_SECRET=new-api-local-dev-session-secret-2026
+      - CRYPTO_SECRET=new-api-local-dev-crypto-secret-2026
+      - IMAGE_HANDLE_BASE_URL=http://image-api:8787
+      - IMAGE_HANDLE_API_KEY=local-image-handle-api-key
+      - IMAGE_HANDLE_INTERNAL_BASE_URL=http://new-api-dev:3000
+      - IMAGE_HANDLE_INTERNAL_SECRET_ID=image_handle_1
+      - IMAGE_HANDLE_INTERNAL_SECRET=local-image-handle-lease-secret
+      - IMAGE_HANDLE_CALLBACK_SECRET=local-image-handle-callback-secret
+      - WEBHOOK_ALLOW_INSECURE_LOCAL=true
     depends_on:
       - redis-dev
       - postgres-dev
     networks:
       - new-api-dev-network
+      - ai-gateway
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
@@ -67,3 +78,6 @@ volumes:
 networks:
   new-api-dev-network:
     driver: bridge
+  ai-gateway:
+    external: true
+    name: ai-gateway

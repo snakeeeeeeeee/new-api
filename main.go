@@ -120,6 +120,8 @@ func main() {
 		}
 		return a
 	}
+	service.StartImageTaskDispatchWorker()
+	service.StartOutboundWebhookWorker()
 
 	// Channel upstream model update check task
 	controller.StartChannelUpstreamModelUpdateTask()

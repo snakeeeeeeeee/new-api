@@ -637,7 +637,7 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 					return err
 				}
 			}
-			return nil
+			return CreateImageTaskWebhookEventTx(tx, task)
 		})
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))

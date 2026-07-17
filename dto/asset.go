@@ -58,9 +58,10 @@ type AssetKeyDto struct {
 }
 
 type AssetKeyCreateRequest struct {
-	Name      string `json:"name"`
-	AllowIPs  string `json:"allow_ips"`
-	ExpiredAt int64  `json:"expired_at"`
+	Name      string   `json:"name"`
+	AllowIPs  string   `json:"allow_ips"`
+	ExpiredAt int64    `json:"expired_at"`
+	Scopes    []string `json:"scopes,omitempty"`
 }
 
 type AssetKeyStatusRequest struct {

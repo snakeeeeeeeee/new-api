@@ -439,6 +439,15 @@ func SetApiRouter(router *gin.Engine) {
 			assetRoute.PUT("/:asset_id/block", middleware.AdminAuth(), middleware.AdminMenuAuth("assets"), controller.UpdateAssetBlockStatus)
 		}
 
+		webhookRoute := apiRouter.Group("/webhook")
+		webhookRoute.Use(middleware.UserAuth())
+		{
+			webhookRoute.GET("", controller.GetAccountWebhook)
+			webhookRoute.PUT("", controller.PutAccountWebhook)
+			webhookRoute.DELETE("", controller.DeleteAccountWebhook)
+			webhookRoute.POST("/test", controller.TestAccountWebhook)
+		}
+
 		vendorRoute := apiRouter.Group("/vendors")
 		vendorRoute.Use(middleware.AdminAuth())
 		vendorRoute.Use(middleware.AdminMenuAuth("models"))

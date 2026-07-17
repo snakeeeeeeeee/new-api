@@ -29,6 +29,8 @@ import (
 
 const imageCredentialLeaseTTLSeconds = 30 * 60
 
+var errImageTaskIdempotencyConflict = errors.New("idempotency_key_conflict")
+
 type TaskSubmitResult struct {
 	UpstreamTaskID string
 	TaskData       []byte
@@ -289,6 +291,37 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	var createdTask *model.Task
 	var createdLease *model.ImageCredentialLease
 	if platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeImageHandle)) {
+		if _, durable := c.Get(relaycommon.ImageTaskPublicRequestContextKey); durable {
+			createdTask, existingTask, createErr := createDurableAsyncImageTask(c, info, platform, info.PriceData.Quota, adaptor)
+			if createErr != nil {
+				if errors.Is(createErr, errImageTaskIdempotencyConflict) {
+					return nil, service.TaskErrorWrapperLocal(createErr, "idempotency_key_conflict", http.StatusConflict)
+				}
+				return nil, service.TaskErrorWrapper(createErr, "create_image_dispatch_failed", http.StatusInternalServerError)
+			}
+			if existingTask != nil {
+				if info.Billing != nil {
+					info.Billing.Refund(c)
+					info.Billing = nil
+				}
+				publicTask, buildErr := service.BuildPublicImageTask(existingTask)
+				if buildErr != nil {
+					return nil, service.TaskErrorWrapper(buildErr, "build_task_response_failed", http.StatusInternalServerError)
+				}
+				c.Header("Idempotent-Replayed", "true")
+				c.Header("Location", "/v1/image/tasks/"+existingTask.TaskID)
+				c.Header("Retry-After", "2")
+				c.JSON(http.StatusAccepted, publicTask)
+				return &TaskSubmitResult{Platform: platform, Quota: existingTask.Quota, ExistingTask: existingTask}, nil
+			}
+			requestValue, _ := c.Get(relaycommon.ImageTaskPublicRequestContextKey)
+			request, _ := requestValue.(dto.ImageTaskCreateRequest)
+			publicTask := service.BuildPublicImageTaskFromRequest(createdTask, &request)
+			c.Header("Location", "/v1/image/tasks/"+createdTask.TaskID)
+			c.Header("Retry-After", "2")
+			c.JSON(http.StatusAccepted, publicTask)
+			return &TaskSubmitResult{Platform: platform, Quota: info.PriceData.Quota, CreatedTask: createdTask}, nil
+		}
 		var err error
 		createdTask, createdLease, err = createAsyncImageTaskAndLease(c, info, platform, info.PriceData.Quota)
 		if err != nil {
@@ -416,7 +449,7 @@ func resolveAsyncImageN(c *gin.Context) int {
 	return 1
 }
 
-func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, platform constant.TaskPlatform, quota int) (*model.Task, *model.ImageCredentialLease, error) {
+func newAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, platform constant.TaskPlatform, quota int) (*model.Task, string, error) {
 	task := model.InitTask(platform, info)
 	task.Quota = quota
 	task.Action = info.Action
@@ -427,7 +460,7 @@ func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, p
 		task.PrivateData.ImageInputURLs = snapshot.images
 		task.PrivateData.ImageMaskURL = snapshot.mask
 	} else if err != nil {
-		return nil, nil, err
+		return nil, "", err
 	}
 	task.PrivateData.BillingSource = info.BillingSource
 	task.PrivateData.SubscriptionId = info.SubscriptionId
@@ -478,6 +511,14 @@ func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, p
 	if info.Action == constant.TaskActionImageEdit {
 		operation = "edit"
 	}
+	return task, operation, nil
+}
+
+func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, platform constant.TaskPlatform, quota int) (*model.Task, *model.ImageCredentialLease, error) {
+	task, operation, err := newAsyncImageTask(c, info, platform, quota)
+	if err != nil {
+		return nil, nil, err
+	}
 	var lease *model.ImageCredentialLease
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(task).Error; err != nil {
@@ -490,6 +531,76 @@ func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, p
 	}
 	c.Set("image_credential_lease_id", lease.LeaseID)
 	return task, lease, nil
+}
+
+func createDurableAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, platform constant.TaskPlatform, quota int, adaptor channel.TaskAdaptor) (*model.Task, *model.Task, error) {
+	requestJSONValue, ok := c.Get(relaycommon.ImageTaskPublicRequestJSONContextKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("normalized image task request is missing")
+	}
+	requestJSON, ok := requestJSONValue.([]byte)
+	if !ok || len(requestJSON) == 0 {
+		return nil, nil, fmt.Errorf("normalized image task request is invalid")
+	}
+	fingerprint := c.GetString(relaycommon.ImageTaskFingerprintContextKey)
+	idempotencyKeyValue := strings.TrimSpace(c.GetString(relaycommon.ImageTaskIdempotencyKeyContextKey))
+	var idempotencyKey *string
+	if idempotencyKeyValue != "" {
+		idempotencyKey = &idempotencyKeyValue
+	}
+	publicRequest, ok := c.Get(relaycommon.ImageTaskPublicRequestContextKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("public image task request is missing")
+	}
+	typedRequest, ok := publicRequest.(dto.ImageTaskCreateRequest)
+	if !ok {
+		return nil, nil, fmt.Errorf("public image task request is invalid")
+	}
+	task, operation, err := newAsyncImageTask(c, info, platform, quota)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(task).Error; err != nil {
+			return err
+		}
+		lease := model.NewImageCredentialLease(task, operation, info.UpstreamModelName, imageCredentialLeaseTTLSeconds)
+		if err := tx.Create(lease).Error; err != nil {
+			return err
+		}
+		c.Set("image_credential_lease_id", lease.LeaseID)
+		bodyReader, err := adaptor.BuildRequestBody(c, info)
+		if err != nil {
+			return err
+		}
+		body, err := io.ReadAll(bodyReader)
+		if err != nil {
+			return err
+		}
+		requestRecord := model.NewImageTaskRequest(task, info.UserId, idempotencyKey, fingerprint, typedRequest.ClientReferenceID, requestJSON)
+		if err := tx.Create(requestRecord).Error; err != nil {
+			return err
+		}
+		return tx.Create(model.NewImageTaskDispatch(task, body)).Error
+	})
+	if err == nil {
+		return task, nil, nil
+	}
+	if idempotencyKey == nil {
+		return nil, nil, err
+	}
+	existingRequest, exists, lookupErr := model.GetImageTaskRequestByIdempotencyKey(info.UserId, idempotencyKeyValue)
+	if lookupErr != nil || !exists {
+		return nil, nil, err
+	}
+	if existingRequest.RequestFingerprint != fingerprint {
+		return nil, nil, errImageTaskIdempotencyConflict
+	}
+	existingTask, taskExists, taskErr := model.GetPublicImageTask(info.UserId, existingRequest.TaskID, platform)
+	if taskErr != nil || !taskExists {
+		return nil, nil, err
+	}
+	return nil, existingTask, nil
 }
 
 func markAsyncImageSubmitFailed(task *model.Task, lease *model.ImageCredentialLease, reason string) (bool, error) {

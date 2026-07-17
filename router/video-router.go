@@ -11,6 +11,7 @@ func SetVideoRouter(router *gin.Engine) {
 	assetV1Router := router.Group("/v1")
 	assetV1Router.Use(middleware.RouteTag("relay"))
 	assetV1Router.Use(middleware.AssetKeyAuth())
+	assetV1Router.Use(middleware.RequireAssetKeyScope("assets:read"))
 	{
 		assetV1Router.GET("/assets", controller.ListAssetsByAPIKey)
 		assetV1Router.POST("/assets/query", controller.QueryAssetsByAPIKey)
@@ -31,8 +32,11 @@ func SetVideoRouter(router *gin.Engine) {
 	imageTaskQueryRouter.Use(middleware.RouteTag("relay"))
 	imageTaskQueryRouter.Use(middleware.TokenAuth())
 	{
+		imageTaskQueryRouter.GET("/image/tasks", controller.ListImageTasks)
 		imageTaskQueryRouter.GET("/image/tasks/:task_id", controller.GetImageTask)
 		imageTaskQueryRouter.POST("/image/tasks/query", controller.QueryImageTasks)
+		imageTaskQueryRouter.POST("/image/uploads", controller.ProxyImageTaskUpload)
+		imageTaskQueryRouter.POST("/image/uploads/base64", controller.ProxyImageTaskUpload)
 	}
 
 	videoV1Router := router.Group("/v1")
@@ -42,7 +46,7 @@ func SetVideoRouter(router *gin.Engine) {
 		videoV1Router.POST("/video/generations", controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
 		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
-		videoV1Router.POST("/image/tasks", controller.RelayTask)
+		videoV1Router.POST("/image/tasks", controller.PrepareImageTaskRequest, controller.RelayTask)
 	}
 	// openai compatible API video routes
 	// docs: https://platform.openai.com/docs/api-reference/videos/create

@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -59,7 +60,42 @@ func (key *AssetKey) IsExpired(now int64) bool {
 	return key.ExpiredAt != -1 && key.ExpiredAt != 0 && key.ExpiredAt < now
 }
 
+func ParseAssetKeyScopes(value string) []string {
+	return []string{AssetKeyScopeRead}
+}
+
+func AssetKeyHasScope(value, required string) bool {
+	for _, scope := range ParseAssetKeyScopes(value) {
+		if scope == required {
+			return true
+		}
+	}
+	return false
+}
+
+func NormalizeAssetKeyScopes(scopes []string) (string, error) {
+	if len(scopes) == 0 {
+		return AssetKeyScopeRead, nil
+	}
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope != AssetKeyScopeRead {
+			return "", fmt.Errorf("invalid asset key scope: %s", scope)
+		}
+	}
+	return AssetKeyScopeRead, nil
+}
+
+func NormalizeExistingAssetKeyScopes() error {
+	return DB.Model(&AssetKey{}).Where("scopes IS NULL OR scopes <> ?", AssetKeyScopeRead).
+		Update("scopes", AssetKeyScopeRead).Error
+}
+
 func CreateAssetKey(userID int, name string, expiredAt int64, allowIPs string) (*AssetKey, error) {
+	return CreateAssetKeyWithScopes(userID, name, expiredAt, allowIPs, nil)
+}
+
+func CreateAssetKeyWithScopes(userID int, name string, expiredAt int64, allowIPs string, scopes []string) (*AssetKey, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("name is required")
@@ -75,12 +111,16 @@ func CreateAssetKey(userID int, name string, expiredAt int64, allowIPs string) (
 	if err != nil {
 		return nil, err
 	}
+	normalizedScopes, err := NormalizeAssetKeyScopes(scopes)
+	if err != nil {
+		return nil, err
+	}
 	assetKey := &AssetKey{
 		UserID:     userID,
 		Name:       name,
 		Key:        keyValue,
 		Status:     AssetKeyStatusEnabled,
-		Scopes:     AssetKeyScopeRead,
+		Scopes:     normalizedScopes,
 		AllowIPs:   strings.TrimSpace(allowIPs),
 		ExpiredAt:  expiredAt,
 		CreatedAt:  now,

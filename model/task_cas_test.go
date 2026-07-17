@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 
-	if err := db.AutoMigrate(&Task{}, &User{}, &Token{}, &Log{}, &Channel{}, &InviteCode{}, &TopUp{}, &UserSubscription{}, &SubscriptionPlan{}, &SubscriptionOrder{}); err != nil {
+	if err := db.AutoMigrate(&Task{}, &User{}, &Token{}, &Log{}, &Channel{}, &InviteCode{}, &TopUp{}, &UserSubscription{}, &SubscriptionPlan{}, &SubscriptionOrder{}, &ImageTaskDispatch{}); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
 

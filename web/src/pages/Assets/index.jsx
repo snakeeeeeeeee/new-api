@@ -40,7 +40,6 @@ import {
   ExternalLink,
   FileSpreadsheet,
   Grid3X3,
-  KeyRound,
   Image as ImageIcon,
   Eye,
   EyeOff,
@@ -64,11 +63,57 @@ import {
 } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { DATE_RANGE_PRESETS } from '../../constants/console.constants';
+import WebhookTab from './webhooks/WebhookTab';
+import RESOURCE_CENTER_OPENAPI_SPEC from '../../../../docs/openapi/resource-center.json';
 
 const { Text, Title } = Typography;
 const DIRECT_DOWNLOAD_LIMIT = 20;
 const ASSET_KEY_ENABLED = 1;
 const ASSET_KEY_DISABLED = 2;
+const OPENAPI_HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
+const OPENAPI_OPERATION_COUNT = Object.values(
+  RESOURCE_CENTER_OPENAPI_SPEC.paths,
+).reduce(
+  (total, pathItem) =>
+    total +
+    Object.keys(pathItem).filter((method) => OPENAPI_HTTP_METHODS.has(method))
+      .length,
+  0,
+);
+const OPENAPI_SECTION_CONFIG = [
+  {
+    tag: 'Assets',
+    title: '资源 API',
+    description: '使用带 assets:read scope 的 ak_ Key 查询和导出资源。',
+  },
+  {
+    tag: 'Async Images',
+    title: '异步图片任务',
+    description: '使用普通生图 Token 创建、轮询、筛选或批量查询任务。',
+  },
+  {
+    tag: 'Image Uploads',
+    title: '图片预上传',
+    description: '将本地或 base64 图片转换为可用于编辑任务的临时 URL。',
+  },
+];
+
+function getOpenAPIOperations(tag) {
+  return Object.entries(RESOURCE_CENTER_OPENAPI_SPEC.paths).flatMap(
+    ([path, pathItem]) =>
+      Object.entries(pathItem)
+        .filter(
+          ([method, operation]) =>
+            OPENAPI_HTTP_METHODS.has(method) && operation.tags?.includes(tag),
+        )
+        .map(([method, operation]) => [
+          method.toUpperCase(),
+          path,
+          operation['x-required-scope'] ||
+            (tag === 'Async Images' || tag === 'Image Uploads' ? 'token' : '-'),
+        ]),
+  );
+}
 
 const assetTypeOptions = [
   { value: '', label: '全部' },
@@ -148,7 +193,9 @@ function formatExpireTime(expiredAt, t) {
 
 function CodeBlock({ children, className = '' }) {
   return (
-    <pre className={`m-0 whitespace-pre-wrap break-all rounded-md bg-semi-color-fill-0 p-3 text-xs leading-5 text-semi-color-text-0 ${className}`}>
+    <pre
+      className={`m-0 whitespace-pre-wrap break-all rounded-md bg-semi-color-fill-0 p-3 text-xs leading-5 text-semi-color-text-0 ${className}`}
+    >
       {children}
     </pre>
   );
@@ -161,7 +208,10 @@ function DocsTable({ columns, rows }) {
         <thead>
           <tr className='bg-semi-color-fill-0'>
             {columns.map((column) => (
-              <th key={column} className='px-3 py-2 text-left font-medium text-semi-color-text-1 border-0 border-b border-solid border-semi-color-border'>
+              <th
+                key={column}
+                className='px-3 py-2 text-left font-medium text-semi-color-text-1 border-0 border-b border-solid border-semi-color-border'
+              >
                 {column}
               </th>
             ))}
@@ -169,9 +219,15 @@ function DocsTable({ columns, rows }) {
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={`${row[0]}-${index}`} className='border-0 border-b border-solid border-semi-color-border last:border-b-0'>
+            <tr
+              key={`${row[0]}-${index}`}
+              className='border-0 border-b border-solid border-semi-color-border last:border-b-0'
+            >
               {row.map((cell, cellIndex) => (
-                <td key={`${row[0]}-${cellIndex}`} className='px-3 py-2 align-top text-semi-color-text-0'>
+                <td
+                  key={`${row[0]}-${cellIndex}`}
+                  className='px-3 py-2 align-top text-semi-color-text-0'
+                >
                   {cellIndex === 0 ? <Text code>{cell}</Text> : cell}
                 </td>
               ))}
@@ -224,9 +280,15 @@ const ASSET_URL_FIELD_ROWS = [
 ];
 
 const ASSET_API_STATUS_ROWS = [
-  ['200', '请求成功；列表、详情和 URL 批量接口返回 JSON，导出接口返回 text/csv'],
+  [
+    '200',
+    '请求成功；列表、详情和 URL 批量接口返回 JSON，导出接口返回 text/csv',
+  ],
   ['400', '请求参数或 JSON body 无效，例如 asset_type 不在允许枚举内'],
-  ['401', '缺少 Authorization、Authorization 不是 Bearer ak_...，或 Key 不存在'],
+  [
+    '401',
+    '缺少 Authorization、Authorization 不是 Bearer ak_...，或 Key 不存在',
+  ],
   ['403', 'Key 已禁用、已过期、IP 不允许，或 Key 所属用户被禁用'],
   ['404', '资源不存在，或资源不属于当前 Key 对应用户'],
   ['500', '服务端错误'],
@@ -240,12 +302,23 @@ const ASSET_API_ERROR_CODE_ROWS = [
 ];
 
 const ASSET_API_AUTH_ROWS = [
-  ['Header', 'Authorization', '是', 'Bearer ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'],
+  [
+    'Header',
+    'Authorization',
+    '是',
+    'Bearer <普通 Token>（异步图片任务与预上传）',
+  ],
+  ['Header', 'Authorization', '是', 'Bearer ak_xxx（仅用于资源 API）'],
 ];
 
 const ASSET_API_COMMON_QUERY_ROWS = [
   ['asset_type', 'string', '否', '资源类型：image、video、audio、file'],
-  ['status', 'string', '否', '资源状态；外部 API 只会返回当前用户可见资源，通常使用 available'],
+  [
+    'status',
+    'string',
+    '否',
+    '资源状态；外部 API 只会返回当前用户可见资源，通常使用 available',
+  ],
   ['task_id', 'string', '否', '按任务 ID 精确筛选'],
   ['model', 'string', '否', '按模型名称精确筛选'],
   ['platform', 'string', '否', '按任务平台筛选，例如 58'],
@@ -263,7 +336,12 @@ const ASSET_API_LIST_QUERY_ROWS = [
 ];
 
 const ASSET_API_FILTER_BODY_ROWS = [
-  ['asset_ids', 'string[]', '否', '资源 ID 数组，最多 100 个；传入后优先按 ID 批量查询'],
+  [
+    'asset_ids',
+    'string[]',
+    '否',
+    '资源 ID 数组，最多 100 个；传入后优先按 ID 批量查询',
+  ],
   ['asset_type', 'string', '否', '资源类型：image、video、audio、file'],
   ['task_id', 'string', '否', '按任务 ID 精确筛选'],
   ['model', 'string', '否', '按模型名称精确筛选'],
@@ -280,7 +358,8 @@ const ASSET_API_ENDPOINTS = [
     method: 'GET',
     path: '/v1/assets',
     title: '查询资源列表',
-    description: '按资源类型、任务 ID、模型、渠道、关键词、时间范围等条件分页查询当前 Key 所属用户的可用资源。',
+    description:
+      '按资源类型、任务 ID、模型、渠道、关键词、时间范围等条件分页查询当前 Key 所属用户的可用资源。',
     query: ASSET_API_LIST_QUERY_ROWS,
     responseFields: ASSET_API_FIELD_ROWS,
     curl: `curl "$BASE_URL/v1/assets?asset_type=image&page=1&page_size=20" \\
@@ -318,7 +397,8 @@ const ASSET_API_ENDPOINTS = [
     method: 'GET',
     path: '/v1/assets/{asset_id}',
     title: '查询单个资源',
-    description: '按资源 ID 查询资源详情。只能查询当前 Key 所属用户的可用资源。',
+    description:
+      '按资源 ID 查询资源详情。只能查询当前 Key 所属用户的可用资源。',
     pathParams: [['asset_id', 'string', '是', '资源 ID，格式 asset_xxx']],
     responseFields: ASSET_API_FIELD_ROWS,
     curl: `curl "$BASE_URL/v1/assets/asset_xxx" \\
@@ -343,7 +423,8 @@ const ASSET_API_ENDPOINTS = [
     method: 'POST',
     path: '/v1/assets/query',
     title: '批量查询资源',
-    description: '支持按 asset_ids 批量查询，或用 JSON body 提交筛选条件查询资源列表。asset_ids 为空时走筛选分页。',
+    description:
+      '支持按 asset_ids 批量查询，或用 JSON body 提交筛选条件查询资源列表。asset_ids 为空时走筛选分页。',
     body: ASSET_API_FILTER_BODY_ROWS,
     responseFields: ASSET_API_FIELD_ROWS,
     curl: `curl "$BASE_URL/v1/assets/query" \\
@@ -375,7 +456,8 @@ const ASSET_API_ENDPOINTS = [
     method: 'POST',
     path: '/v1/assets/batch/urls',
     title: '批量获取 URL',
-    description: '只返回资源 ID、任务 ID、资源类型和 URL，适合下载器或脚本快速获取直链。asset_ids 最多处理 100 个，重复和空值会被忽略。',
+    description:
+      '只返回资源 ID、任务 ID、资源类型和 URL，适合下载器或脚本快速获取直链。asset_ids 最多处理 100 个，重复和空值会被忽略。',
     body: [['asset_ids', 'string[]', '是', '资源 ID 数组，最多 100 个']],
     responseFields: ASSET_URL_FIELD_ROWS,
     curl: `curl "$BASE_URL/v1/assets/batch/urls" \\
@@ -398,7 +480,8 @@ const ASSET_API_ENDPOINTS = [
     method: 'GET',
     path: '/v1/assets/export',
     title: '导出 CSV',
-    description: '按筛选条件导出最多 10000 条 URL 清单。响应类型为 text/csv，适合交给下载器、脚本或表格工具处理。',
+    description:
+      '按筛选条件导出最多 10000 条 URL 清单。响应类型为 text/csv，适合交给下载器、脚本或表格工具处理。',
     query: ASSET_API_COMMON_QUERY_ROWS,
     responseFields: [
       ['asset_id', 'string', '资源 ID'],
@@ -418,411 +501,6 @@ const ASSET_API_ENDPOINTS = [
 asset_xxx,task_xxx,image,https://cdn.example.com/image.webp,image.webp,gpt-image-2,58,imageGeneration,1782152450`,
   },
 ];
-
-const ASSET_API_OPENAPI_SPEC = {
-  openapi: '3.0.3',
-  info: {
-    title: 'new-api Assets API',
-    version: '1.0.0',
-    description: '资源管理中心只读 API，用于通过资源 API Key 查询、导出和获取异步图片、视频、音频、文件资源直链。',
-  },
-  servers: [
-    {
-      url: '{base_url}',
-      variables: {
-        base_url: {
-          default: 'https://new-api.example.com',
-          description: '替换为你的 new-api 访问地址',
-        },
-      },
-    },
-  ],
-  tags: [{ name: 'Assets', description: '资源查询、批量 URL 和 CSV 导出' }],
-  security: [{ AssetKeyAuth: [] }],
-  components: {
-    securitySchemes: {
-      AssetKeyAuth: {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'ak_*',
-        description: '在资源管理中心的 API Key Tab 创建，格式为 Authorization: Bearer ak_xxx',
-      },
-    },
-    parameters: {
-      AssetTypeQuery: {
-        name: 'asset_type',
-        in: 'query',
-        required: false,
-        schema: { $ref: '#/components/schemas/AssetType' },
-        description: '资源类型',
-      },
-      StatusQuery: {
-        name: 'status',
-        in: 'query',
-        required: false,
-        schema: { type: 'string', enum: ['available'] },
-        description: '资源状态；外部 API 只返回当前用户可见资源，通常使用 available',
-      },
-      TaskIdQuery: {
-        name: 'task_id',
-        in: 'query',
-        required: false,
-        schema: { type: 'string' },
-        description: '按任务 ID 精确筛选',
-      },
-      ModelQuery: {
-        name: 'model',
-        in: 'query',
-        required: false,
-        schema: { type: 'string' },
-        description: '按模型名称精确筛选',
-      },
-      PlatformQuery: {
-        name: 'platform',
-        in: 'query',
-        required: false,
-        schema: { type: 'string', example: '58' },
-        description: '按任务平台筛选，例如 58',
-      },
-      ActionQuery: {
-        name: 'action',
-        in: 'query',
-        required: false,
-        schema: { type: 'string', example: 'imageGeneration' },
-        description: '按任务动作筛选，例如 imageGeneration、imageEdit',
-      },
-      ChannelIdQuery: {
-        name: 'channel_id',
-        in: 'query',
-        required: false,
-        schema: { type: 'integer' },
-        description: '按渠道 ID 筛选',
-      },
-      KeywordQuery: {
-        name: 'keyword',
-        in: 'query',
-        required: false,
-        schema: { type: 'string' },
-        description: '按 asset_id、task_id、filename、url 模糊搜索',
-      },
-      StartTimestampQuery: {
-        name: 'start_timestamp',
-        in: 'query',
-        required: false,
-        schema: { type: 'integer', format: 'int64' },
-        description: '创建时间下限，Unix 秒',
-      },
-      EndTimestampQuery: {
-        name: 'end_timestamp',
-        in: 'query',
-        required: false,
-        schema: { type: 'integer', format: 'int64' },
-        description: '创建时间上限，Unix 秒',
-      },
-      PageQuery: {
-        name: 'page',
-        in: 'query',
-        required: false,
-        schema: { type: 'integer', minimum: 1, default: 1 },
-        description: '页码，默认 1；兼容参数 p',
-      },
-      PageSizeQuery: {
-        name: 'page_size',
-        in: 'query',
-        required: false,
-        schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
-        description: '每页数量，默认 20，最大 100；兼容参数 ps、size',
-      },
-    },
-    schemas: {
-      AssetType: {
-        type: 'string',
-        enum: ['image', 'video', 'audio', 'file'],
-        example: 'image',
-      },
-      Asset: {
-        type: 'object',
-        required: ['object', 'id', 'task_id', 'index', 'type', 'url', 'status', 'created_at', 'updated_at'],
-        properties: {
-          object: { type: 'string', enum: ['asset'], example: 'asset' },
-          id: { type: 'string', example: 'asset_xxx', description: '资源 ID' },
-          task_id: { type: 'string', example: 'task_xxx', description: 'new-api 任务 ID' },
-          index: { type: 'integer', example: 0, description: '同一任务内的资源序号，从 0 开始' },
-          type: { $ref: '#/components/schemas/AssetType' },
-          url: { type: 'string', format: 'uri', example: 'https://cdn.example.com/image.webp' },
-          thumbnail_url: { type: 'string', format: 'uri', nullable: true, example: 'https://cdn.example.com/thumb.webp' },
-          mime_type: { type: 'string', nullable: true, example: 'image/webp' },
-          filename: { type: 'string', nullable: true, example: 'image.webp' },
-          size_bytes: { type: 'integer', format: 'int64', nullable: true, example: 1024000 },
-          width: { type: 'integer', nullable: true, example: 2048 },
-          height: { type: 'integer', nullable: true, example: 2048 },
-          duration_ms: { type: 'integer', format: 'int64', nullable: true, example: 12000 },
-          model: { type: 'string', nullable: true, example: 'gpt-image-2' },
-          platform: { type: 'string', nullable: true, example: '58' },
-          action: { type: 'string', nullable: true, example: 'imageGeneration' },
-          status: { type: 'string', enum: ['available'], example: 'available' },
-          metadata: { type: 'object', nullable: true, additionalProperties: true },
-          created_at: { type: 'integer', format: 'int64', example: 1782152450 },
-          updated_at: { type: 'integer', format: 'int64', example: 1782152450 },
-        },
-      },
-      AssetListResponse: {
-        type: 'object',
-        required: ['object', 'data', 'page', 'page_size', 'total', 'has_more'],
-        properties: {
-          object: { type: 'string', enum: ['list'], example: 'list' },
-          data: { type: 'array', items: { $ref: '#/components/schemas/Asset' } },
-          page: { type: 'integer', example: 1 },
-          page_size: { type: 'integer', example: 20 },
-          total: { type: 'integer', format: 'int64', example: 1 },
-          has_more: { type: 'boolean', example: false },
-        },
-      },
-      AssetQueryRequest: {
-        type: 'object',
-        properties: {
-          asset_ids: {
-            type: 'array',
-            maxItems: 100,
-            items: { type: 'string' },
-            description: '资源 ID 数组；传入后优先按 ID 批量查询',
-            example: ['asset_xxx', 'asset_yyy'],
-          },
-          asset_type: { $ref: '#/components/schemas/AssetType' },
-          task_id: { type: 'string', example: 'task_xxx' },
-          model: { type: 'string', example: 'gpt-image-2' },
-          platform: { type: 'string', example: '58' },
-          action: { type: 'string', example: 'imageGeneration' },
-          start_timestamp: { type: 'integer', format: 'int64', example: 1782150000 },
-          end_timestamp: { type: 'integer', format: 'int64', example: 1782160000 },
-          page: { type: 'integer', minimum: 1, default: 1 },
-          page_size: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
-        },
-      },
-      AssetBatchURLRequest: {
-        type: 'object',
-        required: ['asset_ids'],
-        properties: {
-          asset_ids: {
-            type: 'array',
-            maxItems: 100,
-            items: { type: 'string' },
-            example: ['asset_xxx', 'asset_yyy'],
-          },
-        },
-      },
-      AssetURLItem: {
-        type: 'object',
-        required: ['asset_id', 'task_id', 'asset_type', 'url'],
-        properties: {
-          asset_id: { type: 'string', example: 'asset_xxx' },
-          task_id: { type: 'string', example: 'task_xxx' },
-          asset_type: { $ref: '#/components/schemas/AssetType' },
-          url: { type: 'string', format: 'uri', example: 'https://cdn.example.com/image.webp' },
-        },
-      },
-      AssetURLListResponse: {
-        type: 'object',
-        required: ['object', 'data'],
-        properties: {
-          object: { type: 'string', enum: ['list'], example: 'list' },
-          data: { type: 'array', items: { $ref: '#/components/schemas/AssetURLItem' } },
-        },
-      },
-      ErrorResponse: {
-        type: 'object',
-        required: ['error'],
-        properties: {
-          error: {
-            type: 'object',
-            required: ['message', 'type', 'code'],
-            properties: {
-              message: { type: 'string', example: '资源 API Key 已禁用 (request id: ...)' },
-              type: { type: 'string', example: 'new_api_error' },
-              code: { type: 'string', example: 'access_denied' },
-            },
-          },
-        },
-      },
-    },
-    responses: {
-      BadRequest: {
-        description: '请求参数或 JSON body 无效',
-        content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-      },
-      Unauthorized: {
-        description: '缺少 Authorization 或 Key 无效',
-        content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-      },
-      Forbidden: {
-        description: 'Key 已禁用、已过期、IP 不允许，或用户不可用',
-        content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-      },
-      NotFound: {
-        description: '资源不存在或不属于当前用户',
-        content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-      },
-      ServerError: {
-        description: '服务端错误',
-        content: { 'application/json': { schema: { $ref: '#/components/schemas/ErrorResponse' } } },
-      },
-    },
-  },
-  paths: {
-    '/v1/assets': {
-      get: {
-        tags: ['Assets'],
-        operationId: 'listAssets',
-        summary: '查询资源列表',
-        description: '分页查询当前资源 API Key 所属用户的可用资源。',
-        security: [{ AssetKeyAuth: [] }],
-        parameters: [
-          { $ref: '#/components/parameters/AssetTypeQuery' },
-          { $ref: '#/components/parameters/StatusQuery' },
-          { $ref: '#/components/parameters/TaskIdQuery' },
-          { $ref: '#/components/parameters/ModelQuery' },
-          { $ref: '#/components/parameters/PlatformQuery' },
-          { $ref: '#/components/parameters/ActionQuery' },
-          { $ref: '#/components/parameters/ChannelIdQuery' },
-          { $ref: '#/components/parameters/KeywordQuery' },
-          { $ref: '#/components/parameters/StartTimestampQuery' },
-          { $ref: '#/components/parameters/EndTimestampQuery' },
-          { $ref: '#/components/parameters/PageQuery' },
-          { $ref: '#/components/parameters/PageSizeQuery' },
-        ],
-        responses: {
-          200: {
-            description: '资源列表',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/AssetListResponse' } } },
-          },
-          401: { $ref: '#/components/responses/Unauthorized' },
-          403: { $ref: '#/components/responses/Forbidden' },
-          500: { $ref: '#/components/responses/ServerError' },
-        },
-      },
-    },
-    '/v1/assets/{asset_id}': {
-      get: {
-        tags: ['Assets'],
-        operationId: 'getAsset',
-        summary: '查询单个资源',
-        description: '按资源 ID 查询资源详情。',
-        security: [{ AssetKeyAuth: [] }],
-        parameters: [
-          {
-            name: 'asset_id',
-            in: 'path',
-            required: true,
-            schema: { type: 'string' },
-            description: '资源 ID，格式 asset_xxx',
-          },
-        ],
-        responses: {
-          200: {
-            description: '资源详情',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/Asset' } } },
-          },
-          401: { $ref: '#/components/responses/Unauthorized' },
-          403: { $ref: '#/components/responses/Forbidden' },
-          404: { $ref: '#/components/responses/NotFound' },
-          500: { $ref: '#/components/responses/ServerError' },
-        },
-      },
-    },
-    '/v1/assets/query': {
-      post: {
-        tags: ['Assets'],
-        operationId: 'queryAssets',
-        summary: '批量查询资源',
-        description: '按 asset_ids 批量查询，或用 JSON body 中的筛选条件分页查询。',
-        security: [{ AssetKeyAuth: [] }],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: { $ref: '#/components/schemas/AssetQueryRequest' },
-            },
-          },
-        },
-        responses: {
-          200: {
-            description: '资源列表',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/AssetListResponse' } } },
-          },
-          400: { $ref: '#/components/responses/BadRequest' },
-          401: { $ref: '#/components/responses/Unauthorized' },
-          403: { $ref: '#/components/responses/Forbidden' },
-          500: { $ref: '#/components/responses/ServerError' },
-        },
-      },
-    },
-    '/v1/assets/batch/urls': {
-      post: {
-        tags: ['Assets'],
-        operationId: 'getAssetBatchURLs',
-        summary: '批量获取资源 URL',
-        description: '按资源 ID 批量返回直链信息。',
-        security: [{ AssetKeyAuth: [] }],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: { $ref: '#/components/schemas/AssetBatchURLRequest' },
-            },
-          },
-        },
-        responses: {
-          200: {
-            description: '资源 URL 列表',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/AssetURLListResponse' } } },
-          },
-          400: { $ref: '#/components/responses/BadRequest' },
-          401: { $ref: '#/components/responses/Unauthorized' },
-          403: { $ref: '#/components/responses/Forbidden' },
-          500: { $ref: '#/components/responses/ServerError' },
-        },
-      },
-    },
-    '/v1/assets/export': {
-      get: {
-        tags: ['Assets'],
-        operationId: 'exportAssets',
-        summary: '导出资源 CSV',
-        description: '按筛选条件导出最多 10000 条资源 URL 清单。',
-        security: [{ AssetKeyAuth: [] }],
-        parameters: [
-          { $ref: '#/components/parameters/AssetTypeQuery' },
-          { $ref: '#/components/parameters/StatusQuery' },
-          { $ref: '#/components/parameters/TaskIdQuery' },
-          { $ref: '#/components/parameters/ModelQuery' },
-          { $ref: '#/components/parameters/PlatformQuery' },
-          { $ref: '#/components/parameters/ActionQuery' },
-          { $ref: '#/components/parameters/ChannelIdQuery' },
-          { $ref: '#/components/parameters/KeywordQuery' },
-          { $ref: '#/components/parameters/StartTimestampQuery' },
-          { $ref: '#/components/parameters/EndTimestampQuery' },
-        ],
-        responses: {
-          200: {
-            description: 'CSV 文件，字段为 asset_id,task_id,asset_type,url,filename,model,platform,action,created_at',
-            content: {
-              'text/csv': {
-                schema: {
-                  type: 'string',
-                  example:
-                    'asset_id,task_id,asset_type,url,filename,model,platform,action,created_at\\nasset_xxx,task_xxx,image,https://cdn.example.com/image.webp,image.webp,gpt-image-2,58,imageGeneration,1782152450',
-                },
-              },
-            },
-          },
-          401: { $ref: '#/components/responses/Unauthorized' },
-          403: { $ref: '#/components/responses/Forbidden' },
-          500: { $ref: '#/components/responses/ServerError' },
-        },
-      },
-    },
-  },
-};
 
 function AssetPreview({ asset, className = '' }) {
   if (!asset) return null;
@@ -989,7 +667,9 @@ export default function AssetsPage() {
   }, [activeMainTab]);
 
   const exportCsv = async () => {
-    const endpoint = adminUser ? '/api/assets/export' : '/api/assets/self/export';
+    const endpoint = adminUser
+      ? '/api/assets/export'
+      : '/api/assets/self/export';
     const params = new URLSearchParams();
     const queryParams = getQueryParams();
     Object.entries(queryParams).forEach(([key, value]) => {
@@ -1066,7 +746,9 @@ export default function AssetsPage() {
 
   const updateAssetKeyStatus = async (record, status) => {
     try {
-      const res = await API.put(`/api/assets/keys/${record.id}/status`, { status });
+      const res = await API.put(`/api/assets/keys/${record.id}/status`, {
+        status,
+      });
       const { success, message } = res.data;
       if (!success) {
         showError(message);
@@ -1103,7 +785,8 @@ export default function AssetsPage() {
     );
   };
 
-  const getAssetOpenAPIJSON = () => JSON.stringify(ASSET_API_OPENAPI_SPEC, null, 2);
+  const getAssetOpenAPIJSON = () =>
+    JSON.stringify(RESOURCE_CENTER_OPENAPI_SPEC, null, 2);
 
   const copyAssetOpenAPIJSON = async () => {
     if (await copy(getAssetOpenAPIJSON())) {
@@ -1112,7 +795,10 @@ export default function AssetsPage() {
   };
 
   const downloadAssetOpenAPIJSON = () => {
-    downloadTextAsFile(getAssetOpenAPIJSON(), 'new-api-assets-openapi.json');
+    downloadTextAsFile(
+      getAssetOpenAPIJSON(),
+      'new-api-resource-center-openapi.json',
+    );
     showSuccess(t('已导出 OpenAPI JSON'));
   };
 
@@ -1165,13 +851,21 @@ export default function AssetsPage() {
       render: (_, record) => (
         <Space>
           <Tooltip content={t('预览')}>
-            <Button icon={<Grid3X3 size={14} />} size='small' onClick={() => setDetailAsset(record)} />
+            <Button
+              icon={<Grid3X3 size={14} />}
+              size='small'
+              onClick={() => setDetailAsset(record)}
+            />
           </Tooltip>
           <Tooltip content={t('复制链接')}>
             <Button
               icon={<Copy size={14} />}
               size='small'
-              onClick={() => copy(record.url).then((ok) => ok && showSuccess(t('已复制链接')))}
+              onClick={() =>
+                copy(record.url).then(
+                  (ok) => ok && showSuccess(t('已复制链接')),
+                )
+              }
             />
           </Tooltip>
           <Tooltip content={t('打开')}>
@@ -1213,7 +907,9 @@ export default function AssetsPage() {
               <Button
                 size='small'
                 icon={<Copy size={14} />}
-                onClick={() => copy(text).then((ok) => ok && showSuccess(t('已复制')))}
+                onClick={() =>
+                  copy(text).then((ok) => ok && showSuccess(t('已复制')))
+                }
               />
             </Tooltip>
           </Space>
@@ -1291,7 +987,11 @@ export default function AssetsPage() {
           </Text>
         </div>
         <Space wrap>
-          <Button icon={<RefreshCcw size={14} />} onClick={() => loadAssets(1, pageSize)} loading={loading}>
+          <Button
+            icon={<RefreshCcw size={14} />}
+            onClick={() => loadAssets(1, pageSize)}
+            loading={loading}
+          >
             {t('刷新')}
           </Button>
           <Button icon={<FileSpreadsheet size={14} />} onClick={exportCsv}>
@@ -1325,10 +1025,34 @@ export default function AssetsPage() {
               }))}
             />
           </div>
-          <Form.Input field='task_id' placeholder={t('任务 ID')} showClear pure size='small' />
-          <Form.Input field='model' placeholder={t('模型')} showClear pure size='small' />
-          <Form.Input field='keyword' placeholder={t('关键词')} showClear pure size='small' />
-          <Form.Select field='status' placeholder={t('状态')} showClear pure size='small'>
+          <Form.Input
+            field='task_id'
+            placeholder={t('任务 ID')}
+            showClear
+            pure
+            size='small'
+          />
+          <Form.Input
+            field='model'
+            placeholder={t('模型')}
+            showClear
+            pure
+            size='small'
+          />
+          <Form.Input
+            field='keyword'
+            placeholder={t('关键词')}
+            showClear
+            pure
+            size='small'
+          />
+          <Form.Select
+            field='status'
+            placeholder={t('状态')}
+            showClear
+            pure
+            size='small'
+          >
             {statusOptions.map((option) => (
               <Select.Option key={option.value} value={option.value}>
                 {t(option.label)}
@@ -1337,8 +1061,20 @@ export default function AssetsPage() {
           </Form.Select>
           {adminUser && (
             <>
-              <Form.Input field='user_id' placeholder={t('用户 ID')} showClear pure size='small' />
-              <Form.Input field='channel_id' placeholder={t('渠道 ID')} showClear pure size='small' />
+              <Form.Input
+                field='user_id'
+                placeholder={t('用户 ID')}
+                showClear
+                pure
+                size='small'
+              />
+              <Form.Input
+                field='channel_id'
+                placeholder={t('渠道 ID')}
+                showClear
+                pure
+                size='small'
+              />
             </>
           )}
         </div>
@@ -1367,8 +1103,12 @@ export default function AssetsPage() {
               {t('重置')}
             </Button>
             <Button
-              icon={viewMode === 'grid' ? <List size={14} /> : <Grid3X3 size={14} />}
-              onClick={() => setViewMode(viewMode === 'grid' ? 'table' : 'grid')}
+              icon={
+                viewMode === 'grid' ? <List size={14} /> : <Grid3X3 size={14} />
+              }
+              onClick={() =>
+                setViewMode(viewMode === 'grid' ? 'table' : 'grid')
+              }
             >
               {viewMode === 'grid' ? t('表格') : t('网格')}
             </Button>
@@ -1383,10 +1123,18 @@ export default function AssetsPage() {
             : t('共 {{count}} 个资源', { count: total })}
         </Text>
         <Space wrap>
-          <Button icon={<Copy size={14} />} disabled={selectedAssets.length === 0} onClick={copySelectedUrls}>
+          <Button
+            icon={<Copy size={14} />}
+            disabled={selectedAssets.length === 0}
+            onClick={copySelectedUrls}
+          >
             {t('复制链接')}
           </Button>
-          <Button icon={<Download size={14} />} disabled={selectedAssets.length === 0} onClick={downloadSelected}>
+          <Button
+            icon={<Download size={14} />}
+            disabled={selectedAssets.length === 0}
+            onClick={downloadSelected}
+          >
             {t('下载选中')}
           </Button>
         </Space>
@@ -1420,7 +1168,11 @@ export default function AssetsPage() {
                 <Text ellipsis={{ showTooltip: true }} strong>
                   {asset.model || asset.asset_id}
                 </Text>
-                <Text size='small' type='tertiary' ellipsis={{ showTooltip: true }}>
+                <Text
+                  size='small'
+                  type='tertiary'
+                  ellipsis={{ showTooltip: true }}
+                >
                   {asset.task_id}
                 </Text>
                 <Text size='small' type='tertiary'>
@@ -1445,12 +1197,18 @@ export default function AssetsPage() {
                     <Button
                       icon={<Copy size={14} />}
                       size='small'
-                      onClick={() => copy(asset.url).then((ok) => ok && showSuccess(t('已复制链接')))}
+                      onClick={() =>
+                        copy(asset.url).then(
+                          (ok) => ok && showSuccess(t('已复制链接')),
+                        )
+                      }
                     />
                     <Button
                       icon={<ExternalLink size={14} />}
                       size='small'
-                      onClick={() => window.open(asset.url, '_blank', 'noreferrer')}
+                      onClick={() =>
+                        window.open(asset.url, '_blank', 'noreferrer')
+                      }
                     />
                   </Space>
                 </div>
@@ -1503,10 +1261,18 @@ export default function AssetsPage() {
           </Text>
         </div>
         <Space wrap>
-          <Button icon={<RefreshCcw size={14} />} onClick={() => loadAssetKeys(1, keyPageSize)} loading={keysLoading}>
+          <Button
+            icon={<RefreshCcw size={14} />}
+            onClick={() => loadAssetKeys(1, keyPageSize)}
+            loading={keysLoading}
+          >
             {t('刷新')}
           </Button>
-          <Button icon={<Plus size={14} />} type='primary' onClick={() => setShowCreateKeySheet(true)}>
+          <Button
+            icon={<Plus size={14} />}
+            type='primary'
+            onClick={() => setShowCreateKeySheet(true)}
+          >
             {t('创建 Key')}
           </Button>
         </Space>
@@ -1537,29 +1303,57 @@ export default function AssetsPage() {
       <div className='flex flex-col md:flex-row md:items-center md:justify-between gap-2'>
         <div>
           <Title heading={5} className='!mb-1'>
-            {t('Assets API Reference')}
+            {t('Resource Center API Reference')}
           </Title>
           <Text type='tertiary'>
-            {t('资源查询 API 的请求参数、响应参数、状态码和 OpenAPI 文档。')}
+            {t('资源、异步图片、预上传和 Webhook 的统一 OpenAPI 文档。')}
           </Text>
         </div>
         <Space wrap>
-          <Button icon={<Eye size={14} />} onClick={() => setShowOpenAPISheet(true)}>
+          <Button
+            icon={<Eye size={14} />}
+            onClick={() => setShowOpenAPISheet(true)}
+          >
             {t('查看 OpenAPI')}
           </Button>
           <Button icon={<Copy size={14} />} onClick={copyAssetOpenAPIJSON}>
             {t('复制 OpenAPI')}
           </Button>
-          <Button icon={<Download size={14} />} onClick={downloadAssetOpenAPIJSON}>
+          <Button
+            icon={<Download size={14} />}
+            onClick={downloadAssetOpenAPIJSON}
+          >
             {t('下载 OpenAPI')}
           </Button>
         </Space>
       </div>
 
+      <div className='grid grid-cols-1 xl:grid-cols-2 gap-3'>
+        {OPENAPI_SECTION_CONFIG.map((section) => (
+          <div
+            key={section.tag}
+            className='flex min-w-0 flex-col gap-2 rounded-md border border-solid border-semi-color-border p-3'
+          >
+            <div>
+              <Title heading={6}>{t(section.title)}</Title>
+              <Text type='tertiary'>{t(section.description)}</Text>
+            </div>
+            <DocsTable
+              columns={[t('方法'), t('路径'), t('凭证 / Scope')]}
+              rows={getOpenAPIOperations(section.tag)}
+            />
+          </div>
+        ))}
+      </div>
+
       <div className='grid grid-cols-1 xl:grid-cols-3 gap-3'>
         <div className='flex flex-col gap-2 rounded-md border border-solid border-semi-color-border p-3'>
           <Title heading={6}>{t('认证')}</Title>
-          <Text type='tertiary'>{t('所有 /v1/assets 接口都只接受资源管理中心生成的 ak_ 开头 Key。')}</Text>
+          <Text type='tertiary'>
+            {t(
+              '异步图片和预上传使用普通 Token；资源 API 使用 ak_ Resource Key。',
+            )}
+          </Text>
           <DocsTable
             columns={[t('位置'), t('名称'), t('必填'), t('说明')]}
             rows={ASSET_API_AUTH_ROWS}
@@ -1596,30 +1390,43 @@ export default function AssetsPage() {
           <div>
             <Title heading={6}>{t('OpenAPI 文档')}</Title>
             <Text type='tertiary'>
-              {t('已按 OpenAPI 3.0.3 生成完整 spec，可导入 Apifox、Postman、Swagger Editor 或其它文档工具。')}
+              {t(
+                '已按 OpenAPI 3.1.0 生成完整 spec，可导入 Apifox、Postman、Swagger Editor 或其它文档工具。',
+              )}
             </Text>
           </div>
           <Space wrap>
-            <Tag color='blue'>OpenAPI 3.0.3</Tag>
-            <Tag>{t('{{count}} 个接口', { count: ASSET_API_ENDPOINTS.length })}</Tag>
+            <Tag color='blue'>OpenAPI 3.1.0</Tag>
+            <Tag>
+              {t('{{count}} 个接口', { count: OPENAPI_OPERATION_COUNT })}
+            </Tag>
           </Space>
         </div>
         <DocsTable
           columns={[t('内容'), t('说明')]}
           rows={[
-            ['securitySchemes', 'Bearer 资源 API Key，格式 ak_xxx'],
-            ['schemas', 'Asset、AssetListResponse、AssetQueryRequest、AssetURLListResponse、ErrorResponse'],
-            ['responses', '200、400、401、403、404、500 的 JSON/CSV 响应结构'],
+            ['securitySchemes', '普通 Token 与 ak_ Resource Key'],
+            ['schemas', 'Asset、ImageTask、ImageUpload、WebhookEvent'],
+            [
+              'webhooks',
+              'image.task.succeeded 与 image.task.failed 的 Bearer Key 回调',
+            ],
           ]}
         />
         <Space wrap>
-          <Button icon={<Eye size={14} />} onClick={() => setShowOpenAPISheet(true)}>
+          <Button
+            icon={<Eye size={14} />}
+            onClick={() => setShowOpenAPISheet(true)}
+          >
             {t('查看 JSON')}
           </Button>
           <Button icon={<Copy size={14} />} onClick={copyAssetOpenAPIJSON}>
             {t('复制 JSON')}
           </Button>
-          <Button icon={<Download size={14} />} onClick={downloadAssetOpenAPIJSON}>
+          <Button
+            icon={<Download size={14} />}
+            onClick={downloadAssetOpenAPIJSON}
+          >
             {t('下载 JSON')}
           </Button>
         </Space>
@@ -1634,7 +1441,10 @@ export default function AssetsPage() {
       </div>
 
       {ASSET_API_ENDPOINTS.map((endpoint) => (
-        <div key={`${endpoint.method}-${endpoint.path}`} className='flex flex-col gap-3 rounded-md border border-solid border-semi-color-border p-3'>
+        <div
+          key={`${endpoint.method}-${endpoint.path}`}
+          className='flex flex-col gap-3 rounded-md border border-solid border-semi-color-border p-3'
+        >
           <div className='flex flex-col md:flex-row md:items-center md:justify-between gap-2'>
             <div className='flex items-center gap-2 flex-wrap'>
               <MethodTag method={endpoint.method} />
@@ -1678,7 +1488,11 @@ export default function AssetsPage() {
 
           {endpoint.responseFields && (
             <div className='flex flex-col gap-2'>
-              <Text strong>{endpoint.path === '/v1/assets/export' ? t('响应 CSV 字段') : t('响应字段')}</Text>
+              <Text strong>
+                {endpoint.path === '/v1/assets/export'
+                  ? t('响应 CSV 字段')
+                  : t('响应字段')}
+              </Text>
               <DocsTable
                 columns={[t('字段'), t('类型'), t('说明')]}
                 rows={endpoint.responseFields}
@@ -1692,7 +1506,11 @@ export default function AssetsPage() {
               <CodeBlock>{endpoint.curl}</CodeBlock>
             </div>
             <div className='flex flex-col gap-2'>
-              <Text strong>{endpoint.path === '/v1/assets/export' ? t('响应示例（CSV）') : t('响应示例')}</Text>
+              <Text strong>
+                {endpoint.path === '/v1/assets/export'
+                  ? t('响应示例（CSV）')
+                  : t('响应示例')}
+              </Text>
               <CodeBlock>{endpoint.response}</CodeBlock>
             </div>
           </div>
@@ -1719,11 +1537,13 @@ export default function AssetsPage() {
           tabList={[
             { tab: t('资源列表'), itemKey: 'assets' },
             { tab: t('API Key'), itemKey: 'keys' },
+            { tab: 'Webhook', itemKey: 'webhooks' },
             { tab: t('使用文档'), itemKey: 'docs' },
           ]}
         />
         {activeMainTab === 'assets' && renderAssetsTab()}
         {activeMainTab === 'keys' && renderKeysTab()}
+        {activeMainTab === 'webhooks' && <WebhookTab />}
         {activeMainTab === 'docs' && renderDocsTab()}
       </div>
 
@@ -1732,7 +1552,7 @@ export default function AssetsPage() {
         title={t('资源详情')}
         visible={!!detailAsset}
         onCancel={() => setDetailAsset(null)}
-        width={560}
+        width='min(560px, 100vw)'
         footer={null}
       >
         {detailAsset && (
@@ -1751,13 +1571,33 @@ export default function AssetsPage() {
               )}
             </div>
             <Space wrap>
-              <Button icon={<Copy size={14} />} onClick={() => copy(detailAsset.url).then((ok) => ok && showSuccess(t('已复制链接')))}>
+              <Button
+                icon={<Copy size={14} />}
+                onClick={() =>
+                  copy(detailAsset.url).then(
+                    (ok) => ok && showSuccess(t('已复制链接')),
+                  )
+                }
+              >
                 {t('复制链接')}
               </Button>
-              <Button icon={<ExternalLink size={14} />} onClick={() => window.open(detailAsset.url, '_blank', 'noreferrer')}>
+              <Button
+                icon={<ExternalLink size={14} />}
+                onClick={() =>
+                  window.open(detailAsset.url, '_blank', 'noreferrer')
+                }
+              >
                 {t('打开资源')}
               </Button>
-              <Button icon={<Download size={14} />} onClick={() => triggerDownload(detailAsset.url, buildDownloadName(detailAsset))}>
+              <Button
+                icon={<Download size={14} />}
+                onClick={() =>
+                  triggerDownload(
+                    detailAsset.url,
+                    buildDownloadName(detailAsset),
+                  )
+                }
+              >
                 {t('下载')}
               </Button>
             </Space>
@@ -1772,20 +1612,27 @@ export default function AssetsPage() {
               [t('生成时间'), timestamp2string(detailAsset.created_at)],
               [t('URL'), detailAsset.url],
             ].map(([label, value]) => (
-              <div key={label} className='flex gap-3 border-0 border-b border-solid border-semi-color-border pb-2'>
+              <div
+                key={label}
+                className='flex gap-3 border-0 border-b border-solid border-semi-color-border pb-2'
+              >
                 <Text type='tertiary' className='w-24 shrink-0'>
                   {label}
                 </Text>
-                <Text copyable={label === t('URL') || label === t('任务 ID')} ellipsis={{ showTooltip: true }}>
+                <Text
+                  copyable={label === t('URL') || label === t('任务 ID')}
+                  ellipsis={{ showTooltip: true }}
+                >
                   {value}
                 </Text>
               </div>
             ))}
-            {detailAsset.metadata && Object.keys(detailAsset.metadata).length > 0 && (
-              <pre className='text-xs p-3 rounded-md bg-semi-color-fill-0 overflow-auto'>
-                {JSON.stringify(detailAsset.metadata, null, 2)}
-              </pre>
-            )}
+            {detailAsset.metadata &&
+              Object.keys(detailAsset.metadata).length > 0 && (
+                <pre className='text-xs p-3 rounded-md bg-semi-color-fill-0 overflow-auto'>
+                  {JSON.stringify(detailAsset.metadata, null, 2)}
+                </pre>
+              )}
           </div>
         )}
       </SideSheet>
@@ -1795,20 +1642,28 @@ export default function AssetsPage() {
         title={t('OpenAPI JSON')}
         visible={showOpenAPISheet}
         onCancel={() => setShowOpenAPISheet(false)}
-        width={720}
+        width='min(720px, 100vw)'
         footer={
           <Space>
-            <Button onClick={() => setShowOpenAPISheet(false)}>{t('关闭')}</Button>
+            <Button onClick={() => setShowOpenAPISheet(false)}>
+              {t('关闭')}
+            </Button>
             <Button icon={<Copy size={14} />} onClick={copyAssetOpenAPIJSON}>
               {t('复制')}
             </Button>
-            <Button type='primary' icon={<Download size={14} />} onClick={downloadAssetOpenAPIJSON}>
+            <Button
+              type='primary'
+              icon={<Download size={14} />}
+              onClick={downloadAssetOpenAPIJSON}
+            >
               {t('下载')}
             </Button>
           </Space>
         }
       >
-        <CodeBlock className='max-h-[calc(100vh-180px)] overflow-auto'>{getAssetOpenAPIJSON()}</CodeBlock>
+        <CodeBlock className='max-h-[calc(100vh-180px)] overflow-auto'>
+          {getAssetOpenAPIJSON()}
+        </CodeBlock>
       </SideSheet>
 
       <SideSheet
@@ -1816,11 +1671,17 @@ export default function AssetsPage() {
         title={t('创建资源 API Key')}
         visible={showCreateKeySheet}
         onCancel={() => setShowCreateKeySheet(false)}
-        width={520}
+        width='min(520px, 100vw)'
         footer={
           <Space>
-            <Button onClick={() => setShowCreateKeySheet(false)}>{t('取消')}</Button>
-            <Button type='primary' loading={createKeyLoading} onClick={createAssetKey}>
+            <Button onClick={() => setShowCreateKeySheet(false)}>
+              {t('取消')}
+            </Button>
+            <Button
+              type='primary'
+              loading={createKeyLoading}
+              onClick={createAssetKey}
+            >
               {t('创建')}
             </Button>
           </Space>
@@ -1828,12 +1689,21 @@ export default function AssetsPage() {
       >
         <Form
           getFormApi={setKeyFormApi}
-          initValues={{ name: '', expired_at: -1, allow_ips: '' }}
+          initValues={{
+            name: '',
+            expired_at: -1,
+            allow_ips: '',
+          }}
           layout='vertical'
           allowEmpty
           autoComplete='off'
         >
-          <Form.Input field='name' label={t('名称')} placeholder={t('例如：本地下载脚本')} showClear />
+          <Form.Input
+            field='name'
+            label={t('名称')}
+            placeholder={t('例如：本地下载脚本')}
+            showClear
+          />
           <Form.DatePicker
             field='expired_at'
             label={t('过期时间')}
@@ -1844,13 +1714,32 @@ export default function AssetsPage() {
           />
           <Form.Slot label={t('快捷设置')}>
             <Space wrap>
-              <Button type='tertiary' onClick={() => keyFormApi?.setValue('expired_at', -1)}>
+              <Button
+                type='tertiary'
+                onClick={() => keyFormApi?.setValue('expired_at', -1)}
+              >
                 {t('永不过期')}
               </Button>
-              <Button type='tertiary' onClick={() => keyFormApi?.setValue('expired_at', timestamp2string(Date.now() / 1000 + 86400 * 30))}>
+              <Button
+                type='tertiary'
+                onClick={() =>
+                  keyFormApi?.setValue(
+                    'expired_at',
+                    timestamp2string(Date.now() / 1000 + 86400 * 30),
+                  )
+                }
+              >
                 {t('一个月')}
               </Button>
-              <Button type='tertiary' onClick={() => keyFormApi?.setValue('expired_at', timestamp2string(Date.now() / 1000 + 86400))}>
+              <Button
+                type='tertiary'
+                onClick={() =>
+                  keyFormApi?.setValue(
+                    'expired_at',
+                    timestamp2string(Date.now() / 1000 + 86400),
+                  )
+                }
+              >
                 {t('一天')}
               </Button>
             </Space>

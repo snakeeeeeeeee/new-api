@@ -22,4 +22,10 @@ func TestXaiCompatibleVideoRoutesRegistered(t *testing.T) {
 	assert.True(t, routes[http.MethodPost+" /v1/videos/edits"])
 	assert.True(t, routes[http.MethodPost+" /v1/videos/extensions"])
 	assert.True(t, routes[http.MethodGet+" /v1/videos/:task_id"])
+	assert.True(t, routes[http.MethodPost+" /v1/image/tasks"])
+	assert.True(t, routes[http.MethodGet+" /v1/image/tasks"])
+	assert.True(t, routes[http.MethodPost+" /v1/image/uploads"])
+	assert.False(t, routes[http.MethodGet+" /v1/webhook/endpoints"])
+	assert.False(t, routes[http.MethodPost+" /v1/webhook/endpoints"])
+	assert.False(t, routes[http.MethodPost+" /v1/webhook/deliveries/:delivery_id/retry"])
 }

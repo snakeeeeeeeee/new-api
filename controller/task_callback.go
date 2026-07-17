@@ -6,7 +6,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -102,39 +101,58 @@ type imageCallbackResultItem struct {
 func GetImageTask(c *gin.Context) {
 	taskID := c.Param("task_id")
 	userID := c.GetInt("id")
-	task, exist, err := model.GetByTaskId(userID, taskID)
+	task, exist, err := model.GetPublicImageTask(userID, taskID, imageHandleTaskPlatform())
 	if err != nil {
-		common.ApiError(c, err)
+		writeImageTaskAPIError(c, http.StatusInternalServerError, "server_error", "Failed to load task", "")
 		return
 	}
 	if !exist {
-		common.ApiError(c, errors.New("task_not_exist"))
+		writeImageTaskAPIError(c, http.StatusNotFound, "task_not_found", "Task not found", "task_id")
 		return
 	}
-	if task.Platform != imageHandleTaskPlatform() {
-		common.ApiError(c, errors.New("task_not_exist"))
+	publicTask, err := service.BuildPublicImageTask(task)
+	if err != nil {
+		writeImageTaskAPIError(c, http.StatusInternalServerError, "server_error", "Failed to build task response", "")
 		return
 	}
-	common.ApiSuccess(c, relay.TaskModel2Dto(task))
+	c.JSON(http.StatusOK, publicTask)
 }
 
 func QueryImageTasks(c *gin.Context) {
 	var req imageTaskQueryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		common.ApiError(c, err)
+		writeImageTaskAPIError(c, http.StatusBadRequest, "invalid_request", "Invalid JSON request body", "")
 		return
 	}
-	if len(req.TaskIDs) > 100 {
-		common.ApiError(c, errors.New("task_ids max size is 100"))
+	if len(req.TaskIDs) == 0 || len(req.TaskIDs) > 100 {
+		writeImageTaskAPIError(c, http.StatusBadRequest, "invalid_request", "task_ids must contain between 1 and 100 IDs", "task_ids")
 		return
 	}
 	userID := c.GetInt("id")
-	tasks, err := model.GetByTaskIDStrings(userID, req.TaskIDs, imageHandleTaskPlatform())
+	tasks, err := model.GetPublicImageTasksByIDs(userID, req.TaskIDs, imageHandleTaskPlatform())
 	if err != nil {
-		common.ApiError(c, err)
+		writeImageTaskAPIError(c, http.StatusInternalServerError, "server_error", "Failed to query tasks", "")
 		return
 	}
-	common.ApiSuccess(c, imageTasksToDto(tasks))
+	publicTasks, err := service.BuildPublicImageTasks(tasks)
+	if err != nil {
+		writeImageTaskAPIError(c, http.StatusInternalServerError, "server_error", "Failed to build task response", "")
+		return
+	}
+	byID := make(map[string]*dto.ImageTaskPublic, len(publicTasks))
+	for _, task := range publicTasks {
+		byID[task.ID] = task
+	}
+	ordered := make([]*dto.ImageTaskPublic, 0, len(req.TaskIDs))
+	missing := make([]string, 0)
+	for _, taskID := range req.TaskIDs {
+		if task, ok := byID[taskID]; ok {
+			ordered = append(ordered, task)
+		} else {
+			missing = append(missing, taskID)
+		}
+	}
+	c.JSON(http.StatusOK, dto.ImageTaskListResponse{Object: "list", Data: ordered, Missing: missing})
 }
 
 func imageTasksToDto(tasks []*model.Task) []*dto.TaskDto {
