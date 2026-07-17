@@ -25,6 +25,32 @@
 
 ---
 
+# Aggregate Group Categories Findings (2026-07-17)
+
+- UI review confirms the existing Semi Design data-dense admin language should be preserved; category management needs keyboard-labelled icon actions, touch-sized mobile selection, explicit loading states, and no new decorative styling.
+- The aggregate-group page already owns client-side search and renders all filtered rows through `CardTable`, so category filtering and selection can be added without pagination or API contract changes.
+- The token modal's existing custom group renderer can be reused inside explicit `Select.OptGroup` children; the flat `optionList` is the only piece that needs replacing there.
+- Category API rows already include custom-category usage counts; the virtual Other count must be derived from aggregate groups whose `category_id` is 0.
+- Historical token groups should be stored separately from the current selectable options so group/token request ordering cannot incorrectly expose or hide an unavailable value.
+- Aggregate groups currently have no category field; full and fast migrations both explicitly register aggregate-group models.
+- The aggregate-group admin list loads all groups and filters client-side, so category filtering and select-all-filtered can stay local.
+- `CardTable` forwards desktop `rowSelection` but currently ignores it in mobile card mode; mobile bulk assignment needs shared selection rendering.
+- `/api/user/self/groups` already distinguishes `auto`, `aggregate`, and `real`, making category metadata additive without changing token persistence.
+- The existing token selector uses one searchable Semi Select and a custom option renderer; Semi supports `Select.OptGroup` for category sections.
+- Configurable categories require stable IDs and ordering; virtual category ID 0 gives old groups and deleted-category groups a cross-database-safe fallback.
+- The approved UI remains a data-dense operational surface with explicit filters, loading states, confirmations, accessible labels, and responsive controls.
+- User administration also reuses the aggregate-group response builder for per-user ratio overrides, so category metadata must be loaded there as well as on the main aggregate-group endpoints.
+- Existing controller tests use an isolated AutoMigrate list; new persistence models must be registered in both production and test migrations.
+- Docker browser QA passed at effective 1440px, 768px, and 375px widths with no document-level horizontal overflow; the mobile card checkbox stays above the card title and the batch bar stacks vertically at 375px.
+- Light and dark theme checks passed for the category drawer and token editor. The 375px drawer fills the viewport without clipping, and the dark token dropdown keeps category headers, HA markers, names, and ratios readable.
+- The token selector shows ordered custom categories before Other, keeps real and uncategorized aggregate groups in Other, applies HA only to aggregate groups, excludes `auto` for creation, and searches by both stored and display names.
+- A disposable local `auto` token verified the historical section and one-way behavior: the existing value can be retained, but after choosing a current group the historical option disappears.
+- Browser QA exposed a real interaction defect: a `Tooltip` wrapped inside Semi `Popconfirm` prevented the category delete trigger from opening. Making the button the direct trigger fixed the confirmation; deleting a category with two assignments restored both groups to Other.
+- All temporary categories, assignments, token, administrator, and build artifacts were removed after QA.
+- Follow-up visual feedback showed the stock Semi OptGroup label was too low-contrast and depended mostly on whitespace. The token selector now uses a semantic fill header band, stronger text, a primary-color left rule, top/bottom boundaries, and subtle option dividers.
+- Docker browser QA confirmed the stronger grouping at 1440px and 375px in light/dark themes. A freshly opened mobile popup matched the 375px viewport, kept ratios visible, and produced no document-level horizontal overflow.
+
+
 # Image Parameter Pricing Findings (2026-07-14)
 
 - Current implementation spans direct image relay, synchronous image-handle execution, and asynchronous `/v1/image/tasks` with one shared single-dimension pricing resolver.
@@ -361,6 +387,10 @@
 - Callback `raw_response` is small JSON only; large base64 fields must be scrubbed by image-handle and are capped by new-api.
 - Callback and polling both flow through `service.ApplyTaskResult`, whose success path uses a DB transaction for terminal task update + assets creation.
 - image-handle edit task payload still only accepts `input.images` and `input.mask` as HTTP(S) URLs.
+- The running new-api and image-handle containers predate the shared-network compose changes; `ai-gateway` currently exists with no attached containers, so both stacks must be recreated before E2E DNS checks are meaningful.
+- After rebuilding/recreating both stacks, `new-api-dev`, image API/worker/notifier, `mock-provider`, and `webhook-receiver` all attach to `ai-gateway`. Bidirectional probes new-api -> image-handle/mock/receiver and image-handle -> new-api/mock return HTTP 200.
+- Local third-party Webhook E2E requires the explicit dev-only `WEBHOOK_ALLOW_INSECURE_LOCAL=true`; production keeps HTTPS/public-IP enforcement by default.
+- Persisted image-handle options still point to `host.docker.internal`, so they override the new shared-network Compose defaults until updated/restarted.
 - For image-handle sync edits, multipart files must be uploaded to `/v1/image/uploads`; JSON base64/data URI inputs must be uploaded to `/v1/image/uploads/base64`.
 - Upload responses expose `images []string` and optional `mask string`; new-api should feed those URLs into the later edit task and should not submit edit if upload fails.
 
@@ -487,3 +517,87 @@
 - `git diff --check` passed for the planning records. Product code was not modified.
 
 ---
+# Async Image Open API and Webhook Findings (2026-07-17)
+
+- Product code is clean at implementation start; existing modified planning files and unrelated untracked diagnostics belong to prior work and must be preserved.
+- Current async submit synchronously calls image-handle before returning, while terminal callbacks already use a CAS transaction for task state and asset creation.
+- Current public task query reuses the internal TaskDto and HTTP-200 dashboard envelopes, so a dedicated public DTO/error boundary is required.
+- AssetKey already stores a scopes string with assets:read, making scoped webhooks:read/webhooks:write an extension rather than a new credential type.
+- The task table cannot safely gain a global task_id unique constraint because it is shared with legacy provider task types; a one-to-one ImageTaskRequest table can own public image-task uniqueness and nullable idempotency keys.
+- image-handle already has PostgreSQL task facts, BullMQ, stale recovery, and a callback outbox. Its required changes are limited to semantic fingerprints, provider_options persistence, and image URL download security.
+- Existing new-api and image-handle Docker dev stacks are isolated; image-handle already ships an optional external gateway-network overlay.
+- RelayTask currently performs channel selection, precharge, task/lease creation, synchronous image-handle submission, settlement, and consumption logging in one request flow. Durable dispatch should preserve its pricing snapshot and credential-lease helpers while moving only the internal HTTP submission behind an outbox.
+- AssetKey.Scopes is already persisted as a comma-compatible string and middleware exposes asset_key_scopes in Gin context; adding scope validation does not require a new key model.
+- Route distribution may cache the original public request body before the image-task normalizer runs. The normalizer must call common.CleanupBodyStorage, replace Request.Body/ContentLength, and let relay validation build a fresh reusable body store.
+- Asset records already have a stable unique task_id + asset_index key and contain all public result-image metadata needed by the normalized task DTO.
+- Durable dispatch can persist the exact signed internal image-handle request body after creating the credential lease; the worker only needs the global image-handle base URL/API key and does not store credentials in the dispatch row.
+- Service already exposes an injected TaskPollingAdaptor factory, so dispatch exhaustion can reuse ApplyTaskResult for the same CAS/refund path without creating a service-to-relay import cycle.
+- The durable create transaction currently inserts Task, credential lease, ImageTaskRequest, and ImageTaskDispatch together, but `PreConsumeBilling` still runs immediately before that transaction. A failed create transaction relies on the outer relay error path for refund rather than sharing one database transaction with the reservation.
+- ImageTaskDispatch claims use conditional updates and expiring leases but have no per-claim lock token. A worker that outlives its lease could update a row after another worker reclaimed it; WebhookDelivery already demonstrates the safer lock-token pattern.
+- Resource Center locale files retain 66-69 pre-existing missing keys depending on language, but all Webhook and scope keys introduced by this implementation are present in zh-CN/zh-TW/en/fr/ru/ja/vi.
+- Resource Center currently embeds an Assets-only OpenAPI 3.0.3 object directly in `Assets/index.jsx`. The normalized task, upload, and Webhook routes are absent, so the new OpenAPI 3.1 document should be a standalone JSON source imported by the UI instead of expanding the page further.
+- The frontend Docker stage currently copies only `web/`, so a direct import from repository `docs/openapi` also requires copying that canonical document into the frontend builder context/path. Keeping one imported JSON avoids a second drifting frontend copy.
+- The unified public spec has 21 operations: 5 Assets, 4 async task, 2 pre-upload, and 10 Webhook management/delivery operations. Tasks/uploads use normal bearer tokens; Assets and Webhooks use `ak_` keys with `assets:read`, `webhooks:read`, or `webhooks:write` scopes.
+- Durable task creation currently precharges before inserting the `(user_id, idempotency_key)` unique row, so concurrent same-key requests can both precharge before one loses the insert race. The durable branch should insert its claim/task/outbox first inside the transaction and precharge only after the unique claim is held.
+- Permanent dispatch failure currently marks the outbox failed before `ApplyTaskResult` runs. If the terminal CAS/Webhook transaction fails, the task stays queued while the failed outbox is no longer retryable; outbox failure must be committed only after terminal transition succeeds, otherwise it should be rescheduled.
+- BillingSession precharge mutates wallet/subscription SQL state and token quota/cache state through global model APIs. Calling it inside the current GORM task transaction would self-lock SQLite and still could not atomically commit Redis with SQL; literal cross-store atomicity requires a separate durable billing-reservation ledger/state machine, not just moving the existing function call.
+- Docker failure acceptance task `task_GjiTaMXd4J1HCnXdwiUIyL6FjhwJuyBW` reached the normalized `failed` terminal state after the mock provider returned a permanent 404. It created no asset, emitted a valid signed `image.task.failed` event, and restored disposable user 994189 exactly to `quota=999900000` and `used_quota=100000`.
+- The task row intentionally retains its request-time quota snapshot (`50000`) for audit even after the user's balance is refunded; user balance, not the task snapshot, is the refund source of truth.
+- Channel 91 was restored from the deliberate `/missing` URL to `http://mock-provider:3999`, and `new-api-dev` returned healthy after restart.
+- Local Docker now has healthy new-api and image-handle application containers attached to `ai-gateway`; real `new-api-dev` handles leases/callbacks while the mock service is used only as the image provider and the receiver only as a third-party Webhook target.
+- The schema contract now has a reusable integration test. SQLite runs by default; disposable PostgreSQL/MySQL DSNs enable the same migration, TEXT/Unicode round-trip, idempotency, event, and delivery unique-index assertions. Local acceptance passed SQLite, PostgreSQL 15, and MySQL 5.7 with the project's required `utf8mb4` charset.
+- Browser QA found fixed-width Resource Center SideSheets clipped inputs and footer actions at a true 375px viewport. All Resource Center/Webhook sheets now use `min(design-width, 100vw)`; rebuilt Docker QA confirmed no page overflow and full visibility of Webhook and API Key scope controls at 375x812.
+- Cleanup removed the disposable user, token, asset key, channel, ability, model-ratio key, tasks, dispatches, leases, resources, quota summary, Webhook records/attempts, four image-handle facts/outbox rows, and four BullMQ jobs. Receiver events and its in-memory signing secret are empty. R2 objects remain subject to the configured one-day lifecycle.
+- Repository-wide `i18n:lint` retains its existing 422 hardcoded-string baseline. The production build, i18n status, targeted ESLint/Prettier, and an explicit check of 63 new Webhook/scope keys across zh-CN/zh-TW/en/fr/ru/ja/vi all pass.
+
+# Simplified Async Image Webhook Findings (2026-07-17)
+
+- The current implementation exposes five endpoints per user, event filters, derived HMAC secrets, 24-hour dual-sign rotation, delivery inspection/retry APIs, and `webhooks:read/write` asset-key scopes.
+- The repository already has a separate URL/Bearer-key Webhook for quota notifications in user settings. It cannot be reused silently because changing the notification channel clears those fields and its payload contract is unrelated to async image events.
+- The simplification will therefore keep an independent account-level task configuration while reusing the established Bearer-key user mental model; current delivery remains image-only and future video events can share the same target.
+- The approved future-video boundary is deliberately narrow: endpoint ownership, encrypted Bearer credentials, event/delivery persistence, retries, and the UI stay account-level; only the current terminal-event producer and public OpenAPI callback examples remain image-specific. No speculative video schemas or event producers are added now.
+- Docker retry verification received the same `webhook.test` event twice after a configured first-attempt 500. Both requests passed Bearer validation and retained an identical stable event ID and payload.
+- PostgreSQL confirms the retry delivery has exactly two attempts (500 then 204), final status `delivered`, and attempt count 2. The saved credential is a 74-character `v1:` encrypted envelope and contains no plaintext Key substring.
+- Docker 410 verification passed: one Bearer-authenticated `webhook.test` received 410 and disabled the account configuration. Saving only the URL with an omitted Key re-enabled it, and a following 204 test still authenticated with the unchanged Key.
+- The final cleanup found no generic-task blocker. One local-state issue was corrected: decryption-failure disable persisted a new timestamp but did not copy it into the returned object; the regression now asserts API/database equality against a forced stale timestamp.
+- The normal self-delete endpoint soft-deletes only the user row and does not cascade durable Webhook logs. Local E2E cleanup therefore needs an exact user-scoped transaction after the normal API call so no receiver credential or test event remains.
+
+## Saved-view and generated-Key follow-up
+- The screenshot confirms the configured state still renders active URL/Key inputs and Save as the primary action, so it visually reads as an edit form despite the enabled status.
+- The requested mental model is the existing API-token flow: new-api generates a prefixed credential, reveals it exactly once for copying, and never returns the stored plaintext afterward.
+- Keep future task-type support unchanged: this follow-up changes only configuration presentation and credential issuance, not image/video event contracts.
+- Current `WebhookTab` always renders both inputs and Save, exactly matching the reported ambiguity. Its hook already centralizes load/save state, so view/edit mode and one-time Key state can stay isolated in the existing Webhook component folder.
+- The current PUT response only returns public configuration metadata. Token-style issuance requires a one-time plaintext field on create/regenerate responses while GET must remain unchanged.
+- The real UI/UX skill scripts live under `/Users/zhangyu/.agents/skills/ui-ux-pro-max`; the Codex skill copy contains instructions but no runnable script at the attempted path.
+- Resource API Keys are already server-generated through `GenerateAssetKey`, and the Resource Center has an established create-Key flow to inspect and mirror rather than inventing a foreign interaction pattern.
+- The generic design-system search suggested marketing-style motion that conflicts with this operational settings surface, so existing Resource Center/Semi conventions take precedence. The applicable guidance is limited to clear state separation, focused components, accessible copy/edit actions, and 375px responsive verification.
+- The Resource API Key tab uses a create SideSheet and system-generated credential returned after creation. The Webhook interaction should reuse its explicit action hierarchy while tightening security to one-time plaintext reveal.
+- Selected contract: `PUT /api/webhook` creates a server-generated Key automatically, preserves it on URL-only updates, and generates a replacement only with explicit `regenerate_key`. Only create/regenerate PUT responses contain one-time plaintext; GET stays redacted.
+- Selected UI: unconfigured create form, configured read-only detail rows, explicit URL edit, independent confirmed regenerate action, and a one-time copy modal. This avoids credential changes being coupled to ordinary address edits.
+- The shared `copy()` helper is available from the same frontend helper barrel already used by the Resource Center. Existing locale files cluster the simplified Webhook strings near their end, allowing a tightly scoped seven-locale update.
+- Existing service tests inject a fixed Key through the PUT request. They can be strengthened by consuming the one-time generated response instead, then asserting prefix/rotation/redaction while preserving the Bearer retry and 410 coverage.
+- Backend implementation now enforces the token-style contract through the strict DTO: console callers cannot submit arbitrary plaintext Keys, create always generates, and only `regenerate_key` rotates an existing credential.
+- User clarified that Webhook Keys are not one-time credentials: the owner must be able to reveal and copy them after creation at any time. Keep system generation/regeneration, but return the decrypted Key from the authenticated console configuration API while preserving encrypted-at-rest storage and log redaction.
+- The final saved view now uses text/detail rows rather than disabled inputs: URL has an icon-only copy action; Key has masked/revealed text, status, eye/copy actions, and confirmed system regeneration. At widths below 640px the grid stacks to protect long Keys and translations.
+- The outbound OpenAPI security description still says the user supplies the Key and must be updated to the generated `wk-...` contract before regenerating the checked-in spec.
+- The locale tails contain both current simplified strings and older unused multi-endpoint strings. This follow-up will add only the new saved-view/generated-Key text and remove the two now-obsolete manual-Key prompts, avoiding unrelated translation churn.
+- Reliable event, delivery, attempt, retry, lease, retention, 410, and SSRF behavior can remain unchanged behind a single internal endpoint record.
+- User-supplied keys require reversible encryption for delivery; versioned AES-GCM keyed from stable `CRYPTO_SECRET` avoids storing or returning plaintext.
+# Webhook Saved View and Generated Key Findings (2026-07-17)
+
+- The supplied screenshot shows the saved URL inside an active input with Save/Refresh controls, so a configured Webhook still reads as an edit form.
+- The accepted interaction is a read-only saved detail state with URL and Key rows; URL editing is explicit, while Key reveal, copy, and system regeneration remain available.
+- The latest requirement intentionally allows authenticated account owners to reveal and copy the generated `wk-...` Key repeatedly; encrypted-at-rest storage and no plaintext logging remain required.
+- The implementation keeps the account-level configuration task-generic for future video events without adding speculative video event behavior now.
+- The in-app browser has no active local session and redirects `/console/assets` to `/login?expired=true`; use an isolated disposable local account for mutation-heavy UI checks.
+- With a disposable account, the rebuilt unconfigured state shows only the Webhook URL input and `创建并生成密钥`; it does not ask for a user-entered Key.
+- Creating the disposable configuration produces a 51-character Key (`wk-` plus 48 random characters) and immediately switches to the read-only detail state.
+- The Key is masked by default after reload, can be revealed repeatedly, matches the original value, and both Key/URL copy actions show success feedback.
+- The desktop saved-state Key row is functionally correct but visually crowded: the long Key wraps and the `已安全保存` tag is truncated beside reveal/copy/regenerate actions.
+- Removing the redundant saved tag and using icon-only regenerate control makes the desktop Key row stable without losing reveal, copy, or confirmation behavior.
+- URL edit/cancel/save works and preserves the Key. A normal URL save should leave the Key masked; only first creation and explicit regeneration should reveal it.
+- Explicit regeneration requires confirmation, returns another 51-character `wk-...` Key, and invalidates/replaces the prior value.
+- The final saved detail view has zero horizontal overflow at 560px and 375x812. Revealed Keys wrap within the page, and all icon/action controls remain separate and usable.
+- Full validation passes: `go test ./...`, image-handle's 72 tests, frontend build, OpenAPI check, targeted Prettier/ESLint, and both repository diff checks.
+- Full i18n lint is back to the known 422-item repository baseline; the Webhook component contributes no finding.
+- The disposable user and its single Webhook endpoint were deleted after QA; there were no related events, deliveries, attempts, or tokens.

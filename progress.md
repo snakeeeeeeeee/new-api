@@ -23,6 +23,30 @@
 
 ---
 
+# Aggregate Group Categories Progress (2026-07-17)
+
+- Resumed after backend completion, reloaded the task plan, and started the aggregate-group admin UI phase.
+- Applied the UI/UX review: preserve current Semi Design styling, use responsive card selection, accessible controls, confirmations, and disabled/loading states.
+- Implemented the category manager, category filter/column, desktop and mobile selection, batch assignment bar, and aggregate-group category field.
+- Implemented token option sections with ordered custom categories, the Other fallback, hidden `auto`, and one-way historical-value preservation.
+- Targeted frontend ESLint and whitespace checks pass; focused aggregate category model/controller tests still pass after frontend integration.
+- The first group-option unit test attempt exposed `api.js` browser-side imports in Bun; extracting the new logic into a pure helper module before rerunning.
+- The repository-wide i18n extractor produced broad unrelated locale churn; reverting only that generated diff and switching to targeted locale updates.
+- Added 30 scoped interface translations across all seven frontend locales; locale JSON, frontend build, 24 Bun tests, and related Go package tests pass.
+- Full i18n lint still reports the repository's existing 421 hardcoded-string baseline; it reports no new category or token component findings.
+- Full `go test ./... -count=1` passed. Production frontend build passed.
+- Full frontend formatting/header checks retain repository baselines (116 Prettier files and 68 header errors, including generated `dist`); targeted changed-file checks pass.
+- **Status:** Docker dev integration and responsive UI verification starting.
+- First Docker Compose rebuild attempt stalled on three remote pinned-image metadata lookups for over four minutes; the old healthy container remained untouched and the stalled build was stopped.
+- **Status:** backend implementation starting.
+- Loaded and applied the approved product plan.
+- Inspected aggregate-group persistence, APIs, admin UI, token editor, group-option helpers, and responsive CardTable behavior.
+- Confirmed the category-management entry will be a side sheet on the existing aggregate-group page.
+- Confirmed custom categories, a virtual Other fallback, grouped token options, and no new-token auto option.
+- Added category persistence, migrations, CRUD/order/delete/assign APIs, aggregate-group category assignments, and category metadata in admin/user responses.
+- Added focused model/controller coverage; the backend category lifecycle and metadata tests pass.
+
+
 # Image Parameter Pricing Progress (2026-07-14)
 
 - Resumed the approved implementation after context recovery; no paid/local generation request has been sent yet.
@@ -384,3 +408,83 @@
 - Product code changes: none.
 
 ---
+
+# 2026-07-17 Aggregate group categories and token group UX
+
+- Completed backend persistence, cross-database migrations, category CRUD/order/delete/assign APIs, response metadata, and focused model/controller coverage.
+- Completed the category manager, aggregate-group category editing/filtering/batch assignment, responsive CardTable selection, and category-grouped token selector with historical-value handling.
+- Full `go test ./...`, Bun tests, the production frontend build, targeted Prettier/ESLint, locale JSON validation, and `git diff --check` passed. Repository-wide i18n/lint commands retain only their documented pre-existing baselines.
+- Built the current embedded-web Linux arm64 binary into `new-api-local:dev`, recreated `new-api-dev`, and confirmed the status endpoint and PostgreSQL migrations.
+- Authenticated Docker browser QA passed at 1440px, 768px, and 375px in light/dark themes for category management, filtering, selection, batch assignment, edit-category display, token grouping/search, `auto` exclusion, and historical one-way selection.
+- Fixed the delete confirmation trigger discovered during browser QA, rebuilt Docker dev, and verified deletion count messaging plus fallback of two assigned groups to Other.
+- Removed all disposable categories, category assignments, historical token, administrator, and generated Docker build files; restored the final page to the 1440px light aggregate-group view.
+- Follow-up: increased token OptGroup contrast and added option dividers after screenshot feedback, rebuilt Docker dev as image `a94c456e...`, and verified the result at 1440px/375px in both themes with no final mobile overflow.
+
+---
+# Async Image Open API and Webhook Progress (2026-07-17)
+
+- Loaded brainstorming and planning-with-files instructions, recovered prior task context, and confirmed the user-approved implementation plan is decision complete.
+- Inspected both worktrees. No existing product-code modifications overlap this work; prior planning records and diagnostics are being preserved.
+- Started Phase 1 with persistence and public API contracts.
+- Added initial cross-database image request/dispatch and Webhook models, public async-image DTOs, task/asset query helpers, and the public task mapping service.
+- Focused `go test ./model ./service` passed.
+- Added durable public task creation and dispatch wiring, formatted the new backend files, and confirmed relay/router/service/model packages compile and pass. Controller contract tests now need the planned public-response fixture migration.
+- Completed and formatted the public async-image controller contract tests. `go test ./controller ./relay ./service ./model ./middleware ./router` passed.
+- Confirmed the Webhook backend is implemented end to end: management APIs, scoped keys, stable signed events, dual-secret rotation, retry/lease behavior, SSRF protection, manual retry, and retention cleanup.
+- Added a per-claim fencing token to ImageTaskDispatch. Stale workers can no longer mark, reschedule, or fail a dispatch after another worker has reclaimed its expired lease.
+- Added the independent Resource Center Webhook UI and API Key scope controls, merged all new strings into zh-CN/zh-TW/en/fr/ru/ja/vi, and verified that every newly introduced translation key exists in all seven locales.
+- Generated a deterministic OpenAPI 3.1 Resource Center document covering 21 Assets/async-image/upload/Webhook operations plus two outbound Webhook definitions, and switched the frontend away from its embedded Assets-only OpenAPI 3.0.3 object.
+- Validated the generated OpenAPI 3.1 document with Redocly at zero warnings and completed another successful frontend production build using the canonical document import.
+- Fixed permanent dispatch terminal ordering and added passing regressions for failure refund/Webhook creation, terminal-transaction recovery, and 16-way durable idempotency record competition.
+- Resumed from the implementation handoff, re-read both repositories' plans and diffs, and narrowed remaining work to Docker E2E, responsive browser QA, full regression, and final limitation documentation.
+- Audited the live Docker state: new-api and image-handle are healthy but still use old images, and the external `ai-gateway` network has no attached containers. Rebuild/recreation is required before gateway integration testing.
+- The first new-api Docker rebuild exposed that `.dockerignore` excluded the newly canonical OpenAPI document; narrowed the ignore rule to include only `docs/openapi/**` for the frontend build context.
+- Rebuilt both dev images successfully, recreated only application-layer containers, and verified shared-network DNS plus HTTP health in both directions without replacing PostgreSQL/Redis data volumes.
+- Created a scoped local user/token/asset-key/channel fixture and passed endpoint creation plus signed test delivery. The first task attempt was safely rejected before persistence because its custom group was not registered; the fixture is being changed to a unique model alias in the valid default group.
+- Docker generation E2E passed task creation, replay/conflict, polling, asset result, public redaction, filtered list, ordered batch/missing, and a signed succeeded Webhook whose first receiver response was HTTP 500. Manual and automatic retry state paths remain to be exercised separately.
+- Automatic retry delivered the same stable event ID after the real one-minute delay (500 then 204); an explicit failed fixture also passed manual retry and a third signed delivery.
+- Base64 and multipart pre-upload passed with repeated images, mask, temporary metadata, and real R2 URLs. The first edit exposed and then verified the image-handle pinned-DNS Undici fix; the rebuilt worker completed pre-uploaded edit, resource creation, and succeeded Webhook end to end.
+- Completed the deliberate permanent-failure E2E: normalized failed task, zero assets, signed failed Webhook, exact user refund, and restored/healthy channel configuration.
+- Full regression passed `go test ./...`, image-handle `npm test` (72/72), `bun run build`, `bun run openapi:check`, and `bun run i18n:status`. Repository-wide i18n lint still reports its existing 422 hardcoded-string baseline and is being supplemented with change-scoped checks.
+- Added and passed the schema contract on SQLite, PostgreSQL 15, and MySQL 5.7/utf8mb4 using isolated disposable databases.
+- Browser QA at desktop, 560px, and true 375x812 found and fixed fixed-width Resource Center SideSheets; final Webhook and API Key scope drawers fit the viewport with all inputs/actions visible.
+- Completed the final source audit: durable task/request/lease/dispatch creation is one SQL transaction, billing precharge remains a documented compensating workflow rather than a cross-store atomic reservation, changed Go files use the common JSON wrapper, dispatch writes are lock-token guarded, and the local Webhook receiver secret was cleared.
+- Rebuilt `new-api-local:dev`, recreated only `new-api-dev`, and confirmed the application is healthy with the final frontend.
+- Removed all disposable new-api/image-handle/PostgreSQL/BullMQ/receiver fixtures; final audit counts are zero and R2 cleanup remains delegated to its one-day lifecycle.
+- Final checks pass OpenAPI drift, seven Compose combinations, full Go/image-handle/frontend builds/tests, 63-key locale completeness, targeted Prettier/ESLint, both repository diff checks, and unchanged `web/bun.lock`.
+- 2026-07-17: Started the Webhook simplification follow-up. The approved contract is one independent image-task URL plus user-supplied Bearer key; public management APIs/scopes and multi-endpoint UI will be removed while durable delivery remains internal.
+- 2026-07-17: Generalized the configuration boundary to an account-level task Webhook so future video events can reuse it; this change still implements only the existing image success/failure event producers.
+- 2026-07-17: Reconfirmed the future-video constraint during final verification: the Webhook configuration and durable delivery substrate remain task-generic, while this iteration intentionally emits and documents only image terminal events.
+- 2026-07-17: Docker Webhook receiver observed two Bearer-authenticated attempts for one stable test event after a forced first 500; event ID and body were identical across retry.
+- 2026-07-17: PostgreSQL audit confirmed attempt 1=500, attempt 2=204, final delivery status `delivered`, and encrypted Key storage with no plaintext occurrence.
+- 2026-07-17: Docker 410 flow passed. The endpoint auto-disabled, URL-only save re-enabled it without replacing the Key, and the next delivery authenticated and completed with 204.
+- 2026-07-17: Removed an unused asset-key scope updater, synchronized the returned `updated_at` after automatic disable on Key decryption failure, and added a deterministic database/API timestamp regression assertion. Focused lifecycle/crypto/410 tests pass.
+- 2026-07-17: Pre-cleanup audit resolved the disposable E2E target exactly as user `994191` / `whk07172110`, with one endpoint and three test events/deliveries.
+- 2026-07-17: Deleted the disposable account through `/api/user/self`, then removed only its durable Webhook attempts/deliveries/events/endpoint and hard-deleted its already-soft-deleted user row. Final database and receiver audits are all zero; the receiver Key is cleared.
+- 2026-07-17: Final regression passed `go test ./...`, image-handle `npm test` (72/72), image-handle production/TypeScript build, new-api `bun run build`, and `bun run openapi:check`. Full i18n lint still exits nonzero on 422 repository-wide pre-existing hardcoded strings; the new Webhook component files are absent from the report.
+- 2026-07-17: Final route/scope/signature audit passed. The only remaining `X-Webhook-Signature` implementation belongs to the separate quota-notification Webhook. Both repository diff checks and Docker health checks pass; the simplified task Webhook phase is complete.
+- 2026-07-17: Rebuilt and force-recreated `new-api-dev` from the final source after the timestamp cleanup. The embedded frontend build, Go image build, status endpoint, and Docker health check all pass; local service is available on port 3001.
+- 2026-07-17: Started the saved-view/generated-Key UX follow-up from the user's configured-state screenshot. Locked the token-style behavior: system-generated `wk-...`, one-time plaintext display, read-only saved detail, explicit edit, and explicit regeneration.
+- 2026-07-17: Implemented server-generated Webhook Keys. Create returns a one-time `wk-` plus 48 random characters; GET and URL-only updates remain redacted; explicit regeneration rotates the encrypted credential. Focused lifecycle, crypto recovery, Bearer retry, and 410 tests pass.
+- 2026-07-17: Implemented the frontend state split and one-time Key modal, then passed targeted Prettier and ESLint. The first combined locale patch changed nothing due to one mismatched Traditional Chinese value; exact locale tails were inspected before retrying per file.
+- 2026-07-17: User replaced the one-time reveal requirement with persistent authenticated reveal/copy. Updating the in-progress implementation to return decrypted Key on account GET/PUT, show it behind an eye toggle, and retain system-only regeneration for modification.
+- 2026-07-17: Completed persistent authenticated Key reveal/copy. Focused controller/service/router tests, JSON validation, OpenAPI regeneration/check, i18n status, targeted frontend lint/format, and production frontend build all pass.
+# Webhook Saved View and Generated Key UX Progress (2026-07-17)
+
+- Recovered the completed backend/frontend implementation and latest requirement: generated `wk-...` Keys remain revealable and copyable after creation.
+- Confirmed the rebuilt `new-api-dev` container is healthy and `/api/status` succeeds on port 3001.
+- Compared the supplied old-state screenshot with the new component contract; saved state is now a detail view and URL editing is explicit.
+- Opened the rebuilt app in the in-app browser; the existing browser session is logged out, so responsive and interaction checks will use a disposable local account rather than a real configuration.
+- Registered and signed in as disposable local user `codexwhux0717`; confirmed the Webhook create state and captured its desktop rendering.
+- Created a disposable Webhook and verified generated prefix/length, saved detail state, hide/show, reload persistence, and URL/Key copy feedback in the rebuilt Docker UI.
+- Simplified the crowded Key row, rebuilt Docker dev, and verified the updated desktop layout.
+- Verified URL edit/cancel/save preserves the existing Key and confirmed explicit regeneration produces a different valid Key; adjusted URL saves to keep the Key masked.
+- Rebuilt Docker dev again and confirmed ordinary URL saves keep the Key masked.
+- Completed responsive browser QA at 560px and 375x812 with the Key revealed; both viewports have matching client/scroll widths and no overlapping controls.
+- Full Go tests and all 72 image-handle tests pass; frontend build and OpenAPI check pass. Full i18n lint exposed one change-scoped literal on top of the known repository baseline, which is being removed.
+- Removed the change-scoped i18n finding; targeted Webhook formatting/ESLint is clean and the repository returned to its existing 422-item lint baseline.
+- Deleted disposable local user id 994192 and its one endpoint after confirming no deliveries/events/attempts/tokens existed.
+- Rebuilt and recreated `new-api-dev` from the final source; `/api/status` succeeds on port 3001.
+- Marked the saved-view/generated-Key UX phase complete.
+- Removed obsolete one-time-display and saved-status locale entries from all seven languages; locale JSON/status and the 422-item lint baseline remain valid.
+- Performed the final Docker rebuild after locale cleanup; `new-api-dev` reports healthy and its status endpoint succeeds.

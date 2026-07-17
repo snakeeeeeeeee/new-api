@@ -42,6 +42,7 @@ Complete with external token-upstream failure documented
 ## Errors Encountered
 | Error | Attempt | Resolution |
 | --- | --- | --- |
+| UI design-system script path under the short `r0` skill path resolved to a non-directory | 1 | Inspect the installed skill link/root and rerun the required design-system query from the real script location. |
 | Combined planning-file patch expected a template heading that the existing findings file did not use | 1 | Re-read each file header and apply independent insertions using its actual first line. |
 | Health polling used zsh's read-only `status` variable | 1 | Use a direct health endpoint check and a non-reserved variable on subsequent checks. |
 | Initial image-handle PostgreSQL inspection assumed a `postgres` role | 1 | Read the container connection configuration and use the actual `image_handle` role. |
@@ -49,6 +50,144 @@ Complete with external token-upstream failure documented
 | Adobe token upstream disconnected twice through image-handle and once directly | 3 | Stop paid retries; retain the `fetch failed` and HTTP/2 framing evidence for upstream investigation. |
 
 ---
+
+# Task Plan: Simplify Account Webhooks (2026-07-17)
+
+## Goal
+Replace the multi-endpoint public management surface with one account-level callback URL and Bearer key while preserving durable delivery, retries, terminal event creation, SSRF protection, and local Docker verification. The current event set remains image-task success/failure, but the configuration and UI must be reusable for future video events.
+
+## Current Phase
+Complete
+
+### Phase 1: Backend contract and migration
+- [x] Add one-config DTOs/controllers and encrypted user-supplied key storage.
+- [x] Collapse legacy endpoints to one active account task config per user.
+- [x] Send Bearer authentication and remove signing, rotation, public management routes, and Webhook asset-key scopes.
+- **Status:** complete
+
+### Phase 2: Resource Center and documentation
+- [x] Replace endpoint/delivery management UI with URL/Key save, test, and disable controls.
+- [x] Remove Webhook management operations from OpenAPI while retaining outbound event definitions.
+- [x] Update all seven locales and remove obsolete scope controls.
+- **Status:** complete
+
+### Phase 3: Verification and local integration
+- [x] Add focused backend/migration/route/frontend receiver coverage.
+- [x] Run final full Go, Bun, image-handle, OpenAPI, i18n, Compose, and diff checks; i18n retains the documented repository-wide 422-item baseline while change-scoped Webhook files are clean.
+- [x] Finish Docker Bearer retry/410 verification; responsive UI passes at 1440px, 560px, and 375x812.
+- **Status:** complete
+
+## Locked Decisions
+- One independent account-level task Webhook configuration per user; quota-warning Webhooks remain separate.
+- new-api generates the account Key with a `wk-` prefix; the owner can reveal, copy, or explicitly regenerate it, while storage remains encrypted and delivery uses `Authorization: Bearer <key>`.
+- Both terminal image events are always enabled; no names, event filters, manual retry, secret rotation, or public Webhook management API.
+- The reliable event/delivery/attempt tables, automatic retries, retention, leases, and SSRF protections remain internal.
+- The storage, console API, UI, delivery worker, and event envelope are task-generic. Video events are not added in this change; future terminal event producers will emit `video.task.*` through the same account configuration.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Planning status patch omitted the existing list marker before `**Status:**` | 1 | Re-read the exact task section and applied a context-correct planning-only patch. |
+| Combined 410 E2E script was rejected because its temp-cookie cleanup used `rm -f` | 1 | No request ran; switch to an in-memory `Set-Cookie` value and avoid filesystem cleanup entirely. |
+| Focused Webhook test search used a zsh glob with no matches | 1 | No code was affected; search the known service test and discovered test filenames directly with `rg`. |
+
+---
+
+# Task Plan: Webhook Saved View and Generated Key UX (2026-07-17)
+
+## Goal
+Make a saved Webhook read as a configuration detail instead of a permanently open form, and replace user-entered credentials with a system-generated `wk-...` Key that the account owner can reveal, copy, or regenerate at any time.
+
+## Current Phase
+Complete
+
+### Phase 1: Contract and existing-pattern discovery
+- [x] Reuse the Resource Center's existing generated-token action hierarchy where practical.
+- [x] Define server-generated Key create/reveal/regenerate semantics with encrypted-at-rest storage.
+- **Status:** complete
+
+### Phase 2: Backend and frontend implementation
+- [x] Add server-side Key generation, authenticated reveal/copy, and regeneration behavior with focused tests.
+- [x] Add saved detail, explicit edit mode, create/regenerate flow, copy affordance, and all locale strings.
+- **Status:** complete
+
+### Phase 3: Verification and Docker handoff
+- [x] Run focused/full backend and frontend checks.
+- [x] Rebuild Docker dev and inspect desktop/560px/375px create, saved, edit, reveal/copy, and regeneration states.
+- **Status:** complete
+
+## Locked Decisions
+- Saved configuration is read-only until the user clicks Edit.
+- New Keys are generated by new-api with a `wk-` prefix and are never accepted as user-entered values in the Resource Center UI.
+- Plaintext Key is available through the authenticated account configuration API for reveal/copy at any time; it remains encrypted at rest and is never logged.
+- Editing URL keeps the current Key. Regenerating replaces it explicitly and does not change event or delivery semantics.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Combined seven-locale patch assumed a Traditional Chinese value that differed from the file | 1 | The patch was atomic and changed nothing; inspect locale tails with JSON tooling and apply exact per-file additions. |
+| Created a browser tab without passing the target URL, so the returned object was not a navigable page | 1 | Create a fresh tab with the URL argument, then navigate the resulting page object. |
+| Requested the viewport capability documentation using the short `viewport` name | 1 | Read the capability document under `capabilities/browser/viewport` before applying responsive overrides. |
+| Full i18n lint reported 423 repository findings, including one new `spacing='tight'` literal in the Webhook component | 1 | Remove the optional spacing prop; rerun to restore the existing 422-item repository baseline and keep the Webhook component clean. |
+
+---
+
+# Aggregate Group Categories and Token Group UX (2026-07-17)
+
+## Goal
+Add configurable aggregate-group categories, category filtering and batch assignment in the admin UI, and category-grouped token options without exposing `auto` for new selection.
+
+## Current Phase
+Complete
+
+### Phase 1: Backend model, migration, and APIs
+- [x] Add category persistence and aggregate-group assignment.
+- [x] Add category CRUD, ordering, deletion fallback, and batch assignment APIs.
+- [x] Add category metadata to aggregate-group and user-group responses.
+- **Status:** complete
+
+### Phase 2: Aggregate-group admin UI
+- [x] Add category manager side sheet and category field to group editing.
+- [x] Add filtering, row selection, and batch category assignment.
+- [x] Support selection in mobile CardTable cards.
+- **Status:** complete
+
+### Phase 3: Token group selector
+- [x] Group aggregate options by configured category.
+- [x] Put real and uncategorized aggregate groups under Other.
+- [x] Hide auto for new selection and preserve historical values on edit.
+- **Status:** complete
+
+### Phase 4: Verification
+- [x] Add focused backend and frontend tests.
+- [x] Run Go tests, Bun checks/build, i18n checks, and responsive browser QA.
+- **Status:** complete
+
+## Locked Decisions
+- Categories are admin-configurable and single-select.
+- Category ID 0 is the virtual, non-deletable Other category.
+- Category behavior is presentation-only and never changes routing or billing.
+- The token UI hides auto for new selection; backend compatibility remains.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Existing planning files contain prior completed tasks | 1 | Append a separately titled task section and preserve all prior records. |
+| Controller compile failed after response signature change | 1 | Add the missing common import and update user-management callers to load category metadata explicitly. |
+| Focused controller tests lacked the new category table | 1 | Register AggregateGroupCategory in the shared controller test database migration. |
+| Category controller test used a nonexistent real group | 1 | Use the configured default group so the test reaches category preservation behavior. |
+| Combined test/log patch targeted the wrong file context | 1 | Reapply the test and planning-record edits under their correct file headers. |
+| Bun helper test imported browser-bound `api.js` and failed because `document` is unavailable | 1 | Move new group-option normalization/grouping into a pure helper module and test that module directly. |
+| `i18n:extract` rewrote thousands of unrelated existing locale entries | 1 | Revert only the extractor-generated locale diff, then add this feature's keys with a targeted structured JSON update. |
+| Full frontend lint scans generated `dist` and existing source baselines | 1 | Record the existing 116-file Prettier and 68-file header baseline; keep targeted changed-file lint green. |
+| Docker BuildKit spent over four minutes resolving pinned base-image metadata | 1 | Stop before touching the running container, then retry as a separate no-pull image build followed by service recreation. |
+| No-pull Docker build repeated registry metadata waits and pinned bases were absent locally | 2 | Cross-build the current embedded-web Linux binary and layer it over the existing matching dev runtime image for local UI verification. |
+| Temporary Docker binary under `tmp/` was excluded from the build context | 1 | Emit the generated binary at a temporary non-ignored root path, then remove it after building the dev image. |
+| Category delete confirmation did not open in browser QA | 1 | Make the delete button the direct `Popconfirm` trigger instead of wrapping it in `Tooltip`; preserve a native title and verify the confirmation and fallback flow after rebuilding Docker dev. |
+| Recreating Docker used the container name instead of the Compose service name | 1 | Read `docker-compose-dev.yml` and recreate the `new-api-dev` service. |
+| A test-category insert collided with the administrator's existing `生图` category | 1 | Stop creating category fixtures and reuse the existing category plus its two assigned Adobe aggregate groups for visual QA; no data was changed. |
+| Resizing while the Select popup was already open retained its desktop popup width | 1 | Close and reopen the popup after applying the 375px viewport, matching the real mobile interaction; the reopened popup fit the viewport with zero overflow. |
+
 
 # Task Plan: Image parameter per-call pricing and image-handle compatibility
 
@@ -492,5 +631,84 @@ Complete
 | Existing planning files contain unrelated active work | 1 | Append a separate scoped task section and preserve all prior content. |
 | `git status` was passed a deleted `/tmp` path outside the repository | 1 | Treat as a harmless diagnostic command error and inspect only repository paths thereafter. |
 | Initial read-only PostgreSQL metadata queries lost SQL string quoting through nested shell quoting | 1 | Log the error and retry with quote-free metadata queries, filtering safe output outside `psql`. |
+
+---
+# Task Plan: Async Image Open API and Webhook (2026-07-17)
+
+## Goal
+Normalize the public async image task API, make new-api dispatch to image-handle durably, add user-configured outbound Webhooks, expose scoped management APIs, and verify the complete local Docker workflow.
+
+## Current Phase
+Complete with one documented billing-atomicity follow-up
+
+### Phase 1: Persistence and public task contracts
+- [x] Add cross-database image request/dispatch and Webhook models and migrations.
+- [x] Add normalized create/get/list/batch/upload APIs with user isolation and idempotency.
+- [x] Add durable new-api to image-handle dispatch and unified terminal transitions.
+- **Status:** complete
+
+### Phase 2: Webhook management and delivery
+- [x] Add endpoint/event/delivery/attempt services, signed delivery worker, retries, cleanup, and SSRF controls.
+- [x] Add session and scoped ak_ management APIs, secret rotation, test events, logs, and manual retry.
+- **Status:** complete
+
+### Phase 3: Resource Center and documentation
+- [x] Add Webhook UI, API key scopes, delivery logs, one-time secrets, and OpenAPI documentation.
+- [x] Update all frontend locales.
+- [x] Verify responsive behavior in the rebuilt Docker dev UI.
+- **Status:** complete
+
+### Phase 4: image-handle contract and local integration
+- [x] Add request fingerprint/provider_options/URL security changes in image-handle.
+- [x] Join both Docker dev stacks through ai-gateway and run end-to-end scenarios.
+- **Status:** complete
+
+### Phase 5: Verification
+- [x] Run focused and full Go, image-handle, frontend, i18n, compose, and cross-database checks.
+- [x] Review final diffs and document any environmental limitations.
+- **Status:** complete
+
+## Locked Decisions
+- new-api is the only public task and third-party Webhook boundary; image-handle remains internal.
+- Public task IDs are server-generated; Idempotency-Key is optional and request-fingerprint protected.
+- Async edits use URL inputs with new-api multipart/base64 pre-upload endpoints.
+- Public statuses are queued, in_progress, succeeded, and failed; cancellation is out of scope.
+- Webhooks broadcast terminal task events to up to five subscribed endpoints and retain delivery logs for seven days.
+- Webhook management Open API uses scoped ak_ keys; existing keys remain assets:read only.
+- Endpoint secret rotation emits old and new signatures for 24 hours.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Existing planning files contain several prior task records | 1 | Append a separate task section and preserve all prior content and status. |
+| Used the yielded exec session id with the cell-wait helper | 1 | Resume the PTY session with write_stdin; focused model/service tests passed. |
+| Controller build retained an unused errors import after standardizing task-not-found responses | 1 | Remove the obsolete import and rerun the affected packages before continuing. |
+| Focused controller tests did not migrate `image_task_requests` and still asserted legacy HTTP-200 error envelopes | 1 | Update the test schema/fixtures and assertions to the normalized public API contract before rerunning controller tests. |
+| Adding terminal Webhook creation rolled back legacy test tasks whose intentionally minimal schemas lacked the new tables | 1 | Treat absent extension tables as a rolling-upgrade compatibility case and skip event creation until migrations are present. |
+| Secret-rotation test found the returned one-time secret used a version one higher than the persisted endpoint after GORM synchronized map updates into the struct | 1 | Snapshot old salt/version before the update and assign the exact persisted new version when constructing the response secret. |
+| Durable image API tests had been added but not formatted or executed before the context handoff | 1 | Format the test file and run controller/relay/service/model/middleware/router packages; all passed. |
+| Temporary locale merge script used unquoted Chinese keys containing punctuation, then an initial repair malformed the Russian secret row | 2 | Quote every punctuated key, restore the exact Russian key/value, syntax-check before executing, and remove the temporary script after the structured merge. |
+| Phase 3 status patch expected the status marker without its Markdown list prefix | 1 | Read the current section and reapply the script deletion/status update with the exact `- **Status:**` context. |
+| Initial Redocly OpenAPI 3.1 validation was valid but reported nine schema/operation warnings | 1 | Define conditional required properties in their local schemas and add operation IDs plus explicit unauthenticated security to outgoing Webhook operations. |
+| Dispatch terminal tests left their new ImageTaskRequest row behind, causing the next SQLite fixture to reuse task record ID 1 and hit its unique index | 1 | Delete dispatch request/event rows before deleting the task in the fixture cleanup, then rerun the real terminal path. |
+| Current Docker Compose CLI rejected `config --networks` as an unknown flag | 1 | Use validated compose config plus `docker network inspect` and container-level network/DNS probes; do not repeat the unsupported flag. |
+| Docker build could not copy `docs/openapi` because `.dockerignore` excluded the entire docs directory | 1 | Keep docs excluded by default but explicitly include `docs/openapi/**`, then rebuild from the corrected context. |
+| Local channel inventory query assumed a nonexistent `group_name` column | 1 | Use the actual reserved `group` column with PostgreSQL quoting, matching the repository's cross-database convention. |
+| A combined source read looked for image-handle's mock script from the new-api repository | 1 | Read the script from the image-handle workdir on the next inspection; no product command was affected. |
+| Inline Node E2E script passed escaped newlines as literal `\\n` and failed before making requests | 1 | Pass the same structured-fetch script as a single line, avoiding shell newline interpretation. |
+| First Docker task fixture used an unregistered custom group and was rejected with HTTP 403 before task creation | 1 | Use the valid `default` group with a unique temporary public model alias, model mapping, ratio, and ability so no real channel can match. |
+| Manual retry was requested while the first failed HTTP attempt correctly left delivery in scheduled `pending` state | 1 | Verify manual retry from an explicit terminal `failed` fixture state; verify automatic retry separately by advancing the due time. |
+| A repository-root diagnostic used the unmatched glob `deploy/README*` under zsh | 1 | Read the confirmed Compose files directly from each repository; no product command or file was affected. |
+| Two planning-record patches used either summary wording or a missing file boundary instead of exact local context | 2 | Re-read the active section and apply correctly separated, narrowly anchored patches; neither failed attempt made a partial write. |
+| Full `bun run i18n:lint` reports 422 pre-existing hardcoded-string findings across the frontend | 1 | Preserve the existing baseline, verify all introduced locale keys across seven locales, and run targeted formatting/lint checks on the changed Resource Center files. |
+| The first PostgreSQL integration DSN targeted Docker-only port 5432 from the host | 1 | Use an isolated temporary PostgreSQL container with an explicit loopback port; the test passed and the container was removed. |
+| Official MySQL 5.7 has no arm64 manifest and its first emulated readiness check raced host port forwarding | 2 | Pull/run the amd64 image, wait for container health plus a real TCP query, then execute the integration test. |
+| MySQL 5.7's default `latin1` test schema rejected the Unicode payload fixture | 1 | Start MySQL with `utf8mb4`, matching new-api's existing `checkMySQLChineseSupport` startup requirement; the Unicode/TEXT contract passed. |
+| The 375px browser screenshot capture timed out after viewport calibration | 1 | Do not repeat the capture; verify the exact 375x812 DOM geometry and overflow metrics, using the successful 560px mobile screenshot for visual inspection. |
+| The first locale completeness script read keys from the JSON root instead of its `translation` object | 1 | Inspect the actual locale structure and rerun; all 63 Webhook/scope keys exist in all seven locales. |
+| The initial image-handle cleanup query referenced nonexistent `image_tasks.task_id` | 1 | Query and delete by the real `client_task_id`; no mutation occurred in the failed read-only query. |
+| Final changed-file JSON scan used a temporary-file cleanup command rejected by the command safety policy | 1 | Replace it with a read-only Git file list piped directly to `rg`; only the approved `common/json.go` wrapper contains direct JSON calls. |
+| Final receiver verification requested unsupported `GET /config` and received 404 | 1 | Use the successful `POST /config` response (`secret_configured:false`) plus `GET /events` (`attempts:0`, `received:0`) as the supported verification contract. |
+| The generic planning completion script reported two pending phases | 1 | Confirm they belong to an older image-pricing plan in the shared planning file; all five phases of the active async-image/Webhook plan are complete. |
 
 ---
