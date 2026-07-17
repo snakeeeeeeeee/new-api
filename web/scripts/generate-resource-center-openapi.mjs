@@ -29,7 +29,77 @@ const queryParameter = (name, schema, description) => ({
 const assetSecurity = [{ AssetKeyAuth: [] }];
 const tokenSecurity = [{ TokenAuth: [] }];
 const webhookSecurity = [{ WebhookBearerAuth: [] }];
-const assetRead = { 'x-required-scope': 'assets:read' };
+
+const webhookSucceededExample = {
+  id: 'evt_xxx',
+  object: 'event',
+  api_version: '2026-07-17',
+  type: 'image.task.succeeded',
+  created_at: 1784250060,
+  data: {
+    object: {
+      id: 'task_xxx',
+      object: 'image.task',
+      model: 'gpt-image-2',
+      operation: 'generation',
+      status: 'succeeded',
+      progress: 100,
+      result: {
+        images: [
+          {
+            asset_id: 'asset_xxx',
+            url: 'https://cdn.example.com/image.png',
+            mime_type: 'image/png',
+            format: 'png',
+            width: 1024,
+            height: 1024,
+            size_bytes: 245760,
+            filename: 'image.png',
+          },
+        ],
+      },
+      usage: {},
+      error: null,
+      client_reference_id: 'order_123',
+      metadata: {},
+      created_at: 1784250000,
+      started_at: 1784250002,
+      completed_at: 1784250060,
+      updated_at: 1784250060,
+    },
+  },
+};
+
+const webhookFailedExample = {
+  id: 'evt_yyy',
+  object: 'event',
+  api_version: '2026-07-17',
+  type: 'image.task.failed',
+  created_at: 1784250060,
+  data: {
+    object: {
+      id: 'task_yyy',
+      object: 'image.task',
+      model: 'gpt-image-2',
+      operation: 'edit',
+      status: 'failed',
+      progress: 100,
+      result: null,
+      usage: {},
+      error: {
+        code: 'upstream_error',
+        message: 'Image generation failed',
+        retryable: false,
+      },
+      client_reference_id: 'order_456',
+      metadata: {},
+      created_at: 1784250000,
+      started_at: 1784250002,
+      completed_at: 1784250060,
+      updated_at: 1784250060,
+    },
+  },
+};
 
 const commonErrorResponses = {
   400: responseRef('BadRequest'),
@@ -152,7 +222,6 @@ const spec = {
         summary: 'List assets',
         description: 'Lists only assets owned by the resource key user.',
         security: assetSecurity,
-        ...assetRead,
         parameters: [
           ...assetFilterParameters,
           queryParameter(
@@ -178,7 +247,6 @@ const spec = {
         operationId: 'getAsset',
         summary: 'Get an asset',
         security: assetSecurity,
-        ...assetRead,
         parameters: [pathParameter('asset_id', 'Asset ID such as asset_xxx.')],
         responses: {
           200: jsonResponse('Asset.', ref('Asset')),
@@ -193,7 +261,6 @@ const spec = {
         operationId: 'queryAssets',
         summary: 'Query assets in a JSON body',
         security: assetSecurity,
-        ...assetRead,
         requestBody: {
           required: true,
           content: jsonContent(ref('AssetQueryRequest')),
@@ -210,7 +277,6 @@ const spec = {
         operationId: 'getAssetURLs',
         summary: 'Get asset URLs in bulk',
         security: assetSecurity,
-        ...assetRead,
         requestBody: {
           required: true,
           content: jsonContent(ref('AssetBatchURLRequest')),
@@ -228,7 +294,6 @@ const spec = {
         summary: 'Export asset URLs as CSV',
         description: 'Exports at most 10,000 matching assets.',
         security: assetSecurity,
-        ...assetRead,
         parameters: assetFilterParameters,
         responses: {
           200: {
@@ -395,12 +460,17 @@ const spec = {
         operationId: 'receiveImageTaskSucceededWebhook',
         summary: 'image.task.succeeded callback',
         description:
-          'Delivered at least once with Authorization: Bearer <key>. Deduplicate retries by the stable event id in the JSON body.',
+          'Delivered at least once with Authorization: Bearer wk-.... Return any 2xx within 10 seconds and deduplicate retries by the stable event id.',
         security: webhookSecurity,
         parameters: [],
         requestBody: {
           required: true,
-          content: jsonContent(ref('WebhookEvent')),
+          content: {
+            'application/json': {
+              schema: ref('WebhookEvent'),
+              example: webhookSucceededExample,
+            },
+          },
         },
         responses: {
           200: { description: 'Any 2xx response acknowledges delivery.' },
@@ -412,12 +482,17 @@ const spec = {
         operationId: 'receiveImageTaskFailedWebhook',
         summary: 'image.task.failed callback',
         description:
-          'Delivered at least once with Authorization: Bearer <key>. Deduplicate retries by the stable event id in the JSON body.',
+          'Delivered at least once with Authorization: Bearer wk-.... Return any 2xx within 10 seconds and deduplicate retries by the stable event id.',
         security: webhookSecurity,
         parameters: [],
         requestBody: {
           required: true,
-          content: jsonContent(ref('WebhookEvent')),
+          content: {
+            'application/json': {
+              schema: ref('WebhookEvent'),
+              example: webhookFailedExample,
+            },
+          },
         },
         responses: {
           200: { description: 'Any 2xx response acknowledges delivery.' },
@@ -439,7 +514,7 @@ const spec = {
         scheme: 'bearer',
         bearerFormat: 'ak_*',
         description:
-          'A Resource Center key. Legacy keys have assets:read only.',
+          'A Resource Center API Key used only to query and export assets.',
       },
       WebhookBearerAuth: {
         type: 'http',
@@ -884,8 +959,7 @@ const spec = {
         content: jsonContent(ref('ErrorResponse')),
       },
       Forbidden: {
-        description:
-          'Credential, scope, IP, expiry, or user policy denied access.',
+        description: 'API Key, IP, expiry, or user policy denied access.',
         content: jsonContent(ref('ErrorResponse')),
       },
       NotFound: {
