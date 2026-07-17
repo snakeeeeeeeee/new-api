@@ -26,6 +26,7 @@ import {
   Pagination,
   Empty,
   Button,
+  Checkbox,
   Collapsible,
 } from '@douyinfe/semi-ui';
 import { IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
@@ -133,13 +134,41 @@ const CardTable = ({
   const MobileRowCard = ({ record, index }) => {
     const [showDetails, setShowDetails] = useState(false);
     const rowKeyVal = getRowKey(record, index);
+    const rowSelection = tableProps.rowSelection;
+    const selectedRowKeys = rowSelection?.selectedRowKeys || [];
+    const checkboxProps = rowSelection?.getCheckboxProps?.(record) || {};
+    const isSelected = selectedRowKeys.includes(rowKeyVal);
 
     const hasDetails =
       tableProps.expandedRowRender &&
       (!tableProps.rowExpandable || tableProps.rowExpandable(record));
 
+    const handleSelectionChange = (checked) => {
+      const nextKeys = checked
+        ? [...selectedRowKeys, rowKeyVal]
+        : selectedRowKeys.filter((key) => key !== rowKeyVal);
+      const selectedRows = dataSource.filter((item, itemIndex) =>
+        nextKeys.includes(getRowKey(item, itemIndex)),
+      );
+      rowSelection?.onChange?.(nextKeys, selectedRows);
+      rowSelection?.onSelect?.(record, checked, selectedRows);
+    };
+
     return (
       <Card key={rowKeyVal} className='!rounded-2xl shadow-sm'>
+        {rowSelection ? (
+          <div
+            className='flex justify-end pb-2 mb-1 border-b border-dashed'
+            style={{ borderColor: 'var(--semi-color-border)' }}
+          >
+            <Checkbox
+              {...checkboxProps}
+              checked={isSelected}
+              aria-label={t('选择此项')}
+              onChange={handleSelectionChange}
+            />
+          </div>
+        ) : null}
         {columns.map((col, colIdx) => {
           if (
             tableProps?.visibleColumns &&

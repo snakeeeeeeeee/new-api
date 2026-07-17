@@ -983,7 +983,14 @@ export const renderGroupOption = (item) => {
     alignItems: 'center',
     padding: '8px 16px',
     cursor: disabled ? 'not-allowed' : 'pointer',
-    backgroundColor: focused ? 'var(--semi-color-fill-0)' : 'transparent',
+    backgroundColor: focused
+      ? item.enhancedContrast
+        ? 'var(--semi-color-fill-1)'
+        : 'var(--semi-color-fill-0)'
+      : 'transparent',
+    ...(item.enhancedContrast && {
+      borderBottom: '1px solid var(--semi-color-fill-1)',
+    }),
     opacity: disabled ? 0.5 : 1,
     ...(selected && {
       backgroundColor: 'var(--semi-color-primary-light-default)',

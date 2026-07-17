@@ -603,6 +603,23 @@ html.dark .sbg-variant-green {
 
 /* ==================== 同步倍率 - 渠道选择器 ==================== */
 
+.token-group-select-dropdown .token-group-select-section {
+  margin-top: 8px;
+  padding: 9px 16px 9px 13px;
+  color: var(--semi-color-text-0);
+  background-color: var(--semi-color-fill-1);
+  border-top: 1px solid var(--semi-color-fill-2);
+  border-bottom: 1px solid var(--semi-color-fill-2);
+  border-left: 3px solid var(--semi-color-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.token-group-select-dropdown .token-group-select-section:first-child {
+  margin-top: 0;
+}
+
 .components-transfer-source-item,
 .components-transfer-selected-item {
   display: flex;

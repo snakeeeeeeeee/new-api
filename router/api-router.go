@@ -305,6 +305,12 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			aggregateGroupRoute.GET("/", controller.GetAggregateGroups)
 			aggregateGroupRoute.GET("/models", controller.GetAggregateGroupTargetModels)
+			aggregateGroupRoute.GET("/categories", controller.GetAggregateGroupCategories)
+			aggregateGroupRoute.POST("/categories", controller.CreateAggregateGroupCategory)
+			aggregateGroupRoute.PUT("/categories/order", controller.ReorderAggregateGroupCategories)
+			aggregateGroupRoute.PUT("/categories/assign", controller.AssignAggregateGroupCategories)
+			aggregateGroupRoute.PUT("/categories/:id", controller.UpdateAggregateGroupCategory)
+			aggregateGroupRoute.DELETE("/categories/:id", controller.DeleteAggregateGroupCategory)
 			aggregateGroupRoute.GET("/:id/runtime", controller.GetAggregateGroupRuntime)
 			aggregateGroupRoute.GET("/:id", controller.GetAggregateGroup)
 			aggregateGroupRoute.POST("/", controller.CreateAggregateGroup)

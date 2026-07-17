@@ -1501,13 +1501,17 @@ func isBusinessGroupName(groupName string) bool {
 	return groupName != "" && groupName != "auto" && !isUserIdentityGroupName(groupName)
 }
 
-func buildVisibleAggregateGroupResponses(userGroup string, userSetting dto.UserSetting) []*aggregateGroupResponse {
+func buildVisibleAggregateGroupResponses(userGroup string, userSetting dto.UserSetting) ([]*aggregateGroupResponse, error) {
 	groups := service.GetVisibleAggregateGroupsWithSetting(userGroup, userSetting)
+	categories, err := model.GetAggregateGroupCategoriesByID()
+	if err != nil {
+		return nil, err
+	}
 	resp := make([]*aggregateGroupResponse, 0, len(groups))
 	for _, group := range groups {
-		resp = append(resp, buildAggregateGroupResponse(group))
+		resp = append(resp, buildAggregateGroupResponse(group, categories))
 	}
-	return resp
+	return resp, nil
 }
 
 func buildBusinessGroupOptions() []userBusinessGroupOption {
@@ -1624,9 +1628,14 @@ func GetUserAggregateGroupRatioOverrides(c *gin.Context) {
 	if overrides == nil {
 		overrides = map[string]float64{}
 	}
+	aggregateGroups, err := buildVisibleAggregateGroupResponses(user.Group, userSetting)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	common.ApiSuccess(c, gin.H{
 		"overrides":        overrides,
-		"aggregate_groups": buildVisibleAggregateGroupResponses(user.Group, userSetting),
+		"aggregate_groups": aggregateGroups,
 	})
 }
 
@@ -1666,9 +1675,14 @@ func UpdateUserAggregateGroupRatioOverrides(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	aggregateGroups, err := buildVisibleAggregateGroupResponses(user.Group, userSetting)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	common.ApiSuccess(c, gin.H{
 		"overrides":        normalized,
-		"aggregate_groups": buildVisibleAggregateGroupResponses(user.Group, userSetting),
+		"aggregate_groups": aggregateGroups,
 	})
 }
 

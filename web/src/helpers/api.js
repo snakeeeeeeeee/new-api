@@ -25,6 +25,7 @@ import {
 } from './utils';
 import axios from 'axios';
 import { MESSAGE_ROLES } from '../constants/playground.constants';
+import { buildGroupOption } from './groupOptions';
 
 export let API = axios.create({
   baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
@@ -35,7 +36,6 @@ export let API = axios.create({
     'Cache-Control': 'no-store',
   },
 });
-
 
 function redirectToOAuthUrl(url, options = {}) {
   const { openInNewTab = false } = options;
@@ -48,7 +48,6 @@ function redirectToOAuthUrl(url, options = {}) {
 
   window.location.assign(targetUrl);
 }
-
 
 function patchAPIInstance(instance) {
   const originalGet = instance.get.bind(instance);
@@ -211,8 +210,13 @@ export const filterVisibleGroupsMap = (data = {}) =>
     Object.entries(data).filter(([group]) => !isHiddenGroup(group)),
   );
 
-export const filterVisibleGroupRatioMap = (groupRatio = {}, usableGroup = {}) => {
-  const visibleGroups = new Set(Object.keys(filterVisibleGroupsMap(usableGroup)));
+export const filterVisibleGroupRatioMap = (
+  groupRatio = {},
+  usableGroup = {},
+) => {
+  const visibleGroups = new Set(
+    Object.keys(filterVisibleGroupsMap(usableGroup)),
+  );
 
   return Object.fromEntries(
     Object.entries(groupRatio).filter(([group]) => {
@@ -231,7 +235,9 @@ export const filterVisibleGroupRatioDetailsMap = (
   groupRatioDetails = {},
   usableGroup = {},
 ) => {
-  const visibleGroups = new Set(Object.keys(filterVisibleGroupsMap(usableGroup)));
+  const visibleGroups = new Set(
+    Object.keys(filterVisibleGroupsMap(usableGroup)),
+  );
 
   return Object.fromEntries(
     Object.entries(groupRatioDetails || {}).filter(([group]) => {
@@ -249,17 +255,9 @@ export const filterVisibleGroupRatioDetailsMap = (
 // 处理分组数据
 export const processGroupsData = (data, userGroup) => {
   const visibleGroups = filterVisibleGroupsMap(data);
-  let groupOptions = Object.entries(visibleGroups).map(([group, info]) => ({
-    label:
-      info.desc.length > 20 ? info.desc.substring(0, 20) + '...' : info.desc,
-    value: group,
-    ratio: info.ratio,
-    originalRatio: info.original_ratio,
-    ratioOverride: info.ratio_override,
-    hasRatioOverride: Boolean(info.has_ratio_override),
-    fullLabel: info.desc,
-    groupType: info.type || 'real',
-  }));
+  let groupOptions = Object.entries(visibleGroups).map(([group, info]) =>
+    buildGroupOption(group, info),
+  );
 
   if (groupOptions.length === 0) {
     groupOptions = [

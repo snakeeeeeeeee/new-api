@@ -32,6 +32,7 @@ const (
 
 type AggregateGroup struct {
 	Id                        int                    `json:"id"`
+	CategoryId                int                    `json:"category_id" gorm:"default:0;index"`
 	Name                      string                 `json:"name" gorm:"size:64;not null;uniqueIndex:uk_aggregate_group_name,where:deleted_at IS NULL"`
 	DisplayName               string                 `json:"display_name" gorm:"size:128;not null"`
 	Description               string                 `json:"description,omitempty" gorm:"type:varchar(255)"`
@@ -400,6 +401,7 @@ func (g *AggregateGroup) updateWithTargetsAndRouteModelRatios(targets []Aggregat
 	g.UpdatedTime = common.GetTimestamp()
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&AggregateGroup{}).Where("id = ?", g.Id).Updates(map[string]interface{}{
+			"category_id":                  g.CategoryId,
 			"name":                         g.Name,
 			"display_name":                 g.DisplayName,
 			"description":                  g.Description,
@@ -558,4 +560,17 @@ func GetAllAggregateGroups(enabledOnly bool) ([]*AggregateGroup, error) {
 		return nil, err
 	}
 	return groups, nil
+}
+
+func GetAggregateGroupsByNames(names []string, enabledOnly bool) ([]AggregateGroup, error) {
+	groups := make([]AggregateGroup, 0)
+	if len(names) == 0 {
+		return groups, nil
+	}
+	query := DB.Where("name IN ?", names)
+	if enabledOnly {
+		query = query.Where("status = ?", AggregateGroupStatusEnabled)
+	}
+	err := query.Find(&groups).Error
+	return groups, err
 }

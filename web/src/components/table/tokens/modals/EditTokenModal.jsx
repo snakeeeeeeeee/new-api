@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useContext, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   API,
   showError,
@@ -28,6 +28,7 @@ import {
   getModelCategories,
   selectFilter,
   processGroupsData,
+  groupTokenOptionsByCategory,
 } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import {
@@ -42,6 +43,7 @@ import {
   Form,
   Col,
   Row,
+  Select,
 } from '@douyinfe/semi-ui';
 import {
   IconCreditCard,
@@ -51,19 +53,61 @@ import {
   IconKey,
 } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
-import { StatusContext } from '../../../../context/Status';
 
 const { Text, Title } = Typography;
 
 const EditTokenModal = (props) => {
   const { t } = useTranslation();
-  const [statusState, statusDispatch] = useContext(StatusContext);
   const [loading, setLoading] = useState(false);
   const isMobile = useIsMobile();
   const formApiRef = useRef(null);
   const [models, setModels] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [groupsLoaded, setGroupsLoaded] = useState(false);
+  const [originalTokenGroup, setOriginalTokenGroup] = useState('');
+  const [historicalGroupDismissed, setHistoricalGroupDismissed] =
+    useState(false);
   const isEdit = props.editingToken.id !== undefined;
+
+  const groupSections = useMemo(
+    () => groupTokenOptionsByCategory(groups, t('其他')),
+    [groups, t],
+  );
+
+  const historicalGroup = useMemo(() => {
+    if (
+      !isEdit ||
+      !groupsLoaded ||
+      !originalTokenGroup ||
+      historicalGroupDismissed ||
+      groups.some((group) => group.value === originalTokenGroup)
+    ) {
+      return null;
+    }
+    return {
+      label: t('历史分组（仅允许保留）'),
+      value: originalTokenGroup,
+      fullLabel: t('历史分组（仅允许保留）'),
+      groupType: originalTokenGroup === 'auto' ? 'auto' : 'real',
+    };
+  }, [
+    groups,
+    groupsLoaded,
+    historicalGroupDismissed,
+    isEdit,
+    originalTokenGroup,
+    t,
+  ]);
+
+  const filterGroupOption = (input, option) => {
+    if (!input) return true;
+    const keyword = input.trim().toLowerCase();
+    return [option?.value, option?.label, option?.fullLabel].some((value) =>
+      String(value || '')
+        .toLowerCase()
+        .includes(keyword),
+    );
+  };
 
   const getInitValues = () => ({
     name: '',
@@ -128,28 +172,28 @@ const EditTokenModal = (props) => {
   };
 
   const loadGroups = async () => {
-    let res = await API.get(`/api/user/self/groups`);
-    const { success, message, data } = res.data;
-    if (success) {
-      const localUserGroup = JSON.parse(localStorage.getItem('user') || '{}')
-        ?.group;
-      let localGroupOptions = processGroupsData(data, localUserGroup).map(
-        (group) => ({
-          ...group,
-          label: group.fullLabel || group.label,
-        }),
-      );
-      if (statusState?.status?.default_use_auto_group) {
-        if (localGroupOptions.some((group) => group.value === 'auto')) {
-          localGroupOptions.sort((a, b) => (a.value === 'auto' ? -1 : 1));
-        }
+    setGroupsLoaded(false);
+    try {
+      let res = await API.get(`/api/user/self/groups`);
+      const { success, message, data } = res.data;
+      if (success) {
+        const localUserGroup = JSON.parse(
+          localStorage.getItem('user') || '{}',
+        )?.group;
+        const localGroupOptions = processGroupsData(data, localUserGroup)
+          .filter((group) => group.value && group.groupType !== 'auto')
+          .map((group) => ({
+            ...group,
+            label: group.fullLabel || group.label,
+          }));
+        setGroups(localGroupOptions);
+      } else {
+        showError(t(message));
       }
-      setGroups(localGroupOptions);
-      // if (statusState?.status?.default_use_auto_group && formApiRef.current) {
-      //   formApiRef.current.setValue('group', 'auto');
-      // }
-    } else {
-      showError(t(message));
+    } catch (error) {
+      showError(error?.message || t('获取令牌分组选项失败'));
+    } finally {
+      setGroupsLoaded(true);
     }
   };
 
@@ -166,21 +210,8 @@ const EditTokenModal = (props) => {
       } else {
         data.model_limits = [];
       }
-      setGroups((prev) => {
-        if ((prev || []).some((group) => group.value === data.group)) {
-          return prev;
-        }
-        return [
-          {
-            label: t('历史分组（仅允许保留）'),
-            value: data.group,
-            ratio: 1,
-            fullLabel: t('历史分组（仅允许保留）'),
-            groupType: 'real',
-          },
-          ...(prev || []),
-        ];
-      });
+      setOriginalTokenGroup(data.group || '');
+      setHistoricalGroupDismissed(false);
       if (formApiRef.current) {
         formApiRef.current.setValues({ ...getInitValues(), ...data });
       }
@@ -203,8 +234,11 @@ const EditTokenModal = (props) => {
   useEffect(() => {
     if (props.visiable) {
       if (isEdit) {
+        setHistoricalGroupDismissed(false);
         loadToken();
       } else {
+        setOriginalTokenGroup('');
+        setHistoricalGroupDismissed(false);
         formApiRef.current?.setValues(getInitValues());
       }
     } else {
@@ -378,13 +412,23 @@ const EditTokenModal = (props) => {
                     />
                   </Col>
                   <Col span={24}>
-                    {groups.length > 0 ? (
+                    {groupSections.length > 0 || historicalGroup ? (
                       <Form.Select
                         field='group'
                         label={t('令牌分组')}
                         placeholder={t('请选择令牌分组')}
-                        optionList={groups}
                         renderOptionItem={renderGroupOption}
+                        filter={filterGroupOption}
+                        searchPosition='dropdown'
+                        dropdownClassName='token-group-select-dropdown'
+                        onChange={(value) => {
+                          if (
+                            historicalGroup &&
+                            value !== historicalGroup.value
+                          ) {
+                            setHistoricalGroupDismissed(true);
+                          }
+                        }}
                         style={{ width: '100%' }}
                         rules={[
                           {
@@ -392,7 +436,34 @@ const EditTokenModal = (props) => {
                             message: t('请选择令牌分组'),
                           },
                         ]}
-                      />
+                      >
+                        {historicalGroup ? (
+                          <Select.OptGroup
+                            className='token-group-select-section'
+                            label={t('历史分组（仅允许保留）')}
+                          >
+                            <Select.Option
+                              {...historicalGroup}
+                              enhancedContrast
+                            />
+                          </Select.OptGroup>
+                        ) : null}
+                        {groupSections.map((section) => (
+                          <Select.OptGroup
+                            key={section.key}
+                            className='token-group-select-section'
+                            label={section.label}
+                          >
+                            {section.options.map((group) => (
+                              <Select.Option
+                                key={group.value}
+                                {...group}
+                                enhancedContrast
+                              />
+                            ))}
+                          </Select.OptGroup>
+                        ))}
+                      </Form.Select>
                     ) : (
                       <Form.Select
                         placeholder={t('管理员未设置用户可选分组')}

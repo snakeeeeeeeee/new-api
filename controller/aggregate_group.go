@@ -27,6 +27,7 @@ type aggregateGroupRouteModelRatioRequest struct {
 
 type aggregateGroupUpsertRequest struct {
 	Id                            int                                          `json:"id"`
+	CategoryId                    *int                                         `json:"category_id"`
 	Name                          string                                       `json:"name"`
 	DisplayName                   string                                       `json:"display_name"`
 	Description                   string                                       `json:"description"`
@@ -50,6 +51,9 @@ type aggregateGroupUpsertRequest struct {
 
 type aggregateGroupResponse struct {
 	Id                                       int                                          `json:"id"`
+	CategoryId                               int                                          `json:"category_id"`
+	CategoryName                             string                                       `json:"category_name"`
+	CategoryOrder                            int                                          `json:"category_order"`
 	Name                                     string                                       `json:"name"`
 	DisplayName                              string                                       `json:"display_name"`
 	Description                              string                                       `json:"description"`
@@ -89,7 +93,7 @@ type aggregateGroupRuntimeResponse struct {
 	Runtime        *service.AggregateGroupRuntimeView  `json:"runtime,omitempty"`
 }
 
-func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupResponse {
+func buildAggregateGroupResponse(group *model.AggregateGroup, categories map[int]model.AggregateGroupCategory) *aggregateGroupResponse {
 	if group == nil {
 		return nil
 	}
@@ -97,8 +101,23 @@ func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupRes
 	for _, target := range group.Targets {
 		targets = append(targets, target)
 	}
+	categoryId := group.CategoryId
+	categoryName := ""
+	categoryOrder := 0
+	if categoryId != model.AggregateGroupCategoryOtherID {
+		category, ok := categories[categoryId]
+		if !ok {
+			categoryId = model.AggregateGroupCategoryOtherID
+		} else {
+			categoryName = category.Name
+			categoryOrder = category.OrderIndex
+		}
+	}
 	return &aggregateGroupResponse{
 		Id:                        group.Id,
+		CategoryId:                categoryId,
+		CategoryName:              categoryName,
+		CategoryOrder:             categoryOrder,
 		Name:                      group.Name,
 		DisplayName:               group.DisplayName,
 		Description:               group.Description,
@@ -122,8 +141,8 @@ func buildAggregateGroupResponse(group *model.AggregateGroup) *aggregateGroupRes
 	}
 }
 
-func buildAggregateGroupResponseWithRouteModelRatios(group *model.AggregateGroup, rules []model.AggregateGroupRouteModelRatio) *aggregateGroupResponse {
-	resp := buildAggregateGroupResponse(group)
+func buildAggregateGroupResponseWithRouteModelRatios(group *model.AggregateGroup, rules []model.AggregateGroupRouteModelRatio, categories map[int]model.AggregateGroupCategory) *aggregateGroupResponse {
+	resp := buildAggregateGroupResponse(group, categories)
 	if resp == nil {
 		return nil
 	}
@@ -200,9 +219,14 @@ func GetAggregateGroups(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	categories, err := model.GetAggregateGroupCategoriesByID()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	resp := make([]*aggregateGroupResponse, 0, len(groups))
 	for _, group := range groups {
-		resp = append(resp, buildAggregateGroupResponseWithRouteModelRatios(group, rulesByGroupId[group.Id]))
+		resp = append(resp, buildAggregateGroupResponseWithRouteModelRatios(group, rulesByGroupId[group.Id], categories))
 	}
 	common.ApiSuccess(c, resp)
 }
@@ -223,7 +247,12 @@ func GetAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildAggregateGroupResponseWithRouteModelRatios(group, rules))
+	categories, err := model.GetAggregateGroupCategoriesByID()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildAggregateGroupResponseWithRouteModelRatios(group, rules, categories))
 }
 
 func GetAggregateGroupTargetModels(c *gin.Context) {
@@ -278,9 +307,14 @@ func GetAggregateGroupRuntime(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	categories, err := model.GetAggregateGroupCategoriesByID()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	common.ApiSuccess(c, &aggregateGroupRuntimeResponse{
-		AggregateGroup: buildAggregateGroupResponseWithRouteModelRatios(group, rules),
+		AggregateGroup: buildAggregateGroupResponseWithRouteModelRatios(group, rules, categories),
 		SmartStrategy: aggregateGroupSmartStrategyResponse{
 			GlobalEnabled:     setting.AggregateGroupSmartStrategyEnabled,
 			GroupEnabled:      group.SmartRoutingEnabled,
@@ -302,7 +336,16 @@ func CreateAggregateGroup(c *gin.Context) {
 	if req.Status == 0 {
 		req.Status = model.AggregateGroupStatusEnabled
 	}
+	categoryId := model.AggregateGroupCategoryOtherID
+	if req.CategoryId != nil {
+		categoryId = *req.CategoryId
+	}
+	if err := model.ValidateAggregateGroupCategoryID(categoryId); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	group := &model.AggregateGroup{
+		CategoryId:                categoryId,
 		Name:                      req.Name,
 		DisplayName:               req.DisplayName,
 		Description:               req.Description,
@@ -396,7 +439,12 @@ func CreateAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildAggregateGroupResponseWithRouteModelRatios(createdGroup, createdRules))
+	categories, err := model.GetAggregateGroupCategoriesByID()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildAggregateGroupResponseWithRouteModelRatios(createdGroup, createdRules, categories))
 }
 
 func UpdateAggregateGroup(c *gin.Context) {
@@ -412,8 +460,22 @@ func UpdateAggregateGroup(c *gin.Context) {
 	if req.Status == 0 {
 		req.Status = model.AggregateGroupStatusEnabled
 	}
+	existingGroup, err := model.GetAggregateGroupByID(req.Id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	categoryId := existingGroup.CategoryId
+	if req.CategoryId != nil {
+		categoryId = *req.CategoryId
+	}
+	if err := model.ValidateAggregateGroupCategoryID(categoryId); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	group := &model.AggregateGroup{
 		Id:                        req.Id,
+		CategoryId:                categoryId,
 		Name:                      req.Name,
 		DisplayName:               req.DisplayName,
 		Description:               req.Description,
@@ -508,7 +570,12 @@ func UpdateAggregateGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, buildAggregateGroupResponseWithRouteModelRatios(updatedGroup, updatedRules))
+	categories, err := model.GetAggregateGroupCategoriesByID()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildAggregateGroupResponseWithRouteModelRatios(updatedGroup, updatedRules, categories))
 }
 
 func DeleteAggregateGroup(c *gin.Context) {

@@ -8,15 +8,59 @@ import (
 
 func prepareAggregateGroupModelTest(t *testing.T) {
 	t.Helper()
-	require.NoError(t, DB.AutoMigrate(&AggregateGroup{}, &AggregateGroupTarget{}, &AggregateGroupRouteModelRatio{}))
+	require.NoError(t, DB.AutoMigrate(&AggregateGroupCategory{}, &AggregateGroup{}, &AggregateGroupTarget{}, &AggregateGroupRouteModelRatio{}))
 	DB.Exec("DELETE FROM aggregate_group_route_model_ratios")
 	DB.Exec("DELETE FROM aggregate_group_targets")
 	DB.Exec("DELETE FROM aggregate_groups")
+	DB.Exec("DELETE FROM aggregate_group_categories")
 	t.Cleanup(func() {
 		DB.Exec("DELETE FROM aggregate_group_route_model_ratios")
 		DB.Exec("DELETE FROM aggregate_group_targets")
 		DB.Exec("DELETE FROM aggregate_groups")
+		DB.Exec("DELETE FROM aggregate_group_categories")
 	})
+}
+
+func TestAggregateGroupCategoryLifecycle(t *testing.T) {
+	prepareAggregateGroupModelTest(t)
+
+	textCategory := &AggregateGroupCategory{Name: " 文本 "}
+	require.NoError(t, InsertAggregateGroupCategory(textCategory))
+	require.Equal(t, "文本", textCategory.Name)
+	require.Equal(t, 0, textCategory.OrderIndex)
+
+	imageCategory := &AggregateGroupCategory{Name: "生图"}
+	require.NoError(t, InsertAggregateGroupCategory(imageCategory))
+	require.Equal(t, 1, imageCategory.OrderIndex)
+	require.ErrorContains(t, InsertAggregateGroupCategory(&AggregateGroupCategory{Name: "文本"}), "已存在")
+	require.ErrorContains(t, InsertAggregateGroupCategory(&AggregateGroupCategory{Name: "other"}), "保留名称")
+
+	require.NoError(t, ReorderAggregateGroupCategories([]int{imageCategory.Id, textCategory.Id}))
+	categories, err := GetAllAggregateGroupCategories()
+	require.NoError(t, err)
+	require.Equal(t, []int{imageCategory.Id, textCategory.Id}, []int{categories[0].Id, categories[1].Id})
+
+	groupA := &AggregateGroup{Name: "category-a", DisplayName: "A", Status: AggregateGroupStatusEnabled, CategoryId: textCategory.Id}
+	groupB := &AggregateGroup{Name: "category-b", DisplayName: "B", Status: AggregateGroupStatusEnabled, CategoryId: imageCategory.Id}
+	require.NoError(t, groupA.InsertWithTargets(nil))
+	require.NoError(t, groupB.InsertWithTargets(nil))
+
+	require.ErrorContains(t, AssignAggregateGroupsToCategory([]int{groupA.Id, 999999}, imageCategory.Id), "部分聚合分组不存在")
+	unchanged, err := GetAggregateGroupByID(groupA.Id)
+	require.NoError(t, err)
+	require.Equal(t, textCategory.Id, unchanged.CategoryId)
+
+	require.NoError(t, AssignAggregateGroupsToCategory([]int{groupA.Id}, imageCategory.Id))
+	assigned, err := GetAggregateGroupByID(groupA.Id)
+	require.NoError(t, err)
+	require.Equal(t, imageCategory.Id, assigned.CategoryId)
+
+	require.NoError(t, DeleteAggregateGroupCategory(imageCategory.Id))
+	for _, groupID := range []int{groupA.Id, groupB.Id} {
+		loaded, loadErr := GetAggregateGroupByID(groupID)
+		require.NoError(t, loadErr)
+		require.Equal(t, AggregateGroupCategoryOtherID, loaded.CategoryId)
+	}
 }
 
 func aggregateTargetWeightForTest(weight int) *int {

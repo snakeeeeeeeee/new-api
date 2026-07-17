@@ -48,7 +48,8 @@ import {
 } from '@douyinfe/semi-ui';
 import EditAggregateGroupModal from './EditAggregateGroupModal';
 import AggregateGroupRuntimeDrawer from './AggregateGroupRuntimeDrawer';
-import { Search } from 'lucide-react';
+import AggregateGroupCategorySideSheet from './AggregateGroupCategorySideSheet';
+import { Search, Tags } from 'lucide-react';
 
 const { Text } = Typography;
 
@@ -77,6 +78,7 @@ const defaultSearchFilters = {
   target: '',
   visibleGroup: '',
   status: 'all',
+  category: 'all',
 };
 
 const AggregateGroupsPage = () => {
@@ -84,12 +86,18 @@ const AggregateGroupsPage = () => {
   const [loading, setLoading] = useState(false);
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [groups, setGroups] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [realGroupOptions, setRealGroupOptions] = useState([]);
   const [userGroupOptions, setUserGroupOptions] = useState([]);
   const [editingGroup, setEditingGroup] = useState({ id: undefined });
   const [showEdit, setShowEdit] = useState(false);
   const [runtimeGroup, setRuntimeGroup] = useState(null);
   const [showRuntime, setShowRuntime] = useState(false);
+  const [showCategories, setShowCategories] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [batchCategoryId, setBatchCategoryId] = useState(undefined);
+  const [batchAssigning, setBatchAssigning] = useState(false);
   const [strategyInputs, setStrategyInputs] = useState(defaultStrategyInputs);
   const [strategyInputsRow, setStrategyInputsRow] = useState(
     defaultStrategyInputs,
@@ -141,6 +149,30 @@ const AggregateGroupsPage = () => {
     }
   };
 
+  const loadCategories = async () => {
+    setCategoriesLoading(true);
+    try {
+      const res = await API.get('/api/aggregate_group/categories');
+      const { success, data, message } = res.data;
+      if (!success) {
+        showError(t(message));
+        return [];
+      }
+      const nextCategories = data || [];
+      setCategories(nextCategories);
+      return nextCategories;
+    } catch (error) {
+      showError(error?.message || t('获取业务分类失败'));
+      return [];
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
+
+  const refreshGroupsAndCategories = async () => {
+    await Promise.all([loadGroups(), loadCategories()]);
+  };
+
   const loadStrategyOptions = async () => {
     setOptionsLoading(true);
     try {
@@ -175,6 +207,7 @@ const AggregateGroupsPage = () => {
 
   useEffect(() => {
     loadGroups();
+    loadCategories();
     loadGroupOptions();
     if (isRoot()) {
       loadStrategyOptions();
@@ -190,7 +223,7 @@ const AggregateGroupsPage = () => {
         return;
       }
       showSuccess(t('删除成功'));
-      loadGroups();
+      await refreshGroupsAndCategories();
     } catch (error) {
       showError(error?.message || t('删除失败'));
     }
@@ -229,9 +262,11 @@ const AggregateGroupsPage = () => {
   };
 
   const updateSearchFilter = (key, value) => {
+    setSelectedRowKeys([]);
+    setBatchCategoryId(undefined);
     setSearchFilters((prev) => ({
       ...prev,
-      [key]: value || '',
+      [key]: value ?? '',
     }));
   };
 
@@ -244,12 +279,14 @@ const AggregateGroupsPage = () => {
       searchFilters.visibleGroup.trim(),
     );
     const statusFilter = searchFilters.status || 'all';
+    const categoryFilter = searchFilters.category;
 
     if (
       !aggregateKeyword &&
       !targetKeyword &&
       !visibleGroupKeyword &&
-      statusFilter === 'all'
+      statusFilter === 'all' &&
+      categoryFilter === 'all'
     ) {
       return groups;
     }
@@ -259,6 +296,12 @@ const AggregateGroupsPage = () => {
         return false;
       }
       if (statusFilter === 'disabled' && group.status === 1) {
+        return false;
+      }
+      if (
+        categoryFilter !== 'all' &&
+        Number(group.category_id || 0) !== Number(categoryFilter)
+      ) {
         return false;
       }
 
@@ -286,10 +329,62 @@ const AggregateGroupsPage = () => {
         searchFilters.aggregate ||
           searchFilters.target ||
           searchFilters.visibleGroup ||
-          searchFilters.status !== 'all',
+          searchFilters.status !== 'all' ||
+          searchFilters.category !== 'all',
       ),
     [searchFilters],
   );
+
+  const categoryOptions = useMemo(
+    () => [
+      ...categories.map((category) => ({
+        label: category.name,
+        value: category.id,
+      })),
+      { label: t('其他'), value: 0 },
+    ],
+    [categories, t],
+  );
+
+  const otherCategoryCount = useMemo(
+    () => groups.filter((group) => Number(group.category_id || 0) === 0).length,
+    [groups],
+  );
+
+  const batchCategoryName = useMemo(
+    () =>
+      categoryOptions.find((option) => option.value === batchCategoryId)
+        ?.label || '',
+    [batchCategoryId, categoryOptions],
+  );
+
+  const clearSelection = () => {
+    setSelectedRowKeys([]);
+    setBatchCategoryId(undefined);
+  };
+
+  const handleBatchAssign = async () => {
+    if (selectedRowKeys.length === 0 || batchCategoryId === undefined) return;
+    setBatchAssigning(true);
+    try {
+      const res = await API.put('/api/aggregate_group/categories/assign', {
+        aggregate_group_ids: selectedRowKeys,
+        category_id: batchCategoryId,
+      });
+      const { success, message } = res.data || {};
+      if (!success) {
+        showError(t(message));
+        return;
+      }
+      showSuccess(t('批量修改业务分类成功'));
+      clearSelection();
+      await refreshGroupsAndCategories();
+    } catch (error) {
+      showError(error?.message || t('批量修改业务分类失败'));
+    } finally {
+      setBatchAssigning(false);
+    }
+  };
 
   const columns = useMemo(
     () => [
@@ -325,6 +420,12 @@ const AggregateGroupsPage = () => {
             </Tag>
           </Space>
         ),
+      },
+      {
+        title: t('分类'),
+        dataIndex: 'category_name',
+        key: 'category_name',
+        render: (value) => <Tag size='small'>{value || t('其他')}</Tag>,
       },
       {
         title: t('倍率'),
@@ -436,10 +537,22 @@ const AggregateGroupsPage = () => {
         onSuccess={() => {
           setShowEdit(false);
           setEditingGroup({ id: undefined });
-          loadGroups();
+          refreshGroupsAndCategories();
         }}
         realGroupOptions={realGroupOptions}
         userGroupOptions={userGroupOptions}
+        categoryOptions={categoryOptions}
+      />
+
+      <AggregateGroupCategorySideSheet
+        visible={showCategories}
+        categories={categories}
+        otherCount={otherCategoryCount}
+        onClose={() => setShowCategories(false)}
+        onChanged={async () => {
+          clearSelection();
+          await refreshGroupsAndCategories();
+        }}
       />
 
       <AggregateGroupRuntimeDrawer
@@ -463,17 +576,26 @@ const AggregateGroupsPage = () => {
                   {t('为提高可用性, 配置对外可见的逻辑分组与底层真实分组链路')}
                 </div>
               </div>
-              <Button
-                type='primary'
-                onClick={() => {
-                  setEditingGroup({ id: undefined });
-                  setShowEdit(true);
-                }}
-              >
-                {t('新增聚合分组')}
-              </Button>
+              <Space wrap>
+                <Button
+                  theme='outline'
+                  icon={<Tags size={16} />}
+                  onClick={() => setShowCategories(true)}
+                >
+                  {t('管理分类')}
+                </Button>
+                <Button
+                  type='primary'
+                  onClick={() => {
+                    setEditingGroup({ id: undefined });
+                    setShowEdit(true);
+                  }}
+                >
+                  {t('新增聚合分组')}
+                </Button>
+              </Space>
             </div>
-            <div className='grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4'>
+            <div className='grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5'>
               <Input
                 prefix={<Search size={16} />}
                 showClear
@@ -505,6 +627,19 @@ const AggregateGroupsPage = () => {
                 <Select.Option value='all'>{t('全部状态')}</Select.Option>
                 <Select.Option value='enabled'>{t('启用')}</Select.Option>
                 <Select.Option value='disabled'>{t('禁用')}</Select.Option>
+              </Select>
+              <Select
+                value={searchFilters.category}
+                loading={categoriesLoading}
+                onChange={(value) => updateSearchFilter('category', value)}
+                style={{ width: '100%' }}
+              >
+                <Select.Option value='all'>{t('全部分类')}</Select.Option>
+                {categoryOptions.map((option) => (
+                  <Select.Option key={option.value} value={option.value}>
+                    {option.label}
+                  </Select.Option>
+                ))}
               </Select>
             </div>
             {hasActiveSearchFilters ? (
@@ -770,12 +905,59 @@ const AggregateGroupsPage = () => {
             </Card>
           </Spin>
         ) : null}
+        {selectedRowKeys.length > 0 ? (
+          <div
+            className='mb-3 flex flex-col gap-3 border-y py-3 sm:flex-row sm:items-center'
+            style={{ borderColor: 'var(--semi-color-border)' }}
+          >
+            <Text strong>
+              {t('已选择 {{total}} 项', { total: selectedRowKeys.length })}
+            </Text>
+            <Select
+              value={batchCategoryId}
+              placeholder={t('修改为')}
+              disabled={batchAssigning}
+              onChange={setBatchCategoryId}
+              style={{ width: '100%', maxWidth: 240 }}
+              optionList={categoryOptions}
+            />
+            <Space wrap>
+              <Popconfirm
+                disabled={batchCategoryId === undefined || batchAssigning}
+                title={t('将 {{total}} 个聚合分组修改为“{{category}}”分类？', {
+                  total: selectedRowKeys.length,
+                  category: batchCategoryName,
+                })}
+                onConfirm={handleBatchAssign}
+              >
+                <Button
+                  type='primary'
+                  loading={batchAssigning}
+                  disabled={batchCategoryId === undefined || batchAssigning}
+                >
+                  {t('应用')}
+                </Button>
+              </Popconfirm>
+              <Button
+                theme='borderless'
+                disabled={batchAssigning}
+                onClick={clearSelection}
+              >
+                {t('清除选择')}
+              </Button>
+            </Space>
+          </div>
+        ) : null}
         <CardTable
           rowKey='id'
           columns={columns}
           dataSource={filteredGroups}
           loading={loading}
           hidePagination
+          rowSelection={{
+            selectedRowKeys,
+            onChange: (keys) => setSelectedRowKeys(keys),
+          }}
         />
       </CardPro>
     </>

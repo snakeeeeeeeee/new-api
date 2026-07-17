@@ -52,7 +52,7 @@ func setupAggregateGroupControllerTestDB(t *testing.T) *gorm.DB {
 
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.AggregateGroupRouteModelRatio{}, &model.Channel{}, &model.Ability{}, &model.Option{}, &model.Model{}, &model.Vendor{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.AggregateGroupCategory{}, &model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.AggregateGroupRouteModelRatio{}, &model.Channel{}, &model.Ability{}, &model.Option{}, &model.Model{}, &model.Vendor{}))
 
 	t.Cleanup(func() {
 		setting.AggregateGroupSmartStrategyEnabled = originalSmartStrategyEnabled
@@ -199,6 +199,70 @@ func TestCreateAggregateGroupAndList(t *testing.T) {
 	require.Contains(t, string(listResp.Data), `"smart_strategy_config"`)
 	require.Contains(t, string(listResp.Data), `"failure_rate_threshold_percent":8`)
 	require.Contains(t, string(listResp.Data), `"cluster_degraded_weight_percent":35`)
+}
+
+func TestAggregateGroupCategoryAPIsAndUserGroupMetadata(t *testing.T) {
+	db := setupAggregateGroupControllerTestDB(t)
+	seedAggregateGroupControllerUser(t, db, 501, "category-user", "vip", common.RoleCommonUser, dto.UserSetting{})
+
+	createCategoryRecorder := httptest.NewRecorder()
+	createCategoryCtx, _ := gin.CreateTestContext(createCategoryRecorder)
+	createCategoryCtx.Request = httptest.NewRequest(http.MethodPost, "/api/aggregate_group/categories", bytes.NewBufferString(`{"name":"生图"}`))
+	createCategoryCtx.Request.Header.Set("Content-Type", "application/json")
+	CreateAggregateGroupCategory(createCategoryCtx)
+	createCategoryResp := decodeAggregateGroupAPIResponse(t, createCategoryRecorder)
+	require.True(t, createCategoryResp.Success, createCategoryResp.Message)
+	var category aggregateGroupCategoryResponse
+	require.NoError(t, common.Unmarshal(createCategoryResp.Data, &category))
+	require.NotZero(t, category.Id)
+
+	group := &model.AggregateGroup{
+		Name:        "category-image-ha",
+		DisplayName: "图片高可用",
+		Status:      model.AggregateGroupStatusEnabled,
+		GroupRatio:  1,
+		CategoryId:  category.Id,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, group.InsertWithTargets([]model.AggregateGroupTarget{{RealGroup: "default"}}))
+
+	listRecorder := httptest.NewRecorder()
+	listCtx, _ := gin.CreateTestContext(listRecorder)
+	listCtx.Request = httptest.NewRequest(http.MethodGet, "/api/aggregate_group", nil)
+	GetAggregateGroups(listCtx)
+	listResp := decodeAggregateGroupAPIResponse(t, listRecorder)
+	require.True(t, listResp.Success, listResp.Message)
+	require.Contains(t, string(listResp.Data), `"category_name":"生图"`)
+
+	userGroupsRecorder := httptest.NewRecorder()
+	userGroupsCtx, _ := gin.CreateTestContext(userGroupsRecorder)
+	userGroupsCtx.Set("id", 501)
+	userGroupsCtx.Request = httptest.NewRequest(http.MethodGet, "/api/user/self/groups", nil)
+	GetUserGroups(userGroupsCtx)
+	userGroupsResp := decodeAggregateGroupAPIResponse(t, userGroupsRecorder)
+	require.True(t, userGroupsResp.Success, userGroupsResp.Message)
+	require.Contains(t, string(userGroupsResp.Data), `"category_name":"生图"`)
+	require.Contains(t, string(userGroupsResp.Data), `"type":"aggregate"`)
+
+	updatePayload := fmt.Sprintf(`{
+		"id":%d,
+		"name":"category-image-ha",
+		"display_name":"图片高可用更新",
+		"status":1,
+		"group_ratio":1,
+		"visible_user_groups":["vip"],
+		"targets":[{"real_group":"default"}]
+	}`, group.Id)
+	updateRecorder := httptest.NewRecorder()
+	updateCtx, _ := gin.CreateTestContext(updateRecorder)
+	updateCtx.Request = httptest.NewRequest(http.MethodPut, "/api/aggregate_group", bytes.NewBufferString(updatePayload))
+	updateCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateAggregateGroup(updateCtx)
+	updateResp := decodeAggregateGroupAPIResponse(t, updateRecorder)
+	require.True(t, updateResp.Success, updateResp.Message)
+	var updated aggregateGroupResponse
+	require.NoError(t, common.Unmarshal(updateResp.Data, &updated))
+	require.Equal(t, category.Id, updated.CategoryId)
 }
 
 func TestAggregateGroupRouteModelRatioAPIPreservePruneAndClear(t *testing.T) {

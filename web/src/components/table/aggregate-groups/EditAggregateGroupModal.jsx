@@ -187,6 +187,7 @@ const defaultInputs = {
   display_name: '',
   description: '',
   status: 1,
+  category_id: 0,
   group_ratio: 1,
   routing_mode: 'failover',
   smart_routing_enabled: false,
@@ -211,6 +212,7 @@ const EditAggregateGroupModal = ({
   onSuccess,
   realGroupOptions,
   userGroupOptions,
+  categoryOptions,
 }) => {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
@@ -252,6 +254,7 @@ const EditAggregateGroupModal = ({
           display_name: data.display_name || '',
           description: data.description || '',
           status: data.status || 1,
+          category_id: Number(data.category_id || 0),
           group_ratio: data.group_ratio === undefined ? 1 : data.group_ratio,
           routing_mode: data.routing_mode || 'failover',
           smart_routing_enabled:
@@ -1532,6 +1535,7 @@ const EditAggregateGroupModal = ({
         display_name: inputs.display_name.trim(),
         description: inputs.description.trim(),
         status: inputs.status,
+        category_id: Number(inputs.category_id || 0),
         group_ratio: Number(inputs.group_ratio),
         routing_mode: inputs.routing_mode || 'failover',
         smart_routing_enabled: inputs.smart_routing_enabled,
@@ -1675,6 +1679,37 @@ const EditAggregateGroupModal = ({
                 autosize
               />
             </Col>
+            <Col xs={24} sm={12}>
+              <div className='mb-2'>
+                <Text strong>{t('业务分类')}</Text>
+              </div>
+              <Select
+                value={Number(inputs.category_id || 0)}
+                optionList={categoryOptions || []}
+                onChange={(value) =>
+                  updateField('category_id', Number(value || 0))
+                }
+                style={{ width: '100%' }}
+              />
+            </Col>
+            <Col xs={24} sm={12}>
+              <div className='mb-2'>
+                <Text strong>{t('可见用户组')}</Text>
+              </div>
+              <Select
+                placeholder={t('请选择用户身份组')}
+                value={inputs.visible_user_groups}
+                onChange={(value) =>
+                  updateField('visible_user_groups', value || [])
+                }
+                optionList={userGroupOptions}
+                multiple
+                filter={selectFilter}
+                searchPosition='dropdown'
+                autoClearSearchValue={false}
+                style={{ width: '100%' }}
+              />
+            </Col>
             <Col xs={24} sm={8}>
               <div className='mb-2'>
                 <Text strong>{t('聚合倍率')}</Text>
@@ -1705,24 +1740,6 @@ const EditAggregateGroupModal = ({
                 onChange={(checked) =>
                   updateField('smart_routing_enabled', checked)
                 }
-              />
-            </Col>
-            <Col xs={24} sm={12}>
-              <div className='mb-2'>
-                <Text strong>{t('可见用户组')}</Text>
-              </div>
-              <Select
-                placeholder={t('请选择用户身份组')}
-                value={inputs.visible_user_groups}
-                onChange={(value) =>
-                  updateField('visible_user_groups', value || [])
-                }
-                optionList={userGroupOptions}
-                multiple
-                filter={selectFilter}
-                searchPosition='dropdown'
-                autoClearSearchValue={false}
-                style={{ width: '100%' }}
               />
             </Col>
           </Row>
