@@ -284,6 +284,13 @@
 
 # Progress
 
+## 2026-07-18 multipart async edit and Webhook retry completion
+- Added multipart local-file edit support to `POST /v1/image/tasks` while retaining the normalized JSON URL contract.
+- Added administrator-configurable Webhook total attempts and fixed retry interval, defaulting to 3 attempts and 30 seconds; any 2xx succeeds and the response body is ignored.
+- Full Go tests, frontend production build, focused ESLint, OpenAPI generation check, and whitespace audit passed.
+- Rebuilt `new-api-dev` from the final source and completed multipart, task polling, stable-event retry, Bearer authentication, and idempotency E2E coverage.
+- Resource Center Webhook/docs browser QA passed at the browser's 560px minimum width with no horizontal overflow; the active ordinary-user session correctly remained blocked from the administrator-only async-task page.
+
 ## 2026-06-23
 - User clarified that ImageHandle should not be a duplicate model channel. Async image tasks should reuse existing real image channels.
 - image-handle team accepted the `new_api_internal` executor model and will remove provider-direct execution.
@@ -488,3 +495,40 @@
 - Marked the saved-view/generated-Key UX phase complete.
 - Removed obsolete one-time-display and saved-status locale entries from all seven languages; locale JSON/status and the 422-item lint baseline remain valid.
 - Performed the final Docker rebuild after locale cleanup; `new-api-dev` reports healthy and its status endpoint succeeds.
+# Multipart Async Image Editing Progress (2026-07-18)
+
+- Recovered the clean `main` baseline at `e1aeeaba4`; unrelated untracked diagnostic files remain untouched.
+- Confirmed the user-approved route/content-type design and scoped it to asynchronous image editing.
+- Inspected the current upload validation/proxy, normalized task DTO, idempotency preflight, relay persistence context, synchronous multipart field names, docs, and OpenAPI generator.
+- Started backend implementation.
+- Implemented strict multipart parsing and synchronous-style edit field mapping on `POST /v1/image/tasks`.
+- Added content-hash fingerprints, pre-upload idempotency replay, shared upload forwarding/response parsing, and normalized URL materialization.
+- Added the distributor's async-image multipart model extraction without changing other multipart routes.
+- Focused `go test ./controller ./middleware` passes.
+- Added the follow-up Webhook retry requirement to the active scope after inspecting the current one-shot worker, durable delivery model, and Async Task Management settings page.
+- Implemented administrator-configurable Webhook attempts/interval, 2xx-only success, and bounded retries with no database migration.
+- Updated Async Task Management, Resource Center docs, all seven locales, and generated OpenAPI; focused Go tests and OpenAPI generation/check pass.
+
+---
+# Resource Center API Documentation Progress (2026-07-18)
+
+- Audited the screenshots and existing `ResourceCenterDocs.jsx` structure.
+- Confirmed the missing coverage spans async task list/batch lookup, Base64 upload, and four asset operations beyond list.
+- Started an OpenAPI/backend contract audit before editing examples.
+- Completed the 11-operation contract audit against the generated OpenAPI document and relevant controller/DTO locations.
+- Began implementing the per-operation example structure.
+- Added complete example payload constants for task list/get/batch, Base64 upload, asset get/query/URLs/export, and updated multipart examples to show repeated image fields.
+- Replaced the combined partial sections with complete per-operation request/response sections for all 11 advertised endpoints.
+- Added the new operation titles and guidance to all seven frontend locales.
+- Formatted the documentation component and all changed locale files; `git diff --check` passes.
+- Targeted ESLint, OpenAPI generation check, and production build pass.
+- Full i18n lint remains at the existing 421-item repository baseline and reports no finding in the changed documentation component.
+- Rebuilt and recreated the healthy `new-api-dev` container from the changed source.
+- Desktop browser QA passed for the async image documentation; identified one missing legacy dynamic-title translation to correct before mobile QA.
+- Added the missing `创建异步图片任务` translation to all seven locales.
+- Completed 560px and requested 375x812 responsive QA plus full asset-operation example verification; no layout overflow was found.
+- Final Prettier, targeted ESLint, OpenAPI check, production build, and whitespace checks pass.
+- Rebuilt/recreated Docker dev after the last locale change and verified the final container serves the translated create operation, all 15 async example cards, and the repeated-image multipart example.
+- Final Docker health is `healthy`; unrelated user diagnostic files and older pending planning work remain untouched.
+
+---

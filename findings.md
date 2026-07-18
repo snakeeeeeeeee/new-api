@@ -1,3 +1,25 @@
+# Multipart Async Image Editing Findings (2026-07-18)
+
+- Docker E2E created `task_fzZfMwkWiFiGVzRKJyxyByw3E9ZOdR8h` from a local PNG multipart request, returned HTTP 202, and reached `succeeded` through image-handle and the local mock provider.
+- The retry E2E forced HTTP 500 twice and HTTP 204 on the third attempt. All three requests used valid Bearer authentication and one stable `evt_hViePhxooTbn19AF094BC9XdvuYlAikb`; the delivery finished as `delivered` with three persisted attempt rows.
+- A same-file multipart replay returned HTTP 202 with `Idempotent-Replayed: true`; changing the file contents under the same key returned HTTP 409.
+- Browser QA found and corrected one stale overview sentence that still required pre-upload. The final page describes both direct multipart upload and the URL/pre-upload flow.
+- `PrepareImageTaskRequest` currently strictly decodes JSON, validates it, computes a canonical request fingerprint, resolves sequential idempotent replay, and rewrites the body for the existing relay task handler.
+- `ProxyImageTaskUpload` already validates multipart/base64 upload limits and proxies bytes to image-handle, but response parsing is embedded in the HTTP handler.
+- Multipart task creation must preflight idempotency before image-handle upload because temporary object URLs change on every upload.
+- The durable relay path consumes the public request JSON and fingerprint from Gin context, so multipart can join it after URL materialization without changing task persistence or dispatch models.
+- Synchronous image edit uses `model`, `prompt`, repeated `image`, optional `mask`, `n`, `size`, `quality`, `output_format`, `output_compression`, and `background`; the async multipart surface will match those names.
+- The distributor's generic branch intentionally skipped multipart requests; `/v1/image/tasks` now has a narrowly scoped multipart model extraction branch using the existing reusable form parser.
+- The internal upload body is rebuilt with only `image` and `mask` file parts. Task fields are neither sent to image-handle nor included in generated temporary object names.
+- Focused controller and middleware tests pass with multipart mapping, upload failure propagation, and pre-upload idempotency replay/conflict coverage.
+- Current Webhook delivery marks every HTTP response, including 500, as delivered; only transport errors become final failures, and no retries are scheduled.
+- `WebhookDelivery` already has attempts, `next_attempt_at`, leases, and pending status. `CompleteWebhookDeliveryAttempt` already supports returning a failed attempt to pending, so configurable retries require no schema migration.
+- The existing Async Task Management page and `async_task_setting` option group are the correct narrow configuration surface for attempt count and a fixed retry interval.
+- Webhook failures now return the delivery to `pending` with `next_attempt_at`; the third failed attempt becomes terminal under defaults, while any 2xx response becomes delivered regardless of body.
+- OpenAPI now exposes both JSON and multipart request bodies for task creation and documents the configurable Webhook retry contract.
+
+---
+
 # Image-handle Channel Override and Signed URL Findings (2026-07-15)
 
 - Channel-level `response_format=url` must reach Adobe when execution is delegated to image-handle.
@@ -601,3 +623,21 @@
 - Full validation passes: `go test ./...`, image-handle's 72 tests, frontend build, OpenAPI check, targeted Prettier/ESLint, and both repository diff checks.
 - Full i18n lint is back to the known 422-item repository baseline; the Webhook component contributes no finding.
 - The disposable user and its single Webhook endpoint were deleted after QA; there were no related events, deliveries, attempts, or tokens.
+# Resource Center API Documentation Findings (2026-07-18)
+
+- The UI advertises 11 operations: six async image/upload operations and five asset operations.
+- The current async tab documents task creation well, but combines upload/query into one short section and omits list, batch query, and Base64 upload examples.
+- The current asset tab only demonstrates list querying; single lookup, batch query, batch URL lookup, and CSV export have no executable examples.
+- The clearest low-complexity structure is one collapsible operation entry per endpoint, each containing a curl request and representative success response; the endpoint table remains a navigation overview.
+- Async task listing uses cursor pagination (`after`, `limit`), while task batch query accepts 1-100 IDs and separately reports unauthorized or unknown IDs in `missing`.
+- Multipart upload accepts up to 10 repeated `image` fields and one optional `mask`; Base64 upload supports the simpler `images` plus optional `mask` shape.
+- Asset list and conditional batch query return the same paginated list shape; single lookup returns one asset, batch URL lookup returns compact URL items, and export returns a CSV attachment.
+- CSV export sets `Content-Disposition: attachment; filename=assets.csv` and returns the columns `asset_id,task_id,asset_type,url,filename,model,platform,action,created_at`.
+- Existing locale catalogs already include the generic request/response labels, so the expanded examples can avoid introducing a large set of redundant translation keys.
+- The frontend exposes dedicated `openapi:check`, `i18n:lint`, build, Prettier, and ESLint commands; the changed-file whitespace audit is currently clean.
+- Docker desktop QA renders all async operation sections and 15 request/response example cards with no document-level horizontal overflow; the repeated `image` fields, list, batch query, and Base64 examples are present.
+- Japanese QA exposed one pre-existing dynamic operation label, `创建异步图片任务`, missing from locale catalogs while the other newly added operation labels translate correctly.
+- The in-app browser enforces a 560 CSS-pixel minimum for a requested 375x812 viewport; at both requested mobile sizes every example card stays within the document and only long code content scrolls internally.
+- Asset API QA confirms all five operations have request/response pairs: list, single get, body query, batch URL lookup, and CSV export. The page has no document-level overflow.
+
+---

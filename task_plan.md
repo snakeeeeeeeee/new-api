@@ -1,3 +1,60 @@
+# Task Plan: Multipart Async Image Editing and Webhook Retries (2026-07-18)
+
+## Goal
+Allow `POST /v1/image/tasks` to accept synchronous-style multipart image edit requests while preserving the existing JSON URL contract, durable task flow, Resource Center Key authorization, and idempotency semantics. Restore bounded Webhook retries with administrator-configurable attempt count and fixed interval.
+
+## Current Phase
+Complete
+
+### Phase 1: Contract and discovery
+- [x] Confirm one route with content-type dispatch: JSON remains unchanged; multipart defaults to edit.
+- [x] Reuse the existing image-handle upload proxy and current upload limits.
+- [x] Define multipart idempotency fingerprints from normalized scalar fields and file content hashes before upload.
+- **Status:** complete
+
+### Phase 2: Backend implementation
+- [x] Parse and strictly validate multipart fields/files.
+- [x] Resolve idempotent replays before uploading and map upload URLs into the normalized task DTO.
+- [x] Share upload proxy response parsing with the standalone upload endpoint.
+- **Status:** complete
+
+### Phase 3: Tests and documentation
+- [x] Cover field mapping, upload errors, file validation, and same/conflicting idempotency retries.
+- [x] Document curl usage and add multipart requestBody to OpenAPI 3.1.
+- **Status:** complete
+
+### Phase 4: Configurable Webhook retry
+- [x] Treat only HTTP 2xx as delivery success and ignore the response body.
+- [x] Retry network and non-2xx failures up to the configured total attempt count.
+- [x] Add default `3` attempts and `30` seconds fixed interval to Async Task Management.
+- [x] Replace the one-shot tests with success, retry, exhaustion, and option normalization coverage.
+- **Status:** complete
+
+### Phase 5: Verification and delivery
+- [x] Run focused/full tests, frontend/OpenAPI checks, and diff checks.
+- [x] Rebuild Docker dev and run local multipart and Webhook retry E2E coverage.
+- [x] Commit and push directly to main.
+- **Status:** complete
+
+## Locked Decisions
+- Multipart accepts `model`, `prompt`, repeated `image`, optional `mask`, `n`, `size`, `quality`, `output_format`, `output_compression`, `background`, optional `client_reference_id`, and optional JSON-object `metadata`.
+- Multipart defaults to `operation=edit`; an explicit operation must also be `edit`.
+- Multipart files are uploaded internally to image-handle, then execution continues through the existing normalized durable task path.
+- The request fingerprint excludes generated temporary URLs and includes normalized fields plus ordered file content hashes.
+- No video multipart or additional provider-option surface is added.
+- Webhook success means any HTTP 2xx response; the receiver body is ignored and no business acknowledgement schema is required.
+- Webhook maximum attempts include the initial request. Defaults are 3 total attempts and a fixed 30-second interval, configurable by administrators in Async Task Management.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Initial focused test compile found a branch-local marshal error variable plus stale/new test imports | 1 | Declare the shared marshal error in `PrepareImageTaskRequest`, remove unused imports, and add the required `mime` import. |
+| A locale-tail discovery command referenced the nonexistent legacy `zh.json` filename | 1 | Use the repository's actual `zh-CN.json` and `zh-TW.json` locale files; no product file was affected. |
+| The first combined docs/OpenAPI/i18n patch used a context line that did not match the JSX template literal | 1 | The patch was atomic and changed nothing; split the documentation changes into smaller exact-context patches. |
+| The first combined planning update expected an error row that was part of the failed atomic docs patch | 1 | Re-read the planning-file header and apply the new scope against its actual content. |
+
+---
+
 # Task Plan: Image-handle channel overrides and signed URL output
 
 ## Goal
@@ -710,5 +767,45 @@ Complete with one documented billing-atomicity follow-up
 | Final changed-file JSON scan used a temporary-file cleanup command rejected by the command safety policy | 1 | Replace it with a read-only Git file list piped directly to `rg`; only the approved `common/json.go` wrapper contains direct JSON calls. |
 | Final receiver verification requested unsupported `GET /config` and received 404 | 1 | Use the successful `POST /config` response (`secret_configured:false`) plus `GET /events` (`attempts:0`, `received:0`) as the supported verification contract. |
 | The generic planning completion script reported two pending phases | 1 | Confirm they belong to an older image-pricing plan in the shared planning file; all five phases of the active async-image/Webhook plan are complete. |
+
+---
+# Task Plan: Complete Resource Center API Examples (2026-07-18)
+
+## Goal
+Give every Resource Center endpoint a complete, copyable request example and representative success response, while keeping the documentation easy to scan on desktop and mobile.
+
+## Current Phase
+Complete
+
+### Phase 1: Contract audit
+- [x] Map all 11 documented operations to their real OpenAPI request and response shapes.
+- [x] Identify missing examples and reusable presentation patterns.
+- **Status:** complete
+
+### Phase 2: Documentation implementation
+- [x] Add complete curl and response examples for all async image and asset operations.
+- [x] Keep generation JSON, edit URL JSON, and multi-file multipart edit examples distinct.
+- [x] Add concise parameter guidance where query behavior is not obvious.
+- **Status:** complete
+
+### Phase 3: Verification
+- [x] Run formatting/lint checks, OpenAPI validation, frontend build, and diff checks.
+- [x] Rebuild Docker dev and visually inspect the documentation at desktop and mobile widths.
+- **Status:** complete
+
+## Locked Decisions
+- The endpoint table remains a compact overview; executable examples live in per-operation sections below it.
+- Every operation gets both a request and representative success response, including bodyless GET/export operations.
+- Examples use the same Resource API Key environment variable and are copyable without placeholder restructuring.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| The first combined locale patch assumed ASCII French text and mismatched the existing accented translation | 1 | The patch was atomic and changed no locale; inspect each locale tail and reapply with exact existing context. |
+| The OpenAPI script discovery search included root-level `package.json` and `scripts` paths that do not exist | 1 | Read the actual `web/package.json`; use its `openapi:check` script from the `web` directory. |
+| The first Compose discovery command used a zsh glob with no `compose*.yml` match | 1 | Use `rg --files` with compose filename patterns before selecting the dev Compose file. |
+| Full i18n lint reported the repository's existing 421-item hardcoded-string baseline | 1 | Confirm the changed documentation file is absent from findings and all new keys exist in every locale; keep targeted ESLint green. |
+| Browser QA completed, then the browser runtime's unrelated telemetry POST timed out | 1 | Treat as browser-tool telemetry noise; the local DOM assertions had already completed successfully and the app reported no relevant error. |
+| The generic planning completion script reported two pending phases | 1 | Confirm they belong to an older image-pricing task at lines 273-283; all three phases of the active Resource Center documentation task are complete. |
 
 ---
