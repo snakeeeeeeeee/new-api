@@ -113,16 +113,41 @@ const ASYNC_MULTIPART_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
   -H "Authorization: Bearer $API_KEY" \\
   -H "Idempotency-Key: edit-order-123" \\
   -F "model=gpt-image-2" \\
-  -F "prompt=Replace the background with a studio wall" \\
-  -F "image=@input.png" \\
+  -F "prompt=Combine both products into one studio photo" \\
+  -F "image=@input-1.png" \\
+  -F "image=@input-2.jpg" \\
   -F "mask=@mask.png" \\
+  -F "n=1" \\
   -F "size=1024x1024" \\
+  -F "quality=high" \\
   -F "output_format=png"`;
+
+const ASYNC_EDIT_RESPONSE = `HTTP/1.1 202 Accepted
+Location: /v1/image/tasks/task_edit_xxx
+Retry-After: 2
+
+{
+  "id": "task_edit_xxx",
+  "object": "image.task",
+  "model": "gpt-image-2",
+  "operation": "edit",
+  "status": "queued",
+  "progress": 0,
+  "result": null,
+  "usage": {},
+  "error": null,
+  "metadata": {},
+  "created_at": 1784250000,
+  "started_at": null,
+  "completed_at": null,
+  "updated_at": 1784250000
+}`;
 
 const IMAGE_UPLOAD_REQUEST = `curl "$BASE_URL/v1/image/uploads" \\
   -X POST \\
   -H "Authorization: Bearer $API_KEY" \\
-  -F "image=@input.png" \\
+  -F "image=@input-1.png" \\
+  -F "image=@input-2.jpg" \\
   -F "mask=@mask.png"`;
 
 const IMAGE_UPLOAD_RESPONSE = `{
@@ -132,17 +157,167 @@ const IMAGE_UPLOAD_RESPONSE = `{
       "id": "upload_xxx",
       "object": "image.upload",
       "field": "image",
-      "url": "https://cdn.example.com/tmp/input.png",
+      "url": "https://cdn.example.com/tmp/input-1.png",
+      "mime_type": "image/png",
+      "size_bytes": 245760,
+      "width": 1024,
+      "height": 1024,
+      "format": "png",
+      "temporary": true
+    },
+    {
+      "id": "upload_yyy",
+      "object": "image.upload",
+      "field": "image",
+      "url": "https://cdn.example.com/tmp/input-2.jpg",
+      "mime_type": "image/jpeg",
+      "size_bytes": 198400,
+      "width": 1024,
+      "height": 1024,
+      "format": "jpeg",
+      "temporary": true
+    },
+    {
+      "id": "upload_mask_xxx",
+      "object": "image.upload",
+      "field": "mask",
+      "url": "https://cdn.example.com/tmp/mask.png",
       "mime_type": "image/png",
       "temporary": true
     }
   ],
-  "images": ["https://cdn.example.com/tmp/input.png"],
+  "images": [
+    "https://cdn.example.com/tmp/input-1.png",
+    "https://cdn.example.com/tmp/input-2.jpg"
+  ],
   "mask": "https://cdn.example.com/tmp/mask.png"
 }`;
 
+const IMAGE_BASE64_UPLOAD_REQUEST = `curl "$BASE_URL/v1/image/uploads/base64" \\
+  -X POST \\
+  -H "Authorization: Bearer $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "images": [
+      "data:image/png;base64,iVBORw0KGgoAAA...",
+      {"base64": "/9j/4AAQSkZJRgABAQ..."}
+    ],
+    "mask": {"b64_json": "iVBORw0KGgoAAA..."}
+  }'`;
+
 const TASK_QUERY_REQUEST = `curl "$BASE_URL/v1/image/tasks/task_xxx" \\
   -H "Authorization: Bearer $API_KEY"`;
+
+const TASK_QUERY_RESPONSE = `{
+  "id": "task_xxx",
+  "object": "image.task",
+  "model": "gpt-image-2",
+  "operation": "generation",
+  "status": "succeeded",
+  "progress": 100,
+  "result": {
+    "images": [
+      {
+        "asset_id": "asset_xxx",
+        "url": "https://cdn.example.com/image.png",
+        "mime_type": "image/png",
+        "format": "png",
+        "width": 1024,
+        "height": 1024,
+        "size_bytes": 245760,
+        "filename": "image.png"
+      }
+    ]
+  },
+  "usage": {},
+  "error": null,
+  "client_reference_id": "order_123",
+  "metadata": {},
+  "created_at": 1784250000,
+  "started_at": 1784250002,
+  "completed_at": 1784250060,
+  "updated_at": 1784250060
+}`;
+
+const TASK_LIST_REQUEST = `curl "$BASE_URL/v1/image/tasks?status=succeeded&operation=generation&limit=20" \\
+  -H "Authorization: Bearer $API_KEY"`;
+
+const TASK_LIST_RESPONSE = `{
+  "object": "list",
+  "data": [
+    {
+      "id": "task_xxx",
+      "object": "image.task",
+      "model": "gpt-image-2",
+      "operation": "generation",
+      "status": "succeeded",
+      "progress": 100,
+      "result": {
+        "images": [
+          {
+            "asset_id": "asset_xxx",
+            "url": "https://cdn.example.com/image.png",
+            "mime_type": "image/png",
+            "format": "png",
+            "width": 1024,
+            "height": 1024,
+            "size_bytes": 245760,
+            "filename": "image.png"
+          }
+        ]
+      },
+      "usage": {},
+      "error": null,
+      "client_reference_id": "order_123",
+      "metadata": {},
+      "created_at": 1784250000,
+      "started_at": 1784250002,
+      "completed_at": 1784250060,
+      "updated_at": 1784250060
+    }
+  ],
+  "first_id": "task_xxx",
+  "last_id": "task_xxx",
+  "has_more": false
+}`;
+
+const TASK_BATCH_QUERY_REQUEST = `curl "$BASE_URL/v1/image/tasks/query" \\
+  -X POST \\
+  -H "Authorization: Bearer $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "task_ids": ["task_xxx", "task_not_found"]
+  }'`;
+
+const TASK_BATCH_QUERY_RESPONSE = `{
+  "object": "list",
+  "data": [
+    {
+      "id": "task_xxx",
+      "object": "image.task",
+      "model": "gpt-image-2",
+      "operation": "generation",
+      "status": "succeeded",
+      "progress": 100,
+      "result": {
+        "images": [
+          {
+            "asset_id": "asset_xxx",
+            "url": "https://cdn.example.com/image.png"
+          }
+        ]
+      },
+      "usage": {},
+      "error": null,
+      "metadata": {},
+      "created_at": 1784250000,
+      "started_at": 1784250002,
+      "completed_at": 1784250060,
+      "updated_at": 1784250060
+    }
+  ],
+  "missing": ["task_not_found"]
+}`;
 
 const ASSET_LIST_REQUEST = `curl "$BASE_URL/v1/assets?asset_type=image&page=1&page_size=20" \\
   -H "Authorization: Bearer $API_KEY"`;
@@ -172,6 +347,78 @@ const ASSET_LIST_RESPONSE = `{
   "total": 1,
   "has_more": false
 }`;
+
+const ASSET_GET_REQUEST = `curl "$BASE_URL/v1/assets/asset_xxx" \\
+  -H "Authorization: Bearer $API_KEY"`;
+
+const ASSET_GET_RESPONSE = `{
+  "object": "asset",
+  "id": "asset_xxx",
+  "task_id": "task_xxx",
+  "index": 0,
+  "type": "image",
+  "url": "https://cdn.example.com/image.png",
+  "mime_type": "image/png",
+  "filename": "image.png",
+  "size_bytes": 245760,
+  "width": 1024,
+  "height": 1024,
+  "model": "gpt-image-2",
+  "platform": "image_handle",
+  "action": "image_generation",
+  "status": "available",
+  "metadata": {},
+  "created_at": 1784250060,
+  "updated_at": 1784250060
+}`;
+
+const ASSET_QUERY_REQUEST = `curl "$BASE_URL/v1/assets/query" \\
+  -X POST \\
+  -H "Authorization: Bearer $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "asset_ids": ["asset_xxx", "asset_yyy"],
+    "asset_type": "image",
+    "page": 1,
+    "page_size": 100
+  }'`;
+
+const ASSET_URLS_REQUEST = `curl "$BASE_URL/v1/assets/batch/urls" \\
+  -X POST \\
+  -H "Authorization: Bearer $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "asset_ids": ["asset_xxx", "asset_yyy"]
+  }'`;
+
+const ASSET_URLS_RESPONSE = `{
+  "object": "list",
+  "data": [
+    {
+      "asset_id": "asset_xxx",
+      "task_id": "task_xxx",
+      "asset_type": "image",
+      "url": "https://cdn.example.com/image-1.png"
+    },
+    {
+      "asset_id": "asset_yyy",
+      "task_id": "task_yyy",
+      "asset_type": "image",
+      "url": "https://cdn.example.com/image-2.png"
+    }
+  ]
+}`;
+
+const ASSET_EXPORT_REQUEST = `curl "$BASE_URL/v1/assets/export?asset_type=image&start_timestamp=1784160000" \\
+  -H "Authorization: Bearer $API_KEY" \\
+  --output assets.csv`;
+
+const ASSET_EXPORT_RESPONSE = `HTTP/1.1 200 OK
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename=assets.csv
+
+asset_id,task_id,asset_type,url,filename,model,platform,action,created_at
+asset_xxx,task_xxx,image,https://cdn.example.com/image.png,image.png,gpt-image-2,image_handle,image_generation,1784250060`;
 
 const WEBHOOK_HEADERS = `POST https://your-service.example.com/webhooks/new-api HTTP/1.1
 Authorization: Bearer ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -345,6 +592,19 @@ function DocumentationSection({ title, description, children }) {
   );
 }
 
+function RequestResponseExamples({ request, response, responseTitle }) {
+  const { t } = useTranslation();
+
+  return (
+    <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
+      <CodeExample title={t('请求示例')}>{request}</CodeExample>
+      <CodeExample title={responseTitle || t('响应示例')}>
+        {response}
+      </CodeExample>
+    </div>
+  );
+}
+
 function EndpointTable({ tags, apiKey, t }) {
   const rows = Object.entries(RESOURCE_CENTER_OPENAPI_SPEC.paths).flatMap(
     ([path, pathItem]) =>
@@ -485,19 +745,16 @@ function AsyncImageDocs({ t }) {
       </DocumentationSection>
 
       <DocumentationSection
-        title={t('创建生成任务')}
+        title={`${t('创建生成任务')} · POST /v1/image/tasks`}
         description={t(
           '成功创建后返回 202；使用 Location 查询任务，或等待 Webhook 通知。',
         )}
       >
-        <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
-          <CodeExample title={t('请求示例')}>
-            {ASYNC_CREATE_REQUEST}
-          </CodeExample>
-          <CodeExample title={t('202 响应')}>
-            {ASYNC_CREATE_RESPONSE}
-          </CodeExample>
-        </div>
+        <RequestResponseExamples
+          request={ASYNC_CREATE_REQUEST}
+          response={ASYNC_CREATE_RESPONSE}
+          responseTitle={t('202 响应')}
+        />
         <Text type='tertiary'>
           {t(
             '建议为可重试的创建请求设置 Idempotency-Key；同一个 Key 只能对应同一份请求。',
@@ -506,7 +763,7 @@ function AsyncImageDocs({ t }) {
       </DocumentationSection>
 
       <DocumentationSection
-        title={t('创建编辑任务')}
+        title={`${t('创建编辑任务')} · POST /v1/image/tasks`}
         description={t(
           '编辑任务必须提供 prompt 和至少一张图片；可直接上传本地文件，也可使用 URL JSON，mask 可选。',
         )}
@@ -518,26 +775,65 @@ function AsyncImageDocs({ t }) {
           <CodeExample title={t('multipart 本地文件')}>
             {ASYNC_MULTIPART_EDIT_REQUEST}
           </CodeExample>
+          <CodeExample title={t('202 响应')}>{ASYNC_EDIT_RESPONSE}</CodeExample>
         </div>
       </DocumentationSection>
 
       <DocumentationSection
-        title={t('预上传与查询')}
+        title={`${t('查询异步图片任务列表')} · GET /v1/image/tasks`}
+      >
+        <RequestResponseExamples
+          request={TASK_LIST_REQUEST}
+          response={TASK_LIST_RESPONSE}
+        />
+        <Text type='tertiary'>
+          {t(
+            '下一页把上页返回的 last_id 作为 after 参数，并保持其他筛选条件不变。',
+          )}
+        </Text>
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('查询单个异步图片任务')} · GET /v1/image/tasks/{task_id}`}
+      >
+        <RequestResponseExamples
+          request={TASK_QUERY_REQUEST}
+          response={TASK_QUERY_RESPONSE}
+        />
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('批量查询异步图片任务')} · POST /v1/image/tasks/query`}
+        description={t('最多提交 100 个 task ID，返回顺序与请求顺序一致。')}
+      >
+        <RequestResponseExamples
+          request={TASK_BATCH_QUERY_REQUEST}
+          response={TASK_BATCH_QUERY_RESPONSE}
+        />
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('预上传图片')} · POST /v1/image/uploads`}
         description={t(
-          '上传结果中的 images 和 mask 可直接放入编辑任务；临时 URL 应尽快使用。',
+          '可重复提交 image，最多 10 张；mask 最多 1 张。临时 URL 应尽快用于编辑任务。',
         )}
       >
-        <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
-          <CodeExample title={t('multipart 预上传')}>
-            {IMAGE_UPLOAD_REQUEST}
-          </CodeExample>
-          <CodeExample title={t('上传响应')}>
-            {IMAGE_UPLOAD_RESPONSE}
-          </CodeExample>
-        </div>
-        <CodeExample title={t('查询单个任务')}>
-          {TASK_QUERY_REQUEST}
-        </CodeExample>
+        <RequestResponseExamples
+          request={IMAGE_UPLOAD_REQUEST}
+          response={IMAGE_UPLOAD_RESPONSE}
+        />
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('预上传 Base64 图片')} · POST /v1/image/uploads/base64`}
+        description={t(
+          '支持纯 Base64 和 data URL；响应中的 images 与 mask 可直接用于编辑任务。',
+        )}
+      >
+        <RequestResponseExamples
+          request={IMAGE_BASE64_UPLOAD_REQUEST}
+          response={IMAGE_UPLOAD_RESPONSE}
+        />
       </DocumentationSection>
     </div>
   );
@@ -554,15 +850,52 @@ function AssetApiDocs({ t }) {
       </DocumentationSection>
 
       <DocumentationSection
-        title={t('查询资源')}
+        title={`${t('查询资源列表')} · GET /v1/assets`}
         description={t(
           '资源接口严格按 API Key 所属用户隔离，只返回当前用户可见的数据。',
         )}
       >
-        <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
-          <CodeExample title={t('请求示例')}>{ASSET_LIST_REQUEST}</CodeExample>
-          <CodeExample title={t('响应示例')}>{ASSET_LIST_RESPONSE}</CodeExample>
-        </div>
+        <RequestResponseExamples
+          request={ASSET_LIST_REQUEST}
+          response={ASSET_LIST_RESPONSE}
+        />
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('查询单个资源')} · GET /v1/assets/{asset_id}`}
+      >
+        <RequestResponseExamples
+          request={ASSET_GET_REQUEST}
+          response={ASSET_GET_RESPONSE}
+        />
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('批量查询资源')} · POST /v1/assets/query`}
+      >
+        <RequestResponseExamples
+          request={ASSET_QUERY_REQUEST}
+          response={ASSET_LIST_RESPONSE}
+        />
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('批量获取资源 URL')} · POST /v1/assets/batch/urls`}
+      >
+        <RequestResponseExamples
+          request={ASSET_URLS_REQUEST}
+          response={ASSET_URLS_RESPONSE}
+        />
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('导出资源 CSV')} · GET /v1/assets/export`}
+        description={t('最多导出 10000 条符合筛选条件的资源。')}
+      >
+        <RequestResponseExamples
+          request={ASSET_EXPORT_REQUEST}
+          response={ASSET_EXPORT_RESPONSE}
+        />
       </DocumentationSection>
 
       <DocumentationSection

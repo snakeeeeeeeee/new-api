@@ -5298,6 +5298,22 @@
     "资源 API 使用同一个资源 API Key（ak_...）。": "API tài nguyên dùng cùng API Key tài nguyên (ak_...).",
     "资源中心统一使用一个 API Key": "Một API Key cho Trung tâm tài nguyên",
     "这些接口统一使用资源 API Key（ak_...）。": "Các API này đều dùng API Key tài nguyên (ak_...).",
-    "隐藏资源 API Key": "Ẩn API Key tài nguyên"
+    "隐藏资源 API Key": "Ẩn API Key tài nguyên",
+    "创建异步图片任务": "Tạo tác vụ ảnh bất đồng bộ",
+    "查询异步图片任务列表": "Liệt kê tác vụ ảnh bất đồng bộ",
+    "下一页把上页返回的 last_id 作为 after 参数，并保持其他筛选条件不变。": "Ở trang tiếp theo, truyền last_id của trang trước vào tham số after và giữ nguyên các bộ lọc khác.",
+    "查询单个异步图片任务": "Lấy tác vụ ảnh bất đồng bộ",
+    "批量查询异步图片任务": "Truy vấn hàng loạt tác vụ ảnh bất đồng bộ",
+    "最多提交 100 个 task ID，返回顺序与请求顺序一致。": "Gửi tối đa 100 ID tác vụ; kết quả giữ nguyên thứ tự yêu cầu.",
+    "预上传图片": "Tải trước ảnh đầu vào",
+    "可重复提交 image，最多 10 张；mask 最多 1 张。临时 URL 应尽快用于编辑任务。": "Lặp lại trường image để gửi tối đa 10 tệp và tối đa một mask. Hãy sớm dùng URL tạm thời trong tác vụ chỉnh sửa.",
+    "预上传 Base64 图片": "Tải trước ảnh Base64",
+    "支持纯 Base64 和 data URL；响应中的 images 与 mask 可直接用于编辑任务。": "Hỗ trợ Base64 thuần và data URL. Có thể dùng trực tiếp images và mask trả về trong tác vụ chỉnh sửa.",
+    "查询资源列表": "Liệt kê tài nguyên",
+    "查询单个资源": "Lấy một tài nguyên",
+    "批量查询资源": "Truy vấn hàng loạt tài nguyên",
+    "批量获取资源 URL": "Lấy hàng loạt URL tài nguyên",
+    "导出资源 CSV": "Xuất tài nguyên dạng CSV",
+    "最多导出 10000 条符合筛选条件的资源。": "Xuất tối đa 10.000 tài nguyên phù hợp với bộ lọc."
   }
 }

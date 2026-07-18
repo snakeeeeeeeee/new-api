@@ -4791,6 +4791,22 @@
     "资源 API 使用同一个资源 API Key（ak_...）。": "L’API de ressources utilise la même clé API de ressource (ak_...).",
     "资源中心统一使用一个 API Key": "Une seule clé API pour le centre de ressources",
     "这些接口统一使用资源 API Key（ak_...）。": "Ces API utilisent toutes la clé API de ressource (ak_...).",
-    "隐藏资源 API Key": "Masquer la clé API de ressource"
+    "隐藏资源 API Key": "Masquer la clé API de ressource",
+    "创建异步图片任务": "Créer une tâche d'image asynchrone",
+    "查询异步图片任务列表": "Lister les tâches d'image asynchrones",
+    "下一页把上页返回的 last_id 作为 after 参数，并保持其他筛选条件不变。": "Pour la page suivante, utilisez le last_id précédent comme paramètre after et conservez les autres filtres.",
+    "查询单个异步图片任务": "Consulter une tâche d'image asynchrone",
+    "批量查询异步图片任务": "Consulter plusieurs tâches d'image asynchrones",
+    "最多提交 100 个 task ID，返回顺序与请求顺序一致。": "Envoyez jusqu'à 100 ID de tâche ; les résultats conservent l'ordre de la requête.",
+    "预上传图片": "Précharger des images",
+    "可重复提交 image，最多 10 张；mask 最多 1 张。临时 URL 应尽快用于编辑任务。": "Répétez image pour envoyer jusqu'à 10 fichiers et au plus un mask. Utilisez rapidement les URL temporaires dans une tâche d'édition.",
+    "预上传 Base64 图片": "Précharger des images Base64",
+    "支持纯 Base64 和 data URL；响应中的 images 与 mask 可直接用于编辑任务。": "Le Base64 brut et les data URL sont pris en charge. Les images et le mask renvoyés peuvent être utilisés directement dans une tâche d'édition.",
+    "查询资源列表": "Lister les ressources",
+    "查询单个资源": "Consulter une ressource",
+    "批量查询资源": "Consulter plusieurs ressources",
+    "批量获取资源 URL": "Obtenir plusieurs URL de ressource",
+    "导出资源 CSV": "Exporter les ressources en CSV",
+    "最多导出 10000 条符合筛选条件的资源。": "Exportez jusqu'à 10 000 ressources correspondant aux filtres."
   }
 }

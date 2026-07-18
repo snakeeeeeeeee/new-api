@@ -4812,6 +4812,22 @@
     "资源 API 使用同一个资源 API Key（ak_...）。": "The asset API uses the same Resource API Key (ak_...).",
     "资源中心统一使用一个 API Key": "One API Key for the Resource Center",
     "这些接口统一使用资源 API Key（ak_...）。": "These APIs all use the Resource API Key (ak_...).",
-    "隐藏资源 API Key": "Hide Resource API Key"
+    "隐藏资源 API Key": "Hide Resource API Key",
+    "创建异步图片任务": "Create an asynchronous image task",
+    "查询异步图片任务列表": "List asynchronous image tasks",
+    "下一页把上页返回的 last_id 作为 after 参数，并保持其他筛选条件不变。": "For the next page, pass the previous last_id as after and keep the other filters unchanged.",
+    "查询单个异步图片任务": "Get an asynchronous image task",
+    "批量查询异步图片任务": "Query asynchronous image tasks in bulk",
+    "最多提交 100 个 task ID，返回顺序与请求顺序一致。": "Submit up to 100 task IDs; results preserve request order.",
+    "预上传图片": "Upload image inputs",
+    "可重复提交 image，最多 10 张；mask 最多 1 张。临时 URL 应尽快用于编辑任务。": "Repeat image for up to 10 files and provide at most one mask. Use temporary URLs in an edit task promptly.",
+    "预上传 Base64 图片": "Upload Base64 image inputs",
+    "支持纯 Base64 和 data URL；响应中的 images 与 mask 可直接用于编辑任务。": "Plain Base64 and data URLs are supported. The returned images and mask can be used directly in an edit task.",
+    "查询资源列表": "List assets",
+    "查询单个资源": "Get an asset",
+    "批量查询资源": "Query assets in bulk",
+    "批量获取资源 URL": "Get asset URLs in bulk",
+    "导出资源 CSV": "Export assets as CSV",
+    "最多导出 10000 条符合筛选条件的资源。": "Export up to 10,000 assets matching the filters."
   }
 }
