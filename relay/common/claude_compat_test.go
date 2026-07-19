@@ -203,9 +203,10 @@ func TestNormalizeClaudeRequestCompatZeroMaxTokensUsesRelayInfoStream(t *testing
 	require.Contains(t, err.ToOpenAIError().Message, "stream")
 }
 
-func TestNormalizeClaudeRequestCompatOpusSampling(t *testing.T) {
+func TestNormalizeClaudeRequestCompatSamplingCleanup(t *testing.T) {
 	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
 		settings.DropDefaultSamplingForOpusEnabled = true
+		settings.ThinkingValidationMode = model_setting.ClaudeValidationModeReject
 	})
 	defaultReq := baseClaudeCompatRequest("claude-opus-4-7")
 	defaultReq.Temperature = commonpkg.GetPointer(1.0)
@@ -233,6 +234,78 @@ func TestNormalizeClaudeRequestCompatOpusSampling(t *testing.T) {
 	sonnetReq.Temperature = commonpkg.GetPointer(1.0)
 	require.Nil(t, NormalizeClaudeRequestCompat(sonnetReq, nil))
 	require.NotNil(t, sonnetReq.Temperature)
+
+	for _, model := range []string{"claude-fable-5", "claude-sonnet-5", "claude-opus-5"} {
+		t.Run(model+"_adaptive", func(t *testing.T) {
+			req := baseClaudeCompatRequest(model)
+			req.Thinking = &dto.Thinking{Type: "adaptive"}
+			req.Temperature = commonpkg.GetPointer(0.2)
+			req.TopP = commonpkg.GetPointer(0.5)
+			req.TopK = commonpkg.GetPointer(42)
+
+			require.Nil(t, NormalizeClaudeRequestCompat(req, nil))
+			require.Nil(t, req.Temperature)
+			require.Nil(t, req.TopP)
+			require.Nil(t, req.TopK)
+		})
+	}
+
+	enabledReq := baseClaudeCompatRequest("claude-haiku-4-5")
+	enabledReq.Thinking = &dto.Thinking{Type: "enabled", BudgetTokens: commonpkg.GetPointer(2048)}
+	enabledReq.Temperature = commonpkg.GetPointer(0.2)
+	enabledReq.TopP = commonpkg.GetPointer(0.5)
+	enabledReq.TopK = commonpkg.GetPointer(42)
+	require.Nil(t, NormalizeClaudeRequestCompat(enabledReq, nil))
+	require.Nil(t, enabledReq.Temperature)
+	require.Nil(t, enabledReq.TopP)
+	require.Nil(t, enabledReq.TopK)
+
+	fableWithoutThinking := baseClaudeCompatRequest("claude-fable-5")
+	fableWithoutThinking.Temperature = commonpkg.GetPointer(0.2)
+	fableWithoutThinking.TopP = commonpkg.GetPointer(0.5)
+	fableWithoutThinking.TopK = commonpkg.GetPointer(42)
+	require.Nil(t, NormalizeClaudeRequestCompat(fableWithoutThinking, nil))
+	require.NotNil(t, fableWithoutThinking.Temperature)
+	require.NotNil(t, fableWithoutThinking.TopP)
+	require.NotNil(t, fableWithoutThinking.TopK)
+}
+
+func TestNormalizeClaudeRequestCompatSamplingCleanupDisabled(t *testing.T) {
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.DropDefaultSamplingForOpusEnabled = false
+		settings.ThinkingValidationMode = model_setting.ClaudeValidationModeLog
+	})
+	req := baseClaudeCompatRequest("claude-fable-5")
+	req.Thinking = &dto.Thinking{Type: "adaptive"}
+	req.Temperature = commonpkg.GetPointer(0.2)
+	req.TopP = commonpkg.GetPointer(0.5)
+	req.TopK = commonpkg.GetPointer(42)
+
+	require.Nil(t, NormalizeClaudeRequestCompat(req, nil))
+	require.Equal(t, 0.2, *req.Temperature)
+	require.Equal(t, 0.5, *req.TopP)
+	require.Equal(t, 42, *req.TopK)
+}
+
+func TestNormalizeClaudeRequestCompatJSONCleansActiveThinkingSampling(t *testing.T) {
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.DropDefaultSamplingForOpusEnabled = true
+		settings.ThinkingValidationMode = model_setting.ClaudeValidationModeReject
+	})
+	for _, model := range []string{"claude-fable-5", "claude-sonnet-5", "claude-opus-5"} {
+		t.Run(model, func(t *testing.T) {
+			body := []byte(`{"model":"` + model + `","messages":[{"role":"user","content":"hello"}],"thinking":{"type":"adaptive"},"temperature":0.2,"top_p":0.5,"top_k":42}`)
+
+			out, apiErr := NormalizeClaudeRequestCompatJSON(body, nil)
+			require.Nil(t, apiErr)
+			var payload map[string]any
+			require.NoError(t, commonpkg.Unmarshal(out, &payload))
+			require.NotContains(t, payload, "temperature")
+			require.NotContains(t, payload, "top_p")
+			require.NotContains(t, payload, "top_k")
+			require.Contains(t, payload, "thinking")
+		})
+	}
 }
 
 func TestNormalizeClaudeRequestCompatEffortValidation(t *testing.T) {

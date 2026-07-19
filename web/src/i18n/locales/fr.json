@@ -4811,6 +4811,8 @@
     "Claude 响应完整性保护": "Protection de l'intégrité des réponses Claude",
     "开启后校验 content block 序列，并在首内容块前异常时交给现有渠道 fallback。默认关闭。": "Valide la séquence des blocs de contenu et confie les erreurs précédant le premier bloc au basculement de canal existant. Désactivé par défaut.",
     "首内容块超时": "Délai du premier bloc de contenu",
-    "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "Mesuré dès le début de la requête amont. Plage : 1 à 300 secondes, 30 par défaut. message_start et ping ne réinitialisent pas le délai."
+    "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "Mesuré dès le début de la requête amont. Plage : 1 à 300 secondes, 30 par défaut. message_start et ping ne réinitialisent pas le délai.",
+    "Claude Thinking 采样参数清理": "Nettoyage des paramètres d'échantillonnage Claude Thinking",
+    "保留 Opus 4.7/4.8 原有清理；其他模型在 enabled/adaptive thinking 时删除 temperature、top_p、top_k，避免上游 400。": "Conserve le nettoyage existant pour Opus 4.7/4.8 ; pour les autres modèles, supprime temperature, top_p et top_k lorsque le mode thinking enabled/adaptive est actif afin d'éviter les erreurs 400 en amont."
   }
 }

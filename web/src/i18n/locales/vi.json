@@ -5318,6 +5318,8 @@
     "Claude 响应完整性保护": "Bảo vệ tính toàn vẹn phản hồi Claude",
     "开启后校验 content block 序列，并在首内容块前异常时交给现有渠道 fallback。默认关闭。": "Xác thực chuỗi content block và chuyển lỗi trước block đầu tiên cho cơ chế fallback kênh hiện có. Mặc định tắt.",
     "首内容块超时": "Thời gian chờ content block đầu tiên",
-    "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "Tính từ khi bắt đầu yêu cầu tới thượng nguồn. Phạm vi 1-300 giây, mặc định 30 giây; message_start và ping không đặt lại bộ đếm."
+    "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "Tính từ khi bắt đầu yêu cầu tới thượng nguồn. Phạm vi 1-300 giây, mặc định 30 giây; message_start và ping không đặt lại bộ đếm.",
+    "Claude Thinking 采样参数清理": "Dọn dẹp tham số lấy mẫu Claude Thinking",
+    "保留 Opus 4.7/4.8 原有清理；其他模型在 enabled/adaptive thinking 时删除 temperature、top_p、top_k，避免上游 400。": "Giữ nguyên cơ chế dọn dẹp cho Opus 4.7/4.8; với các mô hình khác, xóa temperature, top_p và top_k khi thinking enabled/adaptive đang hoạt động để tránh lỗi 400 từ thượng nguồn."
   }
 }

@@ -326,6 +326,32 @@ func TestRequestOpenAI2ClaudeMessagePassesAdaptiveThinking(t *testing.T) {
 	require.Nil(t, claudeReq.Thinking.BudgetTokens)
 }
 
+func TestRequestOpenAI2ClaudeMessageNormalizesAdaptiveThinkingSampling(t *testing.T) {
+	withClaudeRequestCompatSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.DropDefaultSamplingForOpusEnabled = true
+		settings.ThinkingValidationMode = model_setting.ClaudeValidationModeReject
+	})
+	for _, model := range []string{"claude-fable-5", "claude-sonnet-5", "claude-opus-5"} {
+		t.Run(model, func(t *testing.T) {
+			req := dto.GeneralOpenAIRequest{
+				Model:       model,
+				Temperature: commonpkg.GetPointer(0.2),
+				TopP:        commonpkg.GetPointer(0.5),
+				TopK:        commonpkg.GetPointer(42),
+				THINKING:    []byte(`{"type":"adaptive"}`),
+				Messages:    []dto.Message{{Role: "user", Content: "hello"}},
+			}
+
+			claudeReq, err := RequestOpenAI2ClaudeMessage(nil, relayInfoWithToolSchemaCompat(false), req)
+			require.NoError(t, err)
+			require.Nil(t, relaycommon.NormalizeClaudeRequestCompat(claudeReq, nil))
+			require.Nil(t, claudeReq.Temperature)
+			require.Nil(t, claudeReq.TopP)
+			require.Nil(t, claudeReq.TopK)
+		})
+	}
+}
+
 func TestRequestOpenAI2ClaudeMessageTopLevelThinkingOverridesReasoning(t *testing.T) {
 	req := dto.GeneralOpenAIRequest{
 		Model:     "claude-sonnet-4-6",

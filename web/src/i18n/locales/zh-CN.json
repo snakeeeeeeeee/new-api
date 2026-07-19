@@ -4785,6 +4785,8 @@
     "Claude 响应完整性保护": "Claude 响应完整性保护",
     "开启后校验 content block 序列，并在首内容块前异常时交给现有渠道 fallback。默认关闭。": "开启后校验 content block 序列，并在首内容块前异常时交给现有渠道 fallback。默认关闭。",
     "首内容块超时": "首内容块超时",
-    "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。"
+    "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。",
+    "Claude Thinking 采样参数清理": "Claude Thinking 采样参数清理",
+    "保留 Opus 4.7/4.8 原有清理；其他模型在 enabled/adaptive thinking 时删除 temperature、top_p、top_k，避免上游 400。": "保留 Opus 4.7/4.8 原有清理；其他模型在 enabled/adaptive thinking 时删除 temperature、top_p、top_k，避免上游 400。"
   }
 }

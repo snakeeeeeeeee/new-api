@@ -798,9 +798,7 @@ func normalizeClaudeRequestCompat(request *dto.ClaudeRequest, info *RelayInfo) *
 		}
 	}
 	if settings.DropDefaultSamplingForOpusEnabled {
-		if err := normalizeClaudeOpusSampling(request, modelName); err != nil {
-			return err
-		}
+		normalizeClaudeSampling(request, modelName)
 	}
 	if settings.ValidateOutputEffortEnabled {
 		if err := validateClaudeOutputEffort(request, modelName); err != nil {
@@ -1253,14 +1251,21 @@ func sniffImageMagicBytes(data []byte) string {
 	return ""
 }
 
-func normalizeClaudeOpusSampling(request *dto.ClaudeRequest, modelName string) *claudeCompatViolation {
-	if !isClaudeOpus47OrLater(modelName) {
-		return nil
+func normalizeClaudeSampling(request *dto.ClaudeRequest, modelName string) {
+	if request == nil || (!isClaudeOpus47OrLater(modelName) && !hasActiveClaudeThinking(request)) {
+		return
 	}
 	request.Temperature = nil
 	request.TopP = nil
 	request.TopK = nil
-	return nil
+}
+
+func hasActiveClaudeThinking(request *dto.ClaudeRequest) bool {
+	if request == nil || request.Thinking == nil {
+		return false
+	}
+	thinkingType := strings.TrimSpace(strings.ToLower(request.Thinking.Type))
+	return thinkingType == "enabled" || thinkingType == "adaptive"
 }
 
 func isFloatDefault(value float64, expected float64) bool {
