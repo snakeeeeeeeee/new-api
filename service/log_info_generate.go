@@ -87,6 +87,15 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 
 	AppendChannelAffinityAdminInfo(ctx, adminInfo)
 	AppendAggregateGroupAdminInfo(ctx, adminInfo)
+	if upstreamFirstEventMs := common.GetContextKeyInt(ctx, constant.ContextKeyUpstreamFirstEventMs); upstreamFirstEventMs > 0 {
+		adminInfo["upstream_first_event_ms"] = upstreamFirstEventMs
+	}
+	if common.GetContextKeyBool(ctx, constant.ContextKeyClaudeStreamIncomplete) {
+		adminInfo["claude_stream_incomplete"] = true
+		if reason := common.GetContextKeyString(ctx, constant.ContextKeyClaudeStreamIncompleteReason); reason != "" {
+			adminInfo["claude_stream_incomplete_reason"] = reason
+		}
+	}
 
 	other["admin_info"] = adminInfo
 	appendRequestPath(ctx, relayInfo, other)

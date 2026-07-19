@@ -333,6 +333,7 @@ func TestClaudeCompatibilityOptionsCanBeReadAndUpdated(t *testing.T) {
 	original := *model_setting.GetClaudeSettings()
 	t.Cleanup(func() {
 		*model_setting.GetClaudeSettings() = original
+		model_setting.RefreshClaudeResponseIntegritySettingsSnapshot()
 	})
 
 	listRecorder := httptest.NewRecorder()
@@ -366,6 +367,65 @@ func TestClaudeCompatibilityOptionsCanBeReadAndUpdated(t *testing.T) {
 	require.Contains(t, data, `"key":"claude.metadata_user_id_validation_mode","value":"log"`)
 	require.Contains(t, data, `"key":"claude.assistant_prefill_validation_mode","value":"log"`)
 	require.Contains(t, data, `"key":"claude.request_size_limit_bytes","value":"33554432"`)
+	require.Contains(t, data, `"key":"claude.response_integrity_fallback_enabled","value":"false"`)
+	require.Contains(t, data, `"key":"claude.response_integrity_first_block_timeout_seconds","value":"30"`)
+
+	integritySwitchPayload := []byte(`{"key":"claude.response_integrity_fallback_enabled","value":true}`)
+	integritySwitchRecorder := httptest.NewRecorder()
+	integritySwitchCtx, _ := gin.CreateTestContext(integritySwitchRecorder)
+	integritySwitchCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(integritySwitchPayload))
+	integritySwitchCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(integritySwitchCtx)
+
+	var integritySwitchResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(integritySwitchRecorder.Body.Bytes(), &integritySwitchResp))
+	require.True(t, integritySwitchResp.Success, integritySwitchResp.Message)
+	require.True(t, model_setting.GetClaudeSettings().ResponseIntegrityFallbackEnabled)
+	require.True(t, model_setting.GetClaudeResponseIntegritySettingsSnapshot().Enabled)
+
+	integritySwitchOffPayload := []byte(`{"key":"claude.response_integrity_fallback_enabled","value":false}`)
+	integritySwitchOffRecorder := httptest.NewRecorder()
+	integritySwitchOffCtx, _ := gin.CreateTestContext(integritySwitchOffRecorder)
+	integritySwitchOffCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(integritySwitchOffPayload))
+	integritySwitchOffCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(integritySwitchOffCtx)
+
+	var integritySwitchOffResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(integritySwitchOffRecorder.Body.Bytes(), &integritySwitchOffResp))
+	require.True(t, integritySwitchOffResp.Success, integritySwitchOffResp.Message)
+	require.False(t, model_setting.GetClaudeResponseIntegritySettingsSnapshot().Enabled)
+
+	integritySwitchOnAgainCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	integritySwitchOnAgainCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(integritySwitchPayload))
+	integritySwitchOnAgainCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(integritySwitchOnAgainCtx)
+	require.True(t, model_setting.GetClaudeResponseIntegritySettingsSnapshot().Enabled)
+
+	timeoutPayload := []byte(`{"key":"claude.response_integrity_first_block_timeout_seconds","value":45}`)
+	timeoutRecorder := httptest.NewRecorder()
+	timeoutCtx, _ := gin.CreateTestContext(timeoutRecorder)
+	timeoutCtx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(timeoutPayload))
+	timeoutCtx.Request.Header.Set("Content-Type", "application/json")
+	UpdateOption(timeoutCtx)
+
+	var timeoutResp tokenAPIResponse
+	require.NoError(t, common.Unmarshal(timeoutRecorder.Body.Bytes(), &timeoutResp))
+	require.True(t, timeoutResp.Success, timeoutResp.Message)
+	require.Equal(t, 45, model_setting.GetClaudeSettings().ResponseIntegrityFirstBlockTimeoutSec)
+	require.Equal(t, 45, model_setting.GetClaudeResponseIntegritySettingsSnapshot().FirstBlockTimeoutSeconds)
+
+	for _, invalidTimeout := range []string{"0", "301", "invalid"} {
+		payload := []byte(`{"key":"claude.response_integrity_first_block_timeout_seconds","value":"` + invalidTimeout + `"}`)
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(payload))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		UpdateOption(ctx)
+		var response tokenAPIResponse
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		require.False(t, response.Success)
+		require.Equal(t, 45, model_setting.GetClaudeSettings().ResponseIntegrityFirstBlockTimeoutSec)
+	}
 
 	updatePayload := []byte(`{"key":"claude.reorder_tool_result_blocks_enabled","value":true}`)
 	updateRecorder := httptest.NewRecorder()

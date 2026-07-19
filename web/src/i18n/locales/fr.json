@@ -4807,6 +4807,10 @@
     "批量查询资源": "Consulter plusieurs ressources",
     "批量获取资源 URL": "Obtenir plusieurs URL de ressource",
     "导出资源 CSV": "Exporter les ressources en CSV",
-    "最多导出 10000 条符合筛选条件的资源。": "Exportez jusqu'à 10 000 ressources correspondant aux filtres."
+    "最多导出 10000 条符合筛选条件的资源。": "Exportez jusqu'à 10 000 ressources correspondant aux filtres.",
+    "Claude 响应完整性保护": "Protection de l'intégrité des réponses Claude",
+    "开启后校验 content block 序列，并在首内容块前异常时交给现有渠道 fallback。默认关闭。": "Valide la séquence des blocs de contenu et confie les erreurs précédant le premier bloc au basculement de canal existant. Désactivé par défaut.",
+    "首内容块超时": "Délai du premier bloc de contenu",
+    "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "Mesuré dès le début de la requête amont. Plage : 1 à 300 secondes, 30 par défaut. message_start et ping ne réinitialisent pas le délai."
   }
 }

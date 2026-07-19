@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/setting/config"
 )
@@ -42,34 +43,43 @@ type ClaudeSettings struct {
 	MetadataUserIDValidationMode          string                         `json:"metadata_user_id_validation_mode"`
 	AssistantPrefillValidationMode        string                         `json:"assistant_prefill_validation_mode"`
 	RequestSizeLimitBytes                 int64                          `json:"request_size_limit_bytes"`
+	ResponseIntegrityFallbackEnabled      bool                           `json:"response_integrity_fallback_enabled"`
+	ResponseIntegrityFirstBlockTimeoutSec int                            `json:"response_integrity_first_block_timeout_seconds"`
+}
+
+type ClaudeResponseIntegritySettingsSnapshot struct {
+	Enabled                  bool
+	FirstBlockTimeoutSeconds int
 }
 
 // 默认配置
 var defaultClaudeSettings = ClaudeSettings{
-	HeadersSettings:                      map[string]map[string][]string{},
-	ThinkingAdapterEnabled:               true,
-	AutoFixImageMediaTypeEnabled:         true,
-	PreserveZeroMaxTokensEnabled:         true,
-	DropDefaultSamplingForOpusEnabled:    true,
-	ValidateOutputEffortEnabled:          true,
-	NormalizeSimpleMessageContentEnabled: true,
-	PromoteLeadingSystemRoleEnabled:      true,
-	MergeAdjacentSameRoleEnabled:         true,
-	ReorderToolResultBlocksEnabled:       false,
-	OpenAIToolCallCompatEnabled:          true,
-	ApplyCompatInPassthroughEnabled:      false,
-	RequestSchemaValidationMode:          "reject",
-	ToolProtocolValidationMode:           "reject",
-	ToolSchemaValidationMode:             "log",
-	ToolChoiceValidationMode:             "log",
-	ThinkingValidationMode:               "log",
-	ImageLimitsValidationMode:            "log",
-	PromptCacheValidationMode:            "log",
-	StopSequencesValidationMode:          "reject",
-	ServiceTierValidationMode:            "reject",
-	MetadataUserIDValidationMode:         "log",
-	AssistantPrefillValidationMode:       "log",
-	RequestSizeLimitBytes:                32 << 20,
+	HeadersSettings:                       map[string]map[string][]string{},
+	ThinkingAdapterEnabled:                true,
+	AutoFixImageMediaTypeEnabled:          true,
+	PreserveZeroMaxTokensEnabled:          true,
+	DropDefaultSamplingForOpusEnabled:     true,
+	ValidateOutputEffortEnabled:           true,
+	NormalizeSimpleMessageContentEnabled:  true,
+	PromoteLeadingSystemRoleEnabled:       true,
+	MergeAdjacentSameRoleEnabled:          true,
+	ReorderToolResultBlocksEnabled:        false,
+	OpenAIToolCallCompatEnabled:           true,
+	ApplyCompatInPassthroughEnabled:       false,
+	RequestSchemaValidationMode:           "reject",
+	ToolProtocolValidationMode:            "reject",
+	ToolSchemaValidationMode:              "log",
+	ToolChoiceValidationMode:              "log",
+	ThinkingValidationMode:                "log",
+	ImageLimitsValidationMode:             "log",
+	PromptCacheValidationMode:             "log",
+	StopSequencesValidationMode:           "reject",
+	ServiceTierValidationMode:             "reject",
+	MetadataUserIDValidationMode:          "log",
+	AssistantPrefillValidationMode:        "log",
+	RequestSizeLimitBytes:                 32 << 20,
+	ResponseIntegrityFallbackEnabled:      false,
+	ResponseIntegrityFirstBlockTimeoutSec: 30,
 	DefaultMaxTokens: map[string]int{
 		"default": 8192,
 	},
@@ -78,6 +88,7 @@ var defaultClaudeSettings = ClaudeSettings{
 
 // 全局实例
 var claudeSettings = defaultClaudeSettings
+var claudeResponseIntegritySettings atomic.Value
 
 const (
 	ClaudeValidationModeOff    = "off"
@@ -88,6 +99,7 @@ const (
 func init() {
 	// 注册到全局配置管理器
 	config.GlobalConfig.Register("claude", &claudeSettings)
+	RefreshClaudeResponseIntegritySettingsSnapshot()
 }
 
 // GetClaudeSettings 获取Claude配置
@@ -98,6 +110,23 @@ func GetClaudeSettings() *ClaudeSettings {
 	}
 	claudeSettings.NormalizeValidationModes()
 	return &claudeSettings
+}
+
+func GetClaudeResponseIntegritySettingsSnapshot() ClaudeResponseIntegritySettingsSnapshot {
+	if value := claudeResponseIntegritySettings.Load(); value != nil {
+		return value.(ClaudeResponseIntegritySettingsSnapshot)
+	}
+	return RefreshClaudeResponseIntegritySettingsSnapshot()
+}
+
+func RefreshClaudeResponseIntegritySettingsSnapshot() ClaudeResponseIntegritySettingsSnapshot {
+	claudeSettings.NormalizeValidationModes()
+	snapshot := ClaudeResponseIntegritySettingsSnapshot{
+		Enabled:                  claudeSettings.ResponseIntegrityFallbackEnabled,
+		FirstBlockTimeoutSeconds: claudeSettings.ResponseIntegrityFirstBlockTimeoutSec,
+	}
+	claudeResponseIntegritySettings.Store(snapshot)
+	return snapshot
 }
 
 func ValidateClaudeValidationMode(mode string) error {
@@ -131,6 +160,9 @@ func (c *ClaudeSettings) NormalizeValidationModes() {
 	c.AssistantPrefillValidationMode = normalizeClaudeValidationMode(c.AssistantPrefillValidationMode, defaultClaudeSettings.AssistantPrefillValidationMode)
 	if c.RequestSizeLimitBytes <= 0 {
 		c.RequestSizeLimitBytes = defaultClaudeSettings.RequestSizeLimitBytes
+	}
+	if c.ResponseIntegrityFirstBlockTimeoutSec < 1 || c.ResponseIntegrityFirstBlockTimeoutSec > 300 {
+		c.ResponseIntegrityFirstBlockTimeoutSec = defaultClaudeSettings.ResponseIntegrityFirstBlockTimeoutSec
 	}
 }
 

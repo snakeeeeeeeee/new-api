@@ -1,10 +1,13 @@
 package common
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -42,6 +45,16 @@ type ClaudeConvertInfo struct {
 	ToolCallMaxIndexOffset int
 	ContentBlockStartSent  map[int]bool
 	ContentBlockStopSent   map[int]bool
+}
+
+type claudeResponseIntegrityAttempt struct {
+	ctx               context.Context
+	cancel            context.CancelFunc
+	firstBlockTimer   *time.Timer
+	firstBlockPending atomic.Bool
+	firstBlockTimeout atomic.Bool
+	startedAt         time.Time
+	mutex             sync.Mutex
 }
 
 type RerankerInfo struct {
@@ -106,31 +119,34 @@ type RelayInfo struct {
 	FirstResponseTime time.Time
 	isFirstResponse   bool
 	//SendLastReasoningResponse bool
-	IsStream               bool
-	IsGeminiBatchEmbedding bool
-	IsPlayground           bool
-	UsePrice               bool
-	RelayMode              int
-	OriginModelName        string
-	RequestURLPath         string
-	RequestHeaders         map[string]string
-	ShouldIncludeUsage     bool
-	DisablePing            bool // 是否禁止向下游发送自定义 Ping
-	ClientWs               *websocket.Conn
-	TargetWs               *websocket.Conn
-	InputAudioFormat       string
-	OutputAudioFormat      string
-	RealtimeTools          []dto.RealTimeTool
-	IsFirstRequest         bool
-	AudioUsage             bool
-	ReasoningEffort        string
-	UserSetting            dto.UserSetting
-	UserEmail              string
-	UserQuota              int
-	RelayFormat            types.RelayFormat
-	SendResponseCount      int
-	ReceivedResponseCount  int
-	FinalPreConsumedQuota  int // 最终预消耗的配额
+	IsStream                                 bool
+	IsGeminiBatchEmbedding                   bool
+	IsPlayground                             bool
+	UsePrice                                 bool
+	RelayMode                                int
+	OriginModelName                          string
+	RequestURLPath                           string
+	RequestHeaders                           map[string]string
+	ShouldIncludeUsage                       bool
+	DisablePing                              bool // 是否禁止向下游发送自定义 Ping
+	ClientWs                                 *websocket.Conn
+	TargetWs                                 *websocket.Conn
+	InputAudioFormat                         string
+	OutputAudioFormat                        string
+	RealtimeTools                            []dto.RealTimeTool
+	IsFirstRequest                           bool
+	AudioUsage                               bool
+	ReasoningEffort                          string
+	UserSetting                              dto.UserSetting
+	UserEmail                                string
+	UserQuota                                int
+	RelayFormat                              types.RelayFormat
+	SendResponseCount                        int
+	ReceivedResponseCount                    int
+	ClaudeResponseIntegrityEnabled           bool
+	ClaudeResponseIntegrityFirstBlockTimeout time.Duration
+	claudeResponseIntegrityAttempt           *claudeResponseIntegrityAttempt
+	FinalPreConsumedQuota                    int // 最终预消耗的配额
 	// ForcePreConsume 为 true 时禁用 BillingSession 的信任额度旁路，
 	// 强制预扣全额。用于异步任务（视频/音乐生成等），因为请求返回后任务仍在运行，
 	// 必须在提交前锁定全额。
@@ -468,6 +484,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	if reqId == "" {
 		reqId = common.GetTimeString() + common.GetRandomString(8)
 	}
+	claudeIntegritySettings := model_setting.GetClaudeResponseIntegritySettingsSnapshot()
 	info := &RelayInfo{
 		Request: request,
 
@@ -485,11 +502,13 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		TokenUnlimited: common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited),
 		TokenGroup:     tokenGroup,
 
-		isFirstResponse: true,
-		RelayMode:       relayconstant.Path2RelayMode(c.Request.URL.Path),
-		RequestURLPath:  c.Request.URL.String(),
-		RequestHeaders:  cloneRequestHeaders(c),
-		IsStream:        isStream,
+		isFirstResponse:                          true,
+		RelayMode:                                relayconstant.Path2RelayMode(c.Request.URL.Path),
+		RequestURLPath:                           c.Request.URL.String(),
+		RequestHeaders:                           cloneRequestHeaders(c),
+		IsStream:                                 isStream,
+		ClaudeResponseIntegrityEnabled:           claudeIntegritySettings.Enabled,
+		ClaudeResponseIntegrityFirstBlockTimeout: time.Duration(claudeIntegritySettings.FirstBlockTimeoutSeconds) * time.Second,
 
 		StartTime:         startTime,
 		FirstResponseTime: startTime.Add(-time.Second),
@@ -675,6 +694,127 @@ func (info *RelayInfo) SetFirstResponseTime() {
 	if info.isFirstResponse {
 		info.FirstResponseTime = time.Now()
 		info.isFirstResponse = false
+	}
+}
+
+func (info *RelayInfo) BeginClaudeResponseIntegrityAttempt(parent context.Context) context.Context {
+	if info == nil || !info.ClaudeResponseIntegrityEnabled {
+		return parent
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+
+	info.EndClaudeResponseIntegrityAttempt()
+	ctx, cancel := context.WithCancel(parent)
+	info.SendResponseCount = 0
+	info.ReceivedResponseCount = 0
+	info.FirstResponseTime = info.StartTime.Add(-time.Second)
+	info.isFirstResponse = true
+	attempt := &claudeResponseIntegrityAttempt{
+		ctx:       ctx,
+		cancel:    cancel,
+		startedAt: time.Now(),
+	}
+	info.claudeResponseIntegrityAttempt = attempt
+	if info.IsStream {
+		timeout := info.ClaudeResponseIntegrityFirstBlockTimeout
+		if timeout <= 0 {
+			timeout = 30 * time.Second
+		}
+		info.DisablePing = true
+		attempt.firstBlockPending.Store(true)
+		attempt.firstBlockTimer = time.AfterFunc(timeout, func() {
+			if attempt.firstBlockPending.CompareAndSwap(true, false) {
+				attempt.firstBlockTimeout.Store(true)
+				cancel()
+			}
+		})
+	}
+	return ctx
+}
+
+func (info *RelayInfo) ClaudeResponseIntegrityAttemptDone() <-chan struct{} {
+	if info == nil {
+		return nil
+	}
+	attempt := info.claudeResponseIntegrityAttempt
+	if attempt == nil || attempt.ctx == nil {
+		return nil
+	}
+	return attempt.ctx.Done()
+}
+
+func (info *RelayInfo) ClaudeResponseIntegrityAttemptElapsed() time.Duration {
+	if info == nil {
+		return 0
+	}
+	attempt := info.claudeResponseIntegrityAttempt
+	if attempt == nil {
+		return 0
+	}
+	startedAt := attempt.startedAt
+	if startedAt.IsZero() {
+		return 0
+	}
+	return time.Since(startedAt)
+}
+
+func (info *RelayInfo) MarkClaudeResponseIntegrityFirstBlock() {
+	if info == nil || !info.ClaudeResponseIntegrityEnabled {
+		return
+	}
+	attempt := info.claudeResponseIntegrityAttempt
+	if attempt == nil {
+		return
+	}
+	if attempt.firstBlockPending.CompareAndSwap(true, false) {
+		attempt.mutex.Lock()
+		if attempt.firstBlockTimer != nil {
+			attempt.firstBlockTimer.Stop()
+		}
+		attempt.mutex.Unlock()
+	}
+}
+
+func (info *RelayInfo) ClaudeResponseIntegrityFirstBlockTimedOut() bool {
+	if info == nil || info.claudeResponseIntegrityAttempt == nil {
+		return false
+	}
+	return info.claudeResponseIntegrityAttempt.firstBlockTimeout.Load()
+}
+
+func (info *RelayInfo) CancelClaudeResponseIntegrityAttempt() {
+	if info == nil || !info.ClaudeResponseIntegrityEnabled {
+		return
+	}
+	attempt := info.claudeResponseIntegrityAttempt
+	if attempt != nil && attempt.cancel != nil {
+		attempt.cancel()
+	}
+}
+
+func (info *RelayInfo) EndClaudeResponseIntegrityAttempt() {
+	if info == nil {
+		return
+	}
+	attempt := info.claudeResponseIntegrityAttempt
+	info.claudeResponseIntegrityAttempt = nil
+	if attempt == nil {
+		return
+	}
+	attempt.firstBlockPending.Store(false)
+	attempt.mutex.Lock()
+	timer := attempt.firstBlockTimer
+	cancel := attempt.cancel
+	attempt.firstBlockTimer = nil
+	attempt.cancel = nil
+	attempt.mutex.Unlock()
+	if timer != nil {
+		timer.Stop()
+	}
+	if cancel != nil {
+		cancel()
 	}
 }
 

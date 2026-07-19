@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -729,6 +730,12 @@ func handleConfigUpdate(key, value string) (bool, error) {
 	}
 	if configName == "image_handle_setting" {
 		image_handle_setting.ApplyNormalization()
+	}
+	if configName == "claude" {
+		snapshot := model_setting.RefreshClaudeResponseIntegritySettingsSnapshot()
+		if configKey == "response_integrity_first_block_timeout_seconds" {
+			common.OptionMap[key] = strconv.Itoa(snapshot.FirstBlockTimeoutSeconds)
+		}
 	}
 
 	return true, nil // 已处理

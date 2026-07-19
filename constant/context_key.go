@@ -7,10 +7,13 @@ const (
 	ContextKeyPromptTokens    ContextKey = "prompt_tokens"
 	ContextKeyEstimatedTokens ContextKey = "estimated_tokens"
 
-	ContextKeyOriginalModel    ContextKey = "original_model"
-	ContextKeyRequestStartTime ContextKey = "request_start_time"
-	ContextKeyRelayIsStream    ContextKey = "relay_is_stream"
-	ContextKeyFirstResponseMs  ContextKey = "first_response_ms"
+	ContextKeyOriginalModel                ContextKey = "original_model"
+	ContextKeyRequestStartTime             ContextKey = "request_start_time"
+	ContextKeyRelayIsStream                ContextKey = "relay_is_stream"
+	ContextKeyFirstResponseMs              ContextKey = "first_response_ms"
+	ContextKeyUpstreamFirstEventMs         ContextKey = "upstream_first_event_ms"
+	ContextKeyClaudeStreamIncomplete       ContextKey = "claude_stream_incomplete"
+	ContextKeyClaudeStreamIncompleteReason ContextKey = "claude_stream_incomplete_reason"
 
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"

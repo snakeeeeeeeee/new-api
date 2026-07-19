@@ -664,6 +664,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "claude.response_integrity_first_block_timeout_seconds":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue < 1 || intValue > 300 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "Claude 首内容块超时必须在 1 到 300 秒之间",
+			})
+			return
+		}
 	case "aggregate_group.smart_strategy_enabled":
 		_, err = strconv.ParseBool(option.Value.(string))
 		if err != nil {

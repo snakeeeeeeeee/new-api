@@ -394,24 +394,49 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if common2.DebugEnabled {
 		println("fullRequestURL:", fullRequestURL)
 	}
-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
+	var req *http.Request
+	if info.ClaudeResponseIntegrityEnabled && info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
+		attemptCtx := info.BeginClaudeResponseIntegrityAttempt(c.Request.Context())
+		req, err = http.NewRequestWithContext(attemptCtx, c.Request.Method, fullRequestURL, requestBody)
+	} else {
+		req, err = http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
+	}
 	if err != nil {
+		info.EndClaudeResponseIntegrityAttempt()
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
 	headers := req.Header
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
+		info.EndClaudeResponseIntegrityAttempt()
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
 	// 这样可以覆盖默认的 Authorization header 设置
 	headerOverride, err := processHeaderOverride(info, c)
 	if err != nil {
+		info.EndClaudeResponseIntegrityAttempt()
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
 	resp, err := doRequest(c, req, info)
 	if err != nil {
+		if info.ClaudeResponseIntegrityEnabled && info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
+			if c.Request.Context().Err() != nil {
+				info.EndClaudeResponseIntegrityAttempt()
+				return nil, types.NewErrorWithStatusCode(c.Request.Context().Err(), types.ErrorCodeDoRequestFailed, 499, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			}
+			if info.ClaudeResponseIntegrityFirstBlockTimedOut() {
+				info.EndClaudeResponseIntegrityAttempt()
+				return nil, types.WithClaudeError(types.ClaudeError{
+					Type:    "api_error",
+					Message: "Claude first content block timeout",
+					Code:    string(types.ErrorCodeClaudeContentBlockMissing),
+					Status:  http.StatusBadGateway,
+				}, http.StatusBadGateway)
+			}
+			info.EndClaudeResponseIntegrityAttempt()
+		}
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
 	return resp, nil

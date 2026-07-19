@@ -4828,6 +4828,10 @@
     "批量查询资源": "Query assets in bulk",
     "批量获取资源 URL": "Get asset URLs in bulk",
     "导出资源 CSV": "Export assets as CSV",
-    "最多导出 10000 条符合筛选条件的资源。": "Export up to 10,000 assets matching the filters."
+    "最多导出 10000 条符合筛选条件的资源。": "Export up to 10,000 assets matching the filters.",
+    "Claude 响应完整性保护": "Claude response integrity protection",
+    "开启后校验 content block 序列，并在首内容块前异常时交给现有渠道 fallback。默认关闭。": "Validates content block sequences and delegates failures before the first block to the existing channel fallback. Disabled by default.",
+    "首内容块超时": "First content block timeout",
+    "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "Measured from the upstream request start. Range: 1-300 seconds; default: 30. message_start and ping do not reset the timer."
   }
 }

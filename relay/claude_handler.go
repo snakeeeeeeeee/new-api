@@ -22,6 +22,9 @@ import (
 )
 
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	if info.ClaudeResponseIntegrityEnabled {
+		defer info.EndClaudeResponseIntegrityAttempt()
+	}
 
 	info.InitChannelMeta(c)
 	info.MarkFinalRequestRelayFormat(types.RelayFormatClaude)

@@ -270,7 +270,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		shouldRetryRequest := shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
 		isInternalRetryLog := shouldRetryRequest
 		if isAggregateGroupRequest {
-			if transition := service.PrepareAggregateGroupRetry(c, retryParam.GetRetry(), relayInfo.OriginModelName, common.RetryTimes); transition != nil {
+			maxInternalRetries := aggregateGroupInternalRetryBudget(newAPIError, common.RetryTimes)
+			if transition := service.PrepareAggregateGroupRetry(c, retryParam.GetRetry(), relayInfo.OriginModelName, maxInternalRetries); transition != nil {
 				groupRetryable := shouldRetry(c, newAPIError, 1)
 				shouldRetryRequest = groupRetryable
 				isInternalRetryLog = groupRetryable && transition.HasNext
@@ -323,6 +324,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 
 	logUsedChannelTrace(c)
+}
+
+func aggregateGroupInternalRetryBudget(err *types.NewAPIError, configured int) int {
+	if err != nil && err.GetErrorCode() == types.ErrorCodeClaudeContentBlockMissing {
+		return 0
+	}
+	return configured
 }
 
 var upgrader = websocket.Upgrader{
@@ -642,6 +650,10 @@ func buildAggregateRelayErrorLog(c *gin.Context, err *types.NewAPIError) string 
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, internalRetry ...bool) {
+	if isClientDisconnectedRelayError(err) {
+		logger.LogInfo(c, fmt.Sprintf("client disconnected while using channel #%d", channelError.ChannelId))
+		return
+	}
 	service.DumpRelayErrorIfNeeded(c, err)
 	if common.GetContextKeyString(c, constant.ContextKeyAggregateGroup) != "" {
 		logger.LogError(c, buildAggregateChannelErrorLog(c, channelError, err))
@@ -659,6 +671,10 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 
 	isInternalRetry := len(internalRetry) > 0 && internalRetry[0]
 	recordRelayErrorLog(c, err, isInternalRetry)
+}
+
+func isClientDisconnectedRelayError(err *types.NewAPIError) bool {
+	return err != nil && err.StatusCode == 499 && err.GetErrorCode() == types.ErrorCodeDoRequestFailed
 }
 
 func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError, internalRetry bool) {

@@ -24,6 +24,9 @@ import (
 )
 
 func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	if info.ClaudeResponseIntegrityEnabled {
+		defer info.EndClaudeResponseIntegrityAttempt()
+	}
 	info.InitChannelMeta(c)
 
 	textReq, ok := info.Request.(*dto.GeneralOpenAIRequest)

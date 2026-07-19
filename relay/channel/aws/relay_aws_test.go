@@ -2,18 +2,85 @@ package aws
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	bedrockruntimeTypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type fakeAwsClaudeIntegrityResponseStream struct {
+	events chan bedrockruntimeTypes.ResponseStream
+	err    error
+}
+
+func (s *fakeAwsClaudeIntegrityResponseStream) Events() <-chan bedrockruntimeTypes.ResponseStream {
+	return s.events
+}
+
+func (s *fakeAwsClaudeIntegrityResponseStream) Err() error {
+	return s.err
+}
+
+func TestAwsClaudeIntegrityStreamBodyPreservesChunksAndPropagatesStreamError(t *testing.T) {
+	events := make(chan bedrockruntimeTypes.ResponseStream, 2)
+	events <- &bedrockruntimeTypes.ResponseStreamMemberChunk{Value: bedrockruntimeTypes.PayloadPart{Bytes: []byte(`{"type":"message_start"}`)}}
+	events <- &bedrockruntimeTypes.ResponseStreamMemberChunk{Value: bedrockruntimeTypes.PayloadPart{Bytes: []byte(`{"type":"content_block_start","index":0,"content_block":{"type":"text"}}`)}}
+	close(events)
+	body := awsClaudeIntegrityStreamBody(&fakeAwsClaudeIntegrityResponseStream{events: events}, make(chan struct{}))
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	require.Equal(t,
+		"data: {\"type\":\"message_start\"}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\"}}\n\n",
+		string(data),
+	)
+
+	sentinel := errors.New("synthetic Bedrock stream failure")
+	errorEvents := make(chan bedrockruntimeTypes.ResponseStream)
+	close(errorEvents)
+	errorBody := awsClaudeIntegrityStreamBody(&fakeAwsClaudeIntegrityResponseStream{events: errorEvents, err: sentinel}, make(chan struct{}))
+	_, err = io.ReadAll(errorBody)
+	require.ErrorIs(t, err, sentinel)
+}
+
+func TestAwsClaudeIntegrityInvokeErrorPreservesFirstBlockTimeoutClassification(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:                              &relaycommon.ChannelMeta{},
+		IsStream:                                 true,
+		ClaudeResponseIntegrityEnabled:           true,
+		ClaudeResponseIntegrityFirstBlockTimeout: time.Millisecond,
+	}
+
+	attemptCtx := info.BeginClaudeResponseIntegrityAttempt(context.Background())
+	select {
+	case <-attemptCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("Claude integrity attempt did not reach the first-block timeout")
+	}
+
+	apiErr := awsClaudeIntegrityInvokeError(c, info, "InvokeModelWithResponseStream", attemptCtx.Err())
+	info.EndClaudeResponseIntegrityAttempt()
+
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	require.Equal(t, types.ErrorCodeClaudeContentBlockMissing, apiErr.GetErrorCode())
+}
 
 func TestDoAwsClientRequest_AppliesRuntimeHeaderOverrideToAnthropicBeta(t *testing.T) {
 	t.Parallel()

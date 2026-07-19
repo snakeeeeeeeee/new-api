@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -659,6 +660,141 @@ func TestPrepareAggregateGroupRetrySwitchesToNextRealGroup(t *testing.T) {
 	require.Equal(t, 1, transition.NextIndex)
 	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateRetryIndex))
 	require.Equal(t, 1, common.GetContextKeyInt(ctx, constant.ContextKeyAggregateRetryBase))
+}
+
+func TestPrepareAggregateGroupRetryZeroBudgetBypassesCurrentRealGroup(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 3
+	seedAggregateGroup(t, "enterprise-integrity", 1.2, 10, []string{"vip"}, []string{"default", "vip"})
+	seedAggregateAbilityChannel(t, 1101, "default", "claude-test", 10)
+	seedAggregateAbilityChannel(t, 1102, "default", "claude-test", 0)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, "enterprise-integrity")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyRouteGroupIndex, 0)
+	common.SetContextKey(ctx, constant.ContextKeyAggregateRetryBase, 0)
+
+	transition := PrepareAggregateGroupRetry(ctx, 0, "claude-test", 0)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.False(t, transition.WithinCurrentGroup)
+	require.Equal(t, "vip", transition.NextGroup)
+	require.Equal(t, 1, transition.NextIndex)
+}
+
+func TestAggregateClusterZeroBudgetSkipsAffinityRouteAndItsRemainingPriorities(t *testing.T) {
+	prepareAggregateGroupServiceTest(t)
+	common.MemoryCacheEnabled = false
+	common.RetryTimes = 3
+
+	group := seedAggregateGroupWithWeightedTargets(t, "cluster-integrity-zero-budget", model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+		{RealGroup: "default", Weight: common.GetPointer(100)},
+		{RealGroup: "vip", Weight: common.GetPointer(100)},
+	})
+	seedAggregateAbilityChannel(t, 1011, "default", "claude-test", 10)
+	seedAggregateAbilityChannel(t, 1012, "default", "claude-test", 0)
+	seedAggregateAbilityChannel(t, 1013, "vip", "claude-test", 10)
+
+	ctx := buildAggregateRequestAffinityContext(t, "/v1/messages", `{"model":"claude-test"}`, 42)
+	setAggregateRouteAffinityContext(ctx, group)
+	RecordAggregateRouteAffinity(ctx, "claude-test", group.Name, "default")
+	retry := 0
+	channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-test",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1011, channel.Id)
+	require.Equal(t, "default", selectedGroup)
+
+	transition := PrepareAggregateGroupRetry(ctx, retry, "claude-test", 0)
+	require.NotNil(t, transition)
+	require.True(t, transition.HasNext)
+	require.False(t, transition.WithinCurrentGroup)
+	require.Equal(t, "vip", transition.NextGroup)
+
+	retry++
+	channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+		Ctx:        ctx,
+		TokenGroup: group.Name,
+		ModelName:  "claude-test",
+		Retry:      &retry,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, channel)
+	require.Equal(t, 1013, channel.Id)
+	require.Equal(t, "vip", selectedGroup)
+}
+
+func TestAggregateClusterClaudeCLIPoolZeroBudgetMovesAcrossPoolThenHonorsFallback(t *testing.T) {
+	for _, fallbackToDefault := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fallback_to_default_%t", fallbackToDefault), func(t *testing.T) {
+			prepareAggregateGroupServiceTest(t)
+			common.MemoryCacheEnabled = false
+			common.RetryTimes = 3
+
+			group := seedAggregateGroupWithWeightedTargets(t, "cluster-cli-integrity-zero-budget-"+fmt.Sprint(fallbackToDefault), model.AggregateGroupRoutingModeCluster, false, []model.AggregateGroupTarget{
+				{RealGroup: "default", Weight: common.GetPointer(100)},
+			})
+			seedAggregateAbilityChannel(t, 1021, "default", "claude-sonnet-4-6", 10)
+			seedAggregateAbilityChannel(t, 1022, "svip", "claude-sonnet-4-6", 10)
+			seedAggregateAbilityChannel(t, 1023, "svip", "claude-sonnet-4-6", 0)
+			seedAggregateAbilityChannel(t, 1024, "vip", "claude-sonnet-4-6", 10)
+			group = configureAggregateClaudeCLIPool(t, group, true, fallbackToDefault, []model.AggregateGroupClientRoutePoolTarget{
+				{RealGroup: "svip", Weight: common.GetPointer(100)},
+				{RealGroup: "vip", Weight: common.GetPointer(100)},
+			})
+
+			ctx := buildAggregateClaudeCLIContext(t, `{"model":"claude-sonnet-4-6","metadata":{"user_id":"cli-user"}}`)
+			setAggregateRouteAffinityContext(ctx, group)
+			RecordAggregateRouteAffinityForPool(ctx, "claude-sonnet-4-6", group.Name, model.AggregateGroupClientRoutePoolClaudeCodeCLI, "svip")
+			retry := 0
+			channel, selectedGroup, err := CacheGetRandomSatisfiedChannel(&RetryParam{
+				Ctx:        ctx,
+				TokenGroup: group.Name,
+				ModelName:  "claude-sonnet-4-6",
+				Retry:      &retry,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			require.Equal(t, 1022, channel.Id)
+			require.Equal(t, "svip", selectedGroup)
+
+			transition := PrepareAggregateGroupRetry(ctx, retry, "claude-sonnet-4-6", 0)
+			require.NotNil(t, transition)
+			require.True(t, transition.HasNext)
+			require.False(t, transition.WithinCurrentGroup)
+			require.Equal(t, "vip", transition.NextGroup)
+
+			retry++
+			channel, selectedGroup, err = CacheGetRandomSatisfiedChannel(&RetryParam{
+				Ctx:        ctx,
+				TokenGroup: group.Name,
+				ModelName:  "claude-sonnet-4-6",
+				Retry:      &retry,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, channel)
+			require.Equal(t, 1024, channel.Id)
+			require.Equal(t, "vip", selectedGroup)
+
+			transition = PrepareAggregateGroupRetry(ctx, retry, "claude-sonnet-4-6", 0)
+			require.NotNil(t, transition)
+			if !fallbackToDefault {
+				require.False(t, transition.HasNext)
+				return
+			}
+			require.True(t, transition.HasNext)
+			require.Equal(t, "default", transition.NextGroup)
+			require.True(t, common.GetContextKeyBool(ctx, constant.ContextKeyAggregateClientRouteFallback))
+		})
+	}
 }
 
 func TestPrepareAggregateGroupRetryStaysInCurrentRealGroupWhenLowerPriorityExists(t *testing.T) {

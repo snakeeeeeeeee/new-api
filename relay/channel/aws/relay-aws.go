@@ -1,6 +1,7 @@
 package aws
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -44,6 +45,33 @@ func newAwsInvokeContext() (context.Context, context.CancelFunc) {
 		return context.Background(), func() {}
 	}
 	return context.WithTimeout(context.Background(), time.Duration(common.RelayTimeout)*time.Second)
+}
+
+func newAwsClaudeIntegrityInvokeContext(c *gin.Context, info *relaycommon.RelayInfo) (context.Context, context.CancelFunc) {
+	parent := c.Request.Context()
+	var cancel context.CancelFunc
+	if common.RelayTimeout > 0 {
+		parent, cancel = context.WithTimeout(parent, time.Duration(common.RelayTimeout)*time.Second)
+	} else {
+		parent, cancel = context.WithCancel(parent)
+	}
+	return info.BeginClaudeResponseIntegrityAttempt(parent), cancel
+}
+
+func awsClaudeIntegrityInvokeError(c *gin.Context, info *relaycommon.RelayInfo, operation string, err error) *types.NewAPIError {
+	relaycommon.LogClaudeToolSchemaCompatOriginalSchemasOnError(info, err)
+	if c.Request.Context().Err() != nil {
+		return types.NewErrorWithStatusCode(c.Request.Context().Err(), types.ErrorCodeDoRequestFailed, 499, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+	}
+	if info.ClaudeResponseIntegrityFirstBlockTimedOut() {
+		return types.WithClaudeError(types.ClaudeError{
+			Type:    "api_error",
+			Message: errors.Wrap(err, "Claude first content block timeout").Error(),
+			Code:    string(types.ErrorCodeClaudeContentBlockMissing),
+			Status:  http.StatusBadGateway,
+		}, http.StatusBadGateway)
+	}
+	return types.NewOpenAIError(errors.Wrap(err, operation), types.ErrorCodeAwsInvokeError, getAwsErrorStatusCode(err))
 }
 
 func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.Client, error) {
@@ -351,6 +379,9 @@ func getAwsModelID(requestModel string) string {
 }
 
 func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
+	if info.ClaudeResponseIntegrityEnabled && info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
+		return awsClaudeIntegrityHandler(c, info, a)
+	}
 
 	ctx, cancel := newAwsInvokeContext()
 	defer cancel()
@@ -382,7 +413,75 @@ func awsHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types
 	return nil, claudeInfo.Usage
 }
 
+func awsClaudeIntegrityHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
+	ctx, cancel := newAwsClaudeIntegrityInvokeContext(c, info)
+	defer cancel()
+	awsResp, err := a.AwsClient.InvokeModel(ctx, a.AwsReq.(*bedrockruntime.InvokeModelInput))
+	if err != nil {
+		apiErr := awsClaudeIntegrityInvokeError(c, info, "InvokeModel", err)
+		info.EndClaudeResponseIntegrityAttempt()
+		return apiErr, nil
+	}
+
+	contentType := "application/json"
+	if awsResp.ContentType != nil && *awsResp.ContentType != "" {
+		contentType = *awsResp.ContentType
+		c.Writer.Header().Set("Content-Type", contentType)
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{contentType}},
+		Body:       io.NopCloser(bytes.NewReader(awsResp.Body)),
+	}
+	usage, apiErr := claude.ClaudeIntegrityHandler(c, resp, info)
+	return apiErr, usage
+}
+
+type awsClaudeIntegrityResponseStream interface {
+	Events() <-chan bedrockruntimeTypes.ResponseStream
+	Err() error
+}
+
+func awsClaudeIntegrityStreamBody(stream awsClaudeIntegrityResponseStream, done <-chan struct{}) io.ReadCloser {
+	reader, writer := io.Pipe()
+	go func() {
+		for event := range stream.Events() {
+			select {
+			case <-done:
+				_ = writer.Close()
+				return
+			default:
+			}
+			switch value := event.(type) {
+			case *bedrockruntimeTypes.ResponseStreamMemberChunk:
+				frame := make([]byte, 0, len(value.Value.Bytes)+8)
+				frame = append(frame, "data: "...)
+				frame = append(frame, value.Value.Bytes...)
+				frame = append(frame, '\n', '\n')
+				if _, err := writer.Write(frame); err != nil {
+					return
+				}
+			case *bedrockruntimeTypes.UnknownUnionMember:
+				_ = writer.CloseWithError(fmt.Errorf("unknown AWS response stream tag %q", value.Tag))
+				return
+			default:
+				_ = writer.CloseWithError(errors.New("nil or unknown AWS response stream type"))
+				return
+			}
+		}
+		if err := stream.Err(); err != nil {
+			_ = writer.CloseWithError(err)
+			return
+		}
+		_ = writer.Close()
+	}()
+	return reader
+}
+
 func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
+	if info.ClaudeResponseIntegrityEnabled && info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
+		return awsClaudeIntegrityStreamHandler(c, info, a)
+	}
 	ctx, cancel := newAwsInvokeContext()
 	defer cancel()
 
@@ -422,6 +521,26 @@ func awsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (
 
 	claude.HandleStreamFinalResponse(c, info, claudeInfo)
 	return nil, claudeInfo.Usage
+}
+
+func awsClaudeIntegrityStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, a *Adaptor) (*types.NewAPIError, *dto.Usage) {
+	ctx, cancel := newAwsClaudeIntegrityInvokeContext(c, info)
+	defer cancel()
+	awsResp, err := a.AwsClient.InvokeModelWithResponseStream(ctx, a.AwsReq.(*bedrockruntime.InvokeModelWithResponseStreamInput))
+	if err != nil {
+		apiErr := awsClaudeIntegrityInvokeError(c, info, "InvokeModelWithResponseStream", err)
+		info.EndClaudeResponseIntegrityAttempt()
+		return apiErr, nil
+	}
+	stream := awsResp.GetStream()
+	defer stream.Close()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       awsClaudeIntegrityStreamBody(stream, info.ClaudeResponseIntegrityAttemptDone()),
+	}
+	usage, apiErr := claude.ClaudeIntegrityStreamHandler(c, resp, info)
+	return apiErr, usage
 }
 
 // Nova模型处理函数

@@ -73,6 +73,8 @@ const DEFAULT_OPTIONS = {
   'claude.metadata_user_id_validation_mode': 'log',
   'claude.assistant_prefill_validation_mode': 'log',
   'claude.request_size_limit_bytes': '33554432',
+  'claude.response_integrity_fallback_enabled': false,
+  'claude.response_integrity_first_block_timeout_seconds': '30',
   'global.chat_completions_to_responses_policy': '{}',
 };
 
@@ -274,6 +276,12 @@ export default function CompatibilityPage() {
         label: 'OpenAI 工具调用转 Claude 兼容',
         extra:
           '开启后会修复 OpenAI 历史消息中的 tool_calls/tool_call_id 到 Claude tool_use/tool_result 的协议结构，兼容 Codex Desktop 等客户端的历史工具调用格式。',
+      },
+      {
+        key: 'claude.response_integrity_fallback_enabled',
+        label: 'Claude 响应完整性保护',
+        extra:
+          '开启后校验 content block 序列，并在首内容块前异常时交给现有渠道 fallback。默认关闭。',
       },
     ],
     [],
@@ -510,6 +518,32 @@ export default function CompatibilityPage() {
                     />
                   </div>
                   <Row gutter={[16, 12]} className='mt-2'>
+                    <Col xs={24} md={12} lg={8}>
+                      <Form.InputNumber
+                        label={t('首内容块超时')}
+                        field={
+                          'claude.response_integrity_first_block_timeout_seconds'
+                        }
+                        min={1}
+                        max={300}
+                        step={1}
+                        disabled={
+                          !inputs[
+                            'claude.response_integrity_fallback_enabled'
+                          ]
+                        }
+                        extraText={t(
+                          '从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。',
+                        )}
+                        onChange={(value) =>
+                          setInputs((current) => ({
+                            ...current,
+                            'claude.response_integrity_first_block_timeout_seconds':
+                              String(value),
+                          }))
+                        }
+                      />
+                    </Col>
                     <Col xs={24} md={12} lg={8}>
                       <Form.InputNumber
                         label={t('Claude 请求体限制')}

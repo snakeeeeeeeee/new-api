@@ -113,11 +113,20 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
+	if info.ClaudeResponseIntegrityEnabled {
+		info.MarkFinalRequestRelayFormat(types.RelayFormatClaude)
+	}
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
 	info.FinalRequestRelayFormat = types.RelayFormatClaude
+	if info.ClaudeResponseIntegrityEnabled {
+		if info.IsStream {
+			return ClaudeIntegrityStreamHandler(c, resp, info)
+		}
+		return ClaudeIntegrityHandler(c, resp, info)
+	}
 	if info.IsStream {
 		return ClaudeStreamHandler(c, resp, info)
 	} else {
