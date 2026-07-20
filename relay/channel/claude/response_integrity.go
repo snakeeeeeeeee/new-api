@@ -194,6 +194,17 @@ func newClaudeIntegrityError(reason string, err error) *types.NewAPIError {
 	}, http.StatusBadGateway)
 }
 
+func newClaudeIntegrityResponseError(reason string, err error, responseBody []byte) *types.NewAPIError {
+	apiErr := newClaudeIntegrityError(reason, err)
+	if len(responseBody) > 0 {
+		apiErr.Diagnostic = &types.RelayErrorDiagnostic{
+			UpstreamResponseBody: responseBody,
+			UpstreamBodySize:     int64(len(responseBody)),
+		}
+	}
+	return apiErr
+}
+
 func newClaudeClientDisconnectedError(err error) *types.NewAPIError {
 	if err == nil {
 		err = errors.New("client disconnected")
@@ -368,6 +379,13 @@ func markClaudeIntegrityStreamIncomplete(c *gin.Context, info *relaycommon.Relay
 	common.SetContextKey(c, constant.ContextKeyClaudeStreamIncompleteReason, reason)
 	logger.LogError(c, "claude_stream_incomplete: "+reason)
 	if upstreamFailure {
+		service.CaptureStreamErrorSnapshot(c, reason, map[string]any{
+			"reason":             reason,
+			"upstream_failure":   true,
+			"received_events":    info.ReceivedResponseCount,
+			"sent_events":        info.SendResponseCount,
+			"response_committed": true,
+		})
 		service.RecordAggregateRouteRPMFailure(c, info.OriginModelName)
 		routeGroup := common.GetContextKeyString(c, constant.ContextKeyRouteGroup)
 		service.RecordAggregateRouteSmartFailure(c, info.OriginModelName, routeGroup, http.StatusBadGateway)
@@ -538,21 +556,26 @@ func ClaudeIntegrityHandler(c *gin.Context, resp *http.Response, info *relaycomm
 		if c.Request.Context().Err() != nil {
 			return nil, newClaudeClientDisconnectedError(c.Request.Context().Err())
 		}
-		return nil, newClaudeIntegrityError("read_error", err)
+		return nil, newClaudeIntegrityResponseError("read_error", err, responseBody)
 	}
 	var response dto.ClaudeResponse
 	if err = common.Unmarshal(responseBody, &response); err != nil {
-		return nil, newClaudeIntegrityError("malformed_json", err)
+		return nil, newClaudeIntegrityResponseError("malformed_json", err, responseBody)
 	}
 	if claudeError := response.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
-		return nil, types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+		apiErr := types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+		apiErr.Diagnostic = &types.RelayErrorDiagnostic{
+			UpstreamResponseBody: responseBody,
+			UpstreamBodySize:     int64(len(responseBody)),
+		}
+		return nil, apiErr
 	}
 	if len(response.Content) == 0 && !claudeIntegrityAllowsEmpty(info) {
-		return nil, newClaudeIntegrityError("empty_content", errors.New("Claude response content is empty"))
+		return nil, newClaudeIntegrityResponseError("empty_content", errors.New("Claude response content is empty"), responseBody)
 	}
 	for _, block := range response.Content {
 		if strings.TrimSpace(block.Type) == "" {
-			return nil, newClaudeIntegrityError("content_block_without_type", errors.New("Claude response content block type is empty"))
+			return nil, newClaudeIntegrityResponseError("content_block_without_type", errors.New("Claude response content block type is empty"), responseBody)
 		}
 	}
 	claudeInfo := &ClaudeResponseInfo{

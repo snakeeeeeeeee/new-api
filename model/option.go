@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -10,12 +11,14 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/error_snapshot_setting"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"gorm.io/gorm"
 )
 
 type Option struct {
@@ -270,6 +273,38 @@ func UpdateOption(key string, value string) error {
 	}
 	// Update OptionMap
 	return updateOptionMap(key, value)
+}
+
+func UpdateOptions(values map[string]string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		for _, key := range keys {
+			option := Option{Key: key}
+			if err := tx.FirstOrCreate(&option, Option{Key: key}).Error; err != nil {
+				return err
+			}
+			option.Value = values[key]
+			if err := tx.Save(&option).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := updateOptionMap(key, values[key]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func updateOptionMap(key string, value string) (err error) {
@@ -705,6 +740,14 @@ func handleConfigUpdate(key, value string) (bool, error) {
 		value = normalizeImageHandleOptionValue(configKey, value)
 		common.OptionMap[key] = value
 	}
+	if configName == "error_snapshot" {
+		normalized, normalizeErr := error_snapshot_setting.NormalizeOptionValue(configKey, value)
+		if normalizeErr != nil {
+			return true, normalizeErr
+		}
+		value = normalized
+		common.OptionMap[key] = value
+	}
 
 	// 获取配置对象
 	cfg := config.GlobalConfig.Get(configName)
@@ -736,6 +779,13 @@ func handleConfigUpdate(key, value string) (bool, error) {
 		if configKey == "response_integrity_first_block_timeout_seconds" {
 			common.OptionMap[key] = strconv.Itoa(snapshot.FirstBlockTimeoutSeconds)
 		}
+	}
+	if configName == "error_snapshot" {
+		snapshot := error_snapshot_setting.RefreshSnapshot()
+		common.OptionMap["error_snapshot.enabled"] = strconv.FormatBool(snapshot.Enabled)
+		common.OptionMap["error_snapshot.ttl_minutes"] = strconv.Itoa(snapshot.TTLMinutes)
+		common.OptionMap["error_snapshot.max_storage_mib"] = strconv.Itoa(snapshot.MaxStorageMiB)
+		common.OptionMap["error_snapshot.max_files"] = strconv.Itoa(snapshot.MaxFiles)
 	}
 
 	return true, nil // 已处理

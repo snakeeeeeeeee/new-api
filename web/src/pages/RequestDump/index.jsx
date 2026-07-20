@@ -32,6 +32,8 @@ import {
   Row,
   Select,
   Space,
+  TabPane,
+  Tabs,
   Tag,
   Tooltip,
   Typography,
@@ -46,6 +48,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { API, copy, showError, showSuccess } from '../../helpers';
+import ErrorSnapshots from './ErrorSnapshots';
 
 const { Text, Title } = Typography;
 
@@ -93,7 +96,7 @@ const formatTime = (timestamp) => {
 
 const eventToText = (event) => JSON.stringify(event, null, 2);
 
-const RequestDumpPage = () => {
+const TemporaryDumpPanel = () => {
   const { t } = useTranslation();
   const [formValues, setFormValues] = useState(defaultForm);
   const [status, setStatus] = useState(null);
@@ -106,7 +109,9 @@ const RequestDumpPage = () => {
   const lastEventIdRef = useRef(0);
   const enabledRef = useRef(false);
   const pausedRef = useRef(false);
-  const visibleRef = useRef(typeof document === 'undefined' || document.visibilityState === 'visible');
+  const visibleRef = useRef(
+    typeof document === 'undefined' || document.visibilityState === 'visible',
+  );
   const enabled = status?.enabled === true;
 
   const loadStatus = async () => {
@@ -139,7 +144,8 @@ const RequestDumpPage = () => {
       if (nextEvents.length === 0) {
         return;
       }
-      lastEventIdRef.current = nextEvents[nextEvents.length - 1].id || lastEventIdRef.current;
+      lastEventIdRef.current =
+        nextEvents[nextEvents.length - 1].id || lastEventIdRef.current;
       setEvents((current) => {
         const merged = [...current, ...nextEvents];
         return merged.slice(Math.max(0, merged.length - MAX_LOCAL_EVENTS));
@@ -169,7 +175,8 @@ const RequestDumpPage = () => {
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    return () =>
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
   useEffect(() => {
@@ -190,7 +197,9 @@ const RequestDumpPage = () => {
   const filteredEvents = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     if (!keyword) return events;
-    return events.filter((event) => eventToText(event).toLowerCase().includes(keyword));
+    return events.filter((event) =>
+      eventToText(event).toLowerCase().includes(keyword),
+    );
   }, [events, search]);
 
   const startDump = async () => {
@@ -219,8 +228,10 @@ const RequestDumpPage = () => {
       print_upstream_body: formValues.print_upstream_body === true,
       max_body_bytes: Math.max(1, Number(formValues.max_body_kb) || 256) * 1024,
       trace_responses_stream: formValues.trace_responses_stream === true,
-      trace_responses_stream_key_events_only: formValues.trace_responses_stream_key_events_only === true,
-      max_stream_events_per_request: Number(formValues.max_stream_events_per_request) || 200,
+      trace_responses_stream_key_events_only:
+        formValues.trace_responses_stream_key_events_only === true,
+      max_stream_events_per_request:
+        Number(formValues.max_stream_events_per_request) || 200,
     };
 
     setLoading(true);
@@ -291,11 +302,11 @@ const RequestDumpPage = () => {
   };
 
   return (
-    <div className='px-2 py-4 md:px-6'>
+    <div>
       <div className='mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between'>
         <div>
-          <Title heading={3} className='!mb-1'>
-            {t('Dump 分析')}
+          <Title heading={4} className='!mb-1'>
+            {t('临时 Dump')}
           </Title>
           <Text type='tertiary'>
             {t('临时打印指定用户请求到服务日志和当前页面 Console')}
@@ -341,7 +352,9 @@ const RequestDumpPage = () => {
                 placeholder={t('可选，多个用逗号分隔，命中后才打印')}
                 value={formValues.keywords}
                 onChange={(value) => updateField('keywords', value)}
-                extraText={t('类似 grep：匹配 URL、Header、Body、错误信息、模型、聚合分组等已采集字段')}
+                extraText={t(
+                  '类似 grep：匹配 URL、Header、Body、错误信息、模型、聚合分组等已采集字段',
+                )}
               />
               <Form.Input
                 field='models'
@@ -367,8 +380,12 @@ const RequestDumpPage = () => {
 
               <div className='mb-3 rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] p-3'>
                 <div className='mb-3 flex items-center justify-between'>
-                  <Text size='small' strong>{t('高级过滤')}</Text>
-                  <Text size='small' type='tertiary'>{t('可选')}</Text>
+                  <Text size='small' strong>
+                    {t('高级过滤')}
+                  </Text>
+                  <Text size='small' type='tertiary'>
+                    {t('可选')}
+                  </Text>
                 </div>
                 <Form.Input
                   field='token_ids'
@@ -376,7 +393,9 @@ const RequestDumpPage = () => {
                   placeholder={t('一般不用填；多个用逗号分隔')}
                   value={formValues.token_ids}
                   onChange={(value) => updateField('token_ids', value)}
-                  extraText={t('Token ID 是系统内部 API Token 记录 ID，仅用于精确限定某些令牌')}
+                  extraText={t(
+                    'Token ID 是系统内部 API Token 记录 ID，仅用于精确限定某些令牌',
+                  )}
                 />
                 <Form.Input
                   field='token_names'
@@ -384,9 +403,16 @@ const RequestDumpPage = () => {
                   placeholder={t('例如 test-codex，多个用逗号分隔')}
                   value={formValues.token_names}
                   onChange={(value) => updateField('token_names', value)}
-                  extraText={t('客户创建令牌时填写的名称，不是 API Key，也不是数据库 ID；建议配合用户 ID 使用')}
+                  extraText={t(
+                    '客户创建令牌时填写的名称，不是 API Key，也不是数据库 ID；建议配合用户 ID 使用',
+                  )}
                 />
-                <Checkbox checked={formValues.case_sensitive} onChange={(event) => updateField('case_sensitive', event.target.checked)}>
+                <Checkbox
+                  checked={formValues.case_sensitive}
+                  onChange={(event) =>
+                    updateField('case_sensitive', event.target.checked)
+                  }
+                >
                   {t('关键词区分大小写')}
                 </Checkbox>
               </div>
@@ -429,7 +455,9 @@ const RequestDumpPage = () => {
                     type='button'
                     buttonSize='small'
                     value={formValues.print_on}
-                    onChange={(event) => updateField('print_on', event.target.value)}
+                    onChange={(event) =>
+                      updateField('print_on', event.target.value)
+                    }
                   >
                     <Radio value='all'>{t('全部')}</Radio>
                     <Radio value='error_only'>{t('仅错误')}</Radio>
@@ -452,30 +480,70 @@ const RequestDumpPage = () => {
               </div>
 
               <div className='mt-4 grid grid-cols-2 gap-2'>
-                <Checkbox checked={formValues.print_url} onChange={(event) => updateField('print_url', event.target.checked)}>
+                <Checkbox
+                  checked={formValues.print_url}
+                  onChange={(event) =>
+                    updateField('print_url', event.target.checked)
+                  }
+                >
                   {t('URL')}
                 </Checkbox>
-                <Checkbox checked={formValues.print_headers} onChange={(event) => updateField('print_headers', event.target.checked)}>
+                <Checkbox
+                  checked={formValues.print_headers}
+                  onChange={(event) =>
+                    updateField('print_headers', event.target.checked)
+                  }
+                >
                   {t('Header')}
                 </Checkbox>
-                <Checkbox checked={formValues.print_body} onChange={(event) => updateField('print_body', event.target.checked)}>
+                <Checkbox
+                  checked={formValues.print_body}
+                  onChange={(event) =>
+                    updateField('print_body', event.target.checked)
+                  }
+                >
                   {t('原始 Body')}
                 </Checkbox>
-                <Checkbox checked={formValues.print_upstream_body} onChange={(event) => updateField('print_upstream_body', event.target.checked)}>
+                <Checkbox
+                  checked={formValues.print_upstream_body}
+                  onChange={(event) =>
+                    updateField('print_upstream_body', event.target.checked)
+                  }
+                >
                   {t('上游 Body')}
                 </Checkbox>
               </div>
 
               <div className='mt-4 rounded-md border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] p-3'>
                 <div className='mb-3 flex items-center justify-between'>
-                  <Text size='small' strong>{t('流式诊断')}</Text>
-                  <Text size='small' type='tertiary'>{t('Responses')}</Text>
+                  <Text size='small' strong>
+                    {t('流式诊断')}
+                  </Text>
+                  <Text size='small' type='tertiary'>
+                    {t('Responses')}
+                  </Text>
                 </div>
                 <div className='flex flex-col gap-2'>
-                  <Checkbox checked={formValues.trace_responses_stream} onChange={(event) => updateField('trace_responses_stream', event.target.checked)}>
+                  <Checkbox
+                    checked={formValues.trace_responses_stream}
+                    onChange={(event) =>
+                      updateField(
+                        'trace_responses_stream',
+                        event.target.checked,
+                      )
+                    }
+                  >
                     {t('Responses 流事件追踪')}
                   </Checkbox>
-                  <Checkbox checked={formValues.trace_responses_stream_key_events_only} onChange={(event) => updateField('trace_responses_stream_key_events_only', event.target.checked)}>
+                  <Checkbox
+                    checked={formValues.trace_responses_stream_key_events_only}
+                    onChange={(event) =>
+                      updateField(
+                        'trace_responses_stream_key_events_only',
+                        event.target.checked,
+                      )
+                    }
+                  >
                     {t('只记录关键事件')}
                   </Checkbox>
                   <div>
@@ -485,11 +553,15 @@ const RequestDumpPage = () => {
                       min={1}
                       max={1000}
                       value={formValues.max_stream_events_per_request}
-                      onChange={(value) => updateField('max_stream_events_per_request', value)}
+                      onChange={(value) =>
+                        updateField('max_stream_events_per_request', value)
+                      }
                     />
                   </div>
                   <Text size='small' type='tertiary'>
-                    {t('用于排查 Codex / Responses 工具调用卡住。记录事件类型、工具名、调用 ID、参数截断摘要、请求 tools 摘要和结束原因，不记录完整响应正文。建议路径填写 /v1/responses。')}
+                    {t(
+                      '用于排查 Codex / Responses 工具调用卡住。记录事件类型、工具名、调用 ID、参数截断摘要、请求 tools 摘要和结束原因，不记录完整响应正文。建议路径填写 /v1/responses。',
+                    )}
                   </Text>
                 </div>
               </div>
@@ -498,7 +570,12 @@ const RequestDumpPage = () => {
                 <Button type='primary' loading={loading} onClick={startDump}>
                   {t('启动')}
                 </Button>
-                <Button type='danger' theme='outline' loading={loading} onClick={stopDump}>
+                <Button
+                  type='danger'
+                  theme='outline'
+                  loading={loading}
+                  onClick={stopDump}
+                >
                   {t('停止')}
                 </Button>
               </Space>
@@ -509,11 +586,15 @@ const RequestDumpPage = () => {
             <div className='grid grid-cols-2 gap-3 text-sm'>
               <div>
                 <Text type='tertiary'>{t('已命中')}</Text>
-                <div className='mt-1 font-semibold'>{status?.matched_count ?? 0} / {status?.max_count ?? '-'}</div>
+                <div className='mt-1 font-semibold'>
+                  {status?.matched_count ?? 0} / {status?.max_count ?? '-'}
+                </div>
               </div>
               <div>
                 <Text type='tertiary'>{t('剩余秒数')}</Text>
-                <div className='mt-1 font-semibold'>{status?.remaining_seconds ?? 0}</div>
+                <div className='mt-1 font-semibold'>
+                  {status?.remaining_seconds ?? 0}
+                </div>
               </div>
               <div>
                 <Text type='tertiary'>{t('启动时间')}</Text>
@@ -532,7 +613,9 @@ const RequestDumpPage = () => {
             <div className='mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between'>
               <Space>
                 <Text strong>{t('Console')}</Text>
-                <Tag>{filteredEvents.length} / {events.length}</Tag>
+                <Tag>
+                  {filteredEvents.length} / {events.length}
+                </Tag>
                 {paused ? <Tag color='amber'>{t('已暂停')}</Tag> : null}
               </Space>
               <Space wrap>
@@ -549,13 +632,21 @@ const RequestDumpPage = () => {
                     onClick={() => setPaused((value) => !value)}
                   />
                 </Tooltip>
-                <Checkbox checked={following} onChange={(event) => setFollowing(event.target.checked)}>
+                <Checkbox
+                  checked={following}
+                  onChange={(event) => setFollowing(event.target.checked)}
+                >
                   {t('跟随')}
                 </Checkbox>
                 <Button icon={<Clipboard size={16} />} onClick={copyAll}>
                   {t('复制全部')}
                 </Button>
-                <Button icon={<Trash2 size={16} />} type='danger' theme='outline' onClick={clearConsole}>
+                <Button
+                  icon={<Trash2 size={16} />}
+                  type='danger'
+                  theme='outline'
+                  onClick={clearConsole}
+                >
                   {t('清空')}
                 </Button>
               </Space>
@@ -571,7 +662,10 @@ const RequestDumpPage = () => {
                 </div>
               ) : (
                 filteredEvents.map((event) => (
-                  <div key={event.id} className='mb-3 border-b border-[#374151] pb-3 last:border-b-0'>
+                  <div
+                    key={event.id}
+                    className='mb-3 border-b border-[#374151] pb-3 last:border-b-0'
+                  >
                     <div className='mb-1 flex flex-wrap items-center gap-2 text-[#93c5fd]'>
                       <span>#{event.id}</span>
                       <span>{event.stage}</span>
@@ -581,10 +675,16 @@ const RequestDumpPage = () => {
                         size='small'
                         theme='borderless'
                         icon={<Clipboard size={13} />}
-                        onClick={() => copy(eventToText(event)).then((ok) => ok && showSuccess(t('已复制')))}
+                        onClick={() =>
+                          copy(eventToText(event)).then(
+                            (ok) => ok && showSuccess(t('已复制')),
+                          )
+                        }
                       />
                     </div>
-                    <pre className='m-0 whitespace-pre-wrap break-words'>{eventToText(event)}</pre>
+                    <pre className='m-0 whitespace-pre-wrap break-words'>
+                      {eventToText(event)}
+                    </pre>
                   </div>
                 ))
               )}
@@ -592,6 +692,34 @@ const RequestDumpPage = () => {
           </Card>
         </Col>
       </Row>
+    </div>
+  );
+};
+
+const RequestDumpPage = () => {
+  const { t } = useTranslation();
+  const [activeTab, setActiveTab] = useState('temporary');
+
+  return (
+    <div className='px-2 py-4 md:px-6'>
+      <div className='mb-4'>
+        <Title heading={3} className='!mb-1'>
+          {t('Dump 管理')}
+        </Title>
+        <Text type='tertiary'>
+          {t('按需临时诊断请求，或自动保留有界的错误快照')}
+        </Text>
+      </div>
+      <Tabs
+        type='button'
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        className='mb-4'
+      >
+        <TabPane tab={t('临时 Dump')} itemKey='temporary' />
+        <TabPane tab={t('错误快照')} itemKey='error-snapshots' />
+      </Tabs>
+      {activeTab === 'temporary' ? <TemporaryDumpPanel /> : <ErrorSnapshots />}
     </div>
   );
 };

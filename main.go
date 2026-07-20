@@ -287,6 +287,8 @@ func InitResources() error {
 		return err
 	}
 
+	service.StartErrorSnapshotManager()
+
 	// Initialize Redis
 	err = common.InitRedisClient()
 	if err != nil {

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import gzip
 import json
 import secrets
 import subprocess
@@ -22,6 +23,12 @@ OPTION_DEFAULTS = {
     "CompletionRatio": "{}",
     "claude.response_integrity_fallback_enabled": "false",
     "claude.response_integrity_first_block_timeout_seconds": "30",
+    "error_snapshot.enabled": "false",
+    "error_snapshot.ttl_minutes": "60",
+    "error_snapshot.max_storage_mib": "256",
+    "error_snapshot.max_files": "1000",
+    "error_snapshot.priority_user_ids": "",
+    "error_snapshot.priority_channel_ids": "",
 }
 
 
@@ -149,6 +156,7 @@ class FakeClaudeUpstream(BaseHTTPRequestHandler):
             "legacy-empty-off",
             "legacy-empty-off-again",
             "fallback-empty",
+            "priority-fallback",
             "retry-excluded",
             "all-fail",
         }
@@ -308,6 +316,7 @@ class ClaudeIntegrityDockerTest:
         self.aggregate_group_id = None
         self.aggregate_payload = None
         self.option_snapshot = {}
+        self.initial_error_snapshot_count = 0
         self.fake_server = None
         self.tests = []
         self.result = "running"
@@ -398,6 +407,26 @@ class ClaudeIntegrityDockerTest:
             f"{method} {path} failed: {payload or text}",
         )
         return payload.get("data")
+
+    def request_raw(self, method, path, body=None, headers=None):
+        request_headers = {}
+        if headers:
+            request_headers.update(headers)
+        data = None
+        if body is not None:
+            request_headers["Content-Type"] = "application/json"
+            data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.base_url}{path}",
+            data=data,
+            method=method,
+            headers=request_headers,
+        )
+        try:
+            with NO_PROXY_OPENER.open(req, timeout=self.args.request_timeout) as response:
+                return response.status, response.read(), dict(response.headers.items())
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read(), dict(exc.headers.items())
 
     def gateway_request(self, scenario, stream=False):
         return self.request(
@@ -524,6 +553,9 @@ class ClaudeIntegrityDockerTest:
                 "exists": db_value != "",
                 "value": current.get(key, db_value or default),
             }
+        self.initial_error_snapshot_count = int(
+            self.psql_scalar("select count(*) from error_snapshots") or 0
+        )
         self.passed("runtime configuration snapshot")
 
     def update_option(self, key, value):
@@ -690,6 +722,60 @@ class ClaudeIntegrityDockerTest:
         key = f"aggregate_group:state:{self.aggregate_group}:{self.model}"
         self.redis("del", key)
 
+    def update_error_snapshot_settings(
+        self, enabled, priority_user_ids=None, priority_channel_ids=None
+    ):
+        return self.request_api(
+            "PUT",
+            "/api/request_dump/error_snapshots/settings",
+            {
+                "enabled": bool(enabled),
+                "ttl_minutes": 60,
+                "max_storage_mib": 256,
+                "max_files": 1000,
+                "priority_user_ids": priority_user_ids or [],
+                "priority_channel_ids": priority_channel_ids or [],
+            },
+        )
+
+    def error_snapshot_rows(self):
+        if self.user_id is None:
+            return []
+        return self.psql_json(
+            f"""
+            select coalesce(json_agg(row_to_json(t) order by created_at, id), '[]'::json)
+            from (
+              select id, request_id, channel_id, retry_index, status_code,
+                     error_code, capture_level, final_outcome, relative_path,
+                     compressed_size, payload_truncated, created_at
+              from error_snapshots
+              where user_id={self.user_id}
+              order by created_at, id
+            ) t
+            """,
+            [],
+        )
+
+    def wait_for_new_error_snapshots(self, before_ids, expected):
+        deadline = time.time() + self.args.log_wait_timeout
+        latest = []
+        while time.time() < deadline:
+            rows = self.error_snapshot_rows()
+            latest = [row for row in rows if row["id"] not in before_ids]
+            if len(latest) >= expected and all(
+                row.get("final_outcome") != "pending" for row in latest
+            ):
+                return latest
+            time.sleep(0.1)
+        raise AssertionError(
+            f"expected {expected} finalized error snapshots, got {latest}"
+        )
+
+    def snapshot_detail(self, snapshot_id):
+        return self.request_api(
+            "GET", f"/api/request_dump/error_snapshots/{snapshot_id}"
+        )
+
     def max_consume_log_id(self):
         value = self.psql_scalar(
             f"select coalesce(max(id), 0) from logs where user_id={self.user_id} and type=2"
@@ -732,8 +818,17 @@ class ClaudeIntegrityDockerTest:
         logs = self.consume_logs_after(before, 1)
         require(len(logs) == 1, f"legacy request should settle once: {logs}")
 
+    def verify_error_snapshot_disabled(self):
+        before_ids = {row["id"] for row in self.error_snapshot_rows()}
+        self.verify_legacy_switch_off("legacy-empty-off")
+        time.sleep(0.3)
+        after_ids = {row["id"] for row in self.error_snapshot_rows()}
+        require(after_ids == before_ids, "disabled error snapshot capture wrote a row")
+        self.passed("error snapshot switch off does not capture failures")
+
     def verify_non_stream_fallback(self):
         scenario = "fallback-empty"
+        before_ids = {row["id"] for row in self.error_snapshot_rows()}
         self.reset_route_state()
         before = self.max_consume_log_id()
         status, payload, text = self.gateway_request(scenario)
@@ -749,10 +844,54 @@ class ClaudeIntegrityDockerTest:
             int(logs[0]["channel_id"]) == self.good_channel_id,
             f"failed attempt polluted final billing log: {logs}",
         )
+        snapshots = self.wait_for_new_error_snapshots(before_ids, 1)
+        require(len(snapshots) == 1, f"unexpected fallback snapshots: {snapshots}")
+        snapshot = snapshots[0]
+        require(snapshot["channel_id"] == self.bad_channel_id, str(snapshot))
+        require(snapshot["capture_level"] == "summary", str(snapshot))
+        require(snapshot["final_outcome"] == "fallback_succeeded", str(snapshot))
+        require(snapshot["error_code"] == "claude_content_block_missing", str(snapshot))
+        detail = self.snapshot_detail(snapshot["id"])
+        envelope = detail.get("payload") or {}
+        require("client_request" not in envelope, str(envelope))
+        require("upstream_request" not in envelope, str(envelope))
+        require("upstream_response" in envelope, str(envelope))
+        request_id = urllib.parse.quote(snapshot["request_id"], safe="")
+        page = self.request_api(
+            "GET", f"/api/request_dump/error_snapshots?request_id={request_id}"
+        )
+        require(page.get("total") == 1, f"request-id list mismatch: {page}")
         self.passed(
             "non-stream empty content falls back across child groups",
             "RetryTimes=3 still called bad once and billed good once",
         )
+
+    def verify_priority_error_snapshot(self):
+        self.update_error_snapshot_settings(
+            True,
+            priority_user_ids=[self.user_id],
+            priority_channel_ids=[self.bad_channel_id],
+        )
+        scenario = "priority-fallback"
+        before_ids = {row["id"] for row in self.error_snapshot_rows()}
+        self.reset_route_state()
+        status, payload, text = self.gateway_request(scenario)
+        require(status == 200, f"priority fallback failed: {payload or text}")
+        self.require_routes(scenario, ["bad", "good"])
+        snapshots = self.wait_for_new_error_snapshots(before_ids, 1)
+        require(len(snapshots) == 1, str(snapshots))
+        snapshot = snapshots[0]
+        require(snapshot["capture_level"] == "priority", str(snapshot))
+        detail = self.snapshot_detail(snapshot["id"])
+        envelope = detail.get("payload") or {}
+        client = envelope.get("client_request") or {}
+        upstream = envelope.get("upstream_request") or {}
+        require("scenario:priority-fallback" in client.get("body", ""), str(client))
+        require("scenario:priority-fallback" in upstream.get("body", ""), str(upstream))
+        serialized = json.dumps(envelope, ensure_ascii=False)
+        require(self.token_key not in serialized, "client API key leaked into snapshot")
+        self.update_error_snapshot_settings(True)
+        self.passed("priority snapshot captures sanitized client and upstream requests")
 
     def verify_retry_status_exclusion(self):
         self.update_retry_status_codes("500-501,503-599")
@@ -834,6 +973,7 @@ class ClaudeIntegrityDockerTest:
 
     def verify_incomplete_stream(self):
         scenario = "stream-incomplete"
+        before_ids = {row["id"] for row in self.error_snapshot_rows()}
         self.reset_route_state()
         before = self.max_consume_log_id()
         status, _, text = self.gateway_request(scenario, stream=True)
@@ -845,10 +985,17 @@ class ClaudeIntegrityDockerTest:
         require(int(logs[0]["channel_id"]) == self.bad_channel_id, str(logs))
         admin_info = (logs[0].get("other") or {}).get("admin_info") or {}
         require(admin_info.get("claude_stream_incomplete") is True, str(logs))
+        snapshots = self.wait_for_new_error_snapshots(before_ids, 1)
+        require(len(snapshots) == 1, str(snapshots))
+        snapshot = snapshots[0]
+        require(snapshot["final_outcome"] == "stream_incomplete", str(snapshot))
+        detail = self.snapshot_detail(snapshot["id"])
+        require((detail.get("payload") or {}).get("stream"), str(detail))
         self.passed("post-commit truncation emits SSE error without fallback and is marked")
 
     def verify_all_failed(self):
         scenario = "all-fail"
+        before_ids = {row["id"] for row in self.error_snapshot_rows()}
         self.reset_route_state()
         before = self.max_consume_log_id()
         status, payload, text = self.gateway_request(scenario)
@@ -863,7 +1010,76 @@ class ClaudeIntegrityDockerTest:
         time.sleep(0.5)
         logs = self.consume_logs_after(before, 0, wait=False)
         require(not logs, f"all-fail request was billed: {logs}")
+        snapshots = self.wait_for_new_error_snapshots(before_ids, 2)
+        require(len(snapshots) == 2, str(snapshots))
+        require(len({row["request_id"] for row in snapshots}) == 1, str(snapshots))
+        require(
+            all(row["final_outcome"] == "final_failure" for row in snapshots),
+            str(snapshots),
+        )
+        require(
+            {row["channel_id"] for row in snapshots}
+            == {self.bad_channel_id, self.good_channel_id},
+            str(snapshots),
+        )
         self.passed("all child groups failing returns structured unbilled 502")
+
+    def verify_error_snapshot_management(self):
+        status = self.request_api("GET", "/api/request_dump/error_snapshots/status")
+        require(status.get("settings", {}).get("enabled") is True, str(status))
+        require(
+            str(status.get("storage_path", "")).endswith("/error-snapshots"),
+            str(status),
+        )
+        page = self.request_api(
+            "GET",
+            f"/api/request_dump/error_snapshots?user_id={self.user_id}&p=1&page_size=100",
+        )
+        items = page.get("items") or []
+        require(page.get("total") == len(items) and items, str(page))
+
+        selected = items[0]
+        detail = self.snapshot_detail(selected["id"])
+        require(detail.get("snapshot", {}).get("id") == selected["id"], str(detail))
+        download_status, compressed, headers = self.request_raw(
+            "GET",
+            f"/api/request_dump/error_snapshots/{selected['id']}/download",
+            headers=self.admin_headers(),
+        )
+        require(download_status == 200, f"snapshot download HTTP {download_status}")
+        require(compressed.startswith(b"\x1f\x8b"), "download is not gzip")
+        decoded = gzip.decompress(compressed)
+        require(len(decoded) <= 128 * 1024, f"snapshot exceeds bound: {len(decoded)}")
+        require(
+            "application/gzip" in headers.get("Content-Type", ""),
+            str(headers),
+        )
+
+        self.request_api(
+            "DELETE", f"/api/request_dump/error_snapshots/{selected['id']}"
+        )
+        exists = self.psql_scalar(
+            "select count(*) from error_snapshots where id=" + sql_str(selected["id"])
+        )
+        require(exists == "0", f"deleted snapshot still indexed: {exists}")
+        self.request_api("POST", "/api/request_dump/error_snapshots/cleanup")
+
+        if self.initial_error_snapshot_count == 0:
+            self.request_api("DELETE", "/api/request_dump/error_snapshots")
+            remaining = self.psql_scalar("select count(*) from error_snapshots")
+            require(remaining == "0", f"clear all left {remaining} snapshots")
+            self.passed(
+                "error snapshot detail, gzip download, delete, cleanup, and clear APIs"
+            )
+        else:
+            for snapshot in self.error_snapshot_rows():
+                self.request_api(
+                    "DELETE", f"/api/request_dump/error_snapshots/{snapshot['id']}"
+                )
+            self.passed(
+                "error snapshot detail, gzip download, delete, and cleanup APIs",
+                "clear-all skipped because snapshots existed before this test",
+            )
 
     def run(self):
         self.ensure_ready()
@@ -874,11 +1090,13 @@ class ClaudeIntegrityDockerTest:
         self.update_option("RetryTimes", 3)
         self.update_option("claude.response_integrity_first_block_timeout_seconds", 30)
         self.update_option("claude.response_integrity_fallback_enabled", False)
+        self.update_error_snapshot_settings(False)
 
-        self.verify_legacy_switch_off("legacy-empty-off")
+        self.verify_error_snapshot_disabled()
         self.passed("switch off preserves legacy empty-content response")
 
         self.update_option("claude.response_integrity_fallback_enabled", True)
+        self.update_error_snapshot_settings(True)
         for timeout_value in (30, 45, 60):
             self.update_option(
                 "claude.response_integrity_first_block_timeout_seconds",
@@ -893,6 +1111,7 @@ class ClaudeIntegrityDockerTest:
         self.update_option("claude.response_integrity_first_block_timeout_seconds", 1)
 
         self.verify_non_stream_fallback()
+        self.verify_priority_error_snapshot()
         self.verify_retry_status_exclusion()
         self.verify_stream_fallback("stream-eof")
         self.passed("EOF before first content block falls back")
@@ -902,6 +1121,7 @@ class ClaudeIntegrityDockerTest:
         self.verify_normal_realtime_stream()
         self.verify_incomplete_stream()
         self.verify_all_failed()
+        self.verify_error_snapshot_management()
         self.result = "passed"
 
     def restore_options(self):
@@ -950,6 +1170,14 @@ class ClaudeIntegrityDockerTest:
         if self.good_channel_id is not None:
             resolved_channels.append(self.good_channel_id)
         channel_ids = sorted({int(value) for value in resolved_channels})
+
+        for snapshot in self.error_snapshot_rows():
+            try:
+                self.request_api(
+                    "DELETE", f"/api/request_dump/error_snapshots/{snapshot['id']}"
+                )
+            except Exception as exc:
+                self.log(f"snapshot {snapshot['id']} cleanup failed: {exc}")
 
         if self.aggregate_group_id is not None:
             try:

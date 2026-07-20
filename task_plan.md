@@ -809,3 +809,53 @@ Complete
 | The generic planning completion script reported two pending phases | 1 | Confirm they belong to an older image-pricing task at lines 273-283; all three phases of the active Resource Center documentation task are complete. |
 
 ---
+# Task Plan: Automatic Error Snapshots and Dump Management (2026-07-20)
+
+## Goal
+Add bounded, non-blocking automatic relay error snapshots with runtime settings and a dedicated management experience inside the existing Dump page, while preserving relay, fallback, billing, and temporary Dump behavior.
+
+## Current Phase
+Complete
+
+### Phase 1: Backend storage, capture, and APIs
+- [x] Add hot settings, bounded gzip storage, cleanup, reconciliation, and GORM index.
+- [x] Capture failed relay attempts, including fallback-hidden and Claude stream integrity failures.
+- [x] Add permission-protected status, settings, list, detail, download, delete, cleanup, and clear APIs.
+- **Status:** complete
+
+### Phase 2: Dump management UI and translations
+- [x] Preserve the existing temporary Dump experience under a top-level tab.
+- [x] Add error snapshot status, settings, filters, paginated attempts, detail SideSheet, download, cleanup, and deletion controls.
+- [x] Add all new strings to zh-CN, zh-TW, en, fr, ru, ja, and vi locales.
+- **Status:** complete
+
+### Phase 3: Boundary and regression coverage
+- [x] Add capacity/file-count cleanup and queue-full nonblocking tests.
+- [x] Review fallback outcome ordering and post-commit stream capture coverage.
+- [x] Run full backend and frontend verification.
+- **Status:** complete
+
+### Phase 4: Docker and responsive acceptance
+- [x] Rebuild Docker dev and validate runtime setting changes and failure capture at port 3001.
+- [x] Inspect desktop and mobile layouts and restore test configuration.
+- **Status:** complete
+
+## Locked Decisions
+- Automatic capture is disabled by default and adds only a fast settings check while disabled.
+- Summary snapshots never persist prompts; priority user/channel matches add sanitized client and upstream request bodies.
+- Snapshot payloads are capped at 128 KiB before gzip and writes use a fixed 32-item non-blocking queue.
+- Local disk storage and a bounded database index are intentionally single-instance for this change.
+- The existing temporary Dump implementation and API behavior remain unchanged.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Existing planning files contain completed historical tasks | 1 | Prepend a separate current task section and preserve all prior records. |
+| Full i18n lint reports a large repository baseline | 1 | Remove the three new-component hardcoded labels, retain the unrelated baseline, and verify all page keys exist in all seven locales. |
+| Full frontend ESLint scans generated `dist` and existing source files without required headers | 1 | Record the 68-item repository baseline; targeted ESLint for both changed Request Dump components passes. |
+| Scoped Go vet reaches an existing self-assignment in `model/invite_code.go` | 1 | Record the unrelated existing finding; focused and full Go tests pass. |
+| Mobile browser exact-name selector did not match the filter toggle because the icon name is included in its accessible label | 1 | Use a partial accessible-name match for the same visible button; no application failure occurred. |
+| `go test ./service` failed after adding multipart metadata and secret-assignment tests, while verbose unrelated package logs hid the failing assertion | 1 | JSON-filtered output identified an assertion against escaped envelope bytes; decode the envelope before checking the inner body. The full service package then passed. |
+| Generic planning completion check reports two pending phases | 1 | Confirmed both are from the older image-pricing task at lines 274-283; all four phases of the active Error Snapshot task are complete, so preserve the historical task state. |
+
+---

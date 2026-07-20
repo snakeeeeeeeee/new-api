@@ -532,3 +532,25 @@
 - Final Docker health is `healthy`; unrelated user diagnostic files and older pending planning work remain untouched.
 
 ---
+# Automatic Error Snapshots Progress (2026-07-20)
+
+- Resumed from a completed backend implementation and passing focused backend test suite.
+- Re-read the brainstorming, file-planning, and UI/UX skill instructions; the user-provided implementation plan is treated as the validated design.
+- Inspected the existing Request Dump page and selected a tab shell plus isolated error-snapshot component.
+- Started Phase 2 frontend contract discovery.
+- Confirmed all error-snapshot API response shapes and existing Semi Design patterns for SideSheet, pagination, date filters, confirmation, and copy actions.
+- Implemented the top-level button tabs and complete Error Snapshot management UI.
+- Added real translations for the new feature in zh-CN, zh-TW, en, fr, ru, ja, and vi, plus eight previously missing temporary-Dump strings.
+- Targeted Prettier and ESLint pass; `bun run build` passes with only existing dependency/chunk-size warnings.
+- Full `i18n:lint` exposes the repository baseline; all new component findings were removed and page-key coverage is zero-missing in every locale.
+- Added oldest-first file-count/storage cleanup, queue-full nonblocking, and fallback-outcome ordering tests; all focused packages pass.
+- `go test ./...` passes.
+- Claude integrity benchmarks pass and show no regression: integrity 33.9 us/op versus legacy 50.9 us/op; first-block p95 33.5 us versus 54.3 us on this machine.
+- Full frontend ESLint remains blocked by 68 existing generated/source header findings; targeted changed-file ESLint passes. Scoped vet only reports the existing `model/invite_code.go` self-assignment.
+- Resumed Phase 4 in the running Docker app at an exact 375x812 CSS viewport. The Error Snapshot tab loads and exposes all expected controls. A misleading fractional-scale full-page screenshot was checked against DOM geometry: the page is actually 375 px wide with a 349 px content area and no document overflow. Continue acceptance with scrolled viewport captures and element-bound assertions.
+- Scrolled mobile QA confirms the complete settings form and destructive/cleanup actions fit the viewport. Expanded the CardTable mobile action area and verified all five filters, search/reset controls, and the empty-list state are present and usable.
+- Completed a final implementation audit and added multipart/binary metadata plus broader credential-redaction coverage. Added focused tests for metadata-only capture and embedded secret assignments; the service package passes after correcting a test that initially asserted against the escaped outer JSON instead of the decoded envelope.
+- Final verification passes: `go test ./...`, targeted Request Dump ESLint, production build, and `git diff --check`. Repository-wide i18n lint remains at its known 421-item baseline and reports no finding in the new Error Snapshot component.
+- Rebuilt/recreated Docker dev with the final source and reran the complete Claude/error-snapshot fault-injection suite; all 15 checks passed. The container is healthy at `http://localhost:3001`, default snapshot settings and an empty index were restored, and the temporary browser-test user remains role 1 with zero menu permissions.
+
+---

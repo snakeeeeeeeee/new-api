@@ -101,6 +101,15 @@ type NewAPIError struct {
 	errorCode      ErrorCode
 	StatusCode     int
 	Metadata       json.RawMessage
+	Diagnostic     *RelayErrorDiagnostic
+}
+
+// RelayErrorDiagnostic carries bounded-lifetime upstream data for local
+// diagnostics. It is never serialized to clients or regular error logs.
+type RelayErrorDiagnostic struct {
+	UpstreamResponseBody []byte
+	UpstreamBodySize     int64
+	StreamSummary        map[string]any
 }
 
 // Unwrap enables errors.Is / errors.As to work with NewAPIError by exposing the underlying error.

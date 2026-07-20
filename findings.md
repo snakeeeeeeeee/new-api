@@ -641,3 +641,24 @@
 - Asset API QA confirms all five operations have request/response pairs: list, single get, body query, batch URL lookup, and CSV export. The page has no document-level overflow.
 
 ---
+# Automatic Error Snapshot Findings (2026-07-20)
+
+- Backend settings, GORM index, bounded gzip storage, cleanup/reconciliation, admin APIs, and relay capture hooks are implemented in the current worktree.
+- Focused backend tests pass across settings, model, service, controller, router, Claude, and relay packages.
+- The existing Request Dump page is one large temporary-console component; a thin tab shell plus a separate `ErrorSnapshots` component keeps the old polling path isolated.
+- The UI should remain a compact Semi Design operations surface. Existing theme tokens and typography take precedence over generic external dashboard palette recommendations.
+- The remaining high-risk areas are destructive-action confirmation, responsive filters/table details, bounded cleanup tests, and end-to-end runtime verification.
+- Status returns `settings`, `storage_path`, storage file/byte/oldest metrics, dropped/write-error counters, and cleanup/error diagnostics.
+- List filtering accepts timestamps, exact request ID, user ID/username, channel ID, and an error keyword; responses use the repository's standard page envelope.
+- Detail returns `{ snapshot, payload }`, while download returns raw gzip bytes and therefore needs an explicit blob response in the browser.
+- Summary capture intentionally omits client/upstream request bodies; the detail view must distinguish this policy from an API read failure.
+- The production frontend build passes after adding the new tab, status/settings surface, paginated responsive table, and four-section detail SideSheet.
+- All translation keys used by the complete Request Dump page now exist in all seven locale files. Repository-wide i18n lint still reports its unrelated hardcoded-string baseline.
+- Full `go test ./...` passes. The Claude integrity benchmark is faster and allocates less than the legacy switch-off path on the current Apple M2 Max run; first-block p95 is also lower.
+- Generic stream handlers that return errors already pass through the shared attempt-level capture hook. Claude integrity additionally emits a bounded post-commit state-machine summary.
+- The first full-page screenshot at a fractional browser scale misleadingly appeared to collapse the mobile content into a narrow column. Direct DOM geometry and a viewport screenshot disproved that assumption: at 375x812 CSS pixels the page/main/content widths are about 375/365/349 px, headings and banners use the full content width, and the document has no horizontal overflow. Full-page stitched screenshots at this scale are not reliable acceptance evidence, so the remaining mobile checks use viewport screenshots plus DOM bounds while scrolling.
+- Mobile settings controls, priority selectors, read-only storage path, save/cleanup/clear actions, and the expandable filter surface all render inside the 375 px viewport. Expanding the action area exposes date, Request ID, user, channel, error keyword, search/reset, and the empty state without losing any control.
+- Final security/boundary review found and fixed two plan-level gaps: unsupported multipart/binary priority requests now retain MIME, original size, SHA-256, and skip reason without persisting the body; structured and embedded-text masking now covers channel/API key, token, credential, password, and secret naming variants while preserving ordinary fields such as `max_tokens`.
+- Final Docker fault injection passed all 15 scenarios against the rebuilt image, including disabled-path compatibility, hot 30/45/60-second settings, priority redaction, aggregate fallback, retry exclusion, pre-first-block EOF/timeout, in-flight snapshots, real-time valid streaming, post-commit interruption, final 502, and management APIs. Cleanup restored default error-snapshot settings, removed all snapshots, and left the app healthy at port 3001.
+
+---

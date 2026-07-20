@@ -319,6 +319,7 @@ func DumpRawRequestIfNeeded(c *gin.Context) {
 }
 
 func DumpUpstreamRequestIfNeeded(c *gin.Context, body []byte) {
+	CaptureErrorSnapshotUpstreamRequestIfNeeded(c, body)
 	safeDump(func() {
 		if c == nil || len(body) == 0 {
 			return

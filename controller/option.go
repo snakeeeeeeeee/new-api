@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
+	"github.com/QuantumNous/new-api/setting/error_snapshot_setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -486,6 +487,15 @@ func UpdateOption(c *gin.Context) {
 				"success": false,
 				"message": err.Error(),
 			})
+			return
+		}
+		option.Value = normalized
+	}
+	if strings.HasPrefix(option.Key, "error_snapshot.") {
+		configKey := strings.TrimPrefix(option.Key, "error_snapshot.")
+		normalized, normalizeErr := error_snapshot_setting.NormalizeOptionValue(configKey, option.Value.(string))
+		if normalizeErr != nil {
+			common.ApiErrorMsg(c, normalizeErr.Error())
 			return
 		}
 		option.Value = normalized

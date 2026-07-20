@@ -87,6 +87,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 
 	defer func() {
+		service.CaptureFinalRelayErrorSnapshotIfNeeded(c, newAPIError)
+		service.FinalizeErrorSnapshotRequest(c, newAPIError)
 		if newAPIError != nil {
 			service.DumpRelayErrorIfNeeded(c, newAPIError)
 			if common.GetContextKeyString(c, constant.ContextKeyAggregateGroup) != "" {
@@ -224,6 +226,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		relayInfo.RetryIndex = retryParam.GetRetry()
+		service.BeginErrorSnapshotAttempt(c, relayInfo.RetryIndex)
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
@@ -233,6 +236,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		service.FillViolationLogRouteContextIfNeeded(c, relayInfo)
 		addUsedChannel(c, channel.Id)
+		service.MarkErrorSnapshotChannelSelected(c)
+		c.Set("request_dump_retry_index", relayInfo.RetryIndex)
 		service.DumpRawRequestIfNeeded(c)
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
@@ -670,6 +675,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	}
 
 	isInternalRetry := len(internalRetry) > 0 && internalRetry[0]
+	service.CaptureRelayErrorSnapshot(c, err, isInternalRetry)
 	recordRelayErrorLog(c, err, isInternalRetry)
 }
 
