@@ -260,14 +260,28 @@ func TestNormalizeClaudeRequestCompatSamplingCleanup(t *testing.T) {
 	require.Nil(t, enabledReq.TopP)
 	require.Nil(t, enabledReq.TopK)
 
-	fableWithoutThinking := baseClaudeCompatRequest("claude-fable-5")
-	fableWithoutThinking.Temperature = commonpkg.GetPointer(0.2)
-	fableWithoutThinking.TopP = commonpkg.GetPointer(0.5)
-	fableWithoutThinking.TopK = commonpkg.GetPointer(42)
-	require.Nil(t, NormalizeClaudeRequestCompat(fableWithoutThinking, nil))
-	require.NotNil(t, fableWithoutThinking.Temperature)
-	require.NotNil(t, fableWithoutThinking.TopP)
-	require.NotNil(t, fableWithoutThinking.TopK)
+	for _, model := range []string{"claude-fable-5", "claude-sonnet-5"} {
+		t.Run(model+"_implicit_adaptive", func(t *testing.T) {
+			req := baseClaudeCompatRequest(model)
+			req.Temperature = commonpkg.GetPointer(0.2)
+			req.TopP = commonpkg.GetPointer(0.5)
+			req.TopK = commonpkg.GetPointer(42)
+
+			require.Nil(t, NormalizeClaudeRequestCompat(req, nil))
+			require.Nil(t, req.Temperature)
+			require.Nil(t, req.TopP)
+			require.Nil(t, req.TopK)
+		})
+	}
+
+	sonnet46WithoutThinking := baseClaudeCompatRequest("claude-sonnet-4-6")
+	sonnet46WithoutThinking.Temperature = commonpkg.GetPointer(0.2)
+	sonnet46WithoutThinking.TopP = commonpkg.GetPointer(0.5)
+	sonnet46WithoutThinking.TopK = commonpkg.GetPointer(42)
+	require.Nil(t, NormalizeClaudeRequestCompat(sonnet46WithoutThinking, nil))
+	require.NotNil(t, sonnet46WithoutThinking.Temperature)
+	require.NotNil(t, sonnet46WithoutThinking.TopP)
+	require.NotNil(t, sonnet46WithoutThinking.TopK)
 }
 
 func TestNormalizeClaudeRequestCompatSamplingCleanupDisabled(t *testing.T) {
@@ -306,6 +320,54 @@ func TestNormalizeClaudeRequestCompatJSONCleansActiveThinkingSampling(t *testing
 			require.Contains(t, payload, "thinking")
 		})
 	}
+}
+
+func TestNormalizeClaudeSamplingCompatJSONCleansImplicitAdaptiveModelsOnly(t *testing.T) {
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.DropDefaultSamplingForOpusEnabled = true
+	})
+	for _, model := range []string{"claude-fable-5", "claude-sonnet-5"} {
+		t.Run(model, func(t *testing.T) {
+			body := []byte(`{"model":"` + model + `","messages":[{"role":"developer","content":"keep"}],"temperature":0.2,"top_p":0.5,"top_k":42,"unknown_beta":{"keep":true},"unknown_large":9007199254740993}`)
+
+			out, apiErr := NormalizeClaudeSamplingCompatJSON(body, nil)
+			require.Nil(t, apiErr)
+			var payload map[string]any
+			require.NoError(t, commonpkg.Unmarshal(out, &payload))
+			require.NotContains(t, payload, "temperature")
+			require.NotContains(t, payload, "top_p")
+			require.NotContains(t, payload, "top_k")
+			require.Equal(t, map[string]any{"keep": true}, payload["unknown_beta"])
+			require.Contains(t, string(out), `"unknown_large":9007199254740993`)
+			messages := payload["messages"].([]any)
+			require.Equal(t, "developer", messages[0].(map[string]any)["role"])
+		})
+	}
+
+	body := []byte(`{"model":"claude-sonnet-4-6","messages":[],"temperature":0.2,"top_p":0.5,"top_k":42}`)
+	out, apiErr := NormalizeClaudeSamplingCompatJSON(body, nil)
+	require.Nil(t, apiErr)
+	require.Equal(t, body, out)
+}
+
+func TestNormalizeClaudeSamplingCompatJSONUsesRelayModelAndHonorsSwitch(t *testing.T) {
+	body := []byte(`{"messages":[],"temperature":0,"top_p":0,"top_k":0,"unknown_beta":true}`)
+	info := &RelayInfo{ChannelMeta: &ChannelMeta{UpstreamModelName: "claude-fable-5"}}
+
+	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
+		settings.DropDefaultSamplingForOpusEnabled = true
+	})
+	out, apiErr := NormalizeClaudeSamplingCompatJSON(body, info)
+	require.Nil(t, apiErr)
+	require.NotContains(t, string(out), `"temperature"`)
+	require.NotContains(t, string(out), `"top_p"`)
+	require.NotContains(t, string(out), `"top_k"`)
+	require.Contains(t, string(out), `"unknown_beta":true`)
+
+	model_setting.GetClaudeSettings().DropDefaultSamplingForOpusEnabled = false
+	out, apiErr = NormalizeClaudeSamplingCompatJSON(body, info)
+	require.Nil(t, apiErr)
+	require.Equal(t, body, out)
 }
 
 func TestNormalizeClaudeRequestCompatEffortValidation(t *testing.T) {

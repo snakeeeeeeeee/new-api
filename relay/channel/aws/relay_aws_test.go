@@ -232,6 +232,62 @@ func TestBuildAwsRequestBodyPassThroughFixesToolSchemaBeforeCompatReject(t *test
 	require.Equal(t, map[string]any{}, schema["properties"])
 }
 
+func TestBuildAwsRequestBodyPassThroughAppliesSamplingCleanupIndependently(t *testing.T) {
+	oldPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	oldClaudeSettings := *model_setting.GetClaudeSettings()
+	model_setting.GetGlobalSettings().PassThroughRequestEnabled = false
+	model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled = false
+	model_setting.GetClaudeSettings().DropDefaultSamplingForOpusEnabled = true
+	model_setting.GetClaudeSettings().OpenAIToolCallCompatEnabled = false
+	t.Cleanup(func() {
+		model_setting.GetGlobalSettings().PassThroughRequestEnabled = oldPassThrough
+		*model_setting.GetClaudeSettings() = oldClaudeSettings
+	})
+
+	rawBody := `{"model":"claude-fable-5","stream":false,"messages":[{"role":"developer","content":"keep"}],"temperature":0.2,"top_p":0.5,"top_k":42,"unknown_beta":true}`
+	ctx := awsTestContext(rawBody)
+	info := awsRelayInfoWithToolSchemaCompat(false, true)
+	info.UpstreamModelName = "claude-fable-5"
+	body, err := buildAwsRequestBody(ctx, info, &AwsClaudeRequest{})
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.NotContains(t, payload, "temperature")
+	require.NotContains(t, payload, "top_p")
+	require.NotContains(t, payload, "top_k")
+	require.Equal(t, true, payload["unknown_beta"])
+	messages := payload["messages"].([]any)
+	require.Equal(t, "developer", messages[0].(map[string]any)["role"])
+}
+
+func TestBuildAwsRequestBodyPassThroughFullCompatRemovesSamplingFields(t *testing.T) {
+	oldPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	oldClaudeSettings := *model_setting.GetClaudeSettings()
+	model_setting.GetGlobalSettings().PassThroughRequestEnabled = false
+	model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled = true
+	model_setting.GetClaudeSettings().DropDefaultSamplingForOpusEnabled = true
+	model_setting.GetClaudeSettings().OpenAIToolCallCompatEnabled = false
+	t.Cleanup(func() {
+		model_setting.GetGlobalSettings().PassThroughRequestEnabled = oldPassThrough
+		*model_setting.GetClaudeSettings() = oldClaudeSettings
+	})
+
+	rawBody := `{"model":"claude-fable-5","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"keep"}],"temperature":0.2,"top_p":0.5,"top_k":42,"unknown_beta":true}`
+	ctx := awsTestContext(rawBody)
+	info := awsRelayInfoWithToolSchemaCompat(false, true)
+	info.UpstreamModelName = "claude-fable-5"
+	body, err := buildAwsRequestBody(ctx, info, &AwsClaudeRequest{})
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.NotContains(t, payload, "temperature")
+	require.NotContains(t, payload, "top_p")
+	require.NotContains(t, payload, "top_k")
+	require.Equal(t, true, payload["unknown_beta"])
+}
+
 func TestBuildAwsRequestBodyPassThroughConvertsOpenAIToolCallsToClaude(t *testing.T) {
 	oldPassThrough := model_setting.GetGlobalSettings().PassThroughRequestEnabled
 	oldClaudeSettings := *model_setting.GetClaudeSettings()

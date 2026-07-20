@@ -4842,6 +4842,6 @@
     "首内容块超时": "Тайм-аут первого блока контента",
     "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "Отсчитывается от начала запроса к поставщику. Диапазон: 1–300 секунд, по умолчанию 30. message_start и ping не сбрасывают таймер.",
     "Claude Thinking 采样参数清理": "Очистка параметров сэмплирования Claude Thinking",
-    "保留 Opus 4.7/4.8 原有清理；其他模型在 enabled/adaptive thinking 时删除 temperature、top_p、top_k，避免上游 400。": "Сохраняет существующую очистку для Opus 4.7/4.8; для других моделей удаляет temperature, top_p и top_k при активном thinking enabled/adaptive, чтобы избежать ошибок 400 от поставщика."
+    "清理 Opus 4.7/4.8、Fable 5、Sonnet 5 以及已启用 enabled/adaptive thinking 请求的 temperature、top_p、top_k；原生透传时也独立生效，避免上游 400。": "Удаляет temperature, top_p и top_k для Opus 4.7/4.8, Fable 5, Sonnet 5 и запросов с включенным thinking enabled/adaptive. Также независимо применяется к нативной сквозной передаче, чтобы избежать ошибок 400 от поставщика."
   }
 }

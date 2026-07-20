@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -222,6 +223,44 @@ func NormalizeClaudeRequestCompatJSON(jsonData []byte, info *RelayInfo) ([]byte,
 		return nil, types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
 	}
 	return data, nil
+}
+
+func NormalizeClaudeSamplingCompatJSON(jsonData []byte, info *RelayInfo) ([]byte, *types.NewAPIError) {
+	if len(jsonData) == 0 || !model_setting.GetClaudeSettings().DropDefaultSamplingForOpusEnabled {
+		return jsonData, nil
+	}
+	var payload map[string]json.RawMessage
+	if err := common.Unmarshal(jsonData, &payload); err != nil {
+		return nil, types.NewError(err, types.ErrorCodeBadRequestBody, types.ErrOptionWithSkipRetry())
+	}
+	request := &dto.ClaudeRequest{}
+	if rawModel, ok := payload["model"]; ok {
+		_ = common.Unmarshal(rawModel, &request.Model)
+	}
+	if rawThinking, ok := payload["thinking"]; ok {
+		var thinking dto.Thinking
+		if err := common.Unmarshal(rawThinking, &thinking); err == nil {
+			request.Thinking = &thinking
+		}
+	}
+	if !shouldNormalizeClaudeSampling(request, effectiveClaudeModelName(request, info)) {
+		return jsonData, nil
+	}
+	changed := false
+	for _, field := range []string{"temperature", "top_p", "top_k"} {
+		if _, ok := payload[field]; ok {
+			delete(payload, field)
+			changed = true
+		}
+	}
+	if !changed {
+		return jsonData, nil
+	}
+	normalizedData, err := common.Marshal(payload)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
+	}
+	return normalizedData, nil
 }
 
 func parseClaudeRawPayload(jsonData []byte) (map[string]any, *types.NewAPIError) {
@@ -1252,12 +1291,16 @@ func sniffImageMagicBytes(data []byte) string {
 }
 
 func normalizeClaudeSampling(request *dto.ClaudeRequest, modelName string) {
-	if request == nil || (!isClaudeOpus47OrLater(modelName) && !hasActiveClaudeThinking(request)) {
+	if !shouldNormalizeClaudeSampling(request, modelName) {
 		return
 	}
 	request.Temperature = nil
 	request.TopP = nil
 	request.TopK = nil
+}
+
+func shouldNormalizeClaudeSampling(request *dto.ClaudeRequest, modelName string) bool {
+	return request != nil && (isClaudeOpus47OrLater(modelName) || requiresClaudeAdaptiveThinking(modelName) || hasActiveClaudeThinking(request))
 }
 
 func hasActiveClaudeThinking(request *dto.ClaudeRequest) bool {

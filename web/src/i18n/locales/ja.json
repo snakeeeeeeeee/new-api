@@ -4764,6 +4764,6 @@
     "首内容块超时": "最初のコンテンツブロックのタイムアウト",
     "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "上流リクエスト開始時から計測します。範囲は 1～300 秒、既定値は 30 秒です。message_start と ping ではタイマーはリセットされません。",
     "Claude Thinking 采样参数清理": "Claude Thinking のサンプリングパラメータ整理",
-    "保留 Opus 4.7/4.8 原有清理；其他模型在 enabled/adaptive thinking 时删除 temperature、top_p、top_k，避免上游 400。": "Opus 4.7/4.8 の既存の整理を維持し、その他のモデルでは enabled/adaptive thinking の有効時に temperature、top_p、top_k を削除して上流の 400 エラーを防ぎます。"
+    "清理 Opus 4.7/4.8、Fable 5、Sonnet 5 以及已启用 enabled/adaptive thinking 请求的 temperature、top_p、top_k；原生透传时也独立生效，避免上游 400。": "Opus 4.7/4.8、Fable 5、Sonnet 5、および enabled/adaptive thinking が有効なリクエストから temperature、top_p、top_k を削除します。ネイティブのパススルーにも独立して適用され、上流の 400 エラーを防ぎます。"
   }
 }

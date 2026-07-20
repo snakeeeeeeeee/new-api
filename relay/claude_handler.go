@@ -136,27 +136,37 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) || model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled {
+		claudeSettings := model_setting.GetClaudeSettings()
+		applyToolSchemaCompat := relaycommon.ShouldApplyClaudeToolSchemaCompat(info)
+		applyFullCompat := claudeSettings.ApplyCompatInPassthroughEnabled
+		applySamplingCompat := claudeSettings.DropDefaultSamplingForOpusEnabled
+		if applyToolSchemaCompat || applyFullCompat || applySamplingCompat {
 			body, err := storage.Bytes()
 			if err != nil {
 				return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
 			jsonData := body
-			if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
+			if applyToolSchemaCompat {
 				normalizedData, err := relaycommon.NormalizeClaudeRequestToolSchemasInJSON(jsonData, info)
 				if err != nil {
 					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 				}
 				jsonData = normalizedData
 			}
-			if model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled {
+			if applyFullCompat {
 				normalizedData, compatErr := relaycommon.NormalizeClaudeRequestCompatJSON(jsonData, info)
 				if compatErr != nil {
 					return compatErr
 				}
 				jsonData = normalizedData
+			} else if applySamplingCompat {
+				normalizedData, compatErr := relaycommon.NormalizeClaudeSamplingCompatJSON(jsonData, info)
+				if compatErr != nil {
+					return compatErr
+				}
+				jsonData = normalizedData
 			}
-			if relaycommon.ShouldApplyClaudeToolSchemaCompat(info) {
+			if applyToolSchemaCompat {
 				relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)
 			}
 			relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)

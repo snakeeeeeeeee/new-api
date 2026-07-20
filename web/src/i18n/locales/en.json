@@ -4834,6 +4834,6 @@
     "首内容块超时": "First content block timeout",
     "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "Measured from the upstream request start. Range: 1-300 seconds; default: 30. message_start and ping do not reset the timer.",
     "Claude Thinking 采样参数清理": "Claude thinking sampling cleanup",
-    "保留 Opus 4.7/4.8 原有清理；其他模型在 enabled/adaptive thinking 时删除 temperature、top_p、top_k，避免上游 400。": "Keeps the existing Opus 4.7/4.8 cleanup; for other models, removes temperature, top_p, and top_k when enabled/adaptive thinking is active to avoid upstream 400 errors."
+    "清理 Opus 4.7/4.8、Fable 5、Sonnet 5 以及已启用 enabled/adaptive thinking 请求的 temperature、top_p、top_k；原生透传时也独立生效，避免上游 400。": "Removes temperature, top_p, and top_k for Opus 4.7/4.8, Fable 5, Sonnet 5, and requests with enabled/adaptive thinking. It also applies independently to native passthrough requests to avoid upstream 400 errors."
   }
 }

@@ -243,7 +243,7 @@ export default function CompatibilityPage() {
         key: 'claude.drop_default_sampling_for_opus_enabled',
         label: 'Claude Thinking 采样参数清理',
         extra:
-          '保留 Opus 4.7/4.8 原有清理；其他模型在 enabled/adaptive thinking 时删除 temperature、top_p、top_k，避免上游 400。',
+          '清理 Opus 4.7/4.8、Fable 5、Sonnet 5 以及已启用 enabled/adaptive thinking 请求的 temperature、top_p、top_k；原生透传时也独立生效，避免上游 400。',
       },
       {
         key: 'claude.validate_output_effort_enabled',

@@ -243,6 +243,17 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 			relaycommon.CaptureClaudeCacheTTLBillingCompat(info, finalBody)
 			return finalBody, nil
 		}
+		if !model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled && model_setting.GetClaudeSettings().DropDefaultSamplingForOpusEnabled {
+			normalizedBody, compatErr := relaycommon.NormalizeClaudeSamplingCompatJSON(body, info)
+			if compatErr != nil {
+				return nil, compatErr
+			}
+			var normalizedData map[string]interface{}
+			if err := common.Unmarshal(normalizedBody, &normalizedData); err != nil {
+				return nil, errors.Wrap(err, "pass-through unmarshal sampling normalized request body fail")
+			}
+			data = normalizedData
+		}
 		delete(data, "model")
 		delete(data, "stream")
 		ensureAwsClaudeAnthropicVersion(data, awsClaudeReq)
@@ -256,9 +267,11 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 				return nil, errors.Wrap(err, "pass-through normalize tool schema fail")
 			}
 			bodyWithoutModel = normalizedBody
-			if err := common.Unmarshal(bodyWithoutModel, &data); err != nil {
+			var normalizedData map[string]interface{}
+			if err := common.Unmarshal(bodyWithoutModel, &normalizedData); err != nil {
 				return nil, errors.Wrap(err, "pass-through unmarshal tool schema normalized request body fail")
 			}
+			data = normalizedData
 		}
 		if model_setting.GetClaudeSettings().ApplyCompatInPassthroughEnabled {
 			normalizedBody, compatErr := relaycommon.NormalizeClaudeRequestCompatJSON(bodyWithoutModel, info)
@@ -266,9 +279,11 @@ func buildAwsRequestBody(c *gin.Context, info *relaycommon.RelayInfo, awsClaudeR
 				return nil, compatErr
 			}
 			bodyWithoutModel = normalizedBody
-			if err := common.Unmarshal(bodyWithoutModel, &data); err != nil {
+			var normalizedData map[string]interface{}
+			if err := common.Unmarshal(bodyWithoutModel, &normalizedData); err != nil {
 				return nil, errors.Wrap(err, "pass-through unmarshal normalized request body fail")
 			}
+			data = normalizedData
 		}
 		relaycommon.CaptureClaudeToolSchemaCompatFinalSchemas(data["tools"], info)
 		finalBody, err := common.Marshal(data)

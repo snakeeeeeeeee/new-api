@@ -5320,6 +5320,6 @@
     "首内容块超时": "Thời gian chờ content block đầu tiên",
     "从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。": "Tính từ khi bắt đầu yêu cầu tới thượng nguồn. Phạm vi 1-300 giây, mặc định 30 giây; message_start và ping không đặt lại bộ đếm.",
     "Claude Thinking 采样参数清理": "Dọn dẹp tham số lấy mẫu Claude Thinking",
-    "保留 Opus 4.7/4.8 原有清理；其他模型在 enabled/adaptive thinking 时删除 temperature、top_p、top_k，避免上游 400。": "Giữ nguyên cơ chế dọn dẹp cho Opus 4.7/4.8; với các mô hình khác, xóa temperature, top_p và top_k khi thinking enabled/adaptive đang hoạt động để tránh lỗi 400 từ thượng nguồn."
+    "清理 Opus 4.7/4.8、Fable 5、Sonnet 5 以及已启用 enabled/adaptive thinking 请求的 temperature、top_p、top_k；原生透传时也独立生效，避免上游 400。": "Xóa temperature, top_p và top_k cho Opus 4.7/4.8, Fable 5, Sonnet 5 và các yêu cầu bật thinking enabled/adaptive. Quy tắc này cũng áp dụng độc lập cho yêu cầu chuyển tiếp nguyên bản để tránh lỗi 400 từ thượng nguồn."
   }
 }
