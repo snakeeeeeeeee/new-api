@@ -175,14 +175,14 @@ export default function ApiKeyTab() {
         </Title>
         <Text type='tertiary'>
           {t(
-            '一把资源 API Key 可用于异步生图、生视频、任务查询、预上传、资源访问和 Webhook 回调验证。',
+            '资源 API Key 用于任务查询、预上传和资源访问；异步生图提交使用普通 API Token。',
           )}
         </Text>
       </div>
 
       <Text type='tertiary' size='small'>
         {t(
-          '资源 API Key 以 ak_ 开头，与令牌管理中的普通 sk- Token 相互独立。一把资源 Key 即可调用资源中心 API，Webhook 也使用同一个 Key 验证回调。',
+          '资源 API Key 以 ak_ 开头，与令牌管理中的普通 sk- Token 相互独立。Webhook 使用配置页单独生成的 wk- Key。',
         )}
       </Text>
 

@@ -58,51 +58,49 @@ func setupOutboundWebhookTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func createWebhookResourceKey(t *testing.T, userID int, name string) *model.AssetKey {
-	t.Helper()
-	key, err := model.CreateAssetKey(userID, name, -1, "")
-	require.NoError(t, err)
-	return key
-}
-
 func putWebhookTestConfig(t *testing.T, targetURL string) *dto.AccountWebhookPublic {
 	t.Helper()
-	if _, exists, err := model.GetActiveUserAssetKey(501); err != nil {
-		require.NoError(t, err)
-	} else if !exists {
-		createWebhookResourceKey(t, 501, "resource-center")
-	}
 	config, err := PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
 		URL: targetURL, Enabled: common.GetPointer(true),
 	})
 	require.NoError(t, err)
-	require.True(t, config.ResourceKeyConfigured)
+	require.True(t, config.KeyConfigured)
+	require.True(t, strings.HasPrefix(config.Key, webhookKeyPrefix))
 	return config
 }
 
-func TestAccountWebhookConfigUsesResourceCenterKey(t *testing.T) {
+func TestAccountWebhookConfigGeneratesEncryptedWebhookKey(t *testing.T) {
 	setupOutboundWebhookTestDB(t)
 
 	empty, err := GetAccountWebhookConfig(501)
 	require.NoError(t, err)
 	assert.False(t, empty.Configured)
-	assert.False(t, empty.ResourceKeyConfigured)
+	assert.False(t, empty.KeyConfigured)
+	assert.Empty(t, empty.Key)
 
-	createWebhookResourceKey(t, 501, "resource-center")
 	config := putWebhookTestConfig(t, "http://127.0.0.1:18080/hook")
 	assert.True(t, config.Configured)
-	assert.True(t, config.ResourceKeyConfigured)
+	assert.True(t, config.KeyConfigured)
+	assert.True(t, strings.HasPrefix(config.Key, webhookKeyPrefix))
+	assert.Len(t, config.Key, len(webhookKeyPrefix)+webhookKeyRandomLength)
+	assert.True(t, validWebhookKey(config.Key))
+	assert.False(t, validWebhookKey(webhookKeyPrefix+"short"))
 	assert.Equal(t, model.WebhookEndpointEnabled, config.Status)
 
 	var stored model.WebhookEndpoint
 	require.NoError(t, model.DB.Where("user_id = ?", 501).First(&stored).Error)
 	require.NotNil(t, stored.ConfigOwnerID)
 	assert.Equal(t, 501, *stored.ConfigOwnerID)
-	assert.Empty(t, stored.AuthKeyEncrypted)
+	assert.NotEmpty(t, stored.AuthKeyEncrypted)
+	assert.NotContains(t, stored.AuthKeyEncrypted, config.Key)
+	decrypted, err := decryptWebhookKey(stored.AuthKeyEncrypted)
+	require.NoError(t, err)
+	assert.Equal(t, config.Key, decrypted)
 
 	config, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{URL: "http://127.0.0.1:18081/new"})
 	require.NoError(t, err)
 	assert.Equal(t, "http://127.0.0.1:18081/new", config.URL)
+	assert.Equal(t, decrypted, config.Key)
 
 	require.NoError(t, DisableAccountWebhookConfig(501))
 	disabled, err := GetAccountWebhookConfig(501)
@@ -122,50 +120,43 @@ func TestAccountWebhookConfigUsesResourceCenterKey(t *testing.T) {
 	other, err := GetAccountWebhookConfig(502)
 	require.NoError(t, err)
 	assert.False(t, other.Configured)
-	assert.False(t, other.ResourceKeyConfigured)
+	assert.False(t, other.KeyConfigured)
 	loaded, err := GetAccountWebhookConfig(501)
 	require.NoError(t, err)
-	assert.True(t, loaded.ResourceKeyConfigured)
+	assert.True(t, loaded.KeyConfigured)
+	assert.Equal(t, decrypted, loaded.Key)
 	var total int64
 	require.NoError(t, model.DB.Model(&model.WebhookEndpoint{}).Where("user_id = ?", 501).Count(&total).Error)
 	assert.EqualValues(t, 1, total)
 }
 
-func TestAccountWebhookRequiresEnabledResourceCenterKey(t *testing.T) {
+func TestAccountWebhookDoesNotRequireResourceCenterKey(t *testing.T) {
 	setupOutboundWebhookTestDB(t)
 	config, err := PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
 		URL: "http://127.0.0.1:18080", Enabled: common.GetPointer(false),
 	})
 	require.NoError(t, err)
 	assert.True(t, config.Configured)
-	assert.False(t, config.ResourceKeyConfigured)
+	assert.True(t, config.KeyConfigured)
+	assert.True(t, strings.HasPrefix(config.Key, webhookKeyPrefix))
 	assert.Equal(t, model.WebhookEndpointDisabled, config.Status)
 
-	_, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
-		URL: "http://127.0.0.1:18080", Enabled: common.GetPointer(true),
-	})
-	assert.ErrorContains(t, err, "Resource Center API Key")
-
-	resourceKey := createWebhookResourceKey(t, 501, "resource-center")
 	config, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
 		URL: "http://127.0.0.1:18080", Enabled: common.GetPointer(true),
 	})
 	require.NoError(t, err)
-	assert.True(t, config.ResourceKeyConfigured)
+	assert.True(t, config.KeyConfigured)
 	assert.Equal(t, model.WebhookEndpointEnabled, config.Status)
 
-	_, err = model.UpdateUserAssetKeyStatus(resourceKey.ID, 501, model.AssetKeyStatusDisabled)
+	_, exists, err := model.GetActiveUserAssetKey(501)
 	require.NoError(t, err)
-	config, err = GetAccountWebhookConfig(501)
-	require.NoError(t, err)
-	assert.False(t, config.ResourceKeyConfigured)
+	assert.False(t, exists)
 	_, err = CreateAccountWebhookTestDelivery(501)
-	assert.ErrorContains(t, err, "Resource Center API Key")
+	assert.NoError(t, err)
 }
 
 func TestAccountWebhookMigrationCollapsesLegacyEndpoints(t *testing.T) {
 	db := setupOutboundWebhookTestDB(t)
-	createWebhookResourceKey(t, 501, "resource-center")
 	now := time.Now().Unix()
 	legacy := []*model.WebhookEndpoint{
 		{EndpointID: "we_old_enabled", UserID: 501, Name: "old", URL: "http://127.0.0.1:18080", Status: model.WebhookEndpointEnabled, EventTypes: `["image.task.failed"]`, APIVersion: WebhookAPIVersion, SecretSalt: "salt-old", SecretVersion: 1, CreatedAt: now - 30, UpdatedAt: now - 30},
@@ -184,7 +175,10 @@ func TestAccountWebhookMigrationCollapsesLegacyEndpoints(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	assert.Equal(t, "we_new_enabled", selected.EndpointID)
-	assert.Empty(t, selected.AuthKeyEncrypted)
+	assert.NotEmpty(t, selected.AuthKeyEncrypted)
+	migratedKey, err := decryptWebhookKey(selected.AuthKeyEncrypted)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(migratedKey, webhookKeyPrefix))
 	assert.Empty(t, selected.SecretSalt)
 	assert.Zero(t, selected.SecretVersion)
 	assert.Equal(t, accountWebhookEventTypesJSON(), selected.EventTypes)
@@ -195,6 +189,39 @@ func TestAccountWebhookMigrationCollapsesLegacyEndpoints(t *testing.T) {
 	assert.EqualValues(t, 1, enabledCount)
 	assert.EqualValues(t, 1, deliveryCount)
 	require.NoError(t, MigrateAccountWebhookConfigs())
+	var migratedAgain model.WebhookEndpoint
+	require.NoError(t, db.First(&migratedAgain, selected.ID).Error)
+	assert.Equal(t, selected.AuthKeyEncrypted, migratedAgain.AuthKeyEncrypted)
+}
+
+func TestAccountWebhookRequiresRegenerationForUnreadableStoredKey(t *testing.T) {
+	db := setupOutboundWebhookTestDB(t)
+	now := time.Now().Unix()
+	ownerID := 501
+	endpoint := &model.WebhookEndpoint{
+		EndpointID: "we_unreadable_key", UserID: 501, ConfigOwnerID: &ownerID,
+		Name: "Task events", URL: "http://127.0.0.1:18080/hook", Status: model.WebhookEndpointEnabled,
+		EventTypes: accountWebhookEventTypesJSON(), APIVersion: WebhookAPIVersion,
+		AuthKeyEncrypted: "v1:not-valid-ciphertext", CreatedAt: now, UpdatedAt: now,
+	}
+	require.NoError(t, db.Create(endpoint).Error)
+
+	config, err := GetAccountWebhookConfig(501)
+	require.NoError(t, err)
+	assert.False(t, config.KeyConfigured)
+	assert.Empty(t, config.Key)
+	assert.Equal(t, model.WebhookEndpointDisabled, config.Status)
+
+	_, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{URL: endpoint.URL})
+	assert.ErrorIs(t, err, ErrWebhookStoredKeyUnavailable)
+
+	config, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
+		URL: endpoint.URL, RegenerateKey: true, Enabled: common.GetPointer(true),
+	})
+	require.NoError(t, err)
+	assert.True(t, config.KeyConfigured)
+	assert.True(t, strings.HasPrefix(config.Key, webhookKeyPrefix))
+	assert.Equal(t, model.WebhookEndpointEnabled, config.Status)
 }
 
 func TestAccountWebhookRequiresURLOnlyWhenEnabled(t *testing.T) {
@@ -213,7 +240,6 @@ func TestAccountWebhookRequiresURLOnlyWhenEnabled(t *testing.T) {
 	})
 	assert.ErrorContains(t, err, "URL is required")
 
-	createWebhookResourceKey(t, 501, "resource-center")
 	config, err = PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
 		URL: "http://127.0.0.1:18080/hook", Enabled: common.GetPointer(true),
 	})
@@ -302,10 +328,8 @@ func TestWebhookDeliveryRetriesNon2xxUntilSuccess(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer receiver.Close()
-	putWebhookTestConfig(t, receiver.URL)
-	resourceKey, exists, err := model.GetActiveUserAssetKey(501)
-	require.NoError(t, err)
-	require.True(t, exists)
+	config := putWebhookTestConfig(t, receiver.URL)
+	webhookKey := config.Key
 	result, err := CreateAccountWebhookTestDelivery(501)
 	require.NoError(t, err)
 	processDueWebhookDeliveries(context.Background())
@@ -331,7 +355,7 @@ func TestWebhookDeliveryRetriesNon2xxUntilSuccess(t *testing.T) {
 	mu.Lock()
 	require.Len(t, bodies, 3)
 	for index := range bodies {
-		assert.Equal(t, "Bearer "+resourceKey.Key, authorizations[index])
+		assert.Equal(t, "Bearer "+webhookKey, authorizations[index])
 		assert.Empty(t, signatures[index])
 		assert.Empty(t, timestamps[index])
 		assert.Contains(t, bodies[index], `"id":"`+result.EventID+`"`)
@@ -342,17 +366,13 @@ func TestWebhookDeliveryRetriesNon2xxUntilSuccess(t *testing.T) {
 	require.NoError(t, model.DB.Where("delivery_record_id = ?", delivery.ID).Find(&attempts).Error)
 	require.Len(t, attempts, 3)
 	for _, attempt := range attempts {
-		assert.NotContains(t, attempt.Error, resourceKey.Key)
-		assert.NotContains(t, attempt.ResponseBody, resourceKey.Key)
+		assert.NotContains(t, attempt.Error, webhookKey)
+		assert.NotContains(t, attempt.ResponseBody, webhookKey)
 	}
 }
 
-func TestWebhookDeliveryUsesCurrentResourceCenterKey(t *testing.T) {
+func TestWebhookDeliveryUsesRegeneratedWebhookKey(t *testing.T) {
 	setupOutboundWebhookTestDB(t)
-	older := createWebhookResourceKey(t, 501, "older-resource-key")
-	current := createWebhookResourceKey(t, 501, "current-resource-key")
-	require.Equal(t, older.ID, current.ID)
-	require.NotEqual(t, older.Key, current.Key)
 
 	var authorization string
 	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -361,17 +381,22 @@ func TestWebhookDeliveryUsesCurrentResourceCenterKey(t *testing.T) {
 	}))
 	defer receiver.Close()
 
-	config, err := PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
+	initial, err := PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
 		URL: receiver.URL, Enabled: common.GetPointer(true),
 	})
 	require.NoError(t, err)
-	assert.True(t, config.ResourceKeyConfigured)
+	regenerated, err := PutAccountWebhookConfig(501, dto.AccountWebhookUpdateRequest{
+		URL: receiver.URL, RegenerateKey: true, Enabled: common.GetPointer(true),
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, initial.Key, regenerated.Key)
+	assert.True(t, regenerated.KeyConfigured)
 
 	_, err = CreateAccountWebhookTestDelivery(501)
 	require.NoError(t, err)
 	processDueWebhookDeliveries(context.Background())
-	assert.Equal(t, "Bearer "+current.Key, authorization)
-	assert.NotEqual(t, "Bearer "+older.Key, authorization)
+	assert.Equal(t, "Bearer "+regenerated.Key, authorization)
+	assert.NotEqual(t, "Bearer "+initial.Key, authorization)
 }
 
 func TestDeleteResourceCenterKeyRemovesLegacyRecords(t *testing.T) {

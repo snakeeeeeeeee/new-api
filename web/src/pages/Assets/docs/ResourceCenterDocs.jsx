@@ -59,7 +59,7 @@ const OPERATION_TITLES = {
 
 const ASYNC_CREATE_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
   -X POST \\
-  -H "Authorization: Bearer $API_KEY" \\
+  -H "Authorization: Bearer $MODEL_API_KEY" \\
   -H "Content-Type: application/json" \\
   -H "Idempotency-Key: order-123-image" \\
   -d '{
@@ -95,7 +95,7 @@ Retry-After: 2
 
 const ASYNC_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
   -X POST \\
-  -H "Authorization: Bearer $API_KEY" \\
+  -H "Authorization: Bearer $MODEL_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "gpt-image-2",
@@ -110,7 +110,7 @@ const ASYNC_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
 
 const ASYNC_MULTIPART_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
   -X POST \\
-  -H "Authorization: Bearer $API_KEY" \\
+  -H "Authorization: Bearer $MODEL_API_KEY" \\
   -H "Idempotency-Key: edit-order-123" \\
   -F "model=gpt-image-2" \\
   -F "prompt=Combine both products into one studio photo" \\
@@ -145,7 +145,7 @@ Retry-After: 2
 
 const IMAGE_UPLOAD_REQUEST = `curl "$BASE_URL/v1/image/uploads" \\
   -X POST \\
-  -H "Authorization: Bearer $API_KEY" \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY" \\
   -F "image=@input-1.png" \\
   -F "image=@input-2.jpg" \\
   -F "mask=@mask.png"`;
@@ -195,7 +195,7 @@ const IMAGE_UPLOAD_RESPONSE = `{
 
 const IMAGE_BASE64_UPLOAD_REQUEST = `curl "$BASE_URL/v1/image/uploads/base64" \\
   -X POST \\
-  -H "Authorization: Bearer $API_KEY" \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "images": [
@@ -206,7 +206,7 @@ const IMAGE_BASE64_UPLOAD_REQUEST = `curl "$BASE_URL/v1/image/uploads/base64" \\
   }'`;
 
 const TASK_QUERY_REQUEST = `curl "$BASE_URL/v1/image/tasks/task_xxx" \\
-  -H "Authorization: Bearer $API_KEY"`;
+  -H "Authorization: Bearer $RESOURCE_API_KEY"`;
 
 const TASK_QUERY_RESPONSE = `{
   "id": "task_xxx",
@@ -240,7 +240,7 @@ const TASK_QUERY_RESPONSE = `{
 }`;
 
 const TASK_LIST_REQUEST = `curl "$BASE_URL/v1/image/tasks?status=succeeded&operation=generation&limit=20" \\
-  -H "Authorization: Bearer $API_KEY"`;
+  -H "Authorization: Bearer $RESOURCE_API_KEY"`;
 
 const TASK_LIST_RESPONSE = `{
   "object": "list",
@@ -283,7 +283,7 @@ const TASK_LIST_RESPONSE = `{
 
 const TASK_BATCH_QUERY_REQUEST = `curl "$BASE_URL/v1/image/tasks/query" \\
   -X POST \\
-  -H "Authorization: Bearer $API_KEY" \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "task_ids": ["task_xxx", "task_not_found"]
@@ -320,7 +320,7 @@ const TASK_BATCH_QUERY_RESPONSE = `{
 }`;
 
 const ASSET_LIST_REQUEST = `curl "$BASE_URL/v1/assets?asset_type=image&page=1&page_size=20" \\
-  -H "Authorization: Bearer $API_KEY"`;
+  -H "Authorization: Bearer $RESOURCE_API_KEY"`;
 
 const ASSET_LIST_RESPONSE = `{
   "object": "list",
@@ -349,7 +349,7 @@ const ASSET_LIST_RESPONSE = `{
 }`;
 
 const ASSET_GET_REQUEST = `curl "$BASE_URL/v1/assets/asset_xxx" \\
-  -H "Authorization: Bearer $API_KEY"`;
+  -H "Authorization: Bearer $RESOURCE_API_KEY"`;
 
 const ASSET_GET_RESPONSE = `{
   "object": "asset",
@@ -374,7 +374,7 @@ const ASSET_GET_RESPONSE = `{
 
 const ASSET_QUERY_REQUEST = `curl "$BASE_URL/v1/assets/query" \\
   -X POST \\
-  -H "Authorization: Bearer $API_KEY" \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "asset_ids": ["asset_xxx", "asset_yyy"],
@@ -385,7 +385,7 @@ const ASSET_QUERY_REQUEST = `curl "$BASE_URL/v1/assets/query" \\
 
 const ASSET_URLS_REQUEST = `curl "$BASE_URL/v1/assets/batch/urls" \\
   -X POST \\
-  -H "Authorization: Bearer $API_KEY" \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "asset_ids": ["asset_xxx", "asset_yyy"]
@@ -410,7 +410,7 @@ const ASSET_URLS_RESPONSE = `{
 }`;
 
 const ASSET_EXPORT_REQUEST = `curl "$BASE_URL/v1/assets/export?asset_type=image&start_timestamp=1784160000" \\
-  -H "Authorization: Bearer $API_KEY" \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY" \\
   --output assets.csv`;
 
 const ASSET_EXPORT_RESPONSE = `HTTP/1.1 200 OK
@@ -421,7 +421,7 @@ asset_id,task_id,asset_type,url,filename,model,platform,action,created_at
 asset_xxx,task_xxx,image,https://cdn.example.com/image.png,image.png,gpt-image-2,image_handle,image_generation,1784250060`;
 
 const WEBHOOK_HEADERS = `POST https://your-service.example.com/webhooks/new-api HTTP/1.1
-Authorization: Bearer ak_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+Authorization: Bearer wk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 Content-Type: application/json`;
 
 const WEBHOOK_SUCCEEDED_PAYLOAD = `{
@@ -620,7 +620,7 @@ function EndpointTable({ tags, apiKey, t }) {
             {path}
           </Text>,
           t(OPERATION_TITLES[operation.operationId] || operation.summary),
-          apiKey,
+          typeof apiKey === 'function' ? apiKey(operation) : apiKey,
         ]),
   );
 
@@ -636,9 +636,9 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
   return (
     <div>
       <DocumentationSection
-        title={t('资源中心统一使用一个 API Key')}
+        title={t('三类凭据，各自负责一件事')}
         description={t(
-          '异步图片、视频任务、预上传、资源查询和 Webhook 回调统一使用同一个资源 API Key（ak_...）。',
+          '异步生图提交、资源查询和 Webhook 回调验证使用相互独立的凭据。',
         )}
       >
         <Space wrap className='mb-3'>
@@ -657,22 +657,30 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
           columns={[t('使用场景'), t('API Key'), t('Authorization')]}
           rows={[
             [
-              t(
-                '创建和查询异步图片/视频任务、预上传图片，以及查询和导出生成资源',
-              ),
+              t('创建异步图片任务'),
+              t('普通 API Token（sk-...）'),
+              'Bearer sk-...',
+            ],
+            [
+              t('查询异步图片任务、预上传图片，以及查询和导出生成资源'),
               t('资源 API Key（ak_...）'),
               'Bearer ak_...',
+            ],
+            [
+              t('验证 new-api 发出的 Webhook 回调'),
+              t('Webhook Key（wk-...）'),
+              'Bearer wk-...',
             ],
           ]}
         />
         <Text type='tertiary'>
           {t(
-            'Webhook 回调使用同一个资源 API Key，不需要再生成单独的验证密钥。',
+            '创建任务使用的 Token 会决定模型权限、分组和额度；wk- Key 仅用于接收端验证回调来源。',
           )}
         </Text>
         <Text type='tertiary'>
           {t(
-            '现有视频任务接口也接受该资源 API Key；本页重点列出规范化异步图片与资源接口。',
+            '现有视频任务接口的认证方式保持不变；本页重点列出规范化异步图片与资源接口。',
           )}
         </Text>
       </DocumentationSection>
@@ -735,11 +743,17 @@ function AsyncImageDocs({ t }) {
     <div>
       <DocumentationSection
         title={t('接口列表')}
-        description={t('这些接口统一使用资源 API Key（ak_...）。')}
+        description={t(
+          '创建任务使用普通 API Token（sk-...）；查询和预上传使用资源 API Key（ak_...）。',
+        )}
       >
         <EndpointTable
           tags={['Async Images', 'Image Uploads']}
-          apiKey={t('资源 API Key')}
+          apiKey={(operation) =>
+            operation.operationId === 'createImageTask'
+              ? t('普通 API Token')
+              : t('资源 API Key')
+          }
           t={t}
         />
       </DocumentationSection>
@@ -939,7 +953,7 @@ function WebhookDocs({ onOpenWebhook, t }) {
           </Button>
           <Text type='tertiary'>
             {t(
-              'Webhook 使用 API Key 页签中的资源 API Key；接收端校验 Authorization 请求头即可。',
+              'Webhook 配置页会生成独立的 wk- Key；接收端只需校验 Authorization 请求头。',
             )}
           </Text>
         </div>
@@ -968,7 +982,7 @@ function WebhookDocs({ onOpenWebhook, t }) {
           </Collapse.Panel>
           <Collapse.Panel header={t('webhook.test')} itemKey='test'>
             <Text type='tertiary' className='mb-3 block'>
-              {t('点击“发送测试”后会收到该事件，用于验证地址和资源 API Key。')}
+              {t('点击“发送测试”后会收到该事件，用于验证地址和 wk- Key。')}
             </Text>
             <CodeExample title={t('测试事件')}>
               {WEBHOOK_TEST_PAYLOAD}
@@ -993,7 +1007,7 @@ function WebhookDocs({ onOpenWebhook, t }) {
             ],
             [
               t('安全'),
-              t('校验 Authorization: Bearer ak_...，不要记录完整 Key'),
+              t('校验 Authorization: Bearer wk-...，不要记录完整 Key'),
             ],
           ]}
         />

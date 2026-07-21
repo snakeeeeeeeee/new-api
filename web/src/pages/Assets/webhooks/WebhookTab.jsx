@@ -21,31 +21,44 @@ import React, { useEffect, useState } from 'react';
 import {
   Button,
   Input,
+  Popconfirm,
+  Space,
   Switch,
   Tag,
   Tooltip,
   Typography,
 } from '@douyinfe/semi-ui';
-import { ArrowRight, Copy, KeyRound, Save, Send } from 'lucide-react';
+import {
+  Copy,
+  Eye,
+  EyeOff,
+  KeyRound,
+  RefreshCcw,
+  Save,
+  Send,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { copy, showError, showSuccess } from '../../../helpers';
 import { useWebhooks, webhookErrorMessage } from './useWebhooks';
 
 const { Text, Title } = Typography;
 
-export default function WebhookTab({ onOpenApiKeys }) {
+export default function WebhookTab() {
   const { t } = useTranslation();
   const api = useWebhooks();
   const [url, setUrl] = useState('');
   const [enabledDraft, setEnabledDraft] = useState(false);
+  const [keyVisible, setKeyVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
 
   const load = async () => {
     try {
       const config = await api.loadConfig();
       setUrl(config.url || '');
       setEnabledDraft(config.status === 'enabled');
+      setKeyVisible(false);
     } catch (error) {
       showError(webhookErrorMessage(error, t('加载 Webhook 配置失败')));
     }
@@ -61,10 +74,6 @@ export default function WebhookTab({ onOpenApiKeys }) {
       showError(t('填写回调 URL 后才能启用 Webhook'));
       return;
     }
-    if (enabledDraft && !api.config.resource_key_configured) {
-      showError(t('请先生成并启用资源 API Key'));
-      return;
-    }
     setSaving(true);
     try {
       const response = await api.saveConfig({
@@ -73,11 +82,29 @@ export default function WebhookTab({ onOpenApiKeys }) {
       });
       setUrl(response.url || '');
       setEnabledDraft(response.status === 'enabled');
+      if (!api.config.key_configured && response.key) setKeyVisible(true);
       showSuccess(t('Webhook 配置已保存'));
     } catch (error) {
       showError(webhookErrorMessage(error, t('保存 Webhook 配置失败')));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const regenerateKey = async () => {
+    setRegenerating(true);
+    try {
+      const response = await api.saveConfig({
+        url: api.config.url || '',
+        enabled: api.config.status === 'enabled',
+        regenerate_key: true,
+      });
+      setKeyVisible(Boolean(response.key));
+      showSuccess(t('Webhook 验证 Key 已生成'));
+    } catch (error) {
+      showError(webhookErrorMessage(error, t('重新生成 Webhook 密钥失败')));
+    } finally {
+      setRegenerating(false);
     }
   };
 
@@ -102,15 +129,15 @@ export default function WebhookTab({ onOpenApiKeys }) {
       showError(t('填写回调 URL 后才能启用 Webhook'));
       return;
     }
-    if (nextEnabled && !api.config.resource_key_configured) {
-      showError(t('请先生成并启用资源 API Key'));
-      return;
-    }
     setEnabledDraft(nextEnabled);
   };
 
   const copyURL = async () => {
     if (await copy(api.config.url)) showSuccess(t('Webhook 地址已复制'));
+  };
+
+  const copyKey = async () => {
+    if (await copy(api.config.key)) showSuccess(t('Webhook 密钥已复制'));
   };
 
   return (
@@ -169,26 +196,67 @@ export default function WebhookTab({ onOpenApiKeys }) {
       </label>
 
       <div className='border-y border-semi-color-border py-4'>
-        <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-          <div className='flex min-w-0 items-start gap-3'>
-            <KeyRound
-              size={20}
-              className='mt-0.5 shrink-0 text-semi-color-primary'
-            />
-            <div className='min-w-0'>
-              <Text strong>{t('回调验证使用资源 API Key')}</Text>
-              <Text type='tertiary' size='small' className='mt-1 block'>
-                {api.config.resource_key_configured
-                  ? t('当前使用资源 API Key（ak_...）')
-                  : t('尚未配置启用中的资源 API Key')}
-              </Text>
-            </div>
+        <div className='grid grid-cols-1 gap-3 sm:grid-cols-[160px_minmax(0,1fr)_auto] sm:items-center sm:gap-4'>
+          <div className='flex items-center gap-2'>
+            <KeyRound size={18} className='shrink-0 text-semi-color-primary' />
+            <Text strong>{t('Webhook 验证 Key')}</Text>
           </div>
-          <Button icon={<ArrowRight size={16} />} onClick={onOpenApiKeys}>
-            {api.config.resource_key_configured
-              ? t('查看资源 API Key')
-              : t('生成资源 API Key')}
-          </Button>
+          <div className='min-w-0'>
+            <Text code className='block min-w-0 break-all'>
+              {api.config.key_configured
+                ? keyVisible
+                  ? api.config.key
+                  : '••••••••••••••••'
+                : t('尚未生成')}
+            </Text>
+            <Text type='tertiary' size='small' className='mt-1 block'>
+              {t('以 wk- 开头，仅用于验证 new-api 发出的回调')}
+            </Text>
+          </div>
+          <Space spacing={4} wrap>
+            {api.config.key_configured && (
+              <>
+                <Tooltip content={keyVisible ? t('隐藏密钥') : t('显示密钥')}>
+                  <Button
+                    theme='borderless'
+                    type='tertiary'
+                    icon={keyVisible ? <EyeOff size={17} /> : <Eye size={17} />}
+                    aria-label={keyVisible ? t('隐藏密钥') : t('显示密钥')}
+                    onClick={() => setKeyVisible((current) => !current)}
+                  />
+                </Tooltip>
+                <Tooltip content={t('复制密钥')}>
+                  <Button
+                    theme='borderless'
+                    type='tertiary'
+                    icon={<Copy size={17} />}
+                    aria-label={t('复制密钥')}
+                    onClick={copyKey}
+                  />
+                </Tooltip>
+              </>
+            )}
+            {api.config.key_configured ? (
+              <Popconfirm
+                title={t('确定重新生成 Webhook 密钥？')}
+                content={t('旧密钥将立即失效，请先准备好更新接收端配置。')}
+                onConfirm={regenerateKey}
+              >
+                <Button icon={<RefreshCcw size={16} />} loading={regenerating}>
+                  {t('重新生成')}
+                </Button>
+              </Popconfirm>
+            ) : (
+              <Button
+                type='primary'
+                icon={<KeyRound size={16} />}
+                loading={regenerating}
+                onClick={regenerateKey}
+              >
+                {t('生成验证 Key')}
+              </Button>
+            )}
+          </Space>
         </div>
       </div>
 

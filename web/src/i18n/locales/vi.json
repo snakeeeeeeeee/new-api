@@ -5476,6 +5476,19 @@
     "{{count}} 分钟_other": "{{count}} phút",
     "{{count}} 小时_other": "{{count}} giờ",
     "HTTP": "HTTP",
-    "{{duration}} ms": "{{duration}} ms"
+    "{{duration}} ms": "{{duration}} ms",
+    "三类凭据，各自负责一件事": "Ba loại thông tin xác thực cho ba mục đích",
+    "异步生图提交、资源查询和 Webhook 回调验证使用相互独立的凭据。": "Gửi tác vụ ảnh bất đồng bộ, truy cập tài nguyên và xác minh Webhook dùng thông tin xác thực riêng biệt.",
+    "普通 API Token（sk-...）": "API Token thông thường (sk-...)",
+    "查询异步图片任务、预上传图片，以及查询和导出生成资源": "Truy vấn tác vụ ảnh, tải ảnh lên, truy vấn và xuất tài nguyên đã tạo",
+    "验证 new-api 发出的 Webhook 回调": "Xác minh callback Webhook do new-api gửi",
+    "创建任务使用的 Token 会决定模型权限、分组和额度；wk- Key 仅用于接收端验证回调来源。": "Token tạo tác vụ quyết định quyền mô hình, nhóm và hạn mức. Key wk- chỉ dùng để xác minh nguồn callback.",
+    "现有视频任务接口的认证方式保持不变；本页重点列出规范化异步图片与资源接口。": "Cách xác thực API tác vụ video hiện có không thay đổi. Trang này tập trung vào API ảnh bất đồng bộ và tài nguyên đã chuẩn hóa.",
+    "创建任务使用普通 API Token（sk-...）；查询和预上传使用资源 API Key（ak_...）。": "Tạo tác vụ bằng API Token thông thường (sk-...); truy vấn và tải lên bằng API Key tài nguyên (ak_...).",
+    "普通 API Token": "API Token thông thường",
+    "Webhook 配置页会生成独立的 wk- Key；接收端只需校验 Authorization 请求头。": "Trang cấu hình Webhook tạo Key wk- riêng; phía nhận chỉ cần xác minh tiêu đề Authorization.",
+    "资源 API Key 用于任务查询、预上传和资源访问；异步生图提交使用普通 API Token。": "API Key tài nguyên dùng để truy vấn tác vụ, tải lên và truy cập tài nguyên. Gửi tác vụ ảnh dùng API Token thông thường.",
+    "资源 API Key 以 ak_ 开头，与令牌管理中的普通 sk- Token 相互独立。Webhook 使用配置页单独生成的 wk- Key。": "API Key tài nguyên bắt đầu bằng ak_ và độc lập với Token sk-. Trang cấu hình Webhook tạo Key wk- riêng.",
+    "以 wk- 开头，仅用于验证 new-api 发出的回调": "Bắt đầu bằng wk- và chỉ dùng để xác minh callback do new-api gửi"
   }
 }

@@ -1,3 +1,52 @@
+# Task Plan: Separate Async Image and Webhook Credentials (2026-07-22)
+
+## Goal
+Restore token-scoped routing for asynchronous image submission and replace Resource Center API Key reuse in outbound Webhooks with an independent system-generated `wk-` credential, including Resource Center UI, documentation, tests, and Docker dev acceptance.
+
+## Current Phase
+Complete
+
+### Phase 1: Authentication contract and migration
+- [x] Require normal `sk_` Token authentication for `POST /v1/image/tasks` while preserving token group, model limits, quota, and audit context.
+- [x] Keep task/resource reads on `ak_` Resource Center authentication.
+- [x] Generate, encrypt, reveal, rotate, and migrate an independent `wk-` Webhook credential without adding a business table.
+- **Status:** complete
+
+### Phase 2: Webhook delivery, UI, and docs
+- [x] Deliver Webhooks with `Authorization: Bearer wk-...` and never expose `ak_` to callback receivers.
+- [x] Update the Resource Center Webhook saved/edit states with reveal, copy, and regenerate controls using existing Semi Design patterns.
+- [x] Update all seven locales, curl examples, receiver examples, and OpenAPI security contracts.
+- **Status:** complete
+
+### Phase 3: Verification and Docker dev
+- [x] Add focused route, group-selection, secret lifecycle, migration, delivery, redaction, and UI checks.
+- [x] Rebuild `docker-compose-dev.yml`, verify `sk_` submission plus `ak_` query and `wk_` callback end to end, and clean fixtures.
+- [x] Run affected/full Go and Bun checks, responsive browser QA, and final diff/sensitive-data audit.
+- **Status:** complete
+
+## Locked Decisions
+- The create request carries exactly one credential: `sk_`; no `ak_`, callback URL, or Webhook key is supplied per task.
+- The terminal task's `user_id` resolves the account Webhook configuration and its encrypted `wk-` key.
+- `ak_` remains the Resource Center read credential for tasks, assets, and uploads, but is never sent to callback receivers.
+- Webhook receivers authenticate `wk-`, return any 2xx on success, and deduplicate at-least-once delivery by event ID.
+- Existing configured Webhooks receive a generated `wk-` during migration and switch immediately; operators retrieve it from the UI and update receivers.
+- Reuse `WebhookEndpoint.AuthKeyEncrypted`; do not add a new business table.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Cleanup preflight used inferred `image_tasks` instead of the live generic `tasks` table | 1 | The read-only query changed nothing; verify the live task table and rerun against `tasks.user_id`. |
+| Cleanup preflight used the inferred table name `asset_api_keys` instead of GORM's actual `asset_keys` | 1 | The read-only query changed nothing; verify the live table list and rerun with `asset_keys`. |
+| Cleanup preflight assumed `webhook_deliveries.user_id`, but deliveries link users through their event | 1 | The read-only query changed nothing; inspect the actual table relationship and join `delivery -> event -> user` for exact counts and deletion. |
+| Browser viewport capability mapped the requested `375x812` override to an effective `560x1212` CSS viewport | 1 | Do not claim this as mobile acceptance; read the advertised CDP capability and use exact device-metrics emulation, then reset both overrides. |
+| A combined planning/findings/progress patch contained an extra empty hunk marker | 1 | The atomic patch changed nothing; remove the malformed marker and reapply against the same verified headings. |
+| The browser backend logged an unrelated Statsig telemetry timeout while confirming key regeneration | 1 | The local action completed and authoritative UI/database checks passed; record it as tooling noise and do not retry the successful mutation. |
+| Initial PostgreSQL schema inspection used the nonexistent default `postgres` role | 1 | Read `docker-compose-dev.yml` and rerun with the configured `root` role; no data was changed. |
+| Browser QA waited for the post-generation button name `隐藏密钥`, but the expected control did not appear within 10 seconds | 1 | Backend logs proved the browser retained a stale session for already-cleaned user `994203`; the PUT correctly returned 404. Use a disposable live local account, then clean it precisely. |
+| A combined notation/findings patch expected findings in a different order | 1 | The atomic patch changed nothing; split updates by file and normalize the canonical prefix to the user-requested `wk-`. |
+
+---
+
 # Task Plan: Async Worker Operations and Webhook Delivery Management (2026-07-21)
 
 ## Goal

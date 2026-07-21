@@ -1,16 +1,18 @@
 package dto
 
 type AccountWebhookUpdateRequest struct {
-	URL     string `json:"url"`
-	Enabled *bool  `json:"enabled,omitempty"`
+	URL           string `json:"url"`
+	RegenerateKey bool   `json:"regenerate_key,omitempty"`
+	Enabled       *bool  `json:"enabled,omitempty"`
 }
 
 type AccountWebhookPublic struct {
-	Configured            bool   `json:"configured"`
-	URL                   string `json:"url,omitempty"`
-	ResourceKeyConfigured bool   `json:"resource_key_configured"`
-	Status                string `json:"status"`
-	UpdatedAt             int64  `json:"updated_at,omitempty"`
+	Configured    bool   `json:"configured"`
+	URL           string `json:"url,omitempty"`
+	KeyConfigured bool   `json:"key_configured"`
+	Status        string `json:"status"`
+	UpdatedAt     int64  `json:"updated_at,omitempty"`
+	Key           string `json:"key,omitempty"`
 }
 
 type AccountWebhookTestResponse struct {

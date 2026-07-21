@@ -4944,6 +4944,19 @@
     "{{count}} 分钟_other": "{{count}} 分鐘",
     "{{count}} 小时_other": "{{count}} 小時",
     "HTTP": "HTTP",
-    "{{duration}} ms": "{{duration}} ms"
+    "{{duration}} ms": "{{duration}} ms",
+    "三类凭据，各自负责一件事": "三類憑證，各自負責一件事",
+    "异步生图提交、资源查询和 Webhook 回调验证使用相互独立的凭据。": "非同步生圖提交、資源查詢和 Webhook 回呼驗證使用相互獨立的憑證。",
+    "普通 API Token（sk-...）": "普通 API Token（sk-...）",
+    "查询异步图片任务、预上传图片，以及查询和导出生成资源": "查詢非同步圖片任務、預先上傳圖片，以及查詢和匯出生成資源",
+    "验证 new-api 发出的 Webhook 回调": "驗證 new-api 發出的 Webhook 回呼",
+    "创建任务使用的 Token 会决定模型权限、分组和额度；wk- Key 仅用于接收端验证回调来源。": "建立任務使用的 Token 會決定模型權限、分組和額度；wk- Key 僅用於接收端驗證回呼來源。",
+    "现有视频任务接口的认证方式保持不变；本页重点列出规范化异步图片与资源接口。": "現有影片任務介面的認證方式保持不變；本頁重點列出規範化非同步圖片與資源介面。",
+    "创建任务使用普通 API Token（sk-...）；查询和预上传使用资源 API Key（ak_...）。": "建立任務使用普通 API Token（sk-...）；查詢和預先上傳使用資源 API Key（ak_...）。",
+    "普通 API Token": "普通 API Token",
+    "Webhook 配置页会生成独立的 wk- Key；接收端只需校验 Authorization 请求头。": "Webhook 設定頁會產生獨立的 wk- Key；接收端只需校驗 Authorization 請求頭。",
+    "资源 API Key 用于任务查询、预上传和资源访问；异步生图提交使用普通 API Token。": "資源 API Key 用於任務查詢、預先上傳和資源存取；非同步生圖提交使用普通 API Token。",
+    "资源 API Key 以 ak_ 开头，与令牌管理中的普通 sk- Token 相互独立。Webhook 使用配置页单独生成的 wk- Key。": "資源 API Key 以 ak_ 開頭，與權杖管理中的普通 sk- Token 相互獨立。Webhook 使用設定頁單獨產生的 wk- Key。",
+    "以 wk- 开头，仅用于验证 new-api 发出的回调": "以 wk- 開頭，僅用於驗證 new-api 發出的回呼"
   }
 }

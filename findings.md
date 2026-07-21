@@ -1,3 +1,32 @@
+# Credential Separation Findings (2026-07-22)
+
+- Final implementation review tightened stored-key normalization: a valid Webhook credential must now be exactly the canonical `wk-` prefix plus 48 generated characters, so a historical short value such as `wk-short` cannot bypass migration or regeneration handling.
+- At exact 375 px, the Resource API Key tab remains document-width clean, while the documentation keeps each 560 px credential/flow table inside a 349 px horizontal scroller; all three pages preserve `document.scrollWidth === clientWidth === 375`.
+- Exact CDP emulation confirms the Webhook view at `375x812`: the document and main content are both exactly 375 px wide, the revealed 51-character key wraps within a 342 px code line, and no visible button, input, or switch crosses the viewport boundary.
+- Regeneration UI acceptance shows an explicit warning that the old key becomes invalid immediately; confirmation produced a new 51-character `wk-` value, changed the database ciphertext digest, preserved the `v1:` encrypted format, and left no plaintext `wk-` substring at rest.
+- Live Webhook UI acceptance generated a real `wk-` value, showed it only after explicit visibility state, masked it to 16 bullets when hidden, exposed the expected show/copy/regenerate actions, and displayed a successful copy toast without requiring any Resource API Key.
+- Restoring only the previously deleted local user row for the stale session is sufficient for authenticated Webhook UI acceptance; the live account has no pre-existing endpoint, so subsequent key-generation residue can be identified and removed exactly.
+- The first Webhook UI mutation failed because the browser session referenced previously deleted user `994203`, not because key generation failed; backend logs showed `GET /api/webhook` returning an empty view and `PUT /api/webhook` correctly returning 404 when the owning user row was absent.
+- Desktop browser QA confirms the API Key tab scopes `ak_` to task query, pre-upload, and resource access, while the documentation overview presents separate `sk-`, `ak_`, and `wk-` rows with their exact Bearer formats and explains that only the normal Token selects models, groups, and quota.
+- The rebuilt Docker UI loads `/console/assets` under the existing ordinary-user browser session and exposes the expected Resource List, API Key, Webhook, and Documentation tabs; no additional fixture account is required for browser acceptance.
+- Current `AssetKeyAuth` forces `ContextKeyUsingGroup` to the account group and disables token model/quota limits; it cannot preserve an `sk_` token's selected group.
+- Current `TokenAuth` validates `token.Group`, applies aggregate/auto group semantics, installs model limits and token quota, and is therefore the correct create-path authentication.
+- Current Webhook delivery loads the user's active Resource Center key and sends it as Bearer authentication, coupling resource-read privilege to an externally hosted receiver.
+- `WebhookEndpoint.AuthKeyEncrypted` already exists and historical commits contain a generated/encrypted Webhook key UX, so the separation can reuse existing storage and prior local patterns without schema expansion.
+- UI guidance favors the existing dense Resource Center form: visible field labels, explicit reveal/copy/regenerate actions, stable loading/disabled states, and mobile-safe controls; no new page or decorative treatment is needed.
+- The approved breaking migration generates and activates `wk-` for existing configurations; existing receivers must update their expected Bearer value after deployment.
+- The pre-unification Resource Center UI already implements password-style reveal, copy, confirmed regeneration, and responsive action wrapping. It can be restored narrowly while changing the misleading historical `sk-...` label to `wk-...` and retaining the current retry copy.
+- The current UI blocks Webhook enablement on `resource_key_configured` and links users to the Resource Key tab; both coupling points must be removed when the dedicated key is restored.
+- The historical backend already contains AES-GCM encryption, owner-only reveal, regeneration, and decrypt-failure handling. Its old normalization deliberately converted `wk-` into `sk-`; the restored implementation must instead make `wk-` canonical and migrate every legacy/empty value to a new `wk-`.
+- Current Webhook tests intentionally assert Resource Key availability, rotation, and delivery headers. These assertions must become dedicated-key lifecycle/header tests while leaving retry, timeout, lease, fencing, SSRF, and endpoint-capacity coverage intact.
+- The existing encryption derives an AES-GCM key from `common.CryptoSecret`; if stored ciphertext cannot be decrypted after a secret change, the safe behavior is to disable the Webhook and require owner regeneration rather than silently falling back to `ak_`.
+- Resource Center examples currently use one `$API_KEY` for create, upload, query, and assets, and the generated OpenAPI exposes only `ResourceCenterAuth`. The corrected docs need distinct `$MODEL_API_KEY` (`sk_`, create only), `$RESOURCE_API_KEY` (`ak_`, reads/uploads), and outbound `WebhookAuth` (`wk-`).
+- Existing router coverage asserts only path registration. Focused authentication tests must prove create requests carry token group/model/quota context and reject `ak_`, while query routes continue to reject `sk_`.
+- The Assets page passes `onOpenApiKeys` only because the current Webhook tab links authentication to `ak_`; removing that prop is a narrow parent cleanup and does not affect the documentation tab's separate API-Key navigation.
+- All seven locale files retain historical independent Webhook Key strings, so the restored UI can reuse most translations. Only canonical `wk-` labeling and the explicit no-resource-permission explanation need scoped additions.
+
+---
+
 # Async Worker Operations Findings (2026-07-21)
 
 - Final source-scope review found no embedded production credentials. The only broad secret-pattern matches are existing Docker dev placeholders and the image-handle API-key form field; the opt-in async mock adds no authentication material.

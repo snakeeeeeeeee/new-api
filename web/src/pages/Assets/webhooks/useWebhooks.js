@@ -33,7 +33,8 @@ export function useWebhooks() {
   const [config, setConfig] = useState({
     configured: false,
     url: '',
-    resource_key_configured: false,
+    key_configured: false,
+    key: '',
     status: 'disabled',
   });
   const [loading, setLoading] = useState(false);

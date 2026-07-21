@@ -4977,6 +4977,19 @@
     "{{count}} 小时_many": "{{count}} heure",
     "{{count}} 小时_other": "{{count}} heures",
     "HTTP": "HTTP",
-    "{{duration}} ms": "{{duration}} ms"
+    "{{duration}} ms": "{{duration}} ms",
+    "三类凭据，各自负责一件事": "Trois identifiants, chacun avec un rôle",
+    "异步生图提交、资源查询和 Webhook 回调验证使用相互独立的凭据。": "La création d’images asynchrone, l’accès aux ressources et la vérification Webhook utilisent des identifiants distincts.",
+    "普通 API Token（sk-...）": "Token API standard (sk-...)",
+    "查询异步图片任务、预上传图片，以及查询和导出生成资源": "Interroger les tâches d’image, envoyer des images et consulter ou exporter les ressources générées",
+    "验证 new-api 发出的 Webhook 回调": "Vérifier les rappels Webhook envoyés par new-api",
+    "创建任务使用的 Token 会决定模型权限、分组和额度；wk- Key 仅用于接收端验证回调来源。": "Le Token utilisé pour créer une tâche détermine les modèles, le groupe et le quota. La Key wk- vérifie uniquement l’origine du rappel.",
+    "现有视频任务接口的认证方式保持不变；本页重点列出规范化异步图片与资源接口。": "L’authentification des API vidéo existantes reste inchangée. Cette page couvre les API normalisées d’images asynchrones et de ressources.",
+    "创建任务使用普通 API Token（sk-...）；查询和预上传使用资源 API Key（ak_...）。": "Créez les tâches avec un Token API standard (sk-...) ; utilisez une Key API de ressource (ak_...) pour les requêtes et les envois.",
+    "普通 API Token": "Token API standard",
+    "Webhook 配置页会生成独立的 wk- Key；接收端只需校验 Authorization 请求头。": "La configuration Webhook génère une Key wk- dédiée ; le destinataire doit seulement vérifier l’en-tête Authorization.",
+    "资源 API Key 用于任务查询、预上传和资源访问；异步生图提交使用普通 API Token。": "La Key API de ressource sert aux requêtes de tâches, aux envois et aux ressources. La création d’images utilise un Token API standard.",
+    "资源 API Key 以 ak_ 开头，与令牌管理中的普通 sk- Token 相互独立。Webhook 使用配置页单独生成的 wk- Key。": "La Key API de ressource commence par ak_ et est indépendante des Tokens sk-. La configuration Webhook génère une Key wk- distincte.",
+    "以 wk- 开头，仅用于验证 new-api 发出的回调": "Commence par wk- et sert uniquement à vérifier les rappels envoyés par new-api"
   }
 }

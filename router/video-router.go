@@ -58,7 +58,7 @@ func SetVideoRouter(router *gin.Engine) {
 
 	imageTaskCreateRouter := router.Group("/v1")
 	imageTaskCreateRouter.Use(middleware.RouteTag("relay"))
-	imageTaskCreateRouter.Use(middleware.AssetKeyAuth(), middleware.Distribute())
+	imageTaskCreateRouter.Use(middleware.TokenAuth(), middleware.Distribute())
 	{
 		imageTaskCreateRouter.POST("/image/tasks", controller.PrepareImageTaskRequest, controller.RelayTask)
 	}

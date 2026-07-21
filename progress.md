@@ -1,3 +1,30 @@
+# Credential Separation Progress (2026-07-22)
+
+- Final verification passes `go test ./...`, production frontend build, OpenAPI drift, changed-file Prettier/ESLint, i18n status, and `git diff --check`; the previously documented repository-wide `i18n:lint` baseline remains unrelated to these changed files.
+- Rebuilt ordinary Docker dev and the opt-in `async-test` profile from final source. Image `sha256:8e8c4404ce5c...`, `new-api-dev`, PostgreSQL, Redis, and the mock are healthy; both application and mock health endpoints succeed.
+- Tightened Webhook Key validation to the exact 51-character canonical shape and added positive/negative regression assertions; focused service, middleware, and router tests pass.
+- Removed the disposable UI account and endpoint in one precise transaction; final PostgreSQL counts for users/endpoints/events/deliveries/attempts/asset keys/tokens/tasks are all zero, Redis has no matching cache key, and all Docker services remain healthy.
+- Mobile Resource API Key and documentation checks pass: no page-level overflow, and wide credential/flow tables scroll only inside their constrained containers.
+- Exact `375x812` mobile geometry passes through CDP device emulation: zero document overflow, full-width main content, wrapped long key text, and all visible controls contained within the viewport.
+- Webhook regeneration confirmation passes: the warning is explicit, the replacement key has the canonical prefix/length, and the encrypted database value changed without storing plaintext.
+- Webhook key interaction QA passes through real Docker APIs: generate returns a `wk-` key, hide switches to a 16-character mask and a show action, and copy reports success while masked.
+- Temporarily restored the already-cleaned local user row `994203` without creating credentials or unrelated data; the live Webhook tab now loads the expected unconfigured state and will be cleaned back to absence after interaction checks.
+- Diagnosed the initial Webhook UI-generation timeout as a stale browser session for already-cleaned user `994203`; no endpoint row or key was created, and browser QA will continue with a disposable live local account.
+- Desktop UI checks pass for the Resource API Key scope copy and the documentation's three-credential overview table, including exact `Bearer sk-...`, `Bearer ak_...`, and `Bearer wk-...` examples.
+- Rebuilt Docker dev and the `async-test` profile are healthy; backend E2E has passed `sk-` create, `ak_` query, encrypted-at-rest `wk-` delivery, key regeneration, restart persistence, and exact fixture cleanup.
+- Started final browser QA against `http://localhost:3001/console/assets`; the existing ordinary-user session loads all four Resource Center tabs without requiring a new test account.
+- Confirmed the final contract with the user: `sk_` submits asynchronous images, `ak_` reads Resource Center tasks/assets, and independent `wk-` authenticates outbound Webhooks.
+- Loaded the required brainstorming, file-planning, and UI/UX workflows; retained the existing Semi Design visual language and rejected irrelevant marketing-page recommendations.
+- Recovered a clean tracked `main` baseline at pushed commit `5bf1e37d3`; unrelated untracked `2dev/`, `outputs/`, and `tmp/` content remains out of scope.
+- Started Phase 1 discovery across current authentication, Webhook delivery, encrypted endpoint storage, historical credential behavior, UI, and OpenAPI contracts.
+- Compared the current and pre-unification Webhook tabs; selected the established reveal/copy/regenerate interaction as the lowest-risk UI restoration, with corrected `wk-` naming and no Resource Key dependency.
+- Recovered the historical encrypted-key backend and corrected the design notation from `wk_` to the user-approved canonical `wk-` prefix.
+- Mapped current service and test deltas: restore encrypted credential helpers around the concurrent delivery worker, remove active Resource Key checks, and rewrite only authentication-specific tests.
+- Audited Resource Center docs/OpenAPI and route tests; credential names and security schemes will be split rather than leaving one ambiguous `$API_KEY` example.
+- Located existing locale coverage and the sole Webhook-to-API-Key parent prop; UI changes can remain inside the Webhook tab, its hook, the parent call site, and scoped locale keys.
+
+---
+
 # Async Worker Operations Progress (2026-07-21)
 
 - Final audit passes: targeted AsyncTask Prettier/ESLint, `git diff --check`, implementation-scope secret review, fixture cleanup, and temporary-database cleanup. Unrelated `2dev/`, `outputs/`, and `tmp/` content remains untouched.

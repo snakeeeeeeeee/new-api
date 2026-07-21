@@ -26,7 +26,9 @@ const queryParameter = (name, schema, description) => ({
   description,
   schema,
 });
+const modelTokenSecurity = [{ ModelTokenAuth: [] }];
 const resourceSecurity = [{ ResourceCenterAuth: [] }];
+const webhookSecurity = [{ WebhookAuth: [] }];
 
 const webhookSucceededExample = {
   id: 'evt_xxx',
@@ -181,10 +183,10 @@ const spec = {
   openapi: '3.1.0',
   info: {
     title: 'new-api Resource Center API',
-    version: '2026-07-17',
+    version: '2026-07-22',
     summary: 'Assets, asynchronous image tasks, uploads, and Webhooks.',
     description:
-      'Public Resource Center API. Async image tasks, existing video task APIs, uploads, assets, and outbound Webhook verification use the same Resource Center API Key. This document focuses on normalized image and asset operations.',
+      'Public Resource Center API. Creating an asynchronous image task uses a standard API Token; task queries, uploads, and assets use a Resource Center API Key; outbound Webhook verification uses a dedicated Webhook Key.',
   },
   jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
   servers: [
@@ -312,7 +314,7 @@ const spec = {
         summary: 'Create an asynchronous image task',
         description:
           'Accepts the normalized JSON contract for generation or edit tasks, or synchronous-style multipart local files for edit tasks. Returns immediately after the task, billing reservation, credential lease, and durable dispatch are stored. Reusing an Idempotency-Key with the same normalized fields and file contents returns the original task.',
-        security: resourceSecurity,
+        security: modelTokenSecurity,
         parameters: [
           {
             name: 'Idempotency-Key',
@@ -467,8 +469,8 @@ const spec = {
         operationId: 'receiveImageTaskSucceededWebhook',
         summary: 'image.task.succeeded callback',
         description:
-          'Sent with Authorization: Bearer ak_.... This is the same Resource Center API Key used to create and query tasks. Any 2xx response succeeds and its body is ignored. Network errors and non-2xx responses are retried using the administrator-configured fixed interval and maximum attempts (defaults: 3 total attempts, 30 seconds).',
-        security: resourceSecurity,
+          'Sent with Authorization: Bearer wk-.... The Webhook Key is generated with the account Webhook configuration and has no API permissions. Any 2xx response succeeds and its body is ignored. Network errors and non-2xx responses are retried using the administrator-configured fixed interval and maximum attempts (defaults: 3 total attempts, 30 seconds).',
+        security: webhookSecurity,
         parameters: [],
         requestBody: {
           required: true,
@@ -495,8 +497,8 @@ const spec = {
         operationId: 'receiveImageTaskFailedWebhook',
         summary: 'image.task.failed callback',
         description:
-          'Sent with Authorization: Bearer ak_.... This is the same Resource Center API Key used to create and query tasks. Any 2xx response succeeds and its body is ignored. Network errors and non-2xx responses are retried using the administrator-configured fixed interval and maximum attempts (defaults: 3 total attempts, 30 seconds).',
-        security: resourceSecurity,
+          'Sent with Authorization: Bearer wk-.... The Webhook Key is generated with the account Webhook configuration and has no API permissions. Any 2xx response succeeds and its body is ignored. Network errors and non-2xx responses are retried using the administrator-configured fixed interval and maximum attempts (defaults: 3 total attempts, 30 seconds).',
+        security: webhookSecurity,
         parameters: [],
         requestBody: {
           required: true,
@@ -521,12 +523,26 @@ const spec = {
   },
   components: {
     securitySchemes: {
+      ModelTokenAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'sk-...',
+        description:
+          'A standard API Token from Token Management. Its model limits, group, quota, and audit identity apply when creating asynchronous image tasks.',
+      },
       ResourceCenterAuth: {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'ak_...',
         description:
-          'A Resource Center API Key generated on the Resource Center API Key tab. The same key authorizes async image and video tasks, uploads, asset reads, and outbound Webhook verification.',
+          'A Resource Center API Key generated on the Resource Center API Key tab. It authorizes task queries, uploads, and asset reads, but cannot create asynchronous image tasks or authenticate Webhooks.',
+      },
+      WebhookAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'wk-...',
+        description:
+          'A dedicated Webhook Key generated with the account Webhook configuration. Receivers use it only to verify outbound callbacks; it grants no API access.',
       },
     },
     schemas: {

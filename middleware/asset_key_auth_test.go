@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -43,7 +44,8 @@ func setupAssetKeyAuthTestDB(t *testing.T) {
 	}).Error)
 	require.NoError(t, db.Create(&model.Token{
 		Id: 51, UserId: 41, Key: "normalassetkey", Name: "resource-api",
-		Status: common.TokenStatusEnabled, ExpiredTime: -1, UnlimitedQuota: true,
+		Status: common.TokenStatusEnabled, ExpiredTime: -1, RemainQuota: 321,
+		ModelLimitsEnabled: true, ModelLimits: "gpt-image-2", Group: "default",
 	}).Error)
 
 	t.Cleanup(func() {
@@ -134,6 +136,33 @@ func TestAssetOrTokenAuthAcceptsNormalToken(t *testing.T) {
 	require.Equal(t, 51, ctx.GetInt("token_id"))
 }
 
+func TestTokenAuthPreservesTokenBillingAndRoutingContext(t *testing.T) {
+	setupAssetKeyAuthTestDB(t)
+
+	_, ctx, called := runTokenAuthRequest("sk-normalassetkey")
+
+	require.True(t, called)
+	require.Equal(t, 41, ctx.GetInt("id"))
+	require.Equal(t, 51, ctx.GetInt("token_id"))
+	require.False(t, ctx.GetBool("token_unlimited_quota"))
+	require.Equal(t, 321, ctx.GetInt("token_quota"))
+	require.True(t, ctx.GetBool("token_model_limit_enabled"))
+	require.Equal(t, map[string]bool{"gpt-image-2": true}, ctx.MustGet("token_model_limit"))
+	require.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyTokenGroup))
+	require.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyUsingGroup))
+}
+
+func TestTokenAuthRejectsResourceKey(t *testing.T) {
+	setupAssetKeyAuthTestDB(t)
+	key, err := model.CreateAssetKey(41, "resource-reader", -1, "")
+	require.NoError(t, err)
+
+	recorder, _, called := runTokenAuthRequest(key.Key)
+
+	require.False(t, called)
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+}
+
 func TestAssetOrTokenAuthKeepsLegacyAssetKeyCompatible(t *testing.T) {
 	setupAssetKeyAuthTestDB(t)
 	key, err := model.CreateAssetKey(41, "legacy-resource-reader", -1, "")
@@ -155,6 +184,17 @@ func runAssetOrTokenAuthRequest(keyValue string) (*httptest.ResponseRecorder, *g
 	}
 	handler := AssetOrTokenAuth()
 	handler(ctx)
+	return recorder, ctx, !ctx.IsAborted()
+}
+
+func runTokenAuthRequest(keyValue string) (*httptest.ResponseRecorder, *gin.Context, bool) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", nil)
+	if keyValue != "" {
+		ctx.Request.Header.Set("Authorization", "Bearer "+keyValue)
+	}
+	TokenAuth()(ctx)
 	return recorder, ctx, !ctx.IsAborted()
 }
 

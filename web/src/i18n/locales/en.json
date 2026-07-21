@@ -4994,6 +4994,19 @@
     "{{count}} 小时_one": "{{count}} hour",
     "{{count}} 小时_other": "{{count}} hours",
     "HTTP": "HTTP",
-    "{{duration}} ms": "{{duration}} ms"
+    "{{duration}} ms": "{{duration}} ms",
+    "三类凭据，各自负责一件事": "Three credentials, one role each",
+    "异步生图提交、资源查询和 Webhook 回调验证使用相互独立的凭据。": "Async image submission, resource access, and Webhook verification use separate credentials.",
+    "普通 API Token（sk-...）": "Standard API Token (sk-...)",
+    "查询异步图片任务、预上传图片，以及查询和导出生成资源": "Query async image tasks, upload images, and query or export generated assets",
+    "验证 new-api 发出的 Webhook 回调": "Verify Webhook callbacks sent by new-api",
+    "创建任务使用的 Token 会决定模型权限、分组和额度；wk- Key 仅用于接收端验证回调来源。": "The Token used to create a task determines model access, group, and quota. The wk- Key only verifies callback origin.",
+    "现有视频任务接口的认证方式保持不变；本页重点列出规范化异步图片与资源接口。": "Authentication for existing video task APIs is unchanged. This page focuses on normalized async image and asset APIs.",
+    "创建任务使用普通 API Token（sk-...）；查询和预上传使用资源 API Key（ak_...）。": "Create tasks with a standard API Token (sk-...); query and upload with a Resource API Key (ak_...).",
+    "普通 API Token": "Standard API Token",
+    "Webhook 配置页会生成独立的 wk- Key；接收端只需校验 Authorization 请求头。": "The Webhook settings generate a dedicated wk- Key; receivers only need to validate the Authorization header.",
+    "资源 API Key 用于任务查询、预上传和资源访问；异步生图提交使用普通 API Token。": "Resource API Keys are for task queries, uploads, and asset access. Async image submission uses a standard API Token.",
+    "资源 API Key 以 ak_ 开头，与令牌管理中的普通 sk- Token 相互独立。Webhook 使用配置页单独生成的 wk- Key。": "Resource API Keys start with ak_ and are independent of standard sk- Tokens. Webhook settings generate a separate wk- Key.",
+    "以 wk- 开头，仅用于验证 new-api 发出的回调": "Starts with wk- and is only used to verify callbacks sent by new-api"
   }
 }

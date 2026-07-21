@@ -3,8 +3,14 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -28,13 +34,17 @@ const (
 	WebhookEventImageTaskSucceeded = "image.task.succeeded"
 	WebhookEventImageTaskFailed    = "image.task.failed"
 	WebhookEventTest               = "webhook.test"
+	webhookKeyPrefix               = "wk-"
+	webhookKeyRandomLength         = 48
+	webhookKeyEnvelopeVersion      = "v1"
 )
 
 var (
-	webhookWorkerOnce        sync.Once
-	webhookDeliveryRuntime   = newAsyncWorkerRuntime()
-	ErrWebhookConfigNotFound = errors.New("webhook configuration not found")
-	webhookTransport         = &http.Transport{
+	webhookWorkerOnce              sync.Once
+	webhookDeliveryRuntime         = newAsyncWorkerRuntime()
+	ErrWebhookConfigNotFound       = errors.New("webhook configuration not found")
+	ErrWebhookStoredKeyUnavailable = errors.New("stored webhook key cannot be decrypted; regenerate the key")
+	webhookTransport               = &http.Transport{
 		Proxy: nil, ForceAttemptHTTP2: true, MaxIdleConns: 100, MaxIdleConnsPerHost: 10,
 		IdleConnTimeout: 30 * time.Second, DialContext: dialValidatedWebhookTarget,
 	}
@@ -49,21 +59,84 @@ func accountWebhookEventTypesJSON() string {
 	return string(body)
 }
 
-func accountWebhookToPublic(endpoint *model.WebhookEndpoint, resourceKey *model.AssetKey) *dto.AccountWebhookPublic {
+func webhookKeyCipher() (cipher.AEAD, error) {
+	digest := sha256.Sum256([]byte("new-api:account-webhook-key:v1:" + common.CryptoSecret))
+	block, err := aes.NewCipher(digest[:])
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+func encryptWebhookKey(value string) (string, error) {
+	aead, err := webhookKeyCipher()
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+	sealed := aead.Seal(nil, nonce, []byte(value), []byte(webhookKeyEnvelopeVersion))
+	payload := append(nonce, sealed...)
+	return webhookKeyEnvelopeVersion + ":" + base64.RawURLEncoding.EncodeToString(payload), nil
+}
+
+func decryptWebhookKey(value string) (string, error) {
+	version, encoded, ok := strings.Cut(value, ":")
+	if !ok || version != webhookKeyEnvelopeVersion {
+		return "", errors.New("unsupported webhook key envelope")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", errors.New("invalid webhook key envelope")
+	}
+	aead, err := webhookKeyCipher()
+	if err != nil {
+		return "", err
+	}
+	if len(payload) < aead.NonceSize() {
+		return "", errors.New("invalid webhook key envelope")
+	}
+	plaintext, err := aead.Open(nil, payload[:aead.NonceSize()], payload[aead.NonceSize():], []byte(version))
+	if err != nil {
+		return "", errors.New("webhook key decryption failed")
+	}
+	return string(plaintext), nil
+}
+
+func generateWebhookKey() (string, error) {
+	value, err := common.GenerateRandomCharsKey(webhookKeyRandomLength)
+	if err != nil {
+		return "", err
+	}
+	return webhookKeyPrefix + value, nil
+}
+
+func validWebhookKey(value string) bool {
+	return strings.HasPrefix(value, webhookKeyPrefix) && len(value) == len(webhookKeyPrefix)+webhookKeyRandomLength
+}
+
+func generateEncryptedWebhookKey() (string, string, error) {
+	keyValue, err := generateWebhookKey()
+	if err != nil {
+		return "", "", err
+	}
+	encrypted, err := encryptWebhookKey(keyValue)
+	if err != nil {
+		return "", "", err
+	}
+	return keyValue, encrypted, nil
+}
+
+func accountWebhookToPublic(endpoint *model.WebhookEndpoint, keyConfigured bool) *dto.AccountWebhookPublic {
 	if endpoint == nil {
-		response := &dto.AccountWebhookPublic{Status: model.WebhookEndpointDisabled}
-		if resourceKey != nil {
-			response.ResourceKeyConfigured = true
-		}
-		return response
+		return &dto.AccountWebhookPublic{Status: model.WebhookEndpointDisabled}
 	}
-	response := &dto.AccountWebhookPublic{
-		Configured: true, URL: endpoint.URL, Status: endpoint.Status, UpdatedAt: endpoint.UpdatedAt,
+	return &dto.AccountWebhookPublic{
+		Configured: true, URL: endpoint.URL, KeyConfigured: keyConfigured,
+		Status: endpoint.Status, UpdatedAt: endpoint.UpdatedAt,
 	}
-	if resourceKey != nil {
-		response.ResourceKeyConfigured = true
-	}
-	return response
 }
 
 // MigrateAccountWebhookConfigs reduces legacy multi-endpoint settings to one
@@ -111,20 +184,25 @@ func MigrateAccountWebhookConfigs() error {
 				return err
 			}
 			status := selected.Status
-			var activeKeyCount int64
-			now := time.Now().Unix()
-			if err := tx.Model(&model.AssetKey{}).Where(
-				"user_id = ? AND status = ? AND (expired_at = ? OR expired_at = ? OR expired_at >= ?)",
-				userID, model.AssetKeyStatusEnabled, -1, 0, now,
-			).Count(&activeKeyCount).Error; err != nil {
-				return err
-			}
-			if activeKeyCount == 0 {
+			encryptedKey := selected.AuthKeyEncrypted
+			if encryptedKey == "" {
+				_, generated, err := generateEncryptedWebhookKey()
+				if err != nil {
+					return err
+				}
+				encryptedKey = generated
+			} else if keyValue, err := decryptWebhookKey(encryptedKey); err != nil {
 				status = model.WebhookEndpointDisabled
+			} else if !validWebhookKey(keyValue) {
+				_, generated, err := generateEncryptedWebhookKey()
+				if err != nil {
+					return err
+				}
+				encryptedKey = generated
 			}
 			ownerID := userID
 			if err := tx.Model(&model.WebhookEndpoint{}).Where("id = ?", selected.ID).Updates(map[string]any{
-				"config_owner_id": ownerID, "auth_key_encrypted": "",
+				"config_owner_id": ownerID, "auth_key_encrypted": encryptedKey,
 				"secret_salt": "", "secret_version": 0,
 				"previous_secret_salt": "", "previous_secret_version": 0, "previous_secret_expires_at": 0,
 				"event_types": accountWebhookEventTypesJSON(), "api_version": WebhookAPIVersion,
@@ -138,18 +216,28 @@ func MigrateAccountWebhookConfigs() error {
 }
 
 func GetAccountWebhookConfig(userID int) (*dto.AccountWebhookPublic, error) {
-	resourceKey, _, err := model.GetActiveUserAssetKey(userID)
-	if err != nil {
-		return nil, err
-	}
 	endpoint, exists, err := model.GetAccountWebhookEndpoint(userID)
 	if err != nil {
 		return nil, err
 	}
 	if !exists {
-		return accountWebhookToPublic(nil, resourceKey), nil
+		return accountWebhookToPublic(nil, false), nil
 	}
-	return accountWebhookToPublic(endpoint, resourceKey), nil
+	keyValue, decryptErr := decryptWebhookKey(endpoint.AuthKeyEncrypted)
+	if decryptErr != nil || !validWebhookKey(keyValue) {
+		now := time.Now().Unix()
+		endpoint.Status = model.WebhookEndpointDisabled
+		if err := model.DB.Model(endpoint).Updates(map[string]any{
+			"status": model.WebhookEndpointDisabled, "updated_at": now,
+		}).Error; err != nil {
+			return nil, err
+		}
+		endpoint.UpdatedAt = now
+		return accountWebhookToPublic(endpoint, false), nil
+	}
+	response := accountWebhookToPublic(endpoint, true)
+	response.Key = keyValue
+	return response, nil
 }
 
 func PutAccountWebhookConfig(userID int, request dto.AccountWebhookUpdateRequest) (*dto.AccountWebhookPublic, error) {
@@ -162,13 +250,6 @@ func PutAccountWebhookConfig(userID int, request dto.AccountWebhookUpdateRequest
 	if request.Enabled != nil && *request.Enabled && request.URL == "" {
 		return nil, errors.New("Webhook URL is required when enabling Webhook")
 	}
-	if request.Enabled != nil && *request.Enabled {
-		if _, exists, err := model.GetActiveUserAssetKey(userID); err != nil {
-			return nil, err
-		} else if !exists {
-			return nil, errors.New("an enabled Resource Center API Key is required when enabling Webhook")
-		}
-	}
 	var result *model.WebhookEndpoint
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var user model.User
@@ -180,6 +261,18 @@ func PutAccountWebhookConfig(userID int, request dto.AccountWebhookUpdateRequest
 		creating := errors.Is(err, gorm.ErrRecordNotFound)
 		if err != nil && !creating {
 			return err
+		}
+		if !creating && !request.RegenerateKey {
+			keyValue, err := decryptWebhookKey(endpoint.AuthKeyEncrypted)
+			if err != nil || !validWebhookKey(keyValue) {
+				return ErrWebhookStoredKeyUnavailable
+			}
+		} else {
+			_, encrypted, err := generateEncryptedWebhookKey()
+			if err != nil {
+				return err
+			}
+			endpoint.AuthKeyEncrypted = encrypted
 		}
 
 		status := model.WebhookEndpointDisabled
@@ -201,7 +294,7 @@ func PutAccountWebhookConfig(userID int, request dto.AccountWebhookUpdateRequest
 				EndpointID: model.NewWebhookEndpointID(), UserID: userID, ConfigOwnerID: &ownerID,
 				Name: "Task events", URL: request.URL, Status: status,
 				EventTypes: accountWebhookEventTypesJSON(), APIVersion: WebhookAPIVersion,
-				CreatedAt: now, UpdatedAt: now,
+				AuthKeyEncrypted: endpoint.AuthKeyEncrypted, CreatedAt: now, UpdatedAt: now,
 			}
 			if err := tx.Create(&endpoint).Error; err != nil {
 				return err
@@ -210,7 +303,7 @@ func PutAccountWebhookConfig(userID int, request dto.AccountWebhookUpdateRequest
 			updates := map[string]any{
 				"url": request.URL, "status": status,
 				"event_types": accountWebhookEventTypesJSON(), "api_version": WebhookAPIVersion,
-				"auth_key_encrypted": "", "updated_at": now,
+				"auth_key_encrypted": endpoint.AuthKeyEncrypted, "updated_at": now,
 			}
 			if err := tx.Model(&endpoint).Updates(updates).Error; err != nil {
 				return err
@@ -225,11 +318,13 @@ func PutAccountWebhookConfig(userID int, request dto.AccountWebhookUpdateRequest
 	if err != nil {
 		return nil, err
 	}
-	resourceKey, _, err := model.GetActiveUserAssetKey(userID)
+	keyValue, err := decryptWebhookKey(result.AuthKeyEncrypted)
 	if err != nil {
-		return nil, err
+		return nil, ErrWebhookStoredKeyUnavailable
 	}
-	return accountWebhookToPublic(result, resourceKey), nil
+	response := accountWebhookToPublic(result, true)
+	response.Key = keyValue
+	return response, nil
 }
 
 func DisableAccountWebhookConfig(userID int) error {
@@ -304,10 +399,8 @@ func CreateAccountWebhookTestDelivery(userID int) (*dto.AccountWebhookTestRespon
 	if endpoint.Status != model.WebhookEndpointEnabled {
 		return nil, errors.New("webhook configuration is disabled")
 	}
-	if _, exists, err := model.GetActiveUserAssetKey(userID); err != nil {
-		return nil, err
-	} else if !exists {
-		return nil, errors.New("an enabled Resource Center API Key is required to test Webhook")
+	if keyValue, err := decryptWebhookKey(endpoint.AuthKeyEncrypted); err != nil || !validWebhookKey(keyValue) {
+		return nil, ErrWebhookStoredKeyUnavailable
 	}
 	now := time.Now().Unix()
 	event := &model.WebhookEvent{
@@ -457,13 +550,9 @@ func processWebhookDeliveryWithTimeout(ctx context.Context, claimed *model.Webho
 		}
 		return workerAttemptResult{succeeded: err == nil}
 	}
-	resourceKey, exists, err := model.GetActiveUserAssetKey(endpoint.UserID)
-	if err != nil {
-		completeWebhookFailure(ctx, delivery, 0, "load Resource Center API Key: "+err.Error(), 0)
-		return workerAttemptResult{}
-	}
-	if !exists {
-		completeWebhookFailure(ctx, delivery, 0, "enabled Resource Center API Key is unavailable", 0)
+	webhookKey, err := decryptWebhookKey(endpoint.AuthKeyEncrypted)
+	if err != nil || !validWebhookKey(webhookKey) {
+		completeWebhookFailure(ctx, delivery, 0, "stored Webhook key is unavailable", 0)
 		return workerAttemptResult{}
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
@@ -478,7 +567,7 @@ func processWebhookDeliveryWithTimeout(ctx context.Context, claimed *model.Webho
 		completeWebhookFailure(ctx, delivery, 0, err.Error(), 0)
 		return workerAttemptResult{}
 	}
-	request.Header.Set("Authorization", "Bearer "+resourceKey.Key)
+	request.Header.Set("Authorization", "Bearer "+webhookKey)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("User-Agent", "new-api-webhooks/1.0")
 	started := time.Now()
