@@ -1,3 +1,40 @@
+# Task Plan: Async Image Token Usage Log Backfill (2026-07-22)
+
+## Goal
+Show real upstream token usage in the original async image consume-log token columns without changing image-parameter billing or creating estimated usage.
+
+## Current Phase
+Complete
+
+### Phase 1: Log update contract
+- [x] Confirm the task stores the original consume-log ID and current audit merge already uses it.
+- [x] Select a single CAS update that merges audit metadata and token columns together.
+- **Status:** complete
+
+### Phase 2: Implementation and regression coverage
+- [x] Extend the consume-log merge API with optional real prompt/completion token values.
+- [x] Backfill token columns only when image execution audit contains real upstream usage.
+- [x] Cover successful backfill, missing usage, stale associations, and guarded update behavior.
+- **Status:** complete
+
+### Phase 3: Verification
+- [x] Run focused model/service tests and formatting checks.
+- [x] Run broader affected-package tests and inspect the final diff.
+- **Status:** complete
+
+## Locked Decisions
+- Token backfill is observability only and never changes the request-time image pricing snapshot or final charge.
+- Never estimate tokens from prompt length or image count.
+- Reuse `TaskBillingContext.ConsumeLogId`; do not scan logs by JSON fields.
+- Merge audit JSON and token columns in one guarded update.
+- Retry rare CAS conflicts by re-reading the latest metadata; do not add retries to the normal path.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+
+---
+
 # Task Plan: Separate Async Image and Webhook Credentials (2026-07-22)
 
 ## Goal

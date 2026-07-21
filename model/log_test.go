@@ -40,6 +40,55 @@ func countLogsByTypeAndUser(t *testing.T, userID int, logType int) int64 {
 	return count
 }
 
+func TestMergeConsumeLogOtherAndTokensUpdatesOriginalTaskLog(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+
+	logItem := &Log{
+		UserId:           71,
+		CreatedAt:        time.Now().Unix(),
+		Type:             LogTypeConsume,
+		PromptTokens:     3,
+		CompletionTokens: 4,
+		Other:            common.MapToJsonStr(map[string]interface{}{"task_id": "task_token_backfill"}),
+	}
+	require.NoError(t, LOG_DB.Create(logItem).Error)
+	promptTokens, completionTokens := 17, 29
+
+	merged, err := MergeConsumeLogOtherAndTokens(
+		logItem.Id,
+		logItem.UserId,
+		"task_token_backfill",
+		map[string]interface{}{"image_execution_audit": map[string]interface{}{"total_tokens": 46}},
+		&promptTokens,
+		&completionTokens,
+	)
+	require.NoError(t, err)
+	require.True(t, merged)
+
+	var updated Log
+	require.NoError(t, LOG_DB.First(&updated, logItem.Id).Error)
+	require.Equal(t, promptTokens, updated.PromptTokens)
+	require.Equal(t, completionTokens, updated.CompletionTokens)
+	other, err := common.StrToMap(updated.Other)
+	require.NoError(t, err)
+	require.Contains(t, other, "image_execution_audit")
+
+	merged, err = MergeConsumeLogOtherAndTokens(
+		logItem.Id,
+		logItem.UserId,
+		"task_different",
+		map[string]interface{}{"unexpected": true},
+		&completionTokens,
+		&promptTokens,
+	)
+	require.NoError(t, err)
+	require.False(t, merged)
+	require.NoError(t, LOG_DB.First(&updated, logItem.Id).Error)
+	require.Equal(t, promptTokens, updated.PromptTokens)
+	require.Equal(t, completionTokens, updated.CompletionTokens)
+}
+
 func TestRecordConsumeLogSkipsExcludedUsers(t *testing.T) {
 	truncateTables(t)
 	resetLogTestTables(t)

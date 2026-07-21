@@ -1406,6 +1406,46 @@ func TestSettle_ImageHandlePerCallSuccessKeepsPrecharge(t *testing.T) {
 	assert.Equal(t, preConsumed, task.Quota)
 }
 
+func TestImageExecutionAuditLogTokensRequiresRealBreakdown(t *testing.T) {
+	tests := []struct {
+		name             string
+		audit            map[string]interface{}
+		promptTokens     *int
+		completionTokens *int
+	}{
+		{
+			name:             "canonical input and output",
+			audit:            map[string]interface{}{"input_tokens": float64(17), "output_tokens": float64(29)},
+			promptTokens:     common.GetPointer(17),
+			completionTokens: common.GetPointer(29),
+		},
+		{
+			name:             "prompt and completion aliases",
+			audit:            map[string]interface{}{"prompt_tokens": float64(11), "completion_tokens": float64(13)},
+			promptTokens:     common.GetPointer(11),
+			completionTokens: common.GetPointer(13),
+		},
+		{
+			name:  "total only has no truthful column mapping",
+			audit: map[string]interface{}{"total_tokens": float64(46)},
+		},
+		{
+			name:             "explicit zero is preserved",
+			audit:            map[string]interface{}{"input_tokens": float64(0), "output_tokens": float64(0)},
+			promptTokens:     common.GetPointer(0),
+			completionTokens: common.GetPointer(0),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			promptTokens, completionTokens := imageExecutionAuditLogTokens(test.audit)
+			require.Equal(t, test.promptTokens, promptTokens)
+			require.Equal(t, test.completionTokens, completionTokens)
+		})
+	}
+}
+
 func TestSettle_ImageParameterPerCallKeepsFrozenSnapshotAndIgnoresExecutorUsage(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -1511,6 +1551,8 @@ func TestSettle_ImageParameterPerCallKeepsFrozenSnapshotAndIgnoresExecutorUsage(
 	assert.Equal(t, originalLog.Id, consumeLog.Id)
 	assert.Equal(t, model.LogTypeConsume, consumeLog.Type)
 	assert.Equal(t, preConsumed, consumeLog.Quota)
+	assert.Equal(t, 111, consumeLog.PromptTokens)
+	assert.Equal(t, 888, consumeLog.CompletionTokens)
 	assert.Contains(t, consumeLog.Content, "按张（图片）")
 	var auditOther map[string]interface{}
 	require.NoError(t, common.Unmarshal([]byte(consumeLog.Other), &auditOther))
@@ -1568,7 +1610,10 @@ func TestMergeCompletedImagePricingExecutionAuditHandlesEarlyCallbackRace(t *tes
 		N:             1,
 		FinalQuota:    20000,
 	}
-	task.Data = json.RawMessage(`{"result":{"images":[{"url":"https://cdn.example.com/one.png"}],"output":{"quality":"low","size":"1024x1024"}}}`)
+	task.Data = json.RawMessage(`{
+		"result":{"images":[{"url":"https://cdn.example.com/one.png"}],"output":{"quality":"low","size":"1024x1024"}},
+		"usage":{"input_tokens":17,"output_tokens":29,"total_tokens":46}
+	}`)
 	require.NoError(t, model.DB.Create(task).Error)
 	originalLog := &model.Log{
 		UserId:    task.UserId,
@@ -1591,6 +1636,8 @@ func TestMergeCompletedImagePricingExecutionAuditHandlesEarlyCallbackRace(t *tes
 	require.True(t, ok)
 	require.Equal(t, "low", audit["quality"])
 	require.Equal(t, "1024x1024", audit["size"])
+	require.Equal(t, 17, consumeLog.PromptTokens)
+	require.Equal(t, 29, consumeLog.CompletionTokens)
 }
 
 func TestRecordImagePricingExecutionAuditReloadsConsumeLogIdForStaleCallbackTask(t *testing.T) {
@@ -1628,6 +1675,8 @@ func TestRecordImagePricingExecutionAuditReloadsConsumeLogIdForStaleCallbackTask
 	audit, ok := other["image_execution_audit"].(map[string]interface{})
 	require.True(t, ok)
 	require.Equal(t, "low", audit["quality"])
+	require.Zero(t, consumeLog.PromptTokens)
+	require.Zero(t, consumeLog.CompletionTokens)
 }
 
 func TestSettle_ImageHandleLegacyUsageTaskWithoutSnapshotUsesActualQuota(t *testing.T) {

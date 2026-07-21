@@ -143,6 +143,24 @@ func appendImageExecutionUsage(audit map[string]interface{}, usage *dto.Usage) {
 	}
 }
 
+func imageExecutionAuditLogTokens(audit map[string]interface{}) (*int, *int) {
+	return firstImageExecutionAuditToken(audit, "input_tokens", "prompt_tokens"),
+		firstImageExecutionAuditToken(audit, "output_tokens", "completion_tokens")
+}
+
+func firstImageExecutionAuditToken(audit map[string]interface{}, keys ...string) *int {
+	for _, key := range keys {
+		value, exists := audit[key]
+		if !exists {
+			continue
+		}
+		if tokens, ok := imageExecutionInt(value); ok {
+			return &tokens
+		}
+	}
+	return nil
+}
+
 func cloneImageExecutionAudit(audit map[string]interface{}) map[string]interface{} {
 	cloned := make(map[string]interface{}, len(audit))
 	for key, value := range audit {

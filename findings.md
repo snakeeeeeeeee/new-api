@@ -1,3 +1,17 @@
+# Async Image Token Usage Log Backfill Findings (2026-07-22)
+
+- Async image tasks persist the original consume log ID in `private_data.billing_context.consume_log_id`; terminal processing can find the row directly by `logs.id`.
+- Image-parameter pricing currently writes real execution usage under `other.image_execution_audit`, but the top-level `prompt_tokens` and `completion_tokens` remain zero.
+- `MergeConsumeLogOther` already validates `id + user_id + consume type`, verifies the stored public task ID, and uses the previous `other` value as a CAS fence.
+- The lowest-overhead implementation extends that existing guarded update so audit JSON and token columns are written in one database update.
+- Missing upstream usage must preserve zero token columns; token backfill is not a billing input for `image_parameter_per_call` tasks.
+- A real `total_tokens` value without input/output components remains available in the execution audit but cannot be truthfully assigned to either top-level token column.
+- Token-column mapping prefers `input_tokens/output_tokens` and falls back to the equivalent `prompt_tokens/completion_tokens` names; explicit zero values remain valid.
+- Concurrent callback and submit-side compensation can target the same consume log; the existing one-shot CAS could discard the richer update, so bounded conflict retries are required for reliable backfill.
+- No frontend change is needed because the usage-log table already renders the top-level prompt/completion token columns.
+
+---
+
 # Credential Separation Findings (2026-07-22)
 
 - Final implementation review tightened stored-key normalization: a valid Webhook credential must now be exactly the canonical `wk-` prefix plus 48 generated characters, so a historical short value such as `wk-short` cannot bypass migration or regeneration handling.

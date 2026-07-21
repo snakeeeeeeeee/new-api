@@ -1,3 +1,18 @@
+# Async Image Token Usage Log Backfill Progress (2026-07-22)
+
+- Loaded the required brainstorming and file-planning workflows.
+- Confirmed the approved behavior: real upstream usage should appear in the original consume log while image-parameter charges remain unchanged.
+- Mapped the direct `consume_log_id` association and existing CAS-protected audit merge; implementation will reuse the same update rather than add a second write.
+- Extended the guarded log merge with optional token columns and wired image execution audit usage into the original consume log without touching quota settlement.
+- Added focused coverage for direct guarded updates, callback DTO usage, persisted task-result usage, missing usage, and mismatched task association.
+- Focused model and service tests pass; diff whitespace validation is clean.
+- Added a three-attempt CAS conflict retry so concurrent terminal audit merges preserve the latest metadata without changing normal-path query counts.
+- Added direct mapping coverage for canonical input/output names, prompt/completion aliases, explicit zero values, and total-only usage.
+- Full `go test ./... -count=1` passes, including model, service, controller, relay, router, settings, and async mock packages.
+- Final `git diff --check` is clean; unrelated untracked workspace content remains untouched.
+
+---
+
 # Credential Separation Progress (2026-07-22)
 
 - Final verification passes `go test ./...`, production frontend build, OpenAPI drift, changed-file Prettier/ESLint, i18n status, and `git diff --check`; the previously documented repository-wide `i18n:lint` baseline remains unrelated to these changed files.

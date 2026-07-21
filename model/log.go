@@ -385,39 +385,71 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 // consume log. The task ID check prevents an incorrect log association even
 // if a stale or corrupted consume_log_id is present in task private data.
 func MergeConsumeLogOther(logId int, userId int, taskId string, updates map[string]interface{}) (bool, error) {
+	return MergeConsumeLogOtherAndTokens(logId, userId, taskId, updates, nil, nil)
+}
+
+// MergeConsumeLogOtherAndTokens updates execution metadata and optional real
+// token usage in one guarded write. Nil token values leave the columns intact.
+func MergeConsumeLogOtherAndTokens(
+	logId int,
+	userId int,
+	taskId string,
+	updates map[string]interface{},
+	promptTokens *int,
+	completionTokens *int,
+) (bool, error) {
 	if logId <= 0 || userId <= 0 || strings.TrimSpace(taskId) == "" || len(updates) == 0 {
 		return false, nil
 	}
+	if promptTokens != nil && *promptTokens < 0 {
+		return false, fmt.Errorf("prompt tokens cannot be negative")
+	}
+	if completionTokens != nil && *completionTokens < 0 {
+		return false, fmt.Errorf("completion tokens cannot be negative")
+	}
 
-	var logItem Log
-	if err := LOG_DB.Where("id = ? AND user_id = ? AND type = ?", logId, userId, LogTypeConsume).First(&logItem).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	const maxAttempts = 3
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var logItem Log
+		if err := LOG_DB.Where("id = ? AND user_id = ? AND type = ?", logId, userId, LogTypeConsume).First(&logItem).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return false, nil
+			}
+			return false, err
+		}
+		other, err := common.StrToMap(logItem.Other)
+		if err != nil {
+			return false, err
+		}
+		storedTaskId, _ := other["task_id"].(string)
+		if strings.TrimSpace(storedTaskId) != strings.TrimSpace(taskId) {
 			return false, nil
 		}
-		return false, err
+		for key, value := range updates {
+			other[key] = value
+		}
+		encoded, err := common.Marshal(other)
+		if err != nil {
+			return false, err
+		}
+		columnUpdates := map[string]interface{}{"other": string(encoded)}
+		if promptTokens != nil {
+			columnUpdates["prompt_tokens"] = *promptTokens
+		}
+		if completionTokens != nil {
+			columnUpdates["completion_tokens"] = *completionTokens
+		}
+		result := LOG_DB.Model(&Log{}).
+			Where("id = ? AND other = ?", logItem.Id, logItem.Other).
+			Updates(columnUpdates)
+		if result.Error != nil {
+			return false, result.Error
+		}
+		if result.RowsAffected > 0 {
+			return true, nil
+		}
 	}
-	other, err := common.StrToMap(logItem.Other)
-	if err != nil {
-		return false, err
-	}
-	storedTaskId, _ := other["task_id"].(string)
-	if strings.TrimSpace(storedTaskId) != strings.TrimSpace(taskId) {
-		return false, nil
-	}
-	for key, value := range updates {
-		other[key] = value
-	}
-	encoded, err := common.Marshal(other)
-	if err != nil {
-		return false, err
-	}
-	result := LOG_DB.Model(&Log{}).
-		Where("id = ? AND other = ?", logItem.Id, logItem.Other).
-		Update("other", string(encoded))
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
+	return false, nil
 }
 
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string) (logs []*Log, total int64, err error) {

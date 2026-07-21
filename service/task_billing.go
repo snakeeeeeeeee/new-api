@@ -481,11 +481,14 @@ func recordImagePricingExecutionAudit(task *model.Task, taskResult *relaycommon.
 			consumeLogId = persistedTask.PrivateData.BillingContext.ConsumeLogId
 		}
 	}
-	merged, err := model.MergeConsumeLogOther(
+	promptTokens, completionTokens := imageExecutionAuditLogTokens(audit)
+	merged, err := model.MergeConsumeLogOtherAndTokens(
 		consumeLogId,
 		task.UserId,
 		task.TaskID,
 		map[string]interface{}{imageExecutionAuditContextKey: audit},
+		promptTokens,
+		completionTokens,
 	)
 	if err != nil {
 		logger.LogWarn(context.Background(), fmt.Sprintf("合并图片执行审计失败 task %s: %s", task.TaskID, err.Error()))
