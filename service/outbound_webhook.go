@@ -453,12 +453,9 @@ func webhookAllowsInsecureLocal() bool {
 }
 
 func ValidateWebhookEndpointURL(ctx context.Context, rawURL string) error {
-	parsed, host, port, err := parseWebhookURL(rawURL)
+	_, host, port, err := parseWebhookURL(rawURL)
 	if err != nil {
 		return err
-	}
-	if !webhookAllowsInsecureLocal() && parsed.Scheme != "https" {
-		return errors.New("webhook endpoints must use HTTPS")
 	}
 	_, err = resolveWebhookTarget(ctx, host, port, webhookAllowsInsecureLocal())
 	return err
@@ -533,14 +530,11 @@ func isPublicWebhookIP(ip net.IP) bool {
 }
 
 func newWebhookHTTPClient(ctx context.Context, rawURL string) (*http.Client, error) {
-	parsed, host, port, err := parseWebhookURL(rawURL)
+	_, host, port, err := parseWebhookURL(rawURL)
 	if err != nil {
 		return nil, err
 	}
 	allowLocal := webhookAllowsInsecureLocal()
-	if !allowLocal && parsed.Scheme != "https" {
-		return nil, errors.New("webhook endpoints must use HTTPS")
-	}
 	targets, err := resolveWebhookTarget(ctx, host, port, allowLocal)
 	if err != nil {
 		return nil, err

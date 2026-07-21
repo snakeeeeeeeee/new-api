@@ -485,10 +485,15 @@ func TestClaimedWebhookDeliveryIsNeverReclaimed(t *testing.T) {
 	assert.Empty(t, reclaimed)
 }
 
-func TestWebhookValidationRejectsInsecureAndPrivateTargetsByDefault(t *testing.T) {
+func TestWebhookValidationAllowsHTTPAndHTTPSButRejectsPrivateTargetsByDefault(t *testing.T) {
 	setupOutboundWebhookTestDB(t)
 	t.Setenv("WEBHOOK_ALLOW_INSECURE_LOCAL", "false")
-	assert.ErrorContains(t, ValidateWebhookEndpointURL(context.Background(), "http://example.com/hook"), "HTTPS")
+	assert.NoError(t, ValidateWebhookEndpointURL(context.Background(), "http://8.8.8.8/hook"))
+	assert.NoError(t, ValidateWebhookEndpointURL(context.Background(), "https://8.8.8.8/hook"))
+	client, err := newWebhookHTTPClient(context.Background(), "http://8.8.8.8/hook")
+	require.NoError(t, err)
+	client.CloseIdleConnections()
+	assert.ErrorContains(t, ValidateWebhookEndpointURL(context.Background(), "http://127.0.0.1/hook"), "non-public IP")
 	assert.ErrorContains(t, ValidateWebhookEndpointURL(context.Background(), "https://127.0.0.1/hook"), "non-public IP")
 	assert.ErrorContains(t, ValidateWebhookEndpointURL(context.Background(), "https://169.254.169.254/latest/meta-data"), "non-public IP")
 }
