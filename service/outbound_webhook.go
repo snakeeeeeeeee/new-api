@@ -28,12 +28,20 @@ const (
 	WebhookEventImageTaskSucceeded = "image.task.succeeded"
 	WebhookEventImageTaskFailed    = "image.task.failed"
 	WebhookEventTest               = "webhook.test"
-	webhookDeliveryTimeout         = 10 * time.Second
 )
 
 var (
 	webhookWorkerOnce        sync.Once
+	webhookDeliveryRuntime   = newAsyncWorkerRuntime()
 	ErrWebhookConfigNotFound = errors.New("webhook configuration not found")
+	webhookTransport         = &http.Transport{
+		Proxy: nil, ForceAttemptHTTP2: true, MaxIdleConns: 100, MaxIdleConnsPerHost: 10,
+		IdleConnTimeout: 30 * time.Second, DialContext: dialValidatedWebhookTarget,
+	}
+	webhookHTTPClient = &http.Client{
+		Transport:     webhookTransport,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+	}
 )
 
 func accountWebhookEventTypesJSON() string {
@@ -338,25 +346,82 @@ func StartOutboundWebhookWorker() {
 		logger.LogError(context.Background(), "migrate account webhook configuration failed: "+err.Error())
 	}
 	webhookWorkerOnce.Do(func() {
-		go func() {
-			ticker := time.NewTicker(time.Second)
-			cleanupTicker := time.NewTicker(time.Hour)
-			defer ticker.Stop()
-			defer cleanupTicker.Stop()
-			for {
-				select {
-				case <-ticker.C:
-					processDueWebhookDeliveries(context.Background())
-				case <-cleanupTicker.C:
-					cleanupOutboundWebhookLogs(context.Background())
-				}
-			}
-		}()
+		webhookDeliveryRuntime.start()
+		go runOutboundWebhookWorker()
 	})
 }
 
+func runOutboundWebhookWorker() {
+	ticker := time.NewTicker(time.Second)
+	cleanupTicker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	defer cleanupTicker.Stop()
+	defer webhookDeliveryRuntime.stopLoop()
+	for {
+		select {
+		case <-webhookDeliveryRuntime.stop:
+			return
+		default:
+		}
+		scheduleDueWebhookDeliveries()
+		select {
+		case <-webhookDeliveryRuntime.stop:
+			return
+		case <-webhookDeliveryRuntime.wake:
+		case <-ticker.C:
+		case <-cleanupTicker.C:
+			cleanupOutboundWebhookLogs(context.Background())
+		}
+	}
+}
+
+func webhookDeliveryLeaseSeconds(timeoutSeconds int) int64 {
+	leaseSeconds := timeoutSeconds + 15
+	if leaseSeconds < 30 {
+		leaseSeconds = 30
+	}
+	return int64(leaseSeconds)
+}
+
+func scheduleDueWebhookDeliveries() {
+	setting := async_task_setting.GetSnapshot()
+	available := webhookDeliveryRuntime.capacity(setting.WebhookDeliveryConcurrency)
+	if available <= 0 {
+		return
+	}
+	deliveries, err := model.ClaimDueWebhookDeliveriesForCapacity(
+		available, webhookDeliveryLeaseSeconds(setting.WebhookDeliveryTimeoutSecs),
+		setting.WebhookEndpointConcurrency, webhookDeliveryRuntime.endpointCounts(),
+	)
+	if err != nil {
+		logger.LogError(context.Background(), "claim webhook deliveries failed: "+err.Error())
+		return
+	}
+	for _, delivery := range deliveries {
+		endpointID := delivery.EndpointRecordID
+		if !webhookDeliveryRuntime.tryStart(endpointID, setting.WebhookDeliveryConcurrency, setting.WebhookEndpointConcurrency) {
+			break
+		}
+		go func(delivery *model.WebhookDelivery, timeoutSeconds int) {
+			started := time.Now()
+			result := workerAttemptResult{}
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					logger.LogError(context.Background(), fmt.Sprintf("webhook delivery worker panic: %v", recovered))
+				}
+				webhookDeliveryRuntime.finish(delivery.EndpointRecordID, started, result)
+			}()
+			result = processWebhookDeliveryWithTimeout(context.Background(), delivery, timeoutSeconds)
+		}(delivery, setting.WebhookDeliveryTimeoutSecs)
+	}
+}
+
 func processDueWebhookDeliveries(ctx context.Context) {
-	deliveries, err := model.ClaimDueWebhookDeliveries(20, 30)
+	setting := async_task_setting.GetSnapshot()
+	deliveries, err := model.ClaimDueWebhookDeliveriesForCapacity(
+		setting.WebhookDeliveryConcurrency, webhookDeliveryLeaseSeconds(setting.WebhookDeliveryTimeoutSecs),
+		setting.WebhookEndpointConcurrency, nil,
+	)
 	if err != nil {
 		logger.LogError(ctx, "claim webhook deliveries failed: "+err.Error())
 		return
@@ -367,13 +432,21 @@ func processDueWebhookDeliveries(ctx context.Context) {
 }
 
 func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery) {
+	setting := async_task_setting.GetSnapshot()
+	_ = processWebhookDeliveryWithTimeout(ctx, claimed, setting.WebhookDeliveryTimeoutSecs)
+}
+
+func processWebhookDeliveryWithTimeout(ctx context.Context, claimed *model.WebhookDelivery, timeoutSeconds int) workerAttemptResult {
+	if claimed == nil {
+		return workerAttemptResult{succeeded: true}
+	}
 	delivery, event, endpoint, err := model.LoadWebhookDeliveryContext(claimed.ID)
 	if err != nil {
 		completeWebhookFailure(ctx, claimed, 0, "load webhook delivery context: "+err.Error(), 0)
-		return
+		return workerAttemptResult{}
 	}
 	if delivery.LockToken != claimed.LockToken {
-		return
+		return workerAttemptResult{}
 	}
 	if endpoint.Status != model.WebhookEndpointEnabled || endpoint.DeletedAt.Valid {
 		_, err := model.CompleteWebhookDeliveryAttempt(delivery, model.WebhookDeliveryResult{
@@ -382,28 +455,28 @@ func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery)
 		if err != nil {
 			logger.LogError(ctx, "discard webhook delivery failed: "+err.Error())
 		}
-		return
+		return workerAttemptResult{succeeded: err == nil}
 	}
 	resourceKey, exists, err := model.GetActiveUserAssetKey(endpoint.UserID)
 	if err != nil {
 		completeWebhookFailure(ctx, delivery, 0, "load Resource Center API Key: "+err.Error(), 0)
-		return
+		return workerAttemptResult{}
 	}
 	if !exists {
 		completeWebhookFailure(ctx, delivery, 0, "enabled Resource Center API Key is unavailable", 0)
-		return
+		return workerAttemptResult{}
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, webhookDeliveryTimeout)
+	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	defer cancel()
 	client, err := newWebhookHTTPClient(requestCtx, endpoint.URL)
 	if err != nil {
 		completeWebhookFailure(ctx, delivery, 0, err.Error(), 0)
-		return
+		return workerAttemptResult{timedOut: workerErrorTimedOut(err)}
 	}
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint.URL, bytes.NewBufferString(event.Payload))
 	if err != nil {
 		completeWebhookFailure(ctx, delivery, 0, err.Error(), 0)
-		return
+		return workerAttemptResult{}
 	}
 	request.Header.Set("Authorization", "Bearer "+resourceKey.Key)
 	request.Header.Set("Content-Type", "application/json")
@@ -413,12 +486,12 @@ func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery)
 	durationMS := time.Since(started).Milliseconds()
 	if err != nil {
 		completeWebhookFailure(ctx, delivery, 0, err.Error(), durationMS)
-		return
+		return workerAttemptResult{timedOut: workerErrorTimedOut(err)}
 	}
 	_ = response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		completeWebhookFailure(ctx, delivery, response.StatusCode, fmt.Sprintf("webhook receiver returned HTTP %d", response.StatusCode), durationMS)
-		return
+		return workerAttemptResult{}
 	}
 	_, err = model.CompleteWebhookDeliveryAttempt(delivery, model.WebhookDeliveryResult{
 		Status: model.WebhookDeliveryDelivered, HTTPStatus: response.StatusCode, DurationMS: durationMS,
@@ -426,10 +499,11 @@ func processWebhookDelivery(ctx context.Context, claimed *model.WebhookDelivery)
 	if err != nil {
 		logger.LogError(ctx, "complete webhook delivery failed: "+err.Error())
 	}
+	return workerAttemptResult{succeeded: err == nil}
 }
 
 func completeWebhookFailure(ctx context.Context, delivery *model.WebhookDelivery, httpStatus int, reason string, durationMS int64) {
-	settings := async_task_setting.NormalizeSetting(*async_task_setting.GetAsyncTaskSetting())
+	settings := async_task_setting.GetSnapshot()
 	status := model.WebhookDeliveryFailed
 	nextAttemptAt := int64(0)
 	if delivery != nil && delivery.Attempts < settings.WebhookMaxAttempts {
@@ -530,35 +604,38 @@ func isPublicWebhookIP(ip net.IP) bool {
 }
 
 func newWebhookHTTPClient(ctx context.Context, rawURL string) (*http.Client, error) {
-	_, host, port, err := parseWebhookURL(rawURL)
-	if err != nil {
+	if err := ValidateWebhookEndpointURL(ctx, rawURL); err != nil {
 		return nil, err
 	}
-	allowLocal := webhookAllowsInsecureLocal()
-	targets, err := resolveWebhookTarget(ctx, host, port, allowLocal)
+	return webhookHTTPClient, nil
+}
+
+func dialValidatedWebhookTarget(ctx context.Context, network string, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid webhook dial address: %w", err)
+	}
+	targets, err := resolveWebhookTarget(ctx, host, port, webhookAllowsInsecureLocal())
 	if err != nil {
 		return nil, err
 	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{
-		Proxy: nil, ForceAttemptHTTP2: true, MaxIdleConns: 20, MaxIdleConnsPerHost: 4,
-		IdleConnTimeout: 30 * time.Second,
-		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			var lastErr error
-			for _, target := range targets {
-				connection, err := dialer.DialContext(ctx, network, target)
-				if err == nil {
-					return connection, nil
-				}
-				lastErr = err
-			}
-			return nil, lastErr
-		},
+	var lastErr error
+	for _, target := range targets {
+		connection, dialErr := dialer.DialContext(ctx, network, target)
+		if dialErr == nil {
+			return connection, nil
+		}
+		lastErr = dialErr
 	}
-	return &http.Client{
-		Transport: transport, Timeout: webhookDeliveryTimeout,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
-	}, nil
+	return nil, lastErr
+}
+
+func GetWebhookDeliveryWorkerRuntimeStats() AsyncWorkerRuntimeStats {
+	setting := async_task_setting.GetSnapshot()
+	return webhookDeliveryRuntime.snapshot(
+		setting.WebhookDeliveryConcurrency, setting.WebhookEndpointConcurrency, setting.WebhookDeliveryTimeoutSecs,
+	)
 }
 
 func cleanupOutboundWebhookLogs(ctx context.Context) {

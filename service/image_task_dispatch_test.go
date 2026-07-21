@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -106,6 +107,21 @@ func TestProcessImageTaskDispatchReschedulesRetryableFailure(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, stored.LastHTTPStatus)
 	assert.Equal(t, "temporary outage", stored.LastError)
 	assert.GreaterOrEqual(t, stored.NextAttemptAt, before+5)
+}
+
+func TestProcessImageTaskDispatchUsesDedicatedTimeout(t *testing.T) {
+	_, dispatch := setupImageDispatchTest(t, func(writer http.ResponseWriter, _ *http.Request) {
+		time.Sleep(1500 * time.Millisecond)
+		writer.WriteHeader(http.StatusAccepted)
+	})
+	result := processImageTaskDispatchWithTimeout(context.Background(), dispatch, 1)
+	assert.True(t, result.timedOut)
+
+	var stored model.ImageTaskDispatch
+	require.NoError(t, model.DB.First(&stored, dispatch.ID).Error)
+	assert.Equal(t, model.ImageTaskDispatchPending, stored.Status)
+	assert.Contains(t, stored.LastError, "deadline exceeded")
+	assert.Equal(t, async_task_setting.DefaultImageDispatchTimeoutSeconds, async_task_setting.GetSnapshot().ImageDispatchTimeoutSeconds)
 }
 
 func TestProcessImageTaskDispatchPermanentFailureRefundsAndCreatesWebhookEvent(t *testing.T) {

@@ -1,3 +1,67 @@
+# Task Plan: Async Worker Operations and Webhook Delivery Management (2026-07-21)
+
+## Goal
+Replace the serial fixed-20 image dispatch and Webhook loops with independently bounded, dynamically configurable workers, and turn Async Task Management into a live operations surface with Docker dev acceptance coverage.
+
+## Current Phase
+Complete
+
+### Phase 1: Worker runtime and leases
+- [x] Add normalized concurrency and request-timeout settings.
+- [x] Implement independent capacity-aware schedulers, endpoint limits, transport reuse, telemetry, and stale Webhook lease recovery.
+- [x] Add cancellation and bounded shutdown behavior.
+
+### Phase 2: Admin API
+- [x] Extend compatible stats with image/Webhook queue and worker runtime data.
+- [x] Add paginated async task and Webhook delivery administration APIs.
+- [x] Add safe detail payloads and CAS-protected manual retry.
+
+### Phase 3: Admin UI
+- [x] Rework the page into Overview, Async Tasks, Webhook Deliveries, and Settings tabs.
+- [x] Add active-tab polling, filters, pagination, detail SideSheet, and responsive behavior.
+- [x] Update scoped frontend locale keys.
+
+### Phase 4: Docker dev and verification
+- [x] Add an opt-in `async-test` mock service with deterministic delay/failure modes and concurrency counters.
+- [x] Run focused/full Go and Bun checks; repository-wide Prettier/i18n baselines remain documented separately from clean changed-file checks.
+- [x] Rebuild Docker dev, verify concurrency/recovery, and inspect desktop/mobile UI.
+
+**Status:** complete
+
+## Locked Decisions
+- Image dispatch and Webhook delivery have independent concurrency limits; Webhook also has a per-endpoint cap.
+- Claims are based on available capacity rather than a separately configurable batch size.
+- Settings apply to new claims without restarting or cancelling requests already in flight.
+- Existing async stats fields remain compatible; monitoring responses never expose authorization material or task private credentials.
+- Delivery semantics remain at-least-once and stale completions are fenced by lock tokens.
+- The UI remains a dense Semi Design operations page with no historical time-series charts in this version.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Focused service tests retained an assertion that expired Webhook processing leases are never reclaimed | 1 | Replace it with the approved recovery contract: reclaim after expiry and reject completion from the stale lock token. |
+| Queue-stat fallback logging used a nil context when legacy tests intentionally omitted the new queue tables | 1 | Use `context.Background()` so legacy task-only fixtures preserve the compatible top-level response and new queue sections remain zero-valued. |
+| The first frontend format command ran from `web/` but still prefixed files with `web/` | 1 | No file matched and no product file changed; rerun with `src/pages/AsyncTask/...` paths. |
+| Targeted ESLint rejected the new files' semantically equivalent AGPL line wrapping | 1 | Copy the repository's exact protected header text and wrapping into every new AsyncTask module. |
+| Full i18n lint reported four new AsyncTask technical literals (`HTTP`/`ms`) alongside the repository baseline | 1 | Route the labels through scoped translations and keep the AsyncTask directory at zero new lint findings. |
+| `bun run lint` was first launched concurrently with Vite build and observed transient missing files under generated `dist/` | 1 | Wait for the build to finish, then treat the sequential full lint result separately from targeted changed-file formatting. |
+| First Docker image-concurrency acceptance inserted zero fixtures because `docker exec` did not keep stdin open for the SQL heredoc | 1 | Add `-i`, verify fixture count before polling, and reuse the already-confirmed hot worker configuration. |
+| Lease-recovery script assumed `restart: unless-stopped` would restart a container after an explicit `docker kill` | 1 | Preserve the expired locked record and explicitly start `new-api-dev` through Compose before verifying reclaim. |
+| First reclaimed lease was discarded because startup migration disables non-primary account Webhook endpoints | 1 | Repeat against the test user's primary configuration, then restore its original URL/status; reclaim completed successfully after lease expiry. |
+| Browser QA temporary-user insert used a `psql -c` variable form that was not expanded | 1 | No row was written; expand the locally generated bcrypt hash in the shell and retry with its quote-safe character set. |
+| Browser role locator did not expose a `hover()` method for the hover-triggered Semi account dropdown | 1 | Use the application's same-origin logout GET in the current authenticated tab, then continue through the normal login page. |
+| In-app browser blocked direct top-level navigation to `/api/user/logout`, and its documentation object has no partial `lookup()` helper | 1 | Keep the session in the UI and use the available coordinate mouse movement to trigger the hover-only dropdown. |
+| Coordinate mouse movement used screenshot-space coordinates that did not map to the browser's interaction viewport | 1 | Stop guessing coordinates; issue the normal same-origin logout request through the page execution API and resume visible-form interaction. |
+| Browser page execution sandbox exposed neither `fetch` nor the `MouseEvent` constructor | 2 | Use DOM `createEvent` once to trigger the existing hover handler; if unavailable, switch browser profiles instead of retrying the isolated-script path. |
+| Chrome extension browser was unavailable on the initial connection and one prescribed retry | 1 | Do not install or repair browser integrations; return to the available in-app browser and derive exact CUA coordinates from the target element bounds. |
+| Exact DOM-derived CUA coordinates still did not open the Semi hover dropdown | 2 | Treat this as browser-backend/overlay incompatibility and navigate to the normal `/login` application route to re-authenticate directly. |
+| AsyncTasks mobile-filter patch needed Prettier line wrapping | 1 | ESLint already passed; run the repository formatter on only the changed component and recheck both AsyncTask tabs. |
+| Combined mobile navigation/filter browser call exceeded the execution timeout and reset the browser-control kernel | 1 | Reconnect to the existing browser, split navigation and assertions into shorter calls, then reset emulation explicitly. |
+| Mock `/reset` and `/control` were first invoked in parallel, so reset restored the default 500ms image delay after the control write | 1 | Metrics were cleared; apply `/control` once more sequentially after reset and verify the final config. |
+| The generic planning completion script exited nonzero after this task was complete | 1 | It scans the entire long-lived planning file and found pending checkboxes in the older image-pricing plan; leave unrelated historical task state untouched and verify this plan's four phases directly. |
+
+---
+
 # Task Plan: Multipart Async Image Editing and Webhook Retries (2026-07-18)
 
 ## Goal

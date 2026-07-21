@@ -17,894 +17,123 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Button,
-  Card,
-  Col,
-  Form,
-  Input,
-  InputNumber,
-  Row,
-  Select,
-  Spin,
-  Switch,
-  Table,
-  Tag,
-  Typography,
-} from '@douyinfe/semi-ui';
-import { IconDelete, IconPlus, IconRefresh } from '@douyinfe/semi-icons';
+import React, { useEffect, useState } from 'react';
+import { Button, Select, Tabs, Typography } from '@douyinfe/semi-ui';
+import { IconRefresh } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
-import { API, showError, showSuccess } from '../../helpers';
+import { API, showError } from '../../helpers';
+import OverviewTab from './OverviewTab';
+import AsyncTasksTab from './AsyncTasksTab';
+import WebhookDeliveriesTab from './WebhookDeliveriesTab';
+import SettingsTab from './SettingsTab';
+import { normalizeStats } from './utils';
 
 const { Text, Title } = Typography;
 
-const DEFAULT_OPTIONS = {
-  'async_task_setting.default_timeout_minutes': 30,
-  'async_task_setting.query_limit': 1000,
-  'async_task_setting.webhook_max_attempts': 3,
-  'async_task_setting.webhook_retry_interval_seconds': 30,
-  'async_task_setting.timeout_overrides': '[]',
-};
-
-const DEFAULT_IMAGE_HANDLE_CONFIG = {
-  base_url: '',
-  api_key: '',
-  internal_base_url: '',
-  internal_secret_id: 'image_handle_1',
-  internal_secret: '',
-  callback_secret: '',
-  debug_upstream: false,
-  sync_image_enabled: false,
-  sync_image_result_policy: 'follow_request',
-  sync_image_default_format: 'url',
-  usage_precharge_enabled: true,
-  precharge_amount_per_image: 0,
-  configured: false,
-};
-
-const SYNC_IMAGE_RESULT_POLICY_OPTIONS = [
-  { value: 'follow_request', label: '跟随请求参数' },
-  { value: 'force_url', label: '强制 URL' },
-  { value: 'force_base64', label: '强制 Base64' },
+const REFRESH_OPTIONS = [
+  { value: 0, label: '关闭' },
+  { value: 5, label: '5 秒' },
+  { value: 15, label: '15 秒' },
+  { value: 30, label: '30 秒' },
 ];
-
-const SYNC_IMAGE_DEFAULT_FORMAT_OPTIONS = [
-  { value: 'url', label: 'URL' },
-  { value: 'base64', label: 'Base64' },
-];
-
-const PLATFORM_LABELS = {
-  24: 'Gemini',
-  41: 'VertexAI',
-  50: 'Kling',
-  51: '即梦',
-  52: 'Vidu',
-  48: 'xAI',
-  54: '豆包视频 / Seedance',
-  55: 'Sora',
-  mj: 'Midjourney',
-  suno: 'Suno',
-};
-
-const ACTION_LABELS = {
-  generate: '生成',
-  textGenerate: '文生任务',
-  firstTailGenerate: '首尾帧',
-  referenceGenerate: '参考生成',
-  remixGenerate: 'Remix',
-  videoGeneration: '视频生成',
-  videoEdit: '视频编辑',
-  videoExtension: '视频扩展',
-};
-
-const PLATFORM_OPTIONS = [
-  { value: '48', label: 'xAI' },
-  { value: '54', label: '豆包视频 / Seedance' },
-  { value: '55', label: 'Sora' },
-  { value: '50', label: 'Kling' },
-  { value: '51', label: '即梦' },
-  { value: '52', label: 'Vidu' },
-  { value: '41', label: 'VertexAI' },
-  { value: '24', label: 'Gemini' },
-  { value: 'suno', label: 'Suno' },
-  { value: 'mj', label: 'Midjourney' },
-];
-
-const ACTION_OPTIONS = [
-  { value: '', label: '全部动作' },
-  { value: 'videoGeneration', label: '视频生成' },
-  { value: 'videoEdit', label: '视频编辑' },
-  { value: 'videoExtension', label: '视频扩展' },
-  { value: 'generate', label: '生成' },
-  { value: 'textGenerate', label: '文生任务' },
-  { value: 'firstTailGenerate', label: '首尾帧' },
-  { value: 'referenceGenerate', label: '参考生成' },
-  { value: 'remixGenerate', label: 'Remix' },
-];
-
-const formatPlatform = (value) => {
-  const normalized = String(value || '').trim();
-  if (!normalized) {
-    return '';
-  }
-  const label = PLATFORM_LABELS[normalized];
-  return label || normalized;
-};
-
-const formatAction = (value, translate = (label) => label) => {
-  const normalized = String(value || '').trim();
-  if (!normalized) {
-    return translate('全部动作');
-  }
-  const label = ACTION_LABELS[normalized];
-  return label ? translate(label) : normalized;
-};
-
-const normalizeOverrides = (value) => {
-  if (Array.isArray(value)) {
-    return value;
-  }
-  if (!value) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
-const normalizeStats = (value = {}) => ({
-  total_unfinished: value.total_unfinished || 0,
-  timeout_pending: value.timeout_pending || 0,
-  over_10_minutes: value.over_10_minutes || 0,
-  over_30_minutes: value.over_30_minutes || 0,
-  over_60_minutes: value.over_60_minutes || 0,
-  by_status: value.by_status || [],
-  by_platform: value.by_platform || [],
-  by_action: value.by_action || [],
-  by_channel: value.by_channel || [],
-});
-
-const normalizeMoneyDisplay = (value) => {
-  if (value === undefined || value === null || value === '') {
-    return '';
-  }
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    return '';
-  }
-  return String(Number(numeric.toFixed(6)));
-};
-
-const normalizeMoneyInput = (value) => {
-  const normalized = String(value).replace(/[^\d.]/g, '');
-  const parts = normalized.split('.');
-  return parts.length > 1 ? `${parts[0]}.${parts.slice(1).join('')}` : parts[0];
-};
-
-const parseMoneyAmount = (value) => {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
-};
 
 const AsyncTask = () => {
   const { t } = useTranslation();
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [savingImageHandle, setSavingImageHandle] = useState(false);
-  const [options, setOptions] = useState(DEFAULT_OPTIONS);
-  const [imageHandleConfig, setImageHandleConfig] = useState(
-    DEFAULT_IMAGE_HANDLE_CONFIG,
-  );
+  const [activeTab, setActiveTab] = useState('overview');
+  const [refreshInterval, setRefreshInterval] = useState(5);
+  const [refreshToken, setRefreshToken] = useState(0);
   const [stats, setStats] = useState(normalizeStats());
-
-  const overrides = useMemo(
-    () => normalizeOverrides(options['async_task_setting.timeout_overrides']),
-    [options],
-  );
-
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [optionRes, statsRes, imageHandleRes] = await Promise.all([
-        API.get('/api/option/'),
-        API.get('/api/task/async/stats'),
-        API.get('/api/task/async/image-handle/config'),
-      ]);
-      if (optionRes.data.success) {
-        const next = { ...DEFAULT_OPTIONS };
-        optionRes.data.data.forEach((item) => {
-          if (Object.prototype.hasOwnProperty.call(next, item.key)) {
-            next[item.key] = item.value;
-          }
-        });
-        setOptions(next);
-      } else {
-        showError(optionRes.data.message);
-      }
-      if (statsRes.data.success) {
-        setStats(normalizeStats(statsRes.data.data));
-      } else {
-        showError(statsRes.data.message);
-      }
-      if (imageHandleRes.data.success) {
-        setImageHandleConfig({
-          ...DEFAULT_IMAGE_HANDLE_CONFIG,
-          ...(imageHandleRes.data.data || {}),
-          precharge_amount_per_image: normalizeMoneyDisplay(
-            imageHandleRes.data.data?.precharge_amount_per_image || 0,
-          ),
-        });
-      } else {
-        showError(imageHandleRes.data.message);
-      }
-    } catch {
-      showError(t('加载失败'));
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [statsLoading, setStatsLoading] = useState(false);
 
   useEffect(() => {
-    loadData();
-  }, []);
-
-  const updateOption = (key, value) => {
-    setOptions((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const updateOverrides = (value) => {
-    updateOption('async_task_setting.timeout_overrides', JSON.stringify(value));
-  };
-
-  const updateOverride = (index, patch) => {
-    updateOverrides(
-      overrides.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, ...patch } : item,
-      ),
-    );
-  };
-
-  const addOverride = () => {
-    updateOverrides([
-      ...overrides,
-      {
-        platform: '48',
-        action: '',
-        timeout_minutes: Number(
-          options['async_task_setting.default_timeout_minutes'] || 30,
-        ),
-        enabled: true,
-      },
-    ]);
-  };
-
-  const removeOverride = (index) => {
-    updateOverrides(overrides.filter((_, itemIndex) => itemIndex !== index));
-  };
-
-  const saveOptions = async () => {
-    setSaving(true);
-    try {
-      const payloads = [
-        {
-          key: 'async_task_setting.default_timeout_minutes',
-          value: String(options['async_task_setting.default_timeout_minutes']),
-        },
-        {
-          key: 'async_task_setting.query_limit',
-          value: String(options['async_task_setting.query_limit']),
-        },
-        {
-          key: 'async_task_setting.webhook_max_attempts',
-          value: String(options['async_task_setting.webhook_max_attempts']),
-        },
-        {
-          key: 'async_task_setting.webhook_retry_interval_seconds',
-          value: String(
-            options['async_task_setting.webhook_retry_interval_seconds'],
-          ),
-        },
-        {
-          key: 'async_task_setting.timeout_overrides',
-          value: JSON.stringify(overrides),
-        },
-      ];
-      const results = await Promise.all(
-        payloads.map((payload) => API.put('/api/option/', payload)),
-      );
-      const failed = results.find((res) => !res.data.success);
-      if (failed) {
-        showError(failed.data.message || t('保存失败，请重试'));
-        return;
+    if (activeTab !== 'overview') return;
+    let cancelled = false;
+    const loadStats = async () => {
+      setStatsLoading(true);
+      try {
+        const response = await API.get('/api/task/async/stats');
+        if (!cancelled && response.data.success) {
+          setStats(normalizeStats(response.data.data));
+        } else if (!cancelled) {
+          showError(response.data.message || t('加载失败'));
+        }
+      } catch {
+        if (!cancelled) showError(t('加载失败'));
+      } finally {
+        if (!cancelled) setStatsLoading(false);
       }
-      showSuccess(t('保存成功'));
-      await loadData();
-    } catch {
-      showError(t('保存失败，请重试'));
-    } finally {
-      setSaving(false);
-    }
-  };
+    };
+    loadStats();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, refreshToken, t]);
 
-  const updateImageHandleConfig = (key, value) => {
-    setImageHandleConfig((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const validateImageHandleConfig = () => {
-    if (
-      Boolean(imageHandleConfig.usage_precharge_enabled) &&
-      parseMoneyAmount(imageHandleConfig.precharge_amount_per_image) <= 0
-    ) {
-      showError(t('开启异步图片预扣估算时，请填写大于 0 的每张图预扣费用'));
-      return false;
-    }
-    return true;
-  };
-
-  const renderImageHandleInput = (key, label, placeholder, extraText) => (
-    <Form.Slot label={label} extraText={extraText}>
-      <Input
-        placeholder={placeholder}
-        value={imageHandleConfig[key] || ''}
-        onChange={(value) => updateImageHandleConfig(key, value)}
-        showClear
-        style={{ width: '100%' }}
-      />
-    </Form.Slot>
-  );
-
-  const saveImageHandleConfig = async () => {
-    if (!validateImageHandleConfig()) {
-      return;
-    }
-    setSavingImageHandle(true);
-    try {
-      const res = await API.put('/api/task/async/image-handle/config', {
-        base_url: imageHandleConfig.base_url || '',
-        api_key: imageHandleConfig.api_key || '',
-        internal_base_url: imageHandleConfig.internal_base_url || '',
-        internal_secret_id:
-          imageHandleConfig.internal_secret_id || 'image_handle_1',
-        internal_secret: imageHandleConfig.internal_secret || '',
-        callback_secret: imageHandleConfig.callback_secret || '',
-        debug_upstream: Boolean(imageHandleConfig.debug_upstream),
-        sync_image_enabled: Boolean(imageHandleConfig.sync_image_enabled),
-        sync_image_result_policy:
-          imageHandleConfig.sync_image_result_policy || 'follow_request',
-        sync_image_default_format:
-          imageHandleConfig.sync_image_default_format || 'url',
-        usage_precharge_enabled: Boolean(
-          imageHandleConfig.usage_precharge_enabled,
-        ),
-        precharge_amount_per_image: parseMoneyAmount(
-          imageHandleConfig.precharge_amount_per_image,
-        ),
-      });
-      if (!res.data.success) {
-        showError(res.data.message || t('保存失败，请重试'));
-        return;
+  useEffect(() => {
+    if (!refreshInterval || activeTab === 'settings') return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        setRefreshToken((value) => value + 1);
       }
-      setImageHandleConfig({
-        ...DEFAULT_IMAGE_HANDLE_CONFIG,
-        ...(res.data.data || {}),
-        precharge_amount_per_image: normalizeMoneyDisplay(
-          res.data.data?.precharge_amount_per_image || 0,
-        ),
-      });
-      showSuccess(t('保存成功'));
-    } catch {
-      showError(t('保存失败，请重试'));
-    } finally {
-      setSavingImageHandle(false);
-    }
-  };
-
-  const statItems = [
-    { label: t('未完成任务'), value: stats.total_unfinished, color: 'blue' },
-    { label: t('待超时处理'), value: stats.timeout_pending, color: 'red' },
-    { label: t('超过10分钟'), value: stats.over_10_minutes, color: 'orange' },
-    { label: t('超过30分钟'), value: stats.over_30_minutes, color: 'orange' },
-    { label: t('超过60分钟'), value: stats.over_60_minutes, color: 'red' },
-  ];
-
-  const overrideColumns = [
-    {
-      title: t('平台'),
-      dataIndex: 'platform',
-      render: (_, record, index) => (
-        <Select
-          value={String(record.platform || '')}
-          style={{ width: '100%' }}
-          optionList={PLATFORM_OPTIONS}
-          onChange={(value) => updateOverride(index, { platform: value })}
-        />
-      ),
-    },
-    {
-      title: t('动作'),
-      dataIndex: 'action',
-      render: (_, record, index) => (
-        <Select
-          value={record.action || ''}
-          style={{ width: '100%' }}
-          optionList={ACTION_OPTIONS.map((item) => ({
-            ...item,
-            label: t(item.label),
-          }))}
-          onChange={(value) => updateOverride(index, { action: value })}
-        />
-      ),
-    },
-    {
-      title: t('超时时间'),
-      dataIndex: 'timeout_minutes',
-      render: (_, record, index) => (
-        <InputNumber
-          min={1}
-          step={1}
-          suffix={t('分钟')}
-          value={record.timeout_minutes}
-          onChange={(value) =>
-            updateOverride(index, { timeout_minutes: parseInt(value || 1) })
-          }
-        />
-      ),
-    },
-    {
-      title: t('启用'),
-      dataIndex: 'enabled',
-      width: 100,
-      render: (_, record, index) => (
-        <Switch
-          checked={record.enabled !== false}
-          onChange={(value) => updateOverride(index, { enabled: value })}
-        />
-      ),
-    },
-    {
-      title: t('操作'),
-      width: 88,
-      render: (_, __, index) => (
-        <Button
-          icon={<IconDelete />}
-          theme='borderless'
-          type='danger'
-          onClick={() => removeOverride(index)}
-          aria-label={t('删除')}
-        />
-      ),
-    },
-  ];
-
-  const aggregateColumns = [
-    {
-      title: t('维度'),
-      dataIndex: 'name',
-      render: (value) => <Text strong>{value || t('未设置')}</Text>,
-    },
-    {
-      title: t('数量'),
-      dataIndex: 'count',
-      width: 120,
-      render: (value) => <Tag color='blue'>{value}</Tag>,
-    },
-  ];
-
-  const platformRows = stats.by_platform.map((item) => ({
-    name: formatPlatform(item.platform),
-    count: item.count,
-  }));
-  const actionRows = stats.by_action.map((item) => ({
-    name: formatAction(item.action, t),
-    count: item.count,
-  }));
-  const channelRows = stats.by_channel.map((item) => ({
-    name: `#${item.channel_id}`,
-    count: item.count,
-  }));
+    }, refreshInterval * 1000);
+    return () => window.clearInterval(timer);
+  }, [activeTab, refreshInterval]);
 
   return (
-    <div className='mt-[60px] px-2'>
-      <Spin spinning={loading}>
-        <div className='flex items-center justify-between mb-3'>
-          <Title heading={4} style={{ margin: 0 }}>
-            {t('异步任务管理')}
-          </Title>
-          <Button icon={<IconRefresh />} onClick={loadData}>
-            {t('刷新')}
-          </Button>
+    <div className='mt-[60px] px-2 pb-6'>
+      <div className='flex flex-col gap-3'>
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <div>
+            <Title heading={4} style={{ margin: 0 }}>
+              {t('异步任务管理')}
+            </Title>
+            <Text type='tertiary'>{t('队列与投递运行状态')}</Text>
+          </div>
+          <div className='flex items-center gap-2'>
+            <Select
+              prefix={t('自动刷新')}
+              value={refreshInterval}
+              style={{ width: 150 }}
+              optionList={REFRESH_OPTIONS.map((item) => ({
+                ...item,
+                label: t(item.label),
+              }))}
+              onChange={setRefreshInterval}
+              disabled={activeTab === 'settings'}
+            />
+            <Button
+              icon={<IconRefresh />}
+              aria-label={t('刷新')}
+              onClick={() => setRefreshToken((value) => value + 1)}
+            >
+              {t('刷新')}
+            </Button>
+          </div>
         </div>
 
-        <Row gutter={[12, 12]}>
-          {statItems.map((item) => (
-            <Col xs={12} sm={8} md={5} lg={5} xl={5} key={item.label}>
-              <Card bodyStyle={{ padding: 14 }}>
-                <Text type='tertiary'>{item.label}</Text>
-                <div className='mt-2'>
-                  <Tag color={item.color} size='large'>
-                    {item.value}
-                  </Tag>
-                </div>
-              </Card>
-            </Col>
-          ))}
-        </Row>
+        <Tabs
+          type='line'
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          tabList={[
+            { tab: t('概览'), itemKey: 'overview' },
+            { tab: t('异步任务'), itemKey: 'tasks' },
+            { tab: t('Webhook 投递'), itemKey: 'webhooks' },
+            { tab: t('设置'), itemKey: 'settings' },
+          ]}
+        />
 
-        <Card style={{ marginTop: 12 }}>
-          <Title heading={5}>{t('调度设置')}</Title>
-          <Row gutter={16}>
-            <Col xs={24} md={6}>
-              <Text>{t('默认超时时间')}</Text>
-              <InputNumber
-                min={1}
-                step={1}
-                suffix={t('分钟')}
-                style={{ width: '100%', marginTop: 8 }}
-                value={Number(
-                  options['async_task_setting.default_timeout_minutes'],
-                )}
-                onChange={(value) =>
-                  updateOption(
-                    'async_task_setting.default_timeout_minutes',
-                    parseInt(value || 30),
-                  )
-                }
-              />
-            </Col>
-            <Col xs={24} md={6}>
-              <Text>{t('每轮查询任务数')}</Text>
-              <InputNumber
-                min={1}
-                step={10}
-                style={{ width: '100%', marginTop: 8 }}
-                value={Number(options['async_task_setting.query_limit'])}
-                onChange={(value) =>
-                  updateOption(
-                    'async_task_setting.query_limit',
-                    parseInt(value || 1000),
-                  )
-                }
-              />
-            </Col>
-            <Col xs={24} md={6}>
-              <Text>{t('Webhook 最大尝试次数（含首次）')}</Text>
-              <InputNumber
-                min={1}
-                max={10}
-                step={1}
-                style={{ width: '100%', marginTop: 8 }}
-                value={Number(
-                  options['async_task_setting.webhook_max_attempts'],
-                )}
-                onChange={(value) =>
-                  updateOption(
-                    'async_task_setting.webhook_max_attempts',
-                    parseInt(value || 3),
-                  )
-                }
-              />
-            </Col>
-            <Col xs={24} md={6}>
-              <Text>{t('Webhook 重试间隔')}</Text>
-              <InputNumber
-                min={1}
-                max={3600}
-                step={1}
-                suffix={t('秒')}
-                style={{ width: '100%', marginTop: 8 }}
-                value={Number(
-                  options['async_task_setting.webhook_retry_interval_seconds'],
-                )}
-                onChange={(value) =>
-                  updateOption(
-                    'async_task_setting.webhook_retry_interval_seconds',
-                    parseInt(value || 30),
-                  )
-                }
-              />
-            </Col>
-          </Row>
-        </Card>
-
-        <Card style={{ marginTop: 12 }}>
-          <div className='flex items-center justify-between mb-3'>
-            <div>
-              <Title heading={5} style={{ margin: 0 }}>
-                {t('异步图片执行器')}
-              </Title>
-              <Text type='tertiary'>
-                {t(
-                  '配置 new-api 提交到 image-handle 的地址，以及 image-handle resolve lease 的签名密钥。',
-                )}
-              </Text>
-            </div>
-            <Tag color={imageHandleConfig.configured ? 'green' : 'red'}>
-              {imageHandleConfig.configured ? t('已配置') : t('未配置')}
-            </Tag>
-          </div>
-          <Form layout='vertical'>
-            <Row gutter={16}>
-              <Col xs={24} md={12}>
-                {renderImageHandleInput(
-                  'base_url',
-                  t('image-handle 服务地址'),
-                  'http://image-handle:8787',
-                  t('new-api 用它提交和轮询 image-handle 任务'),
-                )}
-              </Col>
-              <Col xs={24} md={12}>
-                {renderImageHandleInput(
-                  'api_key',
-                  t('image-handle API Key'),
-                  t('和 image-handle 的 PROVIDER_API_KEYS 对齐'),
-                )}
-              </Col>
-              <Col xs={24} md={12}>
-                {renderImageHandleInput(
-                  'internal_base_url',
-                  t('internal resolve 访问地址'),
-                  'http://new-api:3000',
-                  t('必须是 image-handle 容器或 worker 能访问的 new-api 地址'),
-                )}
-              </Col>
-              <Col xs={24} md={12}>
-                {renderImageHandleInput(
-                  'internal_secret_id',
-                  t('internal resolve Secret ID'),
-                  'image_handle_1',
-                )}
-              </Col>
-              <Col xs={24} md={12}>
-                {renderImageHandleInput(
-                  'internal_secret',
-                  t('internal resolve Secret'),
-                  '',
-                  t('和 image-handle 的 CREDENTIAL_LEASE_SECRETS_JSON 对齐'),
-                )}
-              </Col>
-              <Col xs={24} md={12}>
-                {renderImageHandleInput(
-                  'callback_secret',
-                  t('Callback 兜底 Secret'),
-                  '',
-                  t(
-                    '建议填写。作为 image-handle callback 默认验签密钥；单个图片渠道可用 settings.callback_secret 覆盖',
-                  ),
-                )}
-              </Col>
-              <Col xs={24} md={12}>
-                <Form.Slot
-                  label={t('上游调试日志')}
-                  extraText={t(
-                    '开启后，image-handle 会打印异步生图本次上游请求和响应摘要；调试完成后建议关闭。',
-                  )}
-                >
-                  <Switch
-                    checked={Boolean(imageHandleConfig.debug_upstream)}
-                    onChange={(value) =>
-                      updateImageHandleConfig('debug_upstream', value)
-                    }
-                  />
-                </Form.Slot>
-              </Col>
-              <Col xs={24}>
-                <div
-                  style={{
-                    border: '1px solid var(--semi-color-border)',
-                    borderRadius: 8,
-                    padding: 16,
-                    marginBottom: 12,
-                  }}
-                >
-                  <Text strong>{t('同步图片执行')}</Text>
-                  <div style={{ marginTop: 4, marginBottom: 12 }}>
-                    <Text type='tertiary'>
-                      {t(
-                        '开启后，仅对继承全局或强制开启的渠道，将 /v1/images/generations 和 /v1/images/edits 交给 image-handle 同步等待执行。',
-                      )}
-                    </Text>
-                  </div>
-                  <Row gutter={[16, 12]}>
-                    <Col xs={24} md={8}>
-                      <Form.Slot label={t('经 image-handle 执行')}>
-                        <Switch
-                          checked={Boolean(
-                            imageHandleConfig.sync_image_enabled,
-                          )}
-                          onChange={(value) =>
-                            updateImageHandleConfig('sync_image_enabled', value)
-                          }
-                        />
-                      </Form.Slot>
-                    </Col>
-                    <Col xs={24} md={8}>
-                      <Form.Slot
-                        label={t('返回格式策略')}
-                        extraText={t(
-                          '跟随请求参数时，response_format=b64_json 返回 Base64，否则使用默认格式。',
-                        )}
-                      >
-                        <Select
-                          style={{ width: '100%' }}
-                          value={
-                            imageHandleConfig.sync_image_result_policy ||
-                            'follow_request'
-                          }
-                          optionList={SYNC_IMAGE_RESULT_POLICY_OPTIONS.map(
-                            (item) => ({ ...item, label: t(item.label) }),
-                          )}
-                          onChange={(value) =>
-                            updateImageHandleConfig(
-                              'sync_image_result_policy',
-                              value,
-                            )
-                          }
-                        />
-                      </Form.Slot>
-                    </Col>
-                    <Col xs={24} md={8}>
-                      <Form.Slot
-                        label={t('未指定时默认格式')}
-                        extraText={t('仅在返回格式策略为跟随请求参数时生效。')}
-                      >
-                        <Select
-                          style={{ width: '100%' }}
-                          disabled={
-                            (imageHandleConfig.sync_image_result_policy ||
-                              'follow_request') !== 'follow_request'
-                          }
-                          value={
-                            imageHandleConfig.sync_image_default_format || 'url'
-                          }
-                          optionList={SYNC_IMAGE_DEFAULT_FORMAT_OPTIONS.map(
-                            (item) => ({ ...item, label: t(item.label) }),
-                          )}
-                          onChange={(value) =>
-                            updateImageHandleConfig(
-                              'sync_image_default_format',
-                              value,
-                            )
-                          }
-                        />
-                      </Form.Slot>
-                    </Col>
-                  </Row>
-                </div>
-              </Col>
-              <Col xs={24}>
-                <div
-                  style={{
-                    border: '1px solid var(--semi-color-border)',
-                    borderRadius: 8,
-                    padding: 16,
-                    marginBottom: 12,
-                  }}
-                >
-                  <Text strong>{t('异步图片预扣估算')}</Text>
-                  <div style={{ marginTop: 4, marginBottom: 12 }}>
-                    <Text type='tertiary'>
-                      {t(
-                        '仅影响提交阶段的预扣估算，不决定终态计费类型；按量模型按 callback usage 真实结算，按次模型成功保持预扣、失败退款。',
-                      )}
-                    </Text>
-                  </div>
-                  <Row gutter={[16, 12]}>
-                    <Col xs={24} md={8}>
-                      <Form.Slot label={t('启用预扣估算')}>
-                        <Switch
-                          checked={Boolean(
-                            imageHandleConfig.usage_precharge_enabled,
-                          )}
-                          onChange={(value) =>
-                            updateImageHandleConfig(
-                              'usage_precharge_enabled',
-                              value,
-                            )
-                          }
-                        />
-                      </Form.Slot>
-                    </Col>
-                    <Col xs={24} md={16}>
-                      <Form.Slot
-                        label={t('每张图预扣费用（$）')}
-                        extraText={t(
-                          '单位为美元。开启预扣估算时必填且必须大于 0；n=2 只会让预扣乘 2，终态结算不会对 callback 总 usage 再乘 n。',
-                        )}
-                      >
-                        <Input
-                          placeholder='0.01'
-                          style={{ width: '100%' }}
-                          disabled={
-                            !Boolean(imageHandleConfig.usage_precharge_enabled)
-                          }
-                          value={
-                            imageHandleConfig.precharge_amount_per_image ?? '0'
-                          }
-                          onChange={(value) =>
-                            updateImageHandleConfig(
-                              'precharge_amount_per_image',
-                              normalizeMoneyInput(value),
-                            )
-                          }
-                        />
-                      </Form.Slot>
-                    </Col>
-                  </Row>
-                </div>
-              </Col>
-            </Row>
-            <Button
-              type='primary'
-              loading={savingImageHandle}
-              onClick={saveImageHandleConfig}
-            >
-              {t('保存执行器配置')}
-            </Button>
-          </Form>
-        </Card>
-
-        <Card style={{ marginTop: 12 }}>
-          <div className='flex items-center justify-between mb-3'>
-            <Title heading={5} style={{ margin: 0 }}>
-              {t('超时覆盖')}
-            </Title>
-            <Button icon={<IconPlus />} onClick={addOverride}>
-              {t('新增覆盖')}
-            </Button>
-          </div>
-          <Table
-            columns={overrideColumns}
-            dataSource={overrides.map((item, index) => ({
-              ...item,
-              key: index,
-            }))}
-            pagination={false}
-            size='small'
-          />
-          <div className='mt-4'>
-            <Button type='primary' loading={saving} onClick={saveOptions}>
-              {t('保存设置')}
-            </Button>
-          </div>
-        </Card>
-
-        <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
-          <Col xs={24} lg={8}>
-            <Card title={t('按平台')}>
-              <Table
-                columns={aggregateColumns}
-                dataSource={platformRows}
-                pagination={false}
-                size='small'
-              />
-            </Card>
-          </Col>
-          <Col xs={24} lg={8}>
-            <Card title={t('按动作')}>
-              <Table
-                columns={aggregateColumns}
-                dataSource={actionRows}
-                pagination={false}
-                size='small'
-              />
-            </Card>
-          </Col>
-          <Col xs={24} lg={8}>
-            <Card title={t('按渠道')}>
-              <Table
-                columns={aggregateColumns}
-                dataSource={channelRows}
-                pagination={false}
-                size='small'
-              />
-            </Card>
-          </Col>
-        </Row>
-      </Spin>
+        {activeTab === 'overview' ? (
+          <OverviewTab stats={stats} loading={statsLoading} />
+        ) : null}
+        {activeTab === 'tasks' ? (
+          <AsyncTasksTab refreshToken={refreshToken} />
+        ) : null}
+        {activeTab === 'webhooks' ? (
+          <WebhookDeliveriesTab refreshToken={refreshToken} />
+        ) : null}
+        {activeTab === 'settings' ? <SettingsTab /> : null}
+      </div>
     </div>
   );
 };

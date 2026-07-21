@@ -137,11 +137,6 @@ func CountTimeoutPendingTasks(now int64) int64 {
 	return count
 }
 
-func GetAsyncTaskStats() model.AsyncTaskStats {
-	now := time.Now().Unix()
-	return model.GetAsyncTaskStats(now, CountTimeoutPendingTasks(now))
-}
-
 // TaskPollingLoop 主轮询循环，每 15 秒检查一次未完成的任务
 func TaskPollingLoop() {
 	for {

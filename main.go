@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -154,8 +157,8 @@ func main() {
 	}
 
 	// Initialize HTTP server
-	server := gin.New()
-	server.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
+	engine := gin.New()
+	engine.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
 		common.SysLog(fmt.Sprintf("panic detected: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
@@ -166,10 +169,10 @@ func main() {
 	}))
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
-	server.Use(middleware.RequestId())
-	server.Use(middleware.PoweredBy())
-	server.Use(middleware.I18n())
-	middleware.SetUpLogger(server)
+	engine.Use(middleware.RequestId())
+	engine.Use(middleware.PoweredBy())
+	engine.Use(middleware.I18n())
+	middleware.SetUpLogger(engine)
 	// Initialize session store
 	store := cookie.NewStore([]byte(common.SessionSecret))
 	store.Options(sessions.Options{
@@ -179,13 +182,13 @@ func main() {
 		Secure:   false,
 		SameSite: http.SameSiteStrictMode,
 	})
-	server.Use(sessions.Sessions("session", store))
+	engine.Use(sessions.Sessions("session", store))
 
 	InjectUmamiAnalytics()
 	InjectGoogleAnalytics()
 
 	// 设置路由
-	router.SetRouter(server, buildFS, indexPage)
+	router.SetRouter(engine, buildFS, indexPage)
 	var port = os.Getenv("PORT")
 	if port == "" {
 		port = strconv.Itoa(*common.Port)
@@ -194,9 +197,33 @@ func main() {
 	// Log startup success message
 	common.LogStartupSuccess(startTime, port)
 
-	err = server.Run(":" + port)
-	if err != nil {
-		common.FatalLog("failed to start HTTP server: " + err.Error())
+	httpServer := &http.Server{Addr: ":" + port, Handler: engine}
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- httpServer.ListenAndServe()
+	}()
+
+	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	select {
+	case err = <-serverErrors:
+		if err != nil && err != http.ErrServerClosed {
+			common.FatalLog("failed to start HTTP server: " + err.Error())
+		}
+	case <-signalContext.Done():
+		shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancelShutdown()
+		service.SignalStopAsyncWorkers()
+		httpShutdown := make(chan error, 1)
+		go func() {
+			httpShutdown <- httpServer.Shutdown(shutdownContext)
+		}()
+		if workerErr := service.WaitForAsyncWorkers(shutdownContext); workerErr != nil {
+			logger.LogError(context.Background(), "async worker shutdown timed out: "+workerErr.Error())
+		}
+		if shutdownErr := <-httpShutdown; shutdownErr != nil {
+			logger.LogError(context.Background(), "HTTP server shutdown failed: "+shutdownErr.Error())
+		}
 	}
 }
 

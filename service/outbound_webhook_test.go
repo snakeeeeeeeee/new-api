@@ -468,7 +468,7 @@ func makeWebhookDeliveryDue(deliveryID int64) error {
 		Update("next_attempt_at", time.Now().Add(-time.Second).Unix()).Error
 }
 
-func TestClaimedWebhookDeliveryIsNeverReclaimed(t *testing.T) {
+func TestExpiredWebhookDeliveryLeaseIsReclaimedAndFenced(t *testing.T) {
 	setupOutboundWebhookTestDB(t)
 	putWebhookTestConfig(t, "http://127.0.0.1:18080/hook")
 	_, err := CreateAccountWebhookTestDelivery(501)
@@ -482,7 +482,60 @@ func TestClaimedWebhookDeliveryIsNeverReclaimed(t *testing.T) {
 
 	reclaimed, err := model.ClaimDueWebhookDeliveries(20, 30)
 	require.NoError(t, err)
-	assert.Empty(t, reclaimed)
+	require.Len(t, reclaimed, 1)
+	require.NotEqual(t, claimed[0].LockToken, reclaimed[0].LockToken)
+
+	won, err := model.CompleteWebhookDeliveryAttempt(claimed[0], model.WebhookDeliveryResult{Status: model.WebhookDeliveryDelivered})
+	require.NoError(t, err)
+	assert.False(t, won)
+	won, err = model.CompleteWebhookDeliveryAttempt(reclaimed[0], model.WebhookDeliveryResult{Status: model.WebhookDeliveryDelivered})
+	require.NoError(t, err)
+	assert.True(t, won)
+}
+
+func TestWebhookCapacityClaimHonorsPerEndpointLimit(t *testing.T) {
+	db := setupOutboundWebhookTestDB(t)
+	now := time.Now().Unix()
+	endpoints := []*model.WebhookEndpoint{
+		{EndpointID: "we_capacity_1", UserID: 501, URL: "http://127.0.0.1:18080/one", Status: model.WebhookEndpointEnabled, CreatedAt: now, UpdatedAt: now},
+		{EndpointID: "we_capacity_2", UserID: 502, URL: "http://127.0.0.1:18080/two", Status: model.WebhookEndpointEnabled, CreatedAt: now, UpdatedAt: now},
+	}
+	for _, endpoint := range endpoints {
+		require.NoError(t, db.Create(endpoint).Error)
+		for index := 0; index < 5; index++ {
+			event := &model.WebhookEvent{
+				EventID: fmt.Sprintf("evt_capacity_%d_%d", endpoint.ID, index), UserID: endpoint.UserID,
+				EventType: WebhookEventTest, ObjectType: "webhook.test",
+				ObjectID: fmt.Sprintf("object_capacity_%d_%d", endpoint.ID, index), Payload: `{}`, CreatedAt: now,
+			}
+			require.NoError(t, db.Create(event).Error)
+			require.NoError(t, db.Create(&model.WebhookDelivery{
+				DeliveryID: fmt.Sprintf("whd_capacity_%d_%d", endpoint.ID, index), EventRecordID: event.ID,
+				EndpointRecordID: endpoint.ID, Status: model.WebhookDeliveryPending,
+				NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+			}).Error)
+		}
+	}
+
+	claimed, err := model.ClaimDueWebhookDeliveriesForCapacity(10, 30, 2, map[int64]int{endpoints[0].ID: 1})
+	require.NoError(t, err)
+	require.Len(t, claimed, 3)
+	counts := map[int64]int{}
+	for _, delivery := range claimed {
+		counts[delivery.EndpointRecordID]++
+	}
+	assert.Equal(t, 1, counts[endpoints[0].ID])
+	assert.Equal(t, 2, counts[endpoints[1].ID])
+}
+
+func TestWebhookHTTPClientReusesValidatedTransport(t *testing.T) {
+	setupOutboundWebhookTestDB(t)
+	first, err := newWebhookHTTPClient(context.Background(), "http://127.0.0.1:18080/one")
+	require.NoError(t, err)
+	second, err := newWebhookHTTPClient(context.Background(), "https://127.0.0.1:18443/two")
+	require.NoError(t, err)
+	assert.Same(t, first, second)
+	assert.Same(t, webhookTransport, first.Transport)
 }
 
 func TestWebhookValidationAllowsHTTPAndHTTPSButRejectsPrivateTargetsByDefault(t *testing.T) {

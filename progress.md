@@ -1,3 +1,47 @@
+# Async Worker Operations Progress (2026-07-21)
+
+- Final audit passes: targeted AsyncTask Prettier/ESLint, `git diff --check`, implementation-scope secret review, fixture cleanup, and temporary-database cleanup. Unrelated `2dev/`, `outputs/`, and `tmp/` content remains untouched.
+- The generic file-planning completion script reports old pending image-pricing phases elsewhere in the shared planning file; all four phases of the current Async Worker Operations plan are independently checked complete.
+- Cross-database schema/query validation passed against in-memory SQLite plus real MySQL 8.0.33 and PostgreSQL 18.1 containers. Both explicitly named disposable databases were dropped afterward and verified absent; minimum-version compatibility remains based on portable GORM/Unix-time paths rather than live 5.7/9.6 containers.
+- Rebuilt Docker dev and the `async-test` profile from the latest source; `new-api-dev` is healthy on image `sha256:975b7acfe7ca...`, and the mock remains healthy on port 18081.
+- Browser QA resumed against the rebuilt image. The pre-existing browser session belongs to non-admin user `codexwhux0717` and correctly redirects `/console/async-task` to `/forbidden`; administrator login is the next step.
+- Chrome automation is unavailable in this environment, and the in-app backend does not trigger the existing hover-only account dropdown even with exact DOM-derived coordinates; QA is continuing through the application's direct login route.
+- Direct `/login` navigation successfully cleared the stale session and authenticated the disposable root user. The admin async-task route is now available for UI acceptance.
+- The in-app browser exposes a `1139x1204` page viewport but no high-level viewport-resize capability; current-width validation comes first, followed by a check for supported device-emulation controls.
+- Overview UI passes at the available `1139x1204` viewport with zero document-level horizontal overflow. KPI density, both worker/queue panels, refresh controls, and the legacy platform/action/channel summaries render without overlap.
+- Async Tasks tab passes with the 25-row acceptance fixture split over three pages at 20/page. Exact task-ID filtering returns only the requested row and collapses pagination correctly; dispatch status, attempts, HTTP status, timestamps, and error summary are visible.
+- Webhook Deliveries tab exposes all planned filters including the time range, paginates the 53-row fixture, and renders failed/discarded retry actions. The detail SideSheet shows the capped payload, safe endpoint, current error, and the full two-attempt timeline without layout overlap.
+- Retry confirmation passes end to end. Browser QA found and fixed stale open-detail state after a fast worker transition; on rebuilt image `sha256:23ab6e3648d1...`, the next five-second active-tab refresh updates both the row and open SideSheet to the same discarded status/error while retaining historical attempts.
+- Settings tab contains the five new worker limits/timeouts alongside existing task, retry, image-handle, and timeout-override controls. Its auto-refresh selector is disabled, and an unsaved concurrency edit remained unchanged beyond a full poll interval.
+- Local CDP emulation enabled exact responsive QA despite the browser's missing high-level viewport controls. The Settings tab passes at `1440x1000` in true dark media mode with the expected dark body background and zero document-level horizontal overflow.
+- The Overview tab passes at exact `768x1024` light mode: body/root are 768px, the 180px sidebar plus 588px main span the viewport exactly, and document overflow remains zero.
+- The Webhook tab passes at exact `375x812`: advanced filters are collapsed by default and reveal user/event/HTTP/time-range controls on demand; the 2,456px table scrolls inside a 347px body while document overflow stays zero; the SideSheet occupies exactly `x=0..375` and the full 812px height.
+- The Async Tasks tab now follows the same mobile pattern after browser QA found the initial gap: task ID/status remain visible, user/dispatch/platform/action reveal through More Filters, and its 1,430px table remains inside a 347px horizontal scroller with zero document overflow.
+- The `375x812` dark SideSheet also passes with distinct dark body/dialog backgrounds and zero dialog/document overflow.
+- Final Docker image `sha256:4c9d29289809...` is healthy. All async E2E fixtures, the disposable root user, temporary root token, and seven dynamic option rows were removed; endpoint `id=7` remains disabled at its original URL, and mock counters/config are reset to zero-delay defaults.
+- Added scoped translations for every new operations-page label in all seven locales, including locale-specific plural forms; `i18n:status` passes.
+- Added the opt-in `async-test` Compose mock with success/failure/delay Webhooks, image-handle-compatible submission, hot controls, resettable concurrency metrics, a container healthcheck, and focused tests.
+- Mock unit tests, Compose profile rendering, and targeted AsyncTask Prettier/ESLint checks pass.
+- Full `go test ./... -count=1` and the production frontend build pass; full i18n lint is back to the repository's 420-item baseline with no AsyncTask findings.
+- After the final production build, full `bun run lint` still fails only on the repository-wide Prettier baseline: 113 files including generated hashed `dist` assets; every changed AsyncTask source file passes targeted formatting.
+- `bun run i18n:lint` remains at the repository-wide 420-item baseline with no `src/pages/AsyncTask` findings, while `bun run i18n:status` passes for all seven locales.
+- Loaded the approved implementation plan and the required brainstorming, file-planning, and UI/UX workflows.
+- Preserved unrelated untracked scripts, outputs, and historical planning sections.
+- Reconfirmed the two serial worker bottlenecks, Webhook stale-lease gap, unbounded image request timeout, and per-request Webhook transport allocation.
+- Locked implementation order: worker/runtime, admin API, operations UI, Docker mock profile, then full verification.
+- Applied UI guidance: retain the existing Semi Design language, favor compact metrics and tables, make controls accessible, and verify 375/768/1440 widths in light and dark themes.
+- Added normalized worker concurrency/timeouts with an atomic runtime snapshot, capacity-aware schedulers, request-level image timeout, shared validated Webhook transport, telemetry, and stale Webhook lease recovery.
+- The first focused test run found only the intentionally obsolete no-reclaim assertion; it is now a reclaim-and-fencing regression test.
+- A legacy task-only stats fixture exposed that the repository logger requires a non-nil context; the monitoring fallback now logs safely and preserves zero-valued queue sections when optional test tables are absent.
+- Added compatible nested queue/worker stats plus paginated admin task and Webhook delivery list, detail, and CAS retry routes.
+- Added safe public DTOs that omit dispatch request bodies, lock tokens, credentials, and authorization material; detail response text is capped at 4 KiB.
+- Added worker capacity, endpoint limit, timeout, transport reuse, cross-database query, admin API, retry, and lease-fencing coverage.
+- Full affected backend package tests pass: `setting/async_task_setting`, `model`, `service`, `controller`, and `router`.
+- Added the four-tab operations UI with active-tab polling, queue/worker overview, task filters, Webhook detail/retry workflow, responsive tables, and the complete existing image-handle settings surface.
+- The first frontend formatter invocation used repository-relative paths from inside `web/`; it matched nothing and will be rerun with web-relative paths.
+
+---
+
 # Image-handle Channel Override and Signed URL Progress (2026-07-15)
 
 - Traced the sync generation flow from model mapping through credential lease, image-handle execution, URL extraction, and client response serialization.

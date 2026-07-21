@@ -897,6 +897,36 @@ func validateAndNormalizeAsyncTaskOptionUpdate(key string, value string) (string
 			return "", err
 		}
 		return strconv.Itoa(async_task_setting.NormalizeWebhookRetryIntervalSeconds(intValue)), nil
+	case "image_dispatch_concurrency":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeImageDispatchConcurrency(intValue)), nil
+	case "webhook_delivery_concurrency":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeWebhookDeliveryConcurrency(intValue)), nil
+	case "webhook_endpoint_concurrency":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeWebhookEndpointConcurrency(intValue)), nil
+	case "image_dispatch_request_timeout_seconds":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeImageDispatchTimeoutSeconds(intValue)), nil
+	case "webhook_delivery_request_timeout_seconds":
+		intValue, err := strconv.Atoi(value)
+		if err != nil {
+			return "", err
+		}
+		return strconv.Itoa(async_task_setting.NormalizeWebhookDeliveryTimeoutSeconds(intValue)), nil
 	case "timeout_overrides":
 		var overrides []async_task_setting.TimeoutOverride
 		if strings.TrimSpace(value) == "" {

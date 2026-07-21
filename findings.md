@@ -1,3 +1,31 @@
+# Async Worker Operations Findings (2026-07-21)
+
+- Final source-scope review found no embedded production credentials. The only broad secret-pattern matches are existing Docker dev placeholders and the image-handle API-key form field; the opt-in async mock adds no authentication material.
+- `TestImageTaskAndWebhookSchemaAcrossDatabases` passes with all three enabled targets (SQLite, MySQL, PostgreSQL), including migrations, uniqueness, Chinese payloads, queue stats, and admin delivery queries. The available live containers are newer than the documented minimum versions, so this is real engine coverage but not literal MySQL 5.7/PostgreSQL 9.6 execution.
+- The final sequential frontend checks distinguish product scope from repository baselines: production build and i18n status pass, changed AsyncTask files are format/i18n clean, while full Prettier reports 113 files after build-generated `dist` assets and full i18n lint reports the unchanged 420 issues.
+- Live disposable cross-database validation can use dedicated temporary databases on `postgres-db-test` and `business-ai-mysql`; their existing application databases must not be used because the schema test migrates tables and writes fixed fixture IDs.
+- The final rebuilt Docker image containing the SIGTERM ordering, endpoint URL redaction, time filter, and mobile filter fixes is `sha256:975b7acfe7ca...`; both the application and opt-in mock report healthy.
+- The existing in-app browser identity is a non-admin account and is correctly denied access to the admin operations page, so visual acceptance must use the disposable root account rather than treating `/forbidden` as a page regression.
+- The rebuilt operations overview renders cleanly at `1139x1204` with `documentElement.scrollWidth === clientWidth`; worker capacity, queue state, and refresh controls remain readable in the dense admin shell.
+- The available in-app browser backend does not open the application's hover-triggered Semi Dropdowns, including the account and theme menus; ordinary clicks only focus the trigger. Dark-theme QA therefore requires supported media emulation or must remain explicitly environment-limited rather than being claimed from a forced DOM mutation.
+- The Webhook detail response is reflected safely in the UI: no authorization material is present, the endpoint contains only scheme/host/path, payload is bounded, and the attempt timeline retains prior failures.
+- Browser retry acceptance exposed and fixed a live-consistency gap: after CAS retry returned `pending`, the worker immediately discarded the delivery because its endpoint was disabled; the list refreshed while the open SideSheet stayed stale. The Webhook tab now quietly reloads an open detail on each active-tab refresh token, and rebuilt Docker QA confirms row/detail convergence within five seconds.
+- The repository-wide i18n lint currently has a large pre-existing hardcoded-string baseline; changed AsyncTask modules must be checked separately so this feature contributes no new findings.
+- Admin endpoint URLs must omit query strings because user-supplied query parameters can contain credentials even though URL userinfo is already forbidden.
+- Graceful shutdown must signal worker stop before waiting on HTTP shutdown; otherwise workers can continue claiming throughout the 30-second HTTP drain window.
+- Both image dispatch and Webhook delivery currently claim 20 records and process them serially, so increasing only the claim limit would not improve throughput.
+- Image dispatch already reclaims expired processing leases and fences completion with a lock token; Webhook delivery currently claims pending records only and can strand processing records after a crash.
+- The shared image submission client can have no timeout when `RELAY_TIMEOUT=0`; dispatch requests need their own context deadline.
+- Webhook delivery currently creates a new HTTP transport for every request. A shared transport can retain per-connection DNS/IP validation and redirect blocking while reusing safe keep-alive connections.
+- `async_task_setting` is registered in the live option system and applies normalization after updates, so new worker settings can take effect without restart.
+- Existing tables contain the required queue, event, payload, endpoint, and attempt state; no new business table is needed.
+- The existing page loads all settings and stats once. The approved replacement uses active-tab polling and leaves unsaved settings untouched.
+- UI guidance confirms a data-dense operational layout, semantic theme tokens, accessible icon labels, mobile table containment, and stable loading dimensions are the correct fit.
+- `docker-compose-dev.yml` has PostgreSQL, Redis, and new-api but no deterministic Webhook/image submission receiver; the test service will be opt-in through a profile.
+- The new standard-library mock can vary image defaults through `/control`, vary individual image jobs through metadata, expose distinct Webhook paths for endpoint-cap tests, and reports only whether authorization was present rather than credential values.
+
+---
+
 # Multipart Async Image Editing Findings (2026-07-18)
 
 - Docker E2E created `task_fzZfMwkWiFiGVzRKJyxyByw3E9ZOdR8h` from a local PNG multipart request, returned HTTP 202, and reached `succeeded` through image-handle and the local mock provider.

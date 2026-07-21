@@ -25,3 +25,25 @@ func TestNormalizeWebhookDeliverySettings(t *testing.T) {
 	assert.Equal(t, 5, normalized.WebhookMaxAttempts)
 	assert.Equal(t, 90, normalized.WebhookRetryIntervalSeconds)
 }
+
+func TestNormalizeWorkerSettings(t *testing.T) {
+	normalized := NormalizeSetting(AsyncTaskSetting{})
+	assert.Equal(t, DefaultImageDispatchConcurrency, normalized.ImageDispatchConcurrency)
+	assert.Equal(t, DefaultWebhookDeliveryConcurrency, normalized.WebhookDeliveryConcurrency)
+	assert.Equal(t, DefaultWebhookEndpointConcurrency, normalized.WebhookEndpointConcurrency)
+	assert.Equal(t, DefaultImageDispatchTimeoutSeconds, normalized.ImageDispatchTimeoutSeconds)
+	assert.Equal(t, DefaultWebhookDeliveryTimeoutSecs, normalized.WebhookDeliveryTimeoutSecs)
+
+	normalized = NormalizeSetting(AsyncTaskSetting{
+		ImageDispatchConcurrency:    MaxWorkerConcurrency + 1,
+		WebhookDeliveryConcurrency:  3,
+		WebhookEndpointConcurrency:  MaxWebhookEndpointConcurrency,
+		ImageDispatchTimeoutSeconds: MaxWorkerRequestTimeoutSeconds + 1,
+		WebhookDeliveryTimeoutSecs:  MaxWorkerRequestTimeoutSeconds + 1,
+	})
+	assert.Equal(t, MaxWorkerConcurrency, normalized.ImageDispatchConcurrency)
+	assert.Equal(t, 3, normalized.WebhookDeliveryConcurrency)
+	assert.Equal(t, 3, normalized.WebhookEndpointConcurrency)
+	assert.Equal(t, MaxWorkerRequestTimeoutSeconds, normalized.ImageDispatchTimeoutSeconds)
+	assert.Equal(t, MaxWorkerRequestTimeoutSeconds, normalized.WebhookDeliveryTimeoutSecs)
+}

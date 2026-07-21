@@ -72,6 +72,27 @@ services:
     networks:
       - new-api-dev-network
 
+  async-test-mock:
+    profiles:
+      - async-test
+    build:
+      context: ./test/asyncmock
+      dockerfile: Dockerfile
+    image: new-api-async-test-mock:dev
+    container_name: async-test-mock
+    restart: unless-stopped
+    ports:
+      - "18081:8080"
+    environment:
+      - PORT=8080
+    networks:
+      - new-api-dev-network
+    healthcheck:
+      test: ["CMD", "/async-test-mock", "-healthcheck", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
 volumes:
   pg_data_dev:
 

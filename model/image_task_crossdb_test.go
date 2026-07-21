@@ -43,6 +43,9 @@ func TestImageTaskAndWebhookSchemaAcrossDatabases(t *testing.T) {
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = sqlDB.Close() })
+			originalDB := DB
+			DB = db
+			t.Cleanup(func() { DB = originalDB })
 
 			models := []any{
 				&ImageTaskRequest{}, &ImageTaskDispatch{}, &WebhookEndpoint{},
@@ -104,6 +107,18 @@ func TestImageTaskAndWebhookSchemaAcrossDatabases(t *testing.T) {
 				HTTPStatus: 500, Error: "temporary", ResponseBody: `{"retry":true}`,
 				DurationMS: 12, CreatedAt: now,
 			}).Error)
+			imageQueue, err := GetImageTaskDispatchQueueStats(now)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, imageQueue.Pending)
+			webhookQueue, err := GetWebhookDeliveryQueueStats(now)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, webhookQueue.Pending)
+			deliveries, events, endpoints, total, err := ListAdminWebhookDeliveries(0, 20, AdminWebhookDeliveryQuery{UserID: 101})
+			require.NoError(t, err)
+			require.EqualValues(t, 1, total)
+			require.Len(t, deliveries, 1)
+			require.Contains(t, events, event.ID)
+			require.Contains(t, endpoints, endpoint.ID)
 
 			var storedRequest ImageTaskRequest
 			require.NoError(t, db.First(&storedRequest, request.ID).Error)

@@ -150,6 +150,12 @@ func GetAccountWebhookEndpoint(userID int) (*WebhookEndpoint, bool, error) {
 }
 
 func ClaimDueWebhookDeliveries(limit int, leaseSeconds int64) ([]*WebhookDelivery, error) {
+	return ClaimDueWebhookDeliveriesForCapacity(limit, leaseSeconds, 0, nil)
+}
+
+// ClaimDueWebhookDeliveriesForCapacity claims only records that can run now.
+// endpointInFlight is a snapshot owned by the single master scheduler.
+func ClaimDueWebhookDeliveriesForCapacity(limit int, leaseSeconds int64, endpointConcurrency int, endpointInFlight map[int64]int) ([]*WebhookDelivery, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -158,22 +164,38 @@ func ClaimDueWebhookDeliveries(limit int, leaseSeconds int64) ([]*WebhookDeliver
 	}
 	now := time.Now().Unix()
 	var candidates []WebhookDelivery
-	if err := DB.Where("next_attempt_at <= ? AND status = ?", now, WebhookDeliveryPending).
-		Order("next_attempt_at ASC, id ASC").Limit(limit * 2).Find(&candidates).Error; err != nil {
+	candidateLimit := limit * 20
+	if candidateLimit < 100 {
+		candidateLimit = 100
+	}
+	if candidateLimit > 2000 {
+		candidateLimit = 2000
+	}
+	if err := DB.Where(
+		"(status = ? AND next_attempt_at <= ?) OR (status = ? AND (locked_until = 0 OR locked_until < ?))",
+		WebhookDeliveryPending, now, WebhookDeliveryProcessing, now,
+	).Order("next_attempt_at ASC, id ASC").Limit(candidateLimit).Find(&candidates).Error; err != nil {
 		return nil, err
 	}
 	claimed := make([]*WebhookDelivery, 0, limit)
+	claimedByEndpoint := make(map[int64]int)
 	for i := range candidates {
 		if len(claimed) >= limit {
 			break
 		}
 		candidate := &candidates[i]
+		if endpointConcurrency > 0 && endpointInFlight[candidate.EndpointRecordID]+claimedByEndpoint[candidate.EndpointRecordID] >= endpointConcurrency {
+			continue
+		}
 		lockToken, err := common.GenerateRandomCharsKey(32)
 		if err != nil {
 			return nil, err
 		}
 		result := DB.Model(&WebhookDelivery{}).
-			Where("id = ? AND next_attempt_at <= ? AND status = ?", candidate.ID, now, WebhookDeliveryPending).
+			Where(
+				"id = ? AND ((status = ? AND next_attempt_at <= ?) OR (status = ? AND (locked_until = 0 OR locked_until < ?)))",
+				candidate.ID, WebhookDeliveryPending, now, WebhookDeliveryProcessing, now,
+			).
 			Updates(map[string]any{
 				"status":       WebhookDeliveryProcessing,
 				"attempts":     gorm.Expr("attempts + 1"),
@@ -191,6 +213,7 @@ func ClaimDueWebhookDeliveries(limit int, leaseSeconds int64) ([]*WebhookDeliver
 			return nil, err
 		}
 		claimed = append(claimed, candidate)
+		claimedByEndpoint[candidate.EndpointRecordID]++
 	}
 	return claimed, nil
 }

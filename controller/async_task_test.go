@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/gin-gonic/gin"
@@ -62,6 +63,16 @@ func TestNormalizeAsyncTaskWebhookOptions(t *testing.T) {
 	value, err = validateAndNormalizeAsyncTaskOptionUpdate("async_task_setting.webhook_retry_interval_seconds", "7200")
 	require.NoError(t, err)
 	assert.Equal(t, "3600", value)
+
+	value, err = validateAndNormalizeAsyncTaskOptionUpdate("async_task_setting.image_dispatch_concurrency", "101")
+	require.NoError(t, err)
+	assert.Equal(t, "100", value)
+	value, err = validateAndNormalizeAsyncTaskOptionUpdate("async_task_setting.webhook_endpoint_concurrency", "11")
+	require.NoError(t, err)
+	assert.Equal(t, "10", value)
+	value, err = validateAndNormalizeAsyncTaskOptionUpdate("async_task_setting.webhook_delivery_request_timeout_seconds", "301")
+	require.NoError(t, err)
+	assert.Equal(t, "300", value)
 }
 
 func TestGetAsyncTaskStatsReturnsAdminMonitoringData(t *testing.T) {
@@ -78,6 +89,24 @@ func TestGetAsyncTaskStatsReturnsAdminMonitoringData(t *testing.T) {
 		SubmitTime: now - 31*60,
 		CreatedAt:  now - 31*60,
 		UpdatedAt:  now - 31*60,
+	}).Error)
+	require.NoError(t, db.Create(&model.ImageTaskDispatch{
+		DispatchID: "dispatch_async_stats", TaskRecordID: 991001, TaskID: "task_dispatch_async_stats",
+		Status: model.ImageTaskDispatchPending, NextAttemptAt: now - 30, CreatedAt: now - 60, UpdatedAt: now - 60,
+	}).Error)
+	endpoint := &model.WebhookEndpoint{
+		EndpointID: "we_async_stats", UserID: 77, URL: "https://example.com/webhook",
+		Status: model.WebhookEndpointEnabled, CreatedAt: now, UpdatedAt: now,
+	}
+	require.NoError(t, db.Create(endpoint).Error)
+	event := &model.WebhookEvent{
+		EventID: "evt_async_stats", UserID: 77, EventType: service.WebhookEventTest,
+		ObjectType: "webhook.test", ObjectID: "object_async_stats", Payload: `{}`, CreatedAt: now,
+	}
+	require.NoError(t, db.Create(event).Error)
+	require.NoError(t, db.Create(&model.WebhookDelivery{
+		DeliveryID: "whd_async_stats", EventRecordID: event.ID, EndpointRecordID: endpoint.ID,
+		Status: model.WebhookDeliveryPending, NextAttemptAt: now - 20, CreatedAt: now - 20, UpdatedAt: now - 20,
 	}).Error)
 	require.NoError(t, db.Create(&model.Task{
 		TaskID:     "task_async_done",
@@ -105,6 +134,89 @@ func TestGetAsyncTaskStatsReturnsAdminMonitoringData(t *testing.T) {
 	require.Contains(t, string(resp.Data), `"timeout_pending":1`)
 	require.Contains(t, string(resp.Data), `"platform":"48"`)
 	require.Contains(t, string(resp.Data), `"channel_id":3`)
+	require.Contains(t, string(resp.Data), `"image_dispatch"`)
+	require.Contains(t, string(resp.Data), `"webhook_delivery"`)
+	require.Contains(t, string(resp.Data), `"due":1`)
+}
+
+func TestAdminAsyncTaskAndWebhookOperations(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	now := time.Now().Unix()
+	user := &model.User{Id: 801, Username: "async-admin-target", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(user).Error)
+	task := &model.Task{
+		TaskID: "task_admin_async_list", UserId: user.Id, Platform: constant.TaskPlatform("48"),
+		Action: constant.TaskActionVideoGeneration, Status: model.TaskStatusSubmitted,
+		Progress: "0%", SubmitTime: now, CreatedAt: now, UpdatedAt: now,
+	}
+	require.NoError(t, db.Create(task).Error)
+	require.NoError(t, db.Create(&model.ImageTaskDispatch{
+		DispatchID: "dispatch_admin_async_list", TaskRecordID: task.ID, TaskID: task.TaskID,
+		Status: model.ImageTaskDispatchPending, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+		RequestBody: `{"private":"must-not-leak"}`, LockToken: "must-not-leak",
+	}).Error)
+
+	asyncRecorder := httptest.NewRecorder()
+	asyncContext, _ := gin.CreateTestContext(asyncRecorder)
+	asyncContext.Request = httptest.NewRequest(http.MethodGet, "/api/task/async/tasks?task_id="+task.TaskID, nil)
+	GetAdminAsyncTasks(asyncContext)
+	require.Equal(t, http.StatusOK, asyncRecorder.Code)
+	require.Contains(t, asyncRecorder.Body.String(), task.TaskID)
+	require.Contains(t, asyncRecorder.Body.String(), "dispatch_admin_async_list")
+	require.NotContains(t, asyncRecorder.Body.String(), "must-not-leak")
+
+	endpoint := &model.WebhookEndpoint{
+		EndpointID: "we_admin_operations", UserID: user.Id, URL: "https://example.com/webhook?token=query-secret",
+		Status: model.WebhookEndpointEnabled, CreatedAt: now, UpdatedAt: now,
+	}
+	require.NoError(t, db.Create(endpoint).Error)
+	event := &model.WebhookEvent{
+		EventID: "evt_admin_operations", UserID: user.Id, EventType: service.WebhookEventTest,
+		ObjectType: "webhook.test", ObjectID: "object_admin_operations",
+		Payload: `{"data":{"object":{"ok":true}}}`, CreatedAt: now,
+	}
+	require.NoError(t, db.Create(event).Error)
+	delivery := &model.WebhookDelivery{
+		DeliveryID: "whd_admin_operations", EventRecordID: event.ID, EndpointRecordID: endpoint.ID,
+		Status: model.WebhookDeliveryFailed, Attempts: 3, LastHTTPStatus: 500,
+		LastError: "receiver failed", CreatedAt: now, UpdatedAt: now,
+	}
+	require.NoError(t, db.Create(delivery).Error)
+	require.NoError(t, db.Create(&model.WebhookDeliveryAttempt{
+		AttemptID: "wha_admin_operations", DeliveryRecordID: delivery.ID, AttemptNumber: 3,
+		HTTPStatus: 500, Error: "receiver failed", DurationMS: 120, CreatedAt: now,
+	}).Error)
+
+	detailRecorder := httptest.NewRecorder()
+	detailContext, _ := gin.CreateTestContext(detailRecorder)
+	detailContext.Params = gin.Params{{Key: "delivery_id", Value: delivery.DeliveryID}}
+	detailContext.Request = httptest.NewRequest(http.MethodGet, "/api/task/async/webhook-deliveries/"+delivery.DeliveryID, nil)
+	GetAdminWebhookDelivery(detailContext)
+	require.Equal(t, http.StatusOK, detailRecorder.Code)
+	require.Contains(t, detailRecorder.Body.String(), `"attempt_id":"wha_admin_operations"`)
+	require.Contains(t, detailRecorder.Body.String(), `"ok":true`)
+	require.Contains(t, detailRecorder.Body.String(), `"endpoint_url":"https://example.com/webhook"`)
+	require.NotContains(t, detailRecorder.Body.String(), "query-secret")
+	require.NotContains(t, detailRecorder.Body.String(), "authorization")
+
+	retryRecorder := httptest.NewRecorder()
+	retryContext, _ := gin.CreateTestContext(retryRecorder)
+	retryContext.Set("id", 1)
+	retryContext.Params = gin.Params{{Key: "delivery_id", Value: delivery.DeliveryID}}
+	retryContext.Request = httptest.NewRequest(http.MethodPost, "/api/task/async/webhook-deliveries/"+delivery.DeliveryID+"/retry", nil)
+	RetryAdminWebhookDelivery(retryContext)
+	require.Equal(t, http.StatusOK, retryRecorder.Code)
+	var stored model.WebhookDelivery
+	require.NoError(t, db.First(&stored, delivery.ID).Error)
+	require.Equal(t, model.WebhookDeliveryPending, stored.Status)
+	require.Zero(t, stored.Attempts)
+
+	conflictRecorder := httptest.NewRecorder()
+	conflictContext, _ := gin.CreateTestContext(conflictRecorder)
+	conflictContext.Params = gin.Params{{Key: "delivery_id", Value: delivery.DeliveryID}}
+	conflictContext.Request = httptest.NewRequest(http.MethodPost, "/api/task/async/webhook-deliveries/"+delivery.DeliveryID+"/retry", nil)
+	RetryAdminWebhookDelivery(conflictContext)
+	require.Equal(t, http.StatusConflict, conflictRecorder.Code)
 }
 
 func TestUpdateImageHandleConfigPersistsAndEchoesSecrets(t *testing.T) {
