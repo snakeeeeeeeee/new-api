@@ -847,7 +847,7 @@ export const formatRatioLabel = (ratio) => {
   return Number(numberValue.toFixed(6));
 };
 
-export function renderRatio(ratio, ratioInfo = {}) {
+export function renderRatio(ratio) {
   const numberRatio = Number(ratio);
   if (!Number.isFinite(numberRatio)) {
     return <Tag color='grey'>{ratio}</Tag>;
@@ -860,25 +860,9 @@ export function renderRatio(ratio, ratioInfo = {}) {
   } else if (numberRatio > 1) {
     color = 'blue';
   }
-  const originalRatio = ratioInfo.originalRatio ?? ratio;
   return (
     <Tag color={color}>
-      {ratioInfo?.hasRatioOverride ? (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span
-            style={{
-              textDecoration: 'line-through',
-              color: 'var(--semi-color-text-2)',
-            }}
-          >
-            {formatRatioLabel(originalRatio)}x
-          </span>
-          <span>{formatRatioLabel(numberRatio)}x</span>
-        </span>
-      ) : (
-        `${formatRatioLabel(numberRatio)}x`
-      )}{' '}
-      {i18next.t('倍率')}
+      {formatRatioLabel(numberRatio)}x {i18next.t('倍率')}
     </Tag>
   );
 }

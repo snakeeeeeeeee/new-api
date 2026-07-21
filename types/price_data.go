@@ -22,7 +22,13 @@ type GroupRatioInfo struct {
 	RouteModelRatioAggregateGroup string
 	RouteModelRatioRealGroup      string
 	RouteModelRatioModelName      string
+	RouteModelGroupRatioSource    string
 }
+
+const (
+	RouteModelGroupRatioSourceGlobal = "global"
+	RouteModelGroupRatioSourceUser   = "user"
+)
 
 type PriceData struct {
 	FreeModel          bool

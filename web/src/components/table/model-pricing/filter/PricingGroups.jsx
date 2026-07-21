@@ -56,18 +56,8 @@ const PricingGroups = ({
     if (g === 'all') {
       // ratioDisplay = t('全部');
     } else {
-      const detail = groupRatioDetails[g];
       const ratio = groupRatio[g];
-      if (detail?.has_ratio_override) {
-        ratioDisplay = (
-          <span style={{ display: 'inline-flex', gap: 4 }}>
-            <span style={{ textDecoration: 'line-through' }}>
-              {formatRatioLabel(detail.original_ratio)}x
-            </span>
-            <span>{formatRatioLabel(detail.ratio)}x</span>
-          </span>
-        );
-      } else if (ratio !== undefined && ratio !== null) {
+      if (ratio !== undefined && ratio !== null) {
         ratioDisplay = `${formatRatioLabel(ratio)}x`;
       } else {
         ratioDisplay = '1x';

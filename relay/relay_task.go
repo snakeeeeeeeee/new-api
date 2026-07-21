@@ -479,6 +479,7 @@ func newAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, platform con
 		RouteModelAggregateGroup: info.PriceData.GroupRatioInfo.RouteModelRatioAggregateGroup,
 		RouteModelRealGroup:      info.PriceData.GroupRatioInfo.RouteModelRatioRealGroup,
 		RouteModelName:           info.PriceData.GroupRatioInfo.RouteModelRatioModelName,
+		RouteModelRatioSource:    info.PriceData.GroupRatioInfo.RouteModelGroupRatioSource,
 		ModelRatio:               info.PriceData.ModelRatio,
 		CompletionRatio:          info.PriceData.CompletionRatio,
 		CacheRatio:               info.PriceData.CacheRatio,

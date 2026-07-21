@@ -134,6 +134,7 @@ type TaskBillingContext struct {
 	RouteModelAggregateGroup string                      `json:"route_model_aggregate_group,omitempty"` // 命中规则的聚合分组
 	RouteModelRealGroup      string                      `json:"route_model_real_group,omitempty"`      // 命中规则的真实分组
 	RouteModelName           string                      `json:"route_model_name,omitempty"`            // 命中规则的原始模型名
+	RouteModelRatioSource    string                      `json:"route_model_ratio_source,omitempty"`    // 子分组模型倍率来源（global/user）
 	ModelRatio               float64                     `json:"model_ratio,omitempty"`                 // 模型倍率
 	CompletionRatio          float64                     `json:"completion_ratio,omitempty"`            // 输出倍率
 	CacheRatio               float64                     `json:"cache_ratio,omitempty"`                 // 缓存读取倍率

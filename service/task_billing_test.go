@@ -877,6 +877,7 @@ func TestTaskBillingLogUsesEffectiveRouteModelRatio(t *testing.T) {
 		RouteModelAggregateGroup: "aggregate-premium",
 		RouteModelRealGroup:      "premium-route",
 		RouteModelName:           "premium-model",
+		RouteModelRatioSource:    types.RouteModelGroupRatioSourceUser,
 	}
 
 	other := taskBillingOther(task)
@@ -889,6 +890,7 @@ func TestTaskBillingLogUsesEffectiveRouteModelRatio(t *testing.T) {
 	assert.Equal(t, "aggregate-premium", other["route_model_ratio_aggregate_group"])
 	assert.Equal(t, "premium-route", other["route_model_ratio_real_group"])
 	assert.Equal(t, "premium-model", other["route_model_ratio_model_name"])
+	assert.Equal(t, types.RouteModelGroupRatioSourceUser, other["route_model_group_ratio_source"])
 }
 
 func TestTaskBillingRouteModelRatioSnapshotPreservesZero(t *testing.T) {
@@ -901,6 +903,7 @@ func TestTaskBillingRouteModelRatioSnapshotPreservesZero(t *testing.T) {
 		RouteModelAggregateGroup: "aggregate-free-route",
 		RouteModelRealGroup:      "free-route",
 		RouteModelName:           "free-model",
+		RouteModelRatioSource:    types.RouteModelGroupRatioSourceUser,
 	}
 
 	info := taskRelayInfoForBilling(task)
@@ -908,6 +911,7 @@ func TestTaskBillingRouteModelRatioSnapshotPreservesZero(t *testing.T) {
 	assert.Zero(t, info.PriceData.GroupRatioInfo.RouteModelGroupRatio)
 	assert.True(t, info.PriceData.GroupRatioInfo.HasRouteModelGroupRatio)
 	assert.Equal(t, 1.5, info.PriceData.GroupRatioInfo.OriginalGroupRatio)
+	assert.Equal(t, types.RouteModelGroupRatioSourceUser, info.PriceData.GroupRatioInfo.RouteModelGroupRatioSource)
 }
 
 func TestGenerateTextOtherInfoDoesNotApplySuppressedUserRatio(t *testing.T) {

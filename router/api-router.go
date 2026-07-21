@@ -139,6 +139,7 @@ func SetApiRouter(router *gin.Engine) {
 					userAdminRoute.GET("/:id/extra_usable_groups", controller.GetUserExtraUsableGroups)
 					userAdminRoute.PUT("/:id/extra_usable_groups", controller.UpdateUserExtraUsableGroups)
 					userAdminRoute.GET("/:id/aggregate_group_ratio_overrides", controller.GetUserAggregateGroupRatioOverrides)
+					userAdminRoute.GET("/:id/aggregate_group_ratio_overrides/models", controller.GetUserAggregateGroupRatioOverrideModels)
 					userAdminRoute.PUT("/:id/aggregate_group_ratio_overrides", controller.UpdateUserAggregateGroupRatioOverrides)
 					userAdminRoute.GET("/:id/invite_codes", controller.GetUserInviteCodesByAdmin)
 					userAdminRoute.PUT("/:id/invite_binding", controller.UpdateUserInviteBinding)

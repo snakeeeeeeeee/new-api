@@ -126,6 +126,7 @@ func appendGroupRatioOverrideInfo(relayInfo *relaycommon.RelayInfo, other map[st
 		other["route_model_ratio_aggregate_group"] = ratioInfo.RouteModelRatioAggregateGroup
 		other["route_model_ratio_real_group"] = ratioInfo.RouteModelRatioRealGroup
 		other["route_model_ratio_model_name"] = ratioInfo.RouteModelRatioModelName
+		other["route_model_group_ratio_source"] = ratioInfo.RouteModelGroupRatioSource
 	}
 }
 

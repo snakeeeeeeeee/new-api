@@ -859,3 +859,47 @@ Complete
 | Generic planning completion check reports two pending phases | 1 | Confirmed both are from the older image-pricing task at lines 274-283; all four phases of the active Error Snapshot task are complete, so preserve the historical task state. |
 
 ---
+
+# Task Plan: Per-user Aggregate Route Model Ratios (2026-07-21)
+
+## Goal
+Add per-user aggregate child-route exact-model ratios that override global child-route rules, while exposing only final effective ratios to ordinary users.
+
+## Current Phase
+Complete
+
+### Phase 1: Data contract and resolver
+- [x] Add backward-compatible user-setting rule storage and validation.
+- [x] Apply user exact rules before global exact rules and preserve source in task snapshots.
+- [x] Update pricing aggregation to use the same precedence.
+**Status:** complete
+
+### Phase 2: Admin APIs and user-facing privacy
+- [x] Extend the existing user ratio GET/PUT contract and add scoped model lookup.
+- [x] Remove original/override metadata from ordinary user group, pricing, and log responses.
+**Status:** complete
+
+### Phase 3: Frontend administration and display
+- [x] Add default-ratio and child-route-model tabs to the existing user SideSheet.
+- [x] Render only final ratios in pricing, token, and Playground surfaces.
+**Status:** complete
+
+### Phase 4: Verification
+- [x] Run focused and full backend/frontend test suites.
+- [x] Rebuild Docker dev, verify precedence and privacy, perform responsive browser QA, and clean fixtures.
+**Status:** complete
+
+## Locked Decisions
+- Precedence is user exact route/model, global exact route/model, user aggregate default, aggregate default.
+- Exact model names remain case-sensitive; zero is valid; disabled rules fall through.
+- User rules remain in the existing user setting JSON, so no database migration is added.
+- Ordinary user APIs and logs expose only final effective ratios; administrator management and logs retain audit metadata.
+- Existing planning sections and unrelated untracked diagnostics remain untouched.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Full i18n lint still reports the repository's pre-existing hardcoded-string baseline | 1 | Confirm the feature adds no new finding, validate all new locale keys, and keep changed frontend files clean with targeted ESLint and Prettier. |
+| Browser telemetry to Statsig timed out during local UI acceptance | 1 | Treat it as external browser-tool telemetry; local page DOM, network contracts, console timing, and application health checks completed successfully. |
+
+---

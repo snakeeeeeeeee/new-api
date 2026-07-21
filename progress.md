@@ -554,3 +554,19 @@
 - Rebuilt/recreated Docker dev with the final source and reran the complete Claude/error-snapshot fault-injection suite; all 15 checks passed. The container is healthy at `http://localhost:3001`, default snapshot settings and an empty index were restored, and the temporary browser-test user remains role 1 with zero menu permissions.
 
 ---
+
+# Per-user Aggregate Route Model Ratio Progress (2026-07-21)
+
+- Loaded the validated implementation plan and re-read the brainstorming, file-planning, and UI/UX instructions.
+- Confirmed the current storage, resolver precedence, pricing response, user-group response, log sanitization, cache refresh, admin permission, and Docker dev topology.
+- Locked a backward-compatible user-setting list and extension of the existing user ratio endpoint; backend implementation is starting.
+- Added per-user aggregate child-route exact-model rules to the existing user-setting JSON, including backward-compatible PUT semantics, strict validation, disabled-rule fallback, exact case-sensitive matching, and valid zero ratios.
+- Unified resolver precedence as user exact, global exact, user aggregate default, then aggregate default; synchronized relay billing, task snapshots, final settlement, pricing aggregation, and audit-source metadata.
+- Extended the user-management API and SideSheet with child-route model rules plus a user-menu-scoped model candidate endpoint; ordinary pricing, group, and log responses now expose only final effective ratios.
+- Removed comparison strike-throughs and exclusive-ratio labels from model pricing, model detail, token, and Playground renderers, including compatibility behavior against older backend payloads.
+- Added backend resolver/controller/pricing/relay/task/log coverage and pure frontend helper tests. `go test ./... -count=1`, five Bun helper tests, targeted ESLint/Prettier, production build, and changed-scope i18n checks pass.
+- Rebuilt Docker dev and completed four real billed requests: user exact `0.5`, global exact fallback `3`, user aggregate default fallback `0.8`, and aggregate default fallback `1.2`; quota deltas and administrator audit metadata matched each source.
+- Browser QA passed administrator add/edit/enable/disable/delete flows and ordinary-user model pricing, model detail, token, Playground, and expanded log views on desktop and mobile. No final-ratio surface has strike-throughs, exclusive labels, sensitive override fields, or horizontal overflow.
+- Removed the isolated users, token, channel, abilities, aggregate group, targets, exact rule, logs, Redis state, and mock server. All fixture residue counts are zero; `new-api-dev` remains healthy and `/api/status` succeeds.
+
+---

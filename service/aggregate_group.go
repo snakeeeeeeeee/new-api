@@ -103,6 +103,28 @@ type ModelGroupRatioView struct {
 	DynamicRoute bool    `json:"dynamic_route"`
 }
 
+type PublicGroupRatioView struct {
+	Ratio float64 `json:"ratio"`
+}
+
+type PublicModelGroupRatioView struct {
+	Ratio        float64 `json:"ratio"`
+	MaxRatio     float64 `json:"max_ratio"`
+	DynamicRoute bool    `json:"dynamic_route"`
+}
+
+func (view GroupRatioView) Public() PublicGroupRatioView {
+	return PublicGroupRatioView{Ratio: view.Ratio}
+}
+
+func (view ModelGroupRatioView) Public() PublicModelGroupRatioView {
+	return PublicModelGroupRatioView{
+		Ratio:        view.Ratio,
+		MaxRatio:     view.MaxRatio,
+		DynamicRoute: view.DynamicRoute,
+	}
+}
+
 func GetAggregateGroupRatioOverride(userSetting dto.UserSetting, aggregateGroup string) (float64, bool) {
 	if strings.TrimSpace(aggregateGroup) == "" || userSetting.AggregateGroupRatioOverrides == nil {
 		return 0, false
@@ -112,6 +134,26 @@ func GetAggregateGroupRatioOverride(userSetting dto.UserSetting, aggregateGroup 
 		return 0, false
 	}
 	return ratio, true
+}
+
+func GetUserAggregateGroupRouteModelRatioOverride(
+	userSetting dto.UserSetting,
+	aggregateGroup string,
+	realGroup string,
+	modelName string,
+) (dto.UserAggregateGroupRouteModelRatioOverride, bool) {
+	for _, rule := range userSetting.AggregateGroupRouteModelRatioOverrides {
+		if rule.Enabled &&
+			!math.IsNaN(rule.GroupRatio) &&
+			!math.IsInf(rule.GroupRatio, 0) &&
+			rule.GroupRatio >= 0 &&
+			rule.AggregateGroup == aggregateGroup &&
+			rule.RealGroup == realGroup &&
+			rule.ModelName == modelName {
+			return rule, true
+		}
+	}
+	return dto.UserAggregateGroupRouteModelRatioOverride{}, false
 }
 
 func GetAggregateGroupRatioView(userSetting dto.UserSetting, aggregateGroup string) (GroupRatioView, bool) {
@@ -170,7 +212,10 @@ func GetAggregateModelGroupRatioView(
 			continue
 		}
 		ratio := baseView.Ratio
-		if routeRatio, matched := ruleRatios[realGroup]; matched {
+		if userRule, matched := GetUserAggregateGroupRouteModelRatioOverride(userSetting, aggregateGroup.Name, realGroup, modelName); matched {
+			ratio = userRule.GroupRatio
+			view.DynamicRoute = true
+		} else if routeRatio, matched := ruleRatios[realGroup]; matched {
 			ratio = routeRatio
 			view.DynamicRoute = true
 		}
@@ -265,6 +310,10 @@ func getAggregateGroupModelSourceGroups(aggregateGroup *model.AggregateGroup) []
 		}
 	}
 	return groups
+}
+
+func GetAggregateGroupModelSourceGroups(aggregateGroup *model.AggregateGroup) []string {
+	return append([]string(nil), getAggregateGroupModelSourceGroups(aggregateGroup)...)
 }
 
 func MapVisibleModelGroups(userGroup string, realGroups []string) []string {
@@ -721,6 +770,20 @@ func ResolveContextGroupRatioInfoForModel(ctx *gin.Context, userGroup string, lo
 				realGroup = common.GetContextKeyString(ctx, constant.ContextKeyRouteGroup)
 			}
 			if strings.TrimSpace(realGroup) != "" && strings.TrimSpace(modelName) != "" {
+				if userRule, matched := GetUserAggregateGroupRouteModelRatioOverride(userSetting, aggregateGroup, realGroup, modelName); matched {
+					groupRatioInfo.GroupRatio = userRule.GroupRatio
+					groupRatioInfo.GroupSpecialRatio = userRule.GroupRatio
+					groupRatioInfo.HasSpecialRatio = true
+					groupRatioInfo.RatioOverrideApplied = false
+					groupRatioInfo.RouteModelGroupRatio = userRule.GroupRatio
+					groupRatioInfo.HasRouteModelGroupRatio = true
+					groupRatioInfo.RouteModelRatioAggregateGroup = aggregateGroup
+					groupRatioInfo.RouteModelRatioRealGroup = realGroup
+					groupRatioInfo.RouteModelRatioModelName = modelName
+					groupRatioInfo.RouteModelGroupRatioSource = types.RouteModelGroupRatioSourceUser
+					return groupRatioInfo
+				}
+
 				rule, matched, err := lookupAggregateRouteModelRatio(group.Id, realGroup, modelName)
 				if err != nil {
 					message := fmt.Sprintf(
@@ -745,6 +808,7 @@ func ResolveContextGroupRatioInfoForModel(ctx *gin.Context, userGroup string, lo
 					groupRatioInfo.RouteModelRatioAggregateGroup = aggregateGroup
 					groupRatioInfo.RouteModelRatioRealGroup = rule.RealGroup
 					groupRatioInfo.RouteModelRatioModelName = rule.ModelName
+					groupRatioInfo.RouteModelGroupRatioSource = types.RouteModelGroupRatioSourceGlobal
 				}
 			}
 			return groupRatioInfo

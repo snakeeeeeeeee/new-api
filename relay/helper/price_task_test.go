@@ -151,6 +151,15 @@ func TestModelPriceHelpersUseAggregateRouteModelRatio(t *testing.T) {
 		common.SetContextKey(ctx, constant.ContextKeyRouteGroup, "default")
 		common.SetContextKey(ctx, constant.ContextKeyUserSetting, dto.UserSetting{
 			AggregateGroupRatioOverrides: map[string]float64{group.Name: 0.5},
+			AggregateGroupRouteModelRatioOverrides: []dto.UserAggregateGroupRouteModelRatioOverride{
+				{
+					AggregateGroup: group.Name,
+					RealGroup:      "default",
+					ModelName:      "grok-imagine-video-test",
+					GroupRatio:     3,
+					Enabled:        true,
+				},
+			},
 		})
 		return &relaycommon.RelayInfo{
 			OriginModelName: "grok-imagine-video-test",
@@ -163,15 +172,17 @@ func TestModelPriceHelpersUseAggregateRouteModelRatio(t *testing.T) {
 	perCallInfo, perCallCtx := buildInfoAndContext()
 	perCallPrice, err := ModelPriceHelperPerCall(perCallCtx, perCallInfo)
 	require.NoError(t, err)
-	assert.Equal(t, 4.0, perCallPrice.GroupRatioInfo.GroupRatio)
+	assert.Equal(t, 3.0, perCallPrice.GroupRatioInfo.GroupRatio)
 	assert.True(t, perCallPrice.GroupRatioInfo.HasRouteModelGroupRatio)
 	assert.False(t, perCallPrice.GroupRatioInfo.RatioOverrideApplied)
-	assert.Equal(t, int(4*common.QuotaPerUnit), perCallPrice.Quota)
+	assert.Equal(t, types.RouteModelGroupRatioSourceUser, perCallPrice.GroupRatioInfo.RouteModelGroupRatioSource)
+	assert.Equal(t, int(3*common.QuotaPerUnit), perCallPrice.Quota)
 
 	tokenInfo, tokenCtx := buildInfoAndContext()
 	tokenPrice, err := ModelPriceHelper(tokenCtx, tokenInfo, 100, &types.TokenCountMeta{})
 	require.NoError(t, err)
-	assert.Equal(t, 4.0, tokenPrice.GroupRatioInfo.GroupRatio)
+	assert.Equal(t, 3.0, tokenPrice.GroupRatioInfo.GroupRatio)
 	assert.True(t, tokenPrice.GroupRatioInfo.HasRouteModelGroupRatio)
-	assert.Equal(t, int(4*common.QuotaPerUnit), tokenPrice.QuotaToPreConsume)
+	assert.Equal(t, types.RouteModelGroupRatioSourceUser, tokenPrice.GroupRatioInfo.RouteModelGroupRatioSource)
+	assert.Equal(t, int(3*common.QuotaPerUnit), tokenPrice.QuotaToPreConsume)
 }

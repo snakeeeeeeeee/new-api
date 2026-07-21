@@ -65,8 +65,8 @@ func GetPricing(c *gin.Context) {
 	userId, exists := c.Get("id")
 	usableGroup := map[string]string{}
 	groupRatio := map[string]float64{}
-	groupRatioDetails := map[string]service.GroupRatioView{}
-	modelGroupRatioDetails := map[string]map[string]service.ModelGroupRatioView{}
+	groupRatioDetails := map[string]service.PublicGroupRatioView{}
+	modelGroupRatioDetails := map[string]map[string]service.PublicModelGroupRatioView{}
 	var group string
 	userSetting := dto.UserSetting{}
 	if exists {
@@ -81,7 +81,7 @@ func GetPricing(c *gin.Context) {
 	for groupName := range usableGroup {
 		ratioView := service.GetUserGroupRatioView(group, groupName, userSetting)
 		groupRatio[groupName] = ratioView.Ratio
-		groupRatioDetails[groupName] = ratioView
+		groupRatioDetails[groupName] = ratioView.Public()
 	}
 	visibleAggregateGroups := service.GetVisibleAggregateGroupsWithSetting(group, userSetting)
 	aggregateGroupsByName := make(map[string]*model.AggregateGroup, len(visibleAggregateGroups))
@@ -114,9 +114,9 @@ func GetPricing(c *gin.Context) {
 				continue
 			}
 			if modelGroupRatioDetails[pricing[i].ModelName] == nil {
-				modelGroupRatioDetails[pricing[i].ModelName] = make(map[string]service.ModelGroupRatioView)
+				modelGroupRatioDetails[pricing[i].ModelName] = make(map[string]service.PublicModelGroupRatioView)
 			}
-			modelGroupRatioDetails[pricing[i].ModelName][groupName] = detail
+			modelGroupRatioDetails[pricing[i].ModelName][groupName] = detail.Public()
 		}
 	}
 	autoGroups := service.MapVisibleModelGroupsWithSetting(group, service.GetUserAutoGroupWithSetting(group, userSetting), userSetting)

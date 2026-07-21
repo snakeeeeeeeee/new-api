@@ -53,10 +53,8 @@ func GetUserGroups(c *gin.Context) {
 		ratioView := service.GetUserGroupRatioView(userGroup, groupName, userSetting)
 		aggregateGroup, isAggregate := aggregateGroupsByName[groupName]
 		usableGroups[groupName] = map[string]interface{}{
-			"ratio":              ratioView.Ratio,
-			"original_ratio":     ratioView.OriginalRatio,
-			"has_ratio_override": ratioView.HasRatioOverride,
-			"desc":               desc,
+			"ratio": ratioView.Ratio,
+			"desc":  desc,
 			"type": func() string {
 				if isAggregate {
 					return "aggregate"
@@ -80,9 +78,6 @@ func GetUserGroups(c *gin.Context) {
 			usableGroups[groupName]["category_id"] = categoryId
 			usableGroups[groupName]["category_name"] = categoryName
 			usableGroups[groupName]["category_order"] = categoryOrder
-		}
-		if ratioView.RatioOverride != nil {
-			usableGroups[groupName]["ratio_override"] = *ratioView.RatioOverride
 		}
 	}
 	if _, ok := service.GetUserUsableGroupsWithSetting(userGroup, userSetting)["auto"]; ok {

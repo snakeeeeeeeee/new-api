@@ -1010,6 +1010,7 @@ func RelayTask(c *gin.Context) {
 			RouteModelAggregateGroup: relayInfo.PriceData.GroupRatioInfo.RouteModelRatioAggregateGroup,
 			RouteModelRealGroup:      relayInfo.PriceData.GroupRatioInfo.RouteModelRatioRealGroup,
 			RouteModelName:           relayInfo.PriceData.GroupRatioInfo.RouteModelRatioModelName,
+			RouteModelRatioSource:    relayInfo.PriceData.GroupRatioInfo.RouteModelGroupRatioSource,
 			ModelRatio:               relayInfo.PriceData.ModelRatio,
 			OtherRatios:              relayInfo.PriceData.OtherRatios,
 			OriginModelName:          relayInfo.OriginModelName,

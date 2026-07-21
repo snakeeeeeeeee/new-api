@@ -181,18 +181,7 @@ const ModelPricingTable = ({
         dataIndex: 'ratio',
         render: (text, record) => (
           <Tag color='white' size='small' shape='circle'>
-            {record?.isDynamicRouteMaximum ? (
-              `${formatRatioLabel(text)}x`
-            ) : record?.ratioDetail?.has_ratio_override ? (
-              <span style={{ display: 'inline-flex', gap: 4 }}>
-                <span style={{ textDecoration: 'line-through' }}>
-                  {formatRatioLabel(record.ratioDetail.original_ratio)}x
-                </span>
-                <span>{formatRatioLabel(record.ratioDetail.ratio)}x</span>
-              </span>
-            ) : (
-              `${formatRatioLabel(text)}x`
-            )}
+            {`${formatRatioLabel(text)}x`}
           </Tag>
         ),
       });

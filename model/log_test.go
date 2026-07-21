@@ -144,8 +144,15 @@ func TestFormatUserLogsHidesAggregateRouteModelRatioDetails(t *testing.T) {
 			Type: LogTypeConsume,
 			Other: common.MapToJsonStr(map[string]interface{}{
 				"group_ratio":                       3.25,
+				"original_group_ratio":              1.5,
+				"original_ratio":                    1.5,
+				"ratio_override":                    0.75,
+				"has_ratio_override":                true,
+				"ratio_override_applied":            false,
+				"user_group_ratio":                  3.25,
 				"route_model_group_ratio_applied":   true,
 				"route_model_group_ratio":           3.25,
+				"route_model_group_ratio_source":    "user",
 				"route_model_ratio_aggregate_group": "aggregate-premium",
 				"route_model_ratio_real_group":      "premium-route",
 				"route_model_ratio_model_name":      "premium-model",
@@ -158,8 +165,15 @@ func TestFormatUserLogsHidesAggregateRouteModelRatioDetails(t *testing.T) {
 	other, err := common.StrToMap(logs[0].Other)
 	require.NoError(t, err)
 	require.Equal(t, float64(3.25), other["group_ratio"])
+	require.NotContains(t, other, "original_group_ratio")
+	require.NotContains(t, other, "original_ratio")
+	require.NotContains(t, other, "ratio_override")
+	require.NotContains(t, other, "has_ratio_override")
+	require.NotContains(t, other, "ratio_override_applied")
+	require.NotContains(t, other, "user_group_ratio")
 	require.NotContains(t, other, "route_model_group_ratio_applied")
 	require.NotContains(t, other, "route_model_group_ratio")
+	require.NotContains(t, other, "route_model_group_ratio_source")
 	require.NotContains(t, other, "route_model_ratio_aggregate_group")
 	require.NotContains(t, other, "route_model_ratio_real_group")
 	require.NotContains(t, other, "route_model_ratio_model_name")

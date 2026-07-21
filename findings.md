@@ -662,3 +662,21 @@
 - Final Docker fault injection passed all 15 scenarios against the rebuilt image, including disabled-path compatibility, hot 30/45/60-second settings, priority redaction, aggregate fallback, retry exclusion, pre-first-block EOF/timeout, in-flight snapshots, real-time valid streaming, post-commit interruption, final 502, and management APIs. Cleanup restored default error-snapshot settings, removed all snapshots, and left the app healthy at port 3001.
 
 ---
+
+# Per-user Aggregate Route Model Ratio Findings (2026-07-21)
+
+- Existing per-user aggregate defaults are stored as `map[aggregateGroup]ratio` in the user setting JSON; structured child-route rules can be added without a schema migration.
+- Global child-route ratios are exact `(aggregate group, real group, model name)` rules and currently override the per-user aggregate default.
+- The request context already carries the complete cached user setting and the selected real route group, so per-user exact lookup needs no database query in the relay hot path.
+- User updates refresh the user cache, but the self-setting rebuild must explicitly preserve every new user-setting field.
+- `/api/pricing`, `/api/user/self/groups`, token/Playground group renderers, and user log responses currently expose override identity or original values; UI-only removal would not satisfy the chosen privacy requirement.
+- The existing aggregate model lookup endpoint requires aggregate-group menu permission; the user management SideSheet needs a user-menu-scoped lookup route.
+- Docker dev is running PostgreSQL, Redis, and a healthy `new-api-dev` at `http://localhost:3001`.
+- The UI should remain the existing data-dense Semi Design operations surface, with visible labels, Tabs for progressive disclosure, loading states, accessible icon actions, and mobile-safe layouts.
+- Docker verification confirmed the complete precedence with real quota changes: `0.5` user exact, `3` global exact, `0.8` user aggregate default, and `1.2` aggregate default.
+- Administrator logs retain route-model source and original-ratio audit data, while ordinary user logs and expanded detail views retain only the final `group_ratio`.
+- Pricing must evaluate every reachable real group before selecting the maximum effective ratio; applying only the chosen route or aggregate default would understate dynamic-route pricing.
+- The final responsive UI exposes inherited and effective values only to administrators; ordinary-user ratio surfaces render one final value with no comparison styling or override identity.
+- The isolated Docker fixture and all matching PostgreSQL/Redis records were removed after acceptance, leaving the application healthy.
+
+---

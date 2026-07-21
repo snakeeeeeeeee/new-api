@@ -4,8 +4,10 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1478,7 +1480,16 @@ type ManageRequest struct {
 }
 
 type aggregateGroupRatioOverridesRequest struct {
-	Overrides map[string]float64 `json:"overrides"`
+	Overrides                     map[string]float64                     `json:"overrides"`
+	RouteModelGroupRatioOverrides *[]userAggregateRouteModelRatioRequest `json:"route_model_group_ratio_overrides"`
+}
+
+type userAggregateRouteModelRatioRequest struct {
+	AggregateGroup string  `json:"aggregate_group"`
+	RealGroup      string  `json:"real_group"`
+	ModelName      string  `json:"model_name"`
+	GroupRatio     float64 `json:"group_ratio"`
+	Enabled        *bool   `json:"enabled"`
 }
 
 type extraUsableGroupsRequest struct {
@@ -1503,13 +1514,23 @@ func isBusinessGroupName(groupName string) bool {
 
 func buildVisibleAggregateGroupResponses(userGroup string, userSetting dto.UserSetting) ([]*aggregateGroupResponse, error) {
 	groups := service.GetVisibleAggregateGroupsWithSetting(userGroup, userSetting)
+	groupIDs := make([]int, 0, len(groups))
+	for _, group := range groups {
+		if group != nil {
+			groupIDs = append(groupIDs, group.Id)
+		}
+	}
+	rulesByGroupID, err := model.GetAggregateGroupRouteModelRatiosByGroupIDs(groupIDs)
+	if err != nil {
+		return nil, err
+	}
 	categories, err := model.GetAggregateGroupCategoriesByID()
 	if err != nil {
 		return nil, err
 	}
 	resp := make([]*aggregateGroupResponse, 0, len(groups))
 	for _, group := range groups {
-		resp = append(resp, buildAggregateGroupResponse(group, categories))
+		resp = append(resp, buildAggregateGroupResponseWithRouteModelRatios(group, rulesByGroupID[group.Id], categories))
 	}
 	return resp, nil
 }
@@ -1597,7 +1618,7 @@ func normalizeAggregateGroupRatioOverrides(input map[string]float64, userGroup s
 		if group == "" {
 			continue
 		}
-		if ratio < 0 {
+		if math.IsNaN(ratio) || math.IsInf(ratio, 0) || ratio < 0 {
 			return nil, fmt.Errorf("聚合分组 %s 特殊倍率不能小于 0", group)
 		}
 		if _, ok := visibleGroupMap[group]; !ok {
@@ -1606,6 +1627,105 @@ func normalizeAggregateGroupRatioOverrides(input map[string]float64, userGroup s
 		normalized[group] = ratio
 	}
 	return normalized, nil
+}
+
+type userAggregateRouteModelRuleKey struct {
+	AggregateGroup string
+	RealGroup      string
+	ModelName      string
+}
+
+func visibleAggregateGroupMap(userGroup string, userSetting dto.UserSetting) map[string]*model.AggregateGroup {
+	visibleGroups := service.GetVisibleAggregateGroupsWithSetting(userGroup, userSetting)
+	groupMap := make(map[string]*model.AggregateGroup, len(visibleGroups))
+	for _, group := range visibleGroups {
+		if group != nil {
+			groupMap[group.Name] = group
+		}
+	}
+	return groupMap
+}
+
+func normalizeUserAggregateRouteModelRatioOverrides(
+	input []userAggregateRouteModelRatioRequest,
+	userGroup string,
+	userSetting dto.UserSetting,
+) ([]dto.UserAggregateGroupRouteModelRatioOverride, error) {
+	groupMap := visibleAggregateGroupMap(userGroup, userSetting)
+	normalized := make([]dto.UserAggregateGroupRouteModelRatioOverride, 0, len(input))
+	seen := make(map[userAggregateRouteModelRuleKey]struct{}, len(input))
+	for _, item := range input {
+		aggregateGroup := strings.TrimSpace(item.AggregateGroup)
+		realGroup := strings.TrimSpace(item.RealGroup)
+		modelName := strings.TrimSpace(item.ModelName)
+		group, ok := groupMap[aggregateGroup]
+		if aggregateGroup == "" || !ok {
+			return nil, fmt.Errorf("聚合分组 %s 不存在、未启用或当前用户不可见", aggregateGroup)
+		}
+		if !slices.Contains(service.GetAggregateGroupModelSourceGroups(group), realGroup) {
+			return nil, fmt.Errorf("聚合分组 %s 未配置真实子分组 %s", aggregateGroup, realGroup)
+		}
+		if modelName == "" {
+			return nil, fmt.Errorf("聚合分组 %s 真实子分组 %s 的模型名称不能为空", aggregateGroup, realGroup)
+		}
+		if math.IsNaN(item.GroupRatio) || math.IsInf(item.GroupRatio, 0) || item.GroupRatio < 0 {
+			return nil, fmt.Errorf("聚合分组 %s 真实子分组 %s 模型 %s 的倍率必须是大于等于 0 的有限数值", aggregateGroup, realGroup, modelName)
+		}
+		key := userAggregateRouteModelRuleKey{
+			AggregateGroup: aggregateGroup,
+			RealGroup:      realGroup,
+			ModelName:      modelName,
+		}
+		if _, exists := seen[key]; exists {
+			return nil, fmt.Errorf("聚合分组 %s 真实子分组 %s 的模型 %s 重复配置", aggregateGroup, realGroup, modelName)
+		}
+		seen[key] = struct{}{}
+		enabled := true
+		if item.Enabled != nil {
+			enabled = *item.Enabled
+		}
+		normalized = append(normalized, dto.UserAggregateGroupRouteModelRatioOverride{
+			AggregateGroup: aggregateGroup,
+			RealGroup:      realGroup,
+			ModelName:      modelName,
+			GroupRatio:     item.GroupRatio,
+			Enabled:        enabled,
+		})
+	}
+	return normalized, nil
+}
+
+func sanitizeStoredUserAggregateRouteModelRatioOverrides(
+	stored []dto.UserAggregateGroupRouteModelRatioOverride,
+	userGroup string,
+	userSetting dto.UserSetting,
+) []dto.UserAggregateGroupRouteModelRatioOverride {
+	groupMap := visibleAggregateGroupMap(userGroup, userSetting)
+	result := make([]dto.UserAggregateGroupRouteModelRatioOverride, 0, len(stored))
+	indexes := make(map[userAggregateRouteModelRuleKey]int, len(stored))
+	for _, rule := range stored {
+		aggregateGroup := strings.TrimSpace(rule.AggregateGroup)
+		realGroup := strings.TrimSpace(rule.RealGroup)
+		modelName := strings.TrimSpace(rule.ModelName)
+		group, ok := groupMap[aggregateGroup]
+		if !ok || !slices.Contains(service.GetAggregateGroupModelSourceGroups(group), realGroup) || modelName == "" ||
+			math.IsNaN(rule.GroupRatio) || math.IsInf(rule.GroupRatio, 0) || rule.GroupRatio < 0 {
+			continue
+		}
+		rule.AggregateGroup = aggregateGroup
+		rule.RealGroup = realGroup
+		rule.ModelName = modelName
+		key := userAggregateRouteModelRuleKey{AggregateGroup: aggregateGroup, RealGroup: realGroup, ModelName: modelName}
+		if index, exists := indexes[key]; exists {
+			if !result[index].Enabled && rule.Enabled {
+				result[index] = rule
+			}
+			continue
+		}
+		indexes[key] = len(result)
+		result = append(result, rule)
+	}
+	return result
 }
 
 func GetUserAggregateGroupRatioOverrides(c *gin.Context) {
@@ -1634,9 +1754,45 @@ func GetUserAggregateGroupRatioOverrides(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{
-		"overrides":        overrides,
-		"aggregate_groups": aggregateGroups,
+		"overrides":                         overrides,
+		"route_model_group_ratio_overrides": sanitizeStoredUserAggregateRouteModelRatioOverrides(userSetting.AggregateGroupRouteModelRatioOverrides, user.Group, userSetting),
+		"aggregate_groups":                  aggregateGroups,
 	})
+}
+
+func GetUserAggregateGroupRatioOverrideModels(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	user, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !canAdminManageUser(c, user) {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		return
+	}
+	aggregateGroupName := strings.TrimSpace(c.Query("aggregate_group"))
+	realGroup := strings.TrimSpace(c.Query("real_group"))
+	aggregateGroup := visibleAggregateGroupMap(user.Group, user.GetSetting())[aggregateGroupName]
+	if aggregateGroup == nil {
+		common.ApiErrorMsg(c, "聚合分组不存在、未启用或当前用户不可见")
+		return
+	}
+	if !slices.Contains(service.GetAggregateGroupModelSourceGroups(aggregateGroup), realGroup) {
+		common.ApiErrorMsg(c, "真实子分组不属于当前聚合分组")
+		return
+	}
+	models, err := model.GetGroupEnabledChannelModels(realGroup)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	slices.Sort(models)
+	common.ApiSuccess(c, models)
 }
 
 func UpdateUserAggregateGroupRatioOverrides(c *gin.Context) {
@@ -1670,6 +1826,18 @@ func UpdateUserAggregateGroupRatioOverrides(c *gin.Context) {
 	} else {
 		userSetting.AggregateGroupRatioOverrides = normalized
 	}
+	if req.RouteModelGroupRatioOverrides != nil {
+		routeModelOverrides, normalizeErr := normalizeUserAggregateRouteModelRatioOverrides(*req.RouteModelGroupRatioOverrides, user.Group, userSetting)
+		if normalizeErr != nil {
+			common.ApiError(c, normalizeErr)
+			return
+		}
+		if len(routeModelOverrides) == 0 {
+			userSetting.AggregateGroupRouteModelRatioOverrides = nil
+		} else {
+			userSetting.AggregateGroupRouteModelRatioOverrides = routeModelOverrides
+		}
+	}
 	user.SetSetting(userSetting)
 	if err = user.Update(false); err != nil {
 		common.ApiError(c, err)
@@ -1681,8 +1849,9 @@ func UpdateUserAggregateGroupRatioOverrides(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{
-		"overrides":        normalized,
-		"aggregate_groups": aggregateGroups,
+		"overrides":                         normalized,
+		"route_model_group_ratio_overrides": sanitizeStoredUserAggregateRouteModelRatioOverrides(userSetting.AggregateGroupRouteModelRatioOverrides, user.Group, userSetting),
+		"aggregate_groups":                  aggregateGroups,
 	})
 }
 
@@ -2060,16 +2229,17 @@ func UpdateUserSetting(c *gin.Context) {
 
 	// 构建设置
 	settings := dto.UserSetting{
-		NotifyType:                       req.QuotaWarningType,
-		QuotaWarningThreshold:            req.QuotaWarningThreshold,
-		UpstreamModelUpdateNotifyEnabled: upstreamModelUpdateNotifyEnabled,
-		AcceptUnsetRatioModel:            req.AcceptUnsetModelRatioModel,
-		RecordIpLog:                      req.RecordIpLog,
-		SidebarModules:                   existingSettings.SidebarModules,
-		BillingPreference:                existingSettings.BillingPreference,
-		Language:                         existingSettings.Language,
-		AggregateGroupRatioOverrides:     existingSettings.AggregateGroupRatioOverrides,
-		ExtraUsableGroups:                existingSettings.ExtraUsableGroups,
+		NotifyType:                             req.QuotaWarningType,
+		QuotaWarningThreshold:                  req.QuotaWarningThreshold,
+		UpstreamModelUpdateNotifyEnabled:       upstreamModelUpdateNotifyEnabled,
+		AcceptUnsetRatioModel:                  req.AcceptUnsetModelRatioModel,
+		RecordIpLog:                            req.RecordIpLog,
+		SidebarModules:                         existingSettings.SidebarModules,
+		BillingPreference:                      existingSettings.BillingPreference,
+		Language:                               existingSettings.Language,
+		AggregateGroupRatioOverrides:           existingSettings.AggregateGroupRatioOverrides,
+		AggregateGroupRouteModelRatioOverrides: existingSettings.AggregateGroupRouteModelRatioOverrides,
+		ExtraUsableGroups:                      existingSettings.ExtraUsableGroups,
 	}
 
 	// 如果是webhook类型,添加webhook相关设置

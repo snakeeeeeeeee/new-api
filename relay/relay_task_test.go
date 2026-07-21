@@ -67,6 +67,42 @@ func TestAsyncImagePrechargeQuotaPerImageSaturatesHugeAmount(t *testing.T) {
 	require.Equal(t, common.MaxQuota, quota)
 }
 
+func TestNewAsyncImageTaskPreservesEffectiveRouteRatioSnapshot(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{Prompt: "snapshot"})
+	info := &relaycommon.RelayInfo{
+		UserId:          7,
+		TokenId:         77,
+		UsingGroup:      "aggregate-image",
+		OriginModelName: "gpt-image-2",
+		ChannelMeta:     &relaycommon.ChannelMeta{},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_ratio_snapshot"},
+		PriceData: types.PriceData{GroupRatioInfo: types.GroupRatioInfo{
+			GroupRatio:                    0,
+			OriginalGroupRatio:            1.5,
+			RouteModelGroupRatio:          0,
+			HasRouteModelGroupRatio:       true,
+			RouteModelRatioAggregateGroup: "aggregate-image",
+			RouteModelRatioRealGroup:      "default",
+			RouteModelRatioModelName:      "gpt-image-2",
+			RouteModelGroupRatioSource:    types.RouteModelGroupRatioSourceUser,
+		}},
+	}
+
+	task, _, err := newAsyncImageTask(ctx, info, constant.TaskPlatform("58"), 0)
+	require.NoError(t, err)
+	require.NotNil(t, task.PrivateData.BillingContext)
+	billingContext := task.PrivateData.BillingContext
+	assert.Zero(t, billingContext.GroupRatio)
+	assert.Zero(t, billingContext.RouteModelGroupRatio)
+	assert.True(t, billingContext.HasRouteModelGroupRatio)
+	assert.Equal(t, "aggregate-image", billingContext.RouteModelAggregateGroup)
+	assert.Equal(t, "default", billingContext.RouteModelRealGroup)
+	assert.Equal(t, "gpt-image-2", billingContext.RouteModelName)
+	assert.Equal(t, types.RouteModelGroupRatioSourceUser, billingContext.RouteModelRatioSource)
+}
+
 func setupRelayTaskTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	service.InitHttpClient()

@@ -201,6 +201,7 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			other["route_model_ratio_aggregate_group"] = bc.RouteModelAggregateGroup
 			other["route_model_ratio_real_group"] = bc.RouteModelRealGroup
 			other["route_model_ratio_model_name"] = bc.RouteModelName
+			other["route_model_group_ratio_source"] = bc.RouteModelRatioSource
 		}
 		if len(bc.OtherRatios) > 0 {
 			for k, v := range bc.OtherRatios {
@@ -551,6 +552,7 @@ func taskRelayInfoForBilling(task *model.Task) *relaycommon.RelayInfo {
 			RouteModelRatioAggregateGroup: bc.RouteModelAggregateGroup,
 			RouteModelRatioRealGroup:      bc.RouteModelRealGroup,
 			RouteModelRatioModelName:      bc.RouteModelName,
+			RouteModelGroupRatioSource:    bc.RouteModelRatioSource,
 		}
 		if bc.HasRouteModelGroupRatio {
 			priceData.GroupRatioInfo.GroupRatio = bc.GroupRatio

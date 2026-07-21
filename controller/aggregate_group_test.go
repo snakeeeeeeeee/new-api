@@ -490,6 +490,13 @@ func TestUpdateUserAggregateGroupRatioOverridesPreservesUserSetting(t *testing.T
 	}
 	require.NoError(t, stable.SetVisibleUserGroups([]string{"vip"}))
 	require.NoError(t, stable.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+	require.NoError(t, model.DB.Create(&model.AggregateGroupRouteModelRatio{
+		AggregateGroupId: stable.Id,
+		RealGroup:        "default",
+		ModelName:        "global-model",
+		GroupRatio:       2.5,
+		Enabled:          true,
+	}).Error)
 
 	fast := &model.AggregateGroup{
 		Name:                    "enterprise-fast",
@@ -511,6 +518,9 @@ func TestUpdateUserAggregateGroupRatioOverridesPreservesUserSetting(t *testing.T
 		BillingPreference:     "wallet_first",
 		Language:              "en",
 		ExtraUsableGroups:     []string{"enterprise-extra"},
+		AggregateGroupRouteModelRatioOverrides: []dto.UserAggregateGroupRouteModelRatioOverride{
+			{AggregateGroup: stable.Name, RealGroup: "default", ModelName: "kept-model", GroupRatio: 0.5, Enabled: true},
+		},
 	})
 
 	recorder := httptest.NewRecorder()
@@ -538,6 +548,9 @@ func TestUpdateUserAggregateGroupRatioOverridesPreservesUserSetting(t *testing.T
 	require.Equal(t, "wallet_first", setting.BillingPreference)
 	require.Equal(t, "en", setting.Language)
 	require.Equal(t, []string{"enterprise-extra"}, setting.ExtraUsableGroups)
+	require.Equal(t, []dto.UserAggregateGroupRouteModelRatioOverride{
+		{AggregateGroup: stable.Name, RealGroup: "default", ModelName: "kept-model", GroupRatio: 0.5, Enabled: true},
+	}, setting.AggregateGroupRouteModelRatioOverrides)
 	require.Equal(t, map[string]float64{
 		"enterprise-stable": 0.1,
 		"enterprise-fast":   0,
@@ -553,17 +566,163 @@ func TestUpdateUserAggregateGroupRatioOverridesPreservesUserSetting(t *testing.T
 	getResp := decodeAggregateGroupAPIResponse(t, getRecorder)
 	require.True(t, getResp.Success, getResp.Message)
 	var data struct {
-		Overrides       map[string]float64       `json:"overrides"`
-		AggregateGroups []aggregateGroupResponse `json:"aggregate_groups"`
+		Overrides                     map[string]float64                              `json:"overrides"`
+		RouteModelGroupRatioOverrides []dto.UserAggregateGroupRouteModelRatioOverride `json:"route_model_group_ratio_overrides"`
+		AggregateGroups               []aggregateGroupResponse                        `json:"aggregate_groups"`
 	}
 	require.NoError(t, common.Unmarshal(getResp.Data, &data))
 	require.Equal(t, 0.1, data.Overrides["enterprise-stable"])
 	require.Equal(t, 0.0, data.Overrides["enterprise-fast"])
+	require.Len(t, data.RouteModelGroupRatioOverrides, 1)
+	require.Equal(t, "kept-model", data.RouteModelGroupRatioOverrides[0].ModelName)
 	groupNames := make([]string, 0, len(data.AggregateGroups))
 	for _, group := range data.AggregateGroups {
 		groupNames = append(groupNames, group.Name)
+		if group.Name == stable.Name {
+			require.Len(t, group.RouteModelGroupRatioOverrides, 1)
+			require.Equal(t, "global-model", group.RouteModelGroupRatioOverrides[0].ModelName)
+		}
 	}
 	require.ElementsMatch(t, []string{"enterprise-stable", "enterprise-fast"}, groupNames)
+}
+
+func TestUserAggregateRouteModelRatioOverridesRoundTripValidationAndModels(t *testing.T) {
+	db := setupAggregateGroupControllerTestDB(t)
+	seedAggregateGroupControllerAbilityChannel(t, 2041, "default", "z-model,a-model,Exact-Model,exact-model", 0)
+
+	group := &model.AggregateGroup{
+		Name:                    "extra-route-ratio",
+		DisplayName:             "Extra Route Ratio",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.5,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, group.SetVisibleUserGroups([]string{"svip"}))
+	require.NoError(t, group.InsertWithTargets(service.NormalizeAggregateTargets([]string{"default"})))
+	require.NoError(t, model.DB.Create(&model.AggregateGroupRouteModelRatio{
+		AggregateGroupId: group.Id,
+		RealGroup:        "default",
+		ModelName:        "a-model",
+		GroupRatio:       2,
+		Enabled:          true,
+	}).Error)
+
+	seedAggregateGroupControllerUser(t, db, 46, "route_ratio_user", "vip", common.RoleCommonUser, dto.UserSetting{
+		ExtraUsableGroups: []string{group.Name},
+		SidebarModules:    `{"dashboard":true}`,
+	})
+
+	put := func(payload string) tokenAPIResponse {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/api/user/46/aggregate_group_ratio_overrides", bytes.NewBufferString(payload))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		ctx.Params = gin.Params{{Key: "id", Value: "46"}}
+		ctx.Set("role", common.RoleRootUser)
+		UpdateUserAggregateGroupRatioOverrides(ctx)
+		return decodeAggregateGroupAPIResponse(t, recorder)
+	}
+
+	validPayload := `{
+		"overrides":{"extra-route-ratio":0.4},
+		"route_model_group_ratio_overrides":[
+			{"aggregate_group":"extra-route-ratio","real_group":"default","model_name":"a-model","group_ratio":0},
+			{"aggregate_group":"extra-route-ratio","real_group":"default","model_name":"Exact-Model","group_ratio":3,"enabled":false},
+			{"aggregate_group":"extra-route-ratio","real_group":"default","model_name":"exact-model","group_ratio":4,"enabled":true}
+		]
+	}`
+	resp := put(validPayload)
+	require.True(t, resp.Success, resp.Message)
+
+	updated, err := model.GetUserById(46, true)
+	require.NoError(t, err)
+	setting := updated.GetSetting()
+	require.Equal(t, 0.4, setting.AggregateGroupRatioOverrides[group.Name])
+	require.Len(t, setting.AggregateGroupRouteModelRatioOverrides, 3)
+	require.Zero(t, setting.AggregateGroupRouteModelRatioOverrides[0].GroupRatio)
+	require.True(t, setting.AggregateGroupRouteModelRatioOverrides[0].Enabled)
+	require.False(t, setting.AggregateGroupRouteModelRatioOverrides[1].Enabled)
+	require.Equal(t, "exact-model", setting.AggregateGroupRouteModelRatioOverrides[2].ModelName)
+
+	getRecorder := httptest.NewRecorder()
+	getCtx, _ := gin.CreateTestContext(getRecorder)
+	getCtx.Request = httptest.NewRequest(http.MethodGet, "/api/user/46/aggregate_group_ratio_overrides", nil)
+	getCtx.Params = gin.Params{{Key: "id", Value: "46"}}
+	getCtx.Set("role", common.RoleRootUser)
+	GetUserAggregateGroupRatioOverrides(getCtx)
+	getResp := decodeAggregateGroupAPIResponse(t, getRecorder)
+	require.True(t, getResp.Success, getResp.Message)
+	var getData struct {
+		RouteRules      []dto.UserAggregateGroupRouteModelRatioOverride `json:"route_model_group_ratio_overrides"`
+		AggregateGroups []aggregateGroupResponse                        `json:"aggregate_groups"`
+	}
+	require.NoError(t, common.Unmarshal(getResp.Data, &getData))
+	require.Len(t, getData.RouteRules, 3)
+	require.Len(t, getData.AggregateGroups, 1)
+	require.Equal(t, group.Name, getData.AggregateGroups[0].Name)
+	require.Len(t, getData.AggregateGroups[0].RouteModelGroupRatioOverrides, 1)
+
+	modelsRecorder := httptest.NewRecorder()
+	modelsCtx, _ := gin.CreateTestContext(modelsRecorder)
+	modelsCtx.Request = httptest.NewRequest(http.MethodGet, "/api/user/46/aggregate_group_ratio_overrides/models?aggregate_group=extra-route-ratio&real_group=default", nil)
+	modelsCtx.Params = gin.Params{{Key: "id", Value: "46"}}
+	modelsCtx.Set("role", common.RoleRootUser)
+	GetUserAggregateGroupRatioOverrideModels(modelsCtx)
+	modelsResp := decodeAggregateGroupAPIResponse(t, modelsRecorder)
+	require.True(t, modelsResp.Success, modelsResp.Message)
+	var modelNames []string
+	require.NoError(t, common.Unmarshal(modelsResp.Data, &modelNames))
+	require.Equal(t, []string{"Exact-Model", "a-model", "exact-model", "z-model"}, modelNames)
+
+	for _, testCase := range []struct {
+		name    string
+		payload string
+		message string
+	}{
+		{name: "invalid child group", payload: `{"overrides":{},"route_model_group_ratio_overrides":[{"aggregate_group":"extra-route-ratio","real_group":"missing","model_name":"a-model","group_ratio":1}]}`, message: "未配置真实子分组"},
+		{name: "empty model", payload: `{"overrides":{},"route_model_group_ratio_overrides":[{"aggregate_group":"extra-route-ratio","real_group":"default","model_name":" ","group_ratio":1}]}`, message: "模型名称不能为空"},
+		{name: "negative ratio", payload: `{"overrides":{},"route_model_group_ratio_overrides":[{"aggregate_group":"extra-route-ratio","real_group":"default","model_name":"a-model","group_ratio":-1}]}`, message: "有限数值"},
+		{name: "duplicate", payload: `{"overrides":{},"route_model_group_ratio_overrides":[{"aggregate_group":"extra-route-ratio","real_group":"default","model_name":"a-model","group_ratio":1},{"aggregate_group":"extra-route-ratio","real_group":"default","model_name":"a-model","group_ratio":2}]}`, message: "重复配置"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			invalidResp := put(testCase.payload)
+			require.False(t, invalidResp.Success)
+			require.Contains(t, invalidResp.Message, testCase.message)
+		})
+	}
+
+	legacyResp := put(`{"overrides":{"extra-route-ratio":0.75}}`)
+	require.True(t, legacyResp.Success, legacyResp.Message)
+	updated, err = model.GetUserById(46, true)
+	require.NoError(t, err)
+	require.Len(t, updated.GetSetting().AggregateGroupRouteModelRatioOverrides, 3)
+
+	settingRecorder := httptest.NewRecorder()
+	settingCtx, _ := gin.CreateTestContext(settingRecorder)
+	settingCtx.Request = httptest.NewRequest(http.MethodPut, "/api/user/setting", bytes.NewBufferString(`{"notify_type":"email","quota_warning_threshold":0.5,"notification_email":"test@example.com"}`))
+	settingCtx.Request.Header.Set("Content-Type", "application/json")
+	settingCtx.Set("id", 46)
+	UpdateUserSetting(settingCtx)
+	updated, err = model.GetUserById(46, true)
+	require.NoError(t, err)
+	require.Len(t, updated.GetSetting().AggregateGroupRouteModelRatioOverrides, 3)
+	require.Equal(t, `{"dashboard":true}`, updated.GetSetting().SidebarModules)
+
+	deniedRecorder := httptest.NewRecorder()
+	deniedCtx, _ := gin.CreateTestContext(deniedRecorder)
+	deniedCtx.Request = httptest.NewRequest(http.MethodGet, "/api/user/46/aggregate_group_ratio_overrides", nil)
+	deniedCtx.Params = gin.Params{{Key: "id", Value: "46"}}
+	deniedCtx.Set("role", common.RoleCommonUser)
+	GetUserAggregateGroupRatioOverrides(deniedCtx)
+	require.False(t, decodeAggregateGroupAPIResponse(t, deniedRecorder).Success)
+
+	clearResp := put(`{"overrides":{},"route_model_group_ratio_overrides":[]}`)
+	require.True(t, clearResp.Success, clearResp.Message)
+	updated, err = model.GetUserById(46, true)
+	require.NoError(t, err)
+	require.Empty(t, updated.GetSetting().AggregateGroupRouteModelRatioOverrides)
 }
 
 func TestUserAggregateGroupRatioOverridesIncludesExtraAuthorizedAggregateGroups(t *testing.T) {
@@ -693,7 +852,8 @@ func TestUserAggregateGroupRatioOverridesIncludesExtraAuthorizedAggregateGroups(
 	ratioPutRecorder := httptest.NewRecorder()
 	ratioPutCtx, _ := gin.CreateTestContext(ratioPutRecorder)
 	ratioPutCtx.Request = httptest.NewRequest(http.MethodPut, "/api/user/44/aggregate_group_ratio_overrides", bytes.NewReader([]byte(`{
-		"overrides":{"extra-aggregate":0.75}
+		"overrides":{"extra-aggregate":0.75},
+		"route_model_group_ratio_overrides":[{"aggregate_group":"extra-aggregate","real_group":"default","model_name":"extra-model","group_ratio":0,"enabled":true}]
 	}`)))
 	ratioPutCtx.Request.Header.Set("Content-Type", "application/json")
 	ratioPutCtx.Params = gin.Params{{Key: "id", Value: "44"}}
@@ -705,6 +865,9 @@ func TestUserAggregateGroupRatioOverridesIncludesExtraAuthorizedAggregateGroups(
 	updated, err = model.GetUserById(44, true)
 	require.NoError(t, err)
 	require.Equal(t, 0.75, updated.GetSetting().AggregateGroupRatioOverrides["extra-aggregate"])
+	require.Equal(t, []dto.UserAggregateGroupRouteModelRatioOverride{
+		{AggregateGroup: "extra-aggregate", RealGroup: "default", ModelName: "extra-model", GroupRatio: 0, Enabled: true},
+	}, updated.GetSetting().AggregateGroupRouteModelRatioOverrides)
 }
 
 func TestUserAggregateGroupRatioOverridesOnlyExposeVisibleGroups(t *testing.T) {
@@ -801,7 +964,7 @@ func TestUserAggregateGroupRatioOverridesOnlyExposeVisibleGroups(t *testing.T) {
 	require.Equal(t, "visible-aggregate", okData.AggregateGroups[0].Name)
 }
 
-func TestGetUserGroupsReturnsAggregateRatioOverrideDetails(t *testing.T) {
+func TestGetUserGroupsReturnsOnlyEffectiveAggregateRatio(t *testing.T) {
 	db := setupAggregateGroupControllerTestDB(t)
 	originalGroups := setting.UserUsableGroups2JSONString()
 	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","vip":"VIP分组"}`))
@@ -835,26 +998,17 @@ func TestGetUserGroupsReturnsAggregateRatioOverrideDetails(t *testing.T) {
 
 	resp := decodeAggregateGroupAPIResponse(t, recorder)
 	require.True(t, resp.Success, resp.Message)
-	var groups map[string]struct {
-		Ratio            float64  `json:"ratio"`
-		OriginalRatio    float64  `json:"original_ratio"`
-		RatioOverride    *float64 `json:"ratio_override"`
-		HasRatioOverride bool     `json:"has_ratio_override"`
-		Type             string   `json:"type"`
-	}
+	var groups map[string]map[string]interface{}
 	require.NoError(t, common.Unmarshal(resp.Data, &groups))
 
-	require.Equal(t, "aggregate", groups["enterprise-stable"].Type)
-	require.Equal(t, 0.1, groups["enterprise-stable"].Ratio)
-	require.Equal(t, 1.5, groups["enterprise-stable"].OriginalRatio)
-	require.True(t, groups["enterprise-stable"].HasRatioOverride)
-	require.NotNil(t, groups["enterprise-stable"].RatioOverride)
-	require.Equal(t, 0.1, *groups["enterprise-stable"].RatioOverride)
+	require.Equal(t, "aggregate", groups["enterprise-stable"]["type"])
+	require.Equal(t, 0.1, groups["enterprise-stable"]["ratio"])
+	require.NotContains(t, groups["enterprise-stable"], "original_ratio")
+	require.NotContains(t, groups["enterprise-stable"], "ratio_override")
+	require.NotContains(t, groups["enterprise-stable"], "has_ratio_override")
 
-	require.Equal(t, "real", groups["default"].Type)
-	require.Equal(t, 1.0, groups["default"].Ratio)
-	require.False(t, groups["default"].HasRatioOverride)
-	require.Nil(t, groups["default"].RatioOverride)
+	require.Equal(t, "real", groups["default"]["type"])
+	require.Equal(t, 1.0, groups["default"]["ratio"])
 }
 
 func TestGetUserGroupsReturnsExtraUsableGroups(t *testing.T) {
@@ -972,17 +1126,20 @@ func TestGetPricingMapsExtraAuthorizedAggregateGroupModels(t *testing.T) {
 	resp := decodeAggregateGroupAPIResponse(t, recorder)
 	require.True(t, resp.Success, resp.Message)
 	var data struct {
-		UsableGroup            map[string]string                                 `json:"usable_group"`
-		Data                   []model.Pricing                                   `json:"data"`
-		ModelGroupRatioDetails map[string]map[string]service.ModelGroupRatioView `json:"model_group_ratio_details"`
+		UsableGroup            map[string]string                                       `json:"usable_group"`
+		Data                   []model.Pricing                                         `json:"data"`
+		GroupRatioDetails      map[string]service.PublicGroupRatioView                 `json:"group_ratio_details"`
+		ModelGroupRatioDetails map[string]map[string]service.PublicModelGroupRatioView `json:"model_group_ratio_details"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &data))
 	require.Contains(t, data.UsableGroup, "extra-video-aggregate")
 	detail := data.ModelGroupRatioDetails["grok-video-model"]["extra-video-aggregate"]
 	require.True(t, detail.DynamicRoute)
 	require.Equal(t, 0.25, detail.Ratio)
-	require.Equal(t, 1.5, detail.OriginalRatio)
 	require.Equal(t, 3.0, detail.MaxRatio)
+	require.NotContains(t, recorder.Body.String(), "original_ratio")
+	require.NotContains(t, recorder.Body.String(), "ratio_override")
+	require.NotContains(t, recorder.Body.String(), "has_ratio_override")
 	for _, pricing := range data.Data {
 		if pricing.ModelName == "grok-video-model" {
 			require.Contains(t, pricing.EnableGroup, "extra-video-aggregate")

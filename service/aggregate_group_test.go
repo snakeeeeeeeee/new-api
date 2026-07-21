@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -392,43 +393,62 @@ func TestResolveContextGroupRatioInfoForModel(t *testing.T) {
 	group := seedAggregateGroup(t, "enterprise-model-ratio", 1.5, 300, []string{"vip"}, []string{"default", "svip"})
 	require.NoError(t, model.DB.Create(&[]model.AggregateGroupRouteModelRatio{
 		{AggregateGroupId: group.Id, RealGroup: "default", ModelName: "premium-model", GroupRatio: 2.5, Enabled: true},
-		{AggregateGroupId: group.Id, RealGroup: "default", ModelName: "zero-model", GroupRatio: 0, Enabled: true},
+		{AggregateGroupId: group.Id, RealGroup: "default", ModelName: "global-fallback-model", GroupRatio: 6, Enabled: true},
 		{AggregateGroupId: group.Id, RealGroup: "default", ModelName: "disabled-model", GroupRatio: 4, Enabled: false},
 	}).Error)
 
-	userSetting := dto.UserSetting{AggregateGroupRatioOverrides: map[string]float64{
-		"enterprise-model-ratio": 0.25,
-	}}
-	buildContext := func(routeGroup string) *gin.Context {
+	userSetting := dto.UserSetting{
+		AggregateGroupRatioOverrides: map[string]float64{
+			"enterprise-model-ratio": 0.25,
+		},
+		AggregateGroupRouteModelRatioOverrides: []dto.UserAggregateGroupRouteModelRatioOverride{
+			{AggregateGroup: group.Name, RealGroup: "default", ModelName: "premium-model", GroupRatio: 3.5, Enabled: true},
+			{AggregateGroup: group.Name, RealGroup: "default", ModelName: "zero-model", GroupRatio: 0, Enabled: true},
+			{AggregateGroup: group.Name, RealGroup: "default", ModelName: "global-fallback-model", GroupRatio: 9, Enabled: false},
+			{AggregateGroup: group.Name, RealGroup: "default", ModelName: "invalid-negative", GroupRatio: -1, Enabled: true},
+		},
+	}
+	buildContext := func(routeGroup string, setting dto.UserSetting) *gin.Context {
 		recorder := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(recorder)
 		common.SetContextKey(ctx, constant.ContextKeyAggregateGroup, group.Name)
 		common.SetContextKey(ctx, constant.ContextKeyRouteGroup, routeGroup)
-		common.SetContextKey(ctx, constant.ContextKeyUserSetting, userSetting)
+		common.SetContextKey(ctx, constant.ContextKeyUserSetting, setting)
 		return ctx
 	}
 
-	t.Run("enabled exact rule wins over user override", func(t *testing.T) {
-		info := ResolveContextGroupRatioInfoForModel(buildContext("default"), "vip", group.Name, "premium-model")
-		require.Equal(t, 2.5, info.GroupRatio)
+	t.Run("user exact rule wins over global exact rule", func(t *testing.T) {
+		info := ResolveContextGroupRatioInfoForModel(buildContext("default", userSetting), "vip", group.Name, "premium-model")
+		require.Equal(t, 3.5, info.GroupRatio)
 		require.Equal(t, 1.5, info.OriginalGroupRatio)
 		require.True(t, info.HasRouteModelGroupRatio)
-		require.Equal(t, 2.5, info.RouteModelGroupRatio)
+		require.Equal(t, 3.5, info.RouteModelGroupRatio)
 		require.Equal(t, group.Name, info.RouteModelRatioAggregateGroup)
 		require.Equal(t, "default", info.RouteModelRatioRealGroup)
 		require.Equal(t, "premium-model", info.RouteModelRatioModelName)
-		require.False(t, info.HasSpecialRatio)
-		require.Equal(t, -1.0, info.GroupSpecialRatio)
+		require.True(t, info.HasSpecialRatio)
+		require.Equal(t, 3.5, info.GroupSpecialRatio)
 		require.True(t, info.HasRatioOverride)
 		require.Equal(t, 0.25, info.RatioOverride)
 		require.False(t, info.RatioOverrideApplied)
+		require.Equal(t, types.RouteModelGroupRatioSourceUser, info.RouteModelGroupRatioSource)
 	})
 
-	t.Run("zero rule remains a valid match", func(t *testing.T) {
-		info := ResolveContextGroupRatioInfoForModel(buildContext("default"), "vip", group.Name, "zero-model")
+	t.Run("user zero rule remains a valid match", func(t *testing.T) {
+		info := ResolveContextGroupRatioInfoForModel(buildContext("default", userSetting), "vip", group.Name, "zero-model")
 		require.True(t, info.HasRouteModelGroupRatio)
 		require.Zero(t, info.GroupRatio)
 		require.Zero(t, info.RouteModelGroupRatio)
+		require.Equal(t, types.RouteModelGroupRatioSourceUser, info.RouteModelGroupRatioSource)
+	})
+
+	t.Run("disabled user rule falls through to global exact rule", func(t *testing.T) {
+		info := ResolveContextGroupRatioInfoForModel(buildContext("default", userSetting), "vip", group.Name, "global-fallback-model")
+		require.Equal(t, 6.0, info.GroupRatio)
+		require.True(t, info.HasRouteModelGroupRatio)
+		require.Equal(t, types.RouteModelGroupRatioSourceGlobal, info.RouteModelGroupRatioSource)
+		require.False(t, info.HasSpecialRatio)
+		require.False(t, info.RatioOverrideApplied)
 	})
 
 	for _, testCase := range []struct {
@@ -440,9 +460,10 @@ func TestResolveContextGroupRatioInfoForModel(t *testing.T) {
 		{name: "disabled rule", routeGroup: "default", modelName: "disabled-model"},
 		{name: "route mismatch", routeGroup: "svip", modelName: "premium-model"},
 		{name: "model mismatch", routeGroup: "default", modelName: "Premium-Model"},
+		{name: "invalid old user rule", routeGroup: "default", modelName: "invalid-negative"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			info := ResolveContextGroupRatioInfoForModel(buildContext(testCase.routeGroup), "vip", group.Name, testCase.modelName)
+			info := ResolveContextGroupRatioInfoForModel(buildContext(testCase.routeGroup, userSetting), "vip", group.Name, testCase.modelName)
 			require.Equal(t, 0.25, info.GroupRatio)
 			require.False(t, info.HasRouteModelGroupRatio)
 			require.True(t, info.HasSpecialRatio)
@@ -451,7 +472,7 @@ func TestResolveContextGroupRatioInfoForModel(t *testing.T) {
 	}
 
 	t.Run("legacy resolver ignores model route rules", func(t *testing.T) {
-		info := ResolveContextGroupRatioInfo(buildContext("default"), "vip", group.Name)
+		info := ResolveContextGroupRatioInfo(buildContext("default", userSetting), "vip", group.Name)
 		require.Equal(t, 0.25, info.GroupRatio)
 		require.False(t, info.HasRouteModelGroupRatio)
 	})
@@ -465,19 +486,29 @@ func TestResolveContextGroupRatioInfoForModel(t *testing.T) {
 			lookupAggregateRouteModelRatio = originalLookup
 		})
 
-		info := ResolveContextGroupRatioInfoForModel(buildContext("default"), "vip", group.Name, "premium-model")
+		info := ResolveContextGroupRatioInfoForModel(buildContext("default", userSetting), "vip", group.Name, "regular-model")
 		require.Equal(t, 0.25, info.GroupRatio)
 		require.False(t, info.HasRouteModelGroupRatio)
 		require.True(t, info.RatioOverrideApplied)
+	})
+
+	t.Run("aggregate default is final fallback", func(t *testing.T) {
+		info := ResolveContextGroupRatioInfoForModel(buildContext("default", dto.UserSetting{}), "vip", group.Name, "regular-model")
+		require.Equal(t, 1.5, info.GroupRatio)
+		require.False(t, info.HasRouteModelGroupRatio)
+		require.False(t, info.HasRatioOverride)
 	})
 }
 
 func TestGetAggregateModelGroupRatioViewUsesHighestReachableRatio(t *testing.T) {
 	prepareAggregateGroupServiceTest(t)
-	group := seedAggregateGroup(t, "aggregate-pricing-ratio", 1.5, 300, []string{"vip"}, []string{"default", "svip"})
-	userSetting := dto.UserSetting{AggregateGroupRatioOverrides: map[string]float64{
-		group.Name: 0.5,
-	}}
+	group := seedAggregateGroup(t, "aggregate-pricing-ratio", 1.5, 300, []string{"vip"}, []string{"default", "svip", "vip"})
+	userSetting := dto.UserSetting{
+		AggregateGroupRatioOverrides: map[string]float64{group.Name: 0.5},
+		AggregateGroupRouteModelRatioOverrides: []dto.UserAggregateGroupRouteModelRatioOverride{
+			{AggregateGroup: group.Name, RealGroup: "default", ModelName: "priced-model", GroupRatio: 5, Enabled: true},
+		},
+	}
 	rules := []model.AggregateGroupRouteModelRatio{
 		{RealGroup: "default", ModelName: "priced-model", GroupRatio: 2, Enabled: true},
 		{RealGroup: "svip", ModelName: "priced-model", GroupRatio: 4, Enabled: true},
@@ -489,13 +520,13 @@ func TestGetAggregateModelGroupRatioViewUsesHighestReachableRatio(t *testing.T) 
 		group,
 		"priced-model",
 		rules,
-		[]string{"default", "svip"},
+		[]string{"default", "svip", "vip"},
 	)
 	require.True(t, reachable)
 	require.True(t, view.DynamicRoute)
 	require.Equal(t, 0.5, view.Ratio)
 	require.Equal(t, 1.5, view.OriginalRatio)
-	require.Equal(t, 4.0, view.MaxRatio)
+	require.Equal(t, 5.0, view.MaxRatio)
 
 	defaultOnlyView, reachable := GetAggregateModelGroupRatioView(
 		userSetting,
@@ -505,14 +536,14 @@ func TestGetAggregateModelGroupRatioViewUsesHighestReachableRatio(t *testing.T) 
 		[]string{"default"},
 	)
 	require.True(t, reachable)
-	require.Equal(t, 2.0, defaultOnlyView.MaxRatio)
+	require.Equal(t, 5.0, defaultOnlyView.MaxRatio)
 
 	plainView, reachable := GetAggregateModelGroupRatioView(
 		userSetting,
 		group,
 		"plain-model",
 		rules,
-		[]string{"default", "svip"},
+		[]string{"default", "svip", "vip"},
 	)
 	require.True(t, reachable)
 	require.False(t, plainView.DynamicRoute)
