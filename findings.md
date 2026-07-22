@@ -1,3 +1,22 @@
+# Async Image Final Usage Log Reconciliation Findings (2026-07-22)
+
+- The screenshot's balance is financially correct: `$0.500000 - $0.458664 = $0.041336` actual charge, but the real `5/196` tokens are attached to the refund delta row.
+- Refund rows are excluded from consume-only usage aggregation, so over-precharge tasks can report the precharge instead of the actual quota and omit terminal tokens; under-precharge tasks can create two consume rows and inflate request counts.
+- The original consume log already captures the submission Request ID from Gin context, while `RecordTaskBillingLogParams` has no Request ID and creates the blank asynchronous settlement row.
+- `TaskBillingContext.ConsumeLogId` provides a direct guarded association to the original row, but callback completion can race with submit-side persistence of that ID.
+- The approved user view is one consume row per image task, with financial delta events retained as metadata instead of separate usage-log rows.
+- `ApplyTaskResult` wins the terminal status CAS and persists task result data before financial settlement; final log state can therefore be snapshotted afterward without reopening billing ownership.
+- A fast callback can settle while `consume_log_id` is still zero. The final log snapshot must be stored in task private data, then replayed after `PersistTaskSubmitResult` attaches the original log ID.
+- Image dispatch failures and timeout failures also call `RefundTaskQuota`, so image-specific original-row reconciliation belongs in that shared function while generic task refund logs remain unchanged.
+- The final implementation settles balances by delta but never emits a second user-facing async-image settlement row: success overwrites the original consume row with actual quota/usage, and failure overwrites it with quota zero.
+- A persisted terminal snapshot plus guarded `consume_log_id` update closes both callback orderings: completion after submit updates immediately, while completion before submit is replayed after the original log association is stored.
+- Request ID is captured in the task billing context and retained on finalization; the log updater only falls back to it when the original row is missing a Request ID.
+- Real PostgreSQL E2E produced one successful task with exactly one consume log and no refund log: precharge `50000`, final quota `4913`, prompt/completion tokens `5/196`, matching Request ID, and request count `1`.
+- No historical migration is required; reconciliation applies to newly settled async image tasks and leaves existing rows unchanged.
+- Final review found timeout sweeping still gated reconciliation on nonzero quota; image tasks now enter failure reconciliation even at zero precharge, while the refund helper continues to skip all balance mutations when there is no amount to return.
+
+---
+
 # Async Image Token Usage Log Backfill Findings (2026-07-22)
 
 - Async image tasks persist the original consume log ID in `private_data.billing_context.consume_log_id`; terminal processing can find the row directly by `logs.id`.

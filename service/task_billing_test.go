@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -159,6 +160,28 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 			},
 		},
 	}
+}
+
+func seedAsyncImageConsumeLog(t *testing.T, task *model.Task, requestID string) *model.Log {
+	t.Helper()
+	logItem := &model.Log{
+		UserId:    task.UserId,
+		CreatedAt: task.CreatedAt,
+		Type:      model.LogTypeConsume,
+		Content:   fmt.Sprintf("异步图片预扣费：%s", formatQuotaUSD(task.Quota)),
+		ModelName: taskModelName(task),
+		Quota:     task.Quota,
+		ChannelId: task.ChannelId,
+		TokenId:   task.PrivateData.TokenId,
+		Group:     task.Group,
+		RequestId: requestID,
+		Other:     common.MapToJsonStr(map[string]interface{}{"task_id": task.TaskID}),
+	}
+	require.NoError(t, model.LOG_DB.Create(logItem).Error)
+	if task.PrivateData.BillingContext != nil {
+		task.PrivateData.BillingContext.ConsumeLogId = logItem.Id
+	}
+	return logItem
 }
 
 // ---------------------------------------------------------------------------
@@ -999,10 +1022,14 @@ func TestSettleImageHandleUsageNegativeDeltaAdjustsUsedQuota(t *testing.T) {
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.Platform = imageHandleTaskPlatform()
 	task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
+	task.PrivateData.BillingContext.RequestId = "req-image-negative"
+	seedAsyncImageConsumeLog(t, task, "")
 
 	settleTaskQuotaDeltaWithUsage(ctx, task, textQuotaSummary{
-		ModelName: "test-model",
-		Quota:     actualQuota,
+		ModelName:        "test-model",
+		Quota:            actualQuota,
+		PromptTokens:     5,
+		CompletionTokens: 196,
 	}, "异步图片按量真实结算", false)
 
 	userUsedQuota, requestCount := getUserUsageCounters(t, userID)
@@ -1010,6 +1037,95 @@ func TestSettleImageHandleUsageNegativeDeltaAdjustsUsedQuota(t *testing.T) {
 	assert.Equal(t, 1, requestCount)
 	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, actualQuota, task.Quota)
+	require.Equal(t, int64(1), countLogs(t))
+	logItem := getLastLog(t)
+	require.NotNil(t, logItem)
+	assert.Equal(t, model.LogTypeConsume, logItem.Type)
+	assert.Equal(t, actualQuota, logItem.Quota)
+	assert.Equal(t, 5, logItem.PromptTokens)
+	assert.Equal(t, 196, logItem.CompletionTokens)
+	assert.Equal(t, "req-image-negative", logItem.RequestId)
+	stat, err := model.SumUsedQuota(model.LogTypeConsume, time.Now().Unix()-1, time.Now().Unix()+1, "test-model", "", "", 0, "")
+	require.NoError(t, err)
+	assert.Equal(t, actualQuota, stat.Quota)
+	assert.Equal(t, 1, stat.Rpm)
+	assert.Equal(t, 201, stat.Tpm)
+}
+
+func TestSettleImageHandleUsagePositiveDeltaUpdatesOneConsumeLog(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 112, 112, 112
+	const initQuota, preConsumed, actualQuota = 10000, 2000, 3000
+	const tokenRemain = 5000
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-image-usage-positive", tokenRemain)
+	seedChannel(t, channelID)
+	setUserUsageCounters(t, userID, preConsumed, 1)
+	setChannelUsedQuota(t, channelID, preConsumed)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = imageHandleTaskPlatform()
+	task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
+	seedAsyncImageConsumeLog(t, task, "req-image-positive")
+
+	settleTaskQuotaDeltaWithUsage(ctx, task, textQuotaSummary{
+		ModelName:        "test-model",
+		Quota:            actualQuota,
+		PromptTokens:     7,
+		CompletionTokens: 293,
+	}, "异步图片按量真实结算", true)
+
+	assert.Equal(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain-(actualQuota-preConsumed), getTokenRemainQuota(t, tokenID))
+	userUsedQuota, requestCount := getUserUsageCounters(t, userID)
+	assert.Equal(t, actualQuota, userUsedQuota)
+	assert.Equal(t, 1, requestCount)
+	require.Equal(t, int64(1), countLogs(t))
+	logItem := getLastLog(t)
+	require.NotNil(t, logItem)
+	assert.Equal(t, model.LogTypeConsume, logItem.Type)
+	assert.Equal(t, actualQuota, logItem.Quota)
+	assert.Equal(t, 7, logItem.PromptTokens)
+	assert.Equal(t, 293, logItem.CompletionTokens)
+}
+
+func TestSettleImageHandleUsageExactPrechargeStillUpdatesUsage(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 113, 113, 113
+	const initQuota, exactQuota, tokenRemain = 10000, 2500, 5000
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-image-usage-exact", tokenRemain)
+	seedChannel(t, channelID)
+	setUserUsageCounters(t, userID, exactQuota, 1)
+	setChannelUsedQuota(t, channelID, exactQuota)
+
+	task := makeTask(userID, channelID, exactQuota, tokenID, BillingSourceWallet, 0)
+	task.Platform = imageHandleTaskPlatform()
+	task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
+	seedAsyncImageConsumeLog(t, task, "req-image-exact")
+
+	settleTaskQuotaDeltaWithUsage(ctx, task, textQuotaSummary{
+		ModelName:        "test-model",
+		Quota:            exactQuota,
+		PromptTokens:     11,
+		CompletionTokens: 89,
+		UseTimeSeconds:   6,
+	}, "异步图片按量真实结算", true)
+
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	require.Equal(t, int64(1), countLogs(t))
+	logItem := getLastLog(t)
+	require.NotNil(t, logItem)
+	assert.Equal(t, exactQuota, logItem.Quota)
+	assert.Equal(t, 11, logItem.PromptTokens)
+	assert.Equal(t, 89, logItem.CompletionTokens)
+	assert.Equal(t, 6, logItem.UseTime)
+	assert.Contains(t, logItem.Content, "与预扣一致")
 }
 
 func TestRecalculate_ZeroDelta(t *testing.T) {
@@ -1679,6 +1795,52 @@ func TestRecordImagePricingExecutionAuditReloadsConsumeLogIdForStaleCallbackTask
 	require.Zero(t, consumeLog.CompletionTokens)
 }
 
+func TestReconcileCompletedAsyncImageConsumeLogHandlesEarlyCallbackRace(t *testing.T) {
+	truncate(t)
+	task := makeTask(53, 53, 500000, 53, BillingSourceWallet, 0)
+	task.Platform = imageHandleTaskPlatform()
+	task.TaskID = "task_usage_early_callback"
+	task.Status = model.TaskStatusSuccess
+	task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
+	task.PrivateData.BillingContext.RequestId = "req-usage-early"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	snapshot := &model.TaskFinalConsumeLogSnapshot{
+		Quota:            20668,
+		PromptTokens:     5,
+		CompletionTokens: 196,
+		Content:          "异步图片按量真实结算",
+		Other: map[string]interface{}{
+			"task_id":            task.TaskID,
+			"billing_stage":      "async_image_final",
+			"pre_consumed_quota": 500000,
+			"actual_quota":       20668,
+		},
+	}
+	require.NoError(t, model.PersistTaskFinalConsumeLogSnapshot(task.ID, snapshot))
+
+	originalLog := &model.Log{
+		UserId:    task.UserId,
+		CreatedAt: task.CreatedAt,
+		Type:      model.LogTypeConsume,
+		Content:   "precharge",
+		Quota:     500000,
+		Other:     common.MapToJsonStr(map[string]interface{}{"task_id": task.TaskID}),
+	}
+	require.NoError(t, model.LOG_DB.Create(originalLog).Error)
+	require.NoError(t, model.PersistTaskSubmitResult(task.ID, "imgtask_usage_early", nil, originalLog.Id))
+
+	ReconcileCompletedAsyncImageConsumeLog(task.ID)
+
+	require.Equal(t, int64(1), countLogs(t))
+	logItem := getLastLog(t)
+	require.NotNil(t, logItem)
+	assert.Equal(t, 20668, logItem.Quota)
+	assert.Equal(t, 5, logItem.PromptTokens)
+	assert.Equal(t, 196, logItem.CompletionTokens)
+	assert.Equal(t, "req-usage-early", logItem.RequestId)
+}
+
 func TestSettle_ImageHandleLegacyUsageTaskWithoutSnapshotUsesActualQuota(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -1700,7 +1862,9 @@ func TestSettle_ImageHandleLegacyUsageTaskWithoutSnapshotUsesActualQuota(t *test
 		BillingMode:     "async_image_usage_billing",
 		ModelPrice:      -1,
 		GroupRatio:      1,
+		RequestId:       "req-legacy-fallback",
 	}
+	seedAsyncImageConsumeLog(t, task, "")
 
 	settleTaskBillingOnComplete(ctx, &mockAdaptor{}, task, &relaycommon.TaskInfo{
 		Status:      model.TaskStatusSuccess,
@@ -1716,8 +1880,10 @@ func TestSettle_ImageHandleLegacyUsageTaskWithoutSnapshotUsesActualQuota(t *test
 	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
 	log := getLastLog(t)
 	require.NotNil(t, log)
-	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed-actualQuota, log.Quota)
+	assert.Equal(t, model.LogTypeConsume, log.Type)
+	assert.Equal(t, actualQuota, log.Quota)
+	assert.Equal(t, "req-legacy-fallback", log.RequestId)
+	assert.Equal(t, int64(1), countLogs(t))
 }
 
 func TestSettle_ImageHandleUsageBillingUsesCallbackUsageAndCanDriveDebt(t *testing.T) {
@@ -1747,12 +1913,14 @@ func TestSettle_ImageHandleUsageBillingUsesCallbackUsageAndCanDriveDebt(t *testi
 		GroupSpecialRatio:  1.3,
 		HasSpecialRatio:    true,
 		OriginalGroupRatio: 6,
+		RequestId:          "req-context-must-not-replace-original",
 		OtherRatios: map[string]float64{
 			"async_image_precharge_amount_per_image_usd": 1,
 			"async_image_precharge_quota_per_image":      500000,
 			"async_image_n":                              1,
 		},
 	}
+	seedAsyncImageConsumeLog(t, task, "req-original-usage")
 
 	taskResult := &relaycommon.TaskInfo{
 		Status: model.TaskStatusSuccess,
@@ -1777,10 +1945,12 @@ func TestSettle_ImageHandleUsageBillingUsesCallbackUsageAndCanDriveDebt(t *testi
 
 	log := getLastLog(t)
 	require.NotNil(t, log)
-	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed-actualQuota, log.Quota)
+	assert.Equal(t, model.LogTypeConsume, log.Type)
+	assert.Equal(t, actualQuota, log.Quota)
 	assert.Equal(t, 19, log.PromptTokens)
 	assert.Equal(t, 781, log.CompletionTokens)
+	assert.Equal(t, "req-original-usage", log.RequestId)
+	assert.Equal(t, int64(1), countLogs(t))
 	var other map[string]interface{}
 	require.NoError(t, common.Unmarshal([]byte(log.Other), &other))
 	assert.Equal(t, float64(5), other["cache_tokens"])

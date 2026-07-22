@@ -977,6 +977,7 @@ func RelayTask(c *gin.Context) {
 			if updateErr := model.PersistTaskSubmitResult(result.CreatedTask.ID, result.UpstreamTaskID, result.TaskData, consumeLogId); updateErr != nil {
 				common.SysError("update pre-created task error: " + updateErr.Error())
 			}
+			service.ReconcileCompletedAsyncImageConsumeLog(result.CreatedTask.ID)
 			service.MergeCompletedImagePricingExecutionAudit(result.CreatedTask.ID)
 			return
 		}
@@ -1018,6 +1019,7 @@ func RelayTask(c *gin.Context) {
 			UsePrice:                 relayInfo.PriceData.UsePrice,
 			ImagePricing:             cloneControllerImagePricingSnapshot(relayInfo.PriceData.ImagePricing),
 			ConsumeLogId:             consumeLogId,
+			RequestId:                c.GetString(common.RequestIdKey),
 		}
 		if relayInfo.PriceData.ImagePricing != nil {
 			task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode

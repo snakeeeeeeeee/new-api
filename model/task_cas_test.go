@@ -212,6 +212,36 @@ func TestUpdateWithStatus_Lose(t *testing.T) {
 	assert.EqualValues(t, TaskStatusFailure, reloaded.Status) // unchanged
 }
 
+func TestUpdateWithStatusPreservesSubmitBillingLinkFromStaleTask(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID: "task_cas_preserve_submit_link",
+		Status: TaskStatusQueued,
+		PrivateData: TaskPrivateData{BillingContext: &TaskBillingContext{
+			RequestId: "req-original",
+		}},
+		Data: json.RawMessage(`{}`),
+	}
+	insertTask(t, task)
+	var stale Task
+	require.NoError(t, DB.First(&stale, task.ID).Error)
+	require.NoError(t, PersistTaskSubmitResult(task.ID, "provider-task", nil, 1234))
+
+	stale.Status = TaskStatusSuccess
+	stale.Progress = "100%"
+	won, err := stale.UpdateWithStatus(TaskStatusQueued)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, "provider-task", reloaded.PrivateData.UpstreamTaskID)
+	require.NotNil(t, reloaded.PrivateData.BillingContext)
+	require.Equal(t, 1234, reloaded.PrivateData.BillingContext.ConsumeLogId)
+	require.Equal(t, "req-original", reloaded.PrivateData.BillingContext.RequestId)
+}
+
 func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 	truncateTables(t)
 

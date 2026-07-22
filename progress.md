@@ -1,3 +1,21 @@
+# Async Image Final Usage Log Reconciliation Progress (2026-07-22)
+
+- Loaded the required brainstorming and file-planning workflows; the user approved original-row reconciliation after diagnosis.
+- Confirmed the current two-row behavior, missing Request ID source, and consume-only aggregate distortion from the screenshot and code paths.
+- Locked scope to async image user-facing logs while retaining existing wallet/subscription/token delta settlement and generic task behavior.
+- Mapped terminal ordering and selected a persisted final-log snapshot so submit-side compensation updates logs without rerunning wallet billing.
+- Implemented Request ID persistence, terminal consume-log snapshots, row-locked submit persistence, and guarded finalization of the original consume row.
+- Updated async image success/failure settlement so balances still reconcile by delta while the original log stores final quota, real tokens, duration, content, and settlement audit metadata; generic task refund logging remains unchanged.
+- Added regression coverage for refund, supplement, exact charge, failure, Request ID fallback, early callback ordering, stale callbacks, fencing, actual-quota fallback, usage aggregation, and the fast-callback double-refund case.
+- `go test ./... -count=1` and `git diff --check` pass.
+- Rebuilt ordinary Docker dev and the opt-in `async-test` profile. Image `sha256:214db9b26c8...`; new-api, PostgreSQL, Redis, and the mock are healthy.
+- Real PostgreSQL/mock E2E passed with one task, one consume row, no refund row, final quota `4913`, real token usage `5/196`, preserved Request ID, and request count `1`.
+- Removed all disposable users, tokens, channels, tasks, and logs; restored the image-handle base URL and reset mock metrics to zero.
+- Final diff review fixed the zero-precharge timeout edge case and added coverage proving that it updates the original failure log without changing wallet or token balances.
+- Rebuilt final Docker dev image `sha256:0f9583d0b63b...` after the edge-case fix; new-api, PostgreSQL, Redis, and the async mock all report healthy.
+
+---
+
 # Async Image Token Usage Log Backfill Progress (2026-07-22)
 
 - Loaded the required brainstorming and file-planning workflows.

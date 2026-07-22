@@ -109,7 +109,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 			continue
 		}
 		timedOutCount++
-		if !isLegacy && task.Quota != 0 {
+		if !isLegacy && (task.Quota != 0 || isImageHandleTask(task)) {
 			RefundTaskQuota(ctx, task, reason)
 		}
 	}
@@ -603,7 +603,7 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 		task.FailReason = taskResult.Reason
 		logger.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, task.FailReason))
 		taskResult.Progress = taskcommon.ProgressComplete
-		if quota != 0 {
+		if quota != 0 || isImageHandleTask(task) {
 			shouldRefund = true
 		}
 	default:

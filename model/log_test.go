@@ -89,6 +89,79 @@ func TestMergeConsumeLogOtherAndTokensUpdatesOriginalTaskLog(t *testing.T) {
 	require.Equal(t, completionTokens, updated.CompletionTokens)
 }
 
+func TestFinalizeAsyncImageConsumeLogUpdatesOriginalPrechargeRow(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+
+	logItem := &Log{
+		UserId:           72,
+		CreatedAt:        time.Now().Unix(),
+		Type:             LogTypeConsume,
+		Content:          "precharge",
+		Quota:            500000,
+		PromptTokens:     1,
+		CompletionTokens: 2,
+		RequestId:        "req-original",
+		Other:            common.MapToJsonStr(map[string]interface{}{"task_id": "task_finalize"}),
+	}
+	require.NoError(t, LOG_DB.Create(logItem).Error)
+
+	merged, err := FinalizeAsyncImageConsumeLog(logItem.Id, logItem.UserId, "task_finalize", "req-fallback", &TaskFinalConsumeLogSnapshot{
+		Quota:            20668,
+		PromptTokens:     5,
+		CompletionTokens: 196,
+		UseTimeSeconds:   8,
+		Content:          "final settlement",
+		Other: map[string]interface{}{
+			"billing_stage":      "async_image_final",
+			"pre_consumed_quota": 500000,
+			"actual_quota":       20668,
+		},
+	})
+	require.NoError(t, err)
+	require.True(t, merged)
+
+	var updated Log
+	require.NoError(t, LOG_DB.First(&updated, logItem.Id).Error)
+	require.Equal(t, 20668, updated.Quota)
+	require.Equal(t, 5, updated.PromptTokens)
+	require.Equal(t, 196, updated.CompletionTokens)
+	require.Equal(t, 8, updated.UseTime)
+	require.Equal(t, "final settlement", updated.Content)
+	require.Equal(t, "req-original", updated.RequestId)
+	other, err := common.StrToMap(updated.Other)
+	require.NoError(t, err)
+	require.Equal(t, float64(20668), other["actual_quota"])
+}
+
+func TestFinalizeAsyncImageConsumeLogWritesExplicitZeroAndMissingRequestID(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+
+	logItem := &Log{
+		UserId:    73,
+		CreatedAt: time.Now().Unix(),
+		Type:      LogTypeConsume,
+		Content:   "precharge",
+		Quota:     100,
+		Other:     common.MapToJsonStr(map[string]interface{}{"task_id": "task_failed"}),
+	}
+	require.NoError(t, LOG_DB.Create(logItem).Error)
+
+	merged, err := FinalizeAsyncImageConsumeLog(logItem.Id, logItem.UserId, "task_failed", "req-failure", &TaskFinalConsumeLogSnapshot{
+		Quota:   0,
+		Content: "failed and refunded",
+		Other:   map[string]interface{}{"billing_stage": "async_image_failed"},
+	})
+	require.NoError(t, err)
+	require.True(t, merged)
+
+	var updated Log
+	require.NoError(t, LOG_DB.First(&updated, logItem.Id).Error)
+	require.Zero(t, updated.Quota)
+	require.Equal(t, "req-failure", updated.RequestId)
+}
+
 func TestRecordConsumeLogSkipsExcludedUsers(t *testing.T) {
 	truncateTables(t)
 	resetLogTestTables(t)

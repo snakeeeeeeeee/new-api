@@ -246,6 +246,10 @@ func adjustTaskUsedQuota(task *model.Task, quotaDelta int) {
 // RefundTaskQuota 统一的任务失败退款逻辑。
 // 当异步任务失败时，将预扣的 quota 退还给用户（支持钱包和订阅），并退还令牌额度。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
+	if isImageHandleTask(task) {
+		refundAsyncImageTaskQuota(ctx, task, reason)
+		return
+	}
 	quota := task.Quota
 	if quota == 0 {
 		return
@@ -283,8 +287,40 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 		Quota:     quota,
 		TokenId:   task.PrivateData.TokenId,
 		Group:     task.Group,
+		RequestId: taskBillingRequestId(task),
 		Other:     other,
 	})
+}
+
+func refundAsyncImageTaskQuota(ctx context.Context, task *model.Task, reason string) {
+	preConsumedQuota := task.Quota
+	if preConsumedQuota != 0 {
+		if err := taskAdjustFunding(task, -preConsumedQuota); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("退还异步图片资金来源失败 task %s: %s", task.TaskID, err.Error()))
+			return
+		}
+		taskAdjustTokenQuota(ctx, task, -preConsumedQuota)
+		adjustTaskUsedQuota(task, -preConsumedQuota)
+	}
+	if task.ID <= 0 {
+		task.Quota = 0
+	}
+	other := taskBillingOther(task)
+	other["task_id"] = task.TaskID
+	other["billing_stage"] = "async_image_failed"
+	other["pre_consumed_quota"] = preConsumedQuota
+	other["actual_quota"] = 0
+	other["quota_delta"] = -preConsumedQuota
+	other["settlement_direction"] = "refund"
+	other["terminal_status"] = string(model.TaskStatusFailure)
+	other["reason"] = reason
+	snapshot := &model.TaskFinalConsumeLogSnapshot{
+		Quota:          0,
+		UseTimeSeconds: taskTerminalUseTimeSeconds(task),
+		Content:        fmt.Sprintf("异步图片生成失败：已退还预扣费 %s（%s）", formatQuotaUSD(preConsumedQuota), reason),
+		Other:          other,
+	}
+	persistAndReconcileAsyncImageConsumeLog(ctx, task, snapshot)
 }
 
 // RecalculateTaskQuota 通用的异步差额结算。
@@ -365,6 +401,7 @@ func RecalculateTaskQuotaWithDebtOption(ctx context.Context, task *model.Task, a
 		Quota:     logQuota,
 		TokenId:   task.PrivateData.TokenId,
 		Group:     task.Group,
+		RequestId: taskBillingRequestId(task),
 		Other:     other,
 	})
 }
@@ -445,7 +482,17 @@ func settleAsyncImageBillingOnComplete(ctx context.Context, task *model.Task, ta
 	}
 	if usage == nil || usage.TotalTokens <= 0 {
 		if taskResult.ActualQuota > 0 {
-			RecalculateTaskQuotaWithDebtOption(ctx, task, taskResult.ActualQuota, "image-handle actual_quota 兜底", true)
+			preConsumedQuota := task.Quota
+			if settleAsyncImageQuotaDelta(ctx, task, taskResult.ActualQuota, "image-handle actual_quota 兜底", true) {
+				other := asyncImageFinalLogOther(task, preConsumedQuota, taskResult.ActualQuota)
+				snapshot := &model.TaskFinalConsumeLogSnapshot{
+					Quota:          taskResult.ActualQuota,
+					UseTimeSeconds: taskTerminalUseTimeSeconds(task),
+					Content:        asyncImageFinalLogContent(preConsumedQuota, taskResult.ActualQuota),
+					Other:          other,
+				}
+				persistAndReconcileAsyncImageConsumeLog(ctx, task, snapshot)
+			}
 			return true
 		}
 		logger.LogWarn(ctx, fmt.Sprintf("任务 %s 成功但未返回 usage，保持预扣费 %s", task.TaskID, formatQuotaUSD(task.Quota)))
@@ -453,9 +500,7 @@ func settleAsyncImageBillingOnComplete(ctx context.Context, task *model.Task, ta
 	}
 	summary := calculateTextQuotaSummary(taskLogContext(ctx, task), taskRelayInfoForBilling(task), usage)
 	reason := "异步图片按量真实结算"
-	if summary.Quota > 0 {
-		settleTaskQuotaDeltaWithUsage(ctx, task, summary, reason, true)
-	}
+	settleTaskQuotaDeltaWithUsage(ctx, task, summary, reason, true)
 	return true
 }
 
@@ -621,6 +666,9 @@ func asyncImageUsageLogOther(ctx context.Context, task *model.Task, summary text
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = summary.Quota
 	other["billing_stage"] = "async_image_final"
+	other["quota_delta"] = summary.Quota - preConsumedQuota
+	other["settlement_direction"] = asyncImageSettlementDirection(summary.Quota - preConsumedQuota)
+	other["terminal_status"] = string(model.TaskStatusSuccess)
 	if summary.ImageTokens != 0 {
 		other["image"] = true
 		other["image_ratio"] = summary.ImageRatio
@@ -642,6 +690,39 @@ func asyncImageUsageLogOther(ctx context.Context, task *model.Task, summary text
 		other["cache_write_tokens"] = cacheWriteTokens
 	}
 	return other
+}
+
+func asyncImageFinalLogOther(task *model.Task, preConsumedQuota int, actualQuota int) map[string]interface{} {
+	other := taskBillingOther(task)
+	other["task_id"] = task.TaskID
+	other["billing_stage"] = "async_image_final"
+	other["pre_consumed_quota"] = preConsumedQuota
+	other["actual_quota"] = actualQuota
+	other["quota_delta"] = actualQuota - preConsumedQuota
+	other["settlement_direction"] = asyncImageSettlementDirection(actualQuota - preConsumedQuota)
+	other["terminal_status"] = string(model.TaskStatusSuccess)
+	return other
+}
+
+func asyncImageSettlementDirection(quotaDelta int) string {
+	if quotaDelta > 0 {
+		return "supplement"
+	}
+	if quotaDelta < 0 {
+		return "refund"
+	}
+	return "exact"
+}
+
+func asyncImageFinalLogContent(preConsumedQuota int, actualQuota int) string {
+	quotaDelta := actualQuota - preConsumedQuota
+	if quotaDelta > 0 {
+		return fmt.Sprintf("异步图片按量真实结算：实际 %s，预扣 %s，补扣 %s", formatQuotaUSD(actualQuota), formatQuotaUSD(preConsumedQuota), formatQuotaUSD(quotaDelta))
+	}
+	if quotaDelta < 0 {
+		return fmt.Sprintf("异步图片按量真实结算：实际 %s，预扣 %s，退还 %s", formatQuotaUSD(actualQuota), formatQuotaUSD(preConsumedQuota), formatQuotaUSD(-quotaDelta))
+	}
+	return fmt.Sprintf("异步图片按量真实结算：实际 %s，与预扣一致", formatQuotaUSD(actualQuota))
 }
 
 func settleTaskQuotaDelta(ctx context.Context, task *model.Task, actualQuota int, reason string, allowDebt bool, recordLog bool) {
@@ -712,14 +793,33 @@ func settleTaskQuotaDelta(ctx context.Context, task *model.Task, actualQuota int
 
 func settleTaskQuotaDeltaWithUsage(ctx context.Context, task *model.Task, summary textQuotaSummary, reason string, allowDebt bool) {
 	actualQuota := summary.Quota
-	if actualQuota <= 0 {
+	preConsumedQuota := task.Quota
+	if !settleAsyncImageQuotaDelta(ctx, task, actualQuota, reason, allowDebt) {
 		return
+	}
+	snapshot := &model.TaskFinalConsumeLogSnapshot{
+		Quota:            actualQuota,
+		PromptTokens:     summary.PromptTokens,
+		CompletionTokens: summary.CompletionTokens,
+		UseTimeSeconds:   int(summary.UseTimeSeconds),
+		Content:          asyncImageFinalLogContent(preConsumedQuota, actualQuota),
+		Other:            asyncImageUsageLogOther(ctx, task, summary, preConsumedQuota),
+	}
+	persistAndReconcileAsyncImageConsumeLog(ctx, task, snapshot)
+}
+
+func settleAsyncImageQuotaDelta(ctx context.Context, task *model.Task, actualQuota int, reason string, allowDebt bool) bool {
+	if task == nil || actualQuota < 0 {
+		return false
 	}
 	preConsumedQuota := task.Quota
 	quotaDelta := actualQuota - preConsumedQuota
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）", task.TaskID, logger.LogQuota(actualQuota), reason))
-		return
+		if task.ID <= 0 {
+			task.Quota = actualQuota
+		}
+		return true
 	}
 	logger.LogInfo(ctx, fmt.Sprintf("任务 %s 差额结算：delta=%s（实际：%s，预扣：%s，%s）",
 		task.TaskID,
@@ -730,47 +830,95 @@ func settleTaskQuotaDeltaWithUsage(ctx context.Context, task *model.Task, summar
 	))
 	if err := taskAdjustFundingWithDebtOption(task, quotaDelta, allowDebt); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("差额结算资金调整失败 task %s: %s", task.TaskID, err.Error()))
-		return
+		return false
 	}
 	taskAdjustTokenQuotaWithDebtOption(ctx, task, quotaDelta, allowDebt)
-	task.Quota = actualQuota
-	if task.ID > 0 {
-		if err := model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Update("quota", actualQuota).Error; err != nil {
-			logger.LogWarn(ctx, fmt.Sprintf("更新任务实际额度失败 task %s: %s", task.TaskID, err.Error()))
-		}
-	}
-	var logType int
-	var logQuota int
-	if quotaDelta > 0 {
-		logType = model.LogTypeConsume
-		logQuota = quotaDelta
-	} else {
-		logType = model.LogTypeRefund
-		logQuota = -quotaDelta
+	if task.ID <= 0 {
+		task.Quota = actualQuota
 	}
 	adjustTaskUsedQuota(task, quotaDelta)
-	content := ""
-	if quotaDelta > 0 {
-		content = fmt.Sprintf("异步图片按量真实结算：实际 %s，预扣 %s，补扣 %s",
-			formatQuotaUSD(actualQuota), formatQuotaUSD(preConsumedQuota), formatQuotaUSD(quotaDelta))
-	} else {
-		content = fmt.Sprintf("异步图片按量真实结算：实际 %s，预扣 %s，退还 %s",
-			formatQuotaUSD(actualQuota), formatQuotaUSD(preConsumedQuota), formatQuotaUSD(-quotaDelta))
+	return true
+}
+
+func persistAndReconcileAsyncImageConsumeLog(ctx context.Context, task *model.Task, snapshot *model.TaskFinalConsumeLogSnapshot) {
+	if task == nil || snapshot == nil {
+		return
 	}
-	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:           task.UserId,
-		LogType:          logType,
-		Content:          content,
-		ChannelId:        task.ChannelId,
-		ModelName:        summary.ModelName,
-		Quota:            logQuota,
-		PromptTokens:     summary.PromptTokens,
-		CompletionTokens: summary.CompletionTokens,
-		TokenId:          task.PrivateData.TokenId,
-		Group:            task.Group,
-		UseTimeSeconds:   int(summary.UseTimeSeconds),
-		Other:            asyncImageUsageLogOther(ctx, task, summary, preConsumedQuota),
-	})
+	if task.PrivateData.BillingContext == nil {
+		if task.ID > 0 {
+			if err := model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Update("quota", snapshot.Quota).Error; err != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("更新异步图片实际额度失败 task %s: %s", task.TaskID, err.Error()))
+			}
+		} else {
+			task.Quota = snapshot.Quota
+		}
+		return
+	}
+	task.PrivateData.BillingContext.FinalConsumeLog = snapshot
+	if task.ID > 0 {
+		if err := model.PersistTaskFinalConsumeLogSnapshot(task.ID, snapshot); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("保存异步图片终态日志快照失败 task %s: %s", task.TaskID, err.Error()))
+			if updateErr := model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Update("quota", snapshot.Quota).Error; updateErr != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("更新异步图片实际额度失败 task %s: %s", task.TaskID, updateErr.Error()))
+			}
+			reconcileAsyncImageConsumeLog(ctx, task)
+			return
+		}
+		ReconcileCompletedAsyncImageConsumeLog(task.ID)
+		return
+	}
+	reconcileAsyncImageConsumeLog(ctx, task)
+}
+
+// ReconcileCompletedAsyncImageConsumeLog closes the race where the terminal
+// callback arrives before the submit request has stored its consume log ID.
+func ReconcileCompletedAsyncImageConsumeLog(taskId int64) {
+	if taskId <= 0 {
+		return
+	}
+	var task model.Task
+	if err := model.DB.Where("id = ?", taskId).First(&task).Error; err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("读取异步图片终态日志快照失败 taskId=%d: %s", taskId, err.Error()))
+		return
+	}
+	reconcileAsyncImageConsumeLog(context.Background(), &task)
+}
+
+func reconcileAsyncImageConsumeLog(ctx context.Context, task *model.Task) {
+	if !isImageHandleTask(task) || task.PrivateData.BillingContext == nil {
+		return
+	}
+	bc := task.PrivateData.BillingContext
+	if bc.ConsumeLogId <= 0 || bc.FinalConsumeLog == nil {
+		return
+	}
+	merged, err := model.FinalizeAsyncImageConsumeLog(bc.ConsumeLogId, task.UserId, task.TaskID, bc.RequestId, bc.FinalConsumeLog)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("回写异步图片消费日志失败 task %s: %s", task.TaskID, err.Error()))
+		return
+	}
+	if !merged {
+		logger.LogWarn(ctx, fmt.Sprintf("异步图片消费日志关联校验失败 task %s logId=%d", task.TaskID, bc.ConsumeLogId))
+	}
+}
+
+func taskBillingRequestId(task *model.Task) string {
+	if task == nil || task.PrivateData.BillingContext == nil {
+		return ""
+	}
+	return task.PrivateData.BillingContext.RequestId
+}
+
+func taskTerminalUseTimeSeconds(task *model.Task) int {
+	if task == nil {
+		return 0
+	}
+	start := defaultInt64(task.StartTime, task.SubmitTime, task.CreatedAt)
+	finish := defaultInt64(task.FinishTime, time.Now().Unix())
+	if start <= 0 || finish <= start {
+		return 0
+	}
+	return int(finish - start)
 }
 
 func defaultFloat(value float64, fallback float64) float64 {

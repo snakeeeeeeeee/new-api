@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type TaskStatus string
@@ -121,38 +123,49 @@ type TaskPrivateData struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice               float64                     `json:"model_price,omitempty"`                 // 模型单价
-	GroupRatio               float64                     `json:"group_ratio,omitempty"`                 // 分组倍率
-	GroupSpecialRatio        float64                     `json:"group_special_ratio,omitempty"`         // 专属倍率，用于日志展示
-	OriginalGroupRatio       float64                     `json:"original_group_ratio,omitempty"`        // 覆盖前分组倍率
-	RatioOverride            float64                     `json:"ratio_override,omitempty"`              // 用户聚合分组覆盖倍率
-	HasSpecialRatio          bool                        `json:"has_special_ratio,omitempty"`           // 是否存在专属倍率
-	HasRatioOverride         bool                        `json:"has_ratio_override,omitempty"`          // 是否使用用户聚合分组覆盖倍率
-	RatioOverrideApplied     bool                        `json:"ratio_override_applied,omitempty"`      // 用户聚合覆盖倍率是否实际生效
-	RouteModelGroupRatio     float64                     `json:"route_model_group_ratio,omitempty"`     // 子分组模型最终倍率
-	HasRouteModelGroupRatio  bool                        `json:"has_route_model_group_ratio,omitempty"` // 是否命中子分组模型倍率
-	RouteModelAggregateGroup string                      `json:"route_model_aggregate_group,omitempty"` // 命中规则的聚合分组
-	RouteModelRealGroup      string                      `json:"route_model_real_group,omitempty"`      // 命中规则的真实分组
-	RouteModelName           string                      `json:"route_model_name,omitempty"`            // 命中规则的原始模型名
-	RouteModelRatioSource    string                      `json:"route_model_ratio_source,omitempty"`    // 子分组模型倍率来源（global/user）
-	ModelRatio               float64                     `json:"model_ratio,omitempty"`                 // 模型倍率
-	CompletionRatio          float64                     `json:"completion_ratio,omitempty"`            // 输出倍率
-	CacheRatio               float64                     `json:"cache_ratio,omitempty"`                 // 缓存读取倍率
-	CacheCreationRatio       float64                     `json:"cache_creation_ratio,omitempty"`        // 缓存创建倍率
-	CacheCreation5mRatio     float64                     `json:"cache_creation_5m_ratio,omitempty"`     // 5m 缓存创建倍率
-	CacheCreation1hRatio     float64                     `json:"cache_creation_1h_ratio,omitempty"`     // 1h 缓存创建倍率
-	ImageRatio               float64                     `json:"image_ratio,omitempty"`                 // 图片输入倍率
-	UsePrice                 bool                        `json:"use_price,omitempty"`                   // true 表示固定按次价格
-	OtherRatios              map[string]float64          `json:"other_ratios,omitempty"`                // 附加倍率（时长、分辨率等）
-	OriginModelName          string                      `json:"origin_model_name,omitempty"`           // 模型名称，必须为OriginModelName
-	PerCallBilling           bool                        `json:"per_call_billing,omitempty"`            // 按次计费：跳过轮询阶段的差额结算
-	BillingMode              string                      `json:"billing_mode,omitempty"`                // 计费模式快照，例如 async_image_usage_billing
-	PrechargeStrategy        string                      `json:"precharge_strategy,omitempty"`          // 预扣策略快照
-	PrechargePerImage        int                         `json:"precharge_per_image,omitempty"`         // 每张图预扣额度
-	PrechargeAmountPerImage  float64                     `json:"precharge_amount_per_image,omitempty"`  // 每张图预扣美元金额
-	ImageCount               int                         `json:"image_count,omitempty"`                 // 本次提交按 n 估算的图片数量
-	ImagePricing             *types.ImagePricingSnapshot `json:"image_pricing,omitempty"`               // 图片参数按张计价的不可变快照
-	ConsumeLogId             int                         `json:"consume_log_id,omitempty"`              // 提交成功时的消费日志 ID，用于异步终态合并审计信息
+	ModelPrice               float64                      `json:"model_price,omitempty"`                 // 模型单价
+	GroupRatio               float64                      `json:"group_ratio,omitempty"`                 // 分组倍率
+	GroupSpecialRatio        float64                      `json:"group_special_ratio,omitempty"`         // 专属倍率，用于日志展示
+	OriginalGroupRatio       float64                      `json:"original_group_ratio,omitempty"`        // 覆盖前分组倍率
+	RatioOverride            float64                      `json:"ratio_override,omitempty"`              // 用户聚合分组覆盖倍率
+	HasSpecialRatio          bool                         `json:"has_special_ratio,omitempty"`           // 是否存在专属倍率
+	HasRatioOverride         bool                         `json:"has_ratio_override,omitempty"`          // 是否使用用户聚合分组覆盖倍率
+	RatioOverrideApplied     bool                         `json:"ratio_override_applied,omitempty"`      // 用户聚合覆盖倍率是否实际生效
+	RouteModelGroupRatio     float64                      `json:"route_model_group_ratio,omitempty"`     // 子分组模型最终倍率
+	HasRouteModelGroupRatio  bool                         `json:"has_route_model_group_ratio,omitempty"` // 是否命中子分组模型倍率
+	RouteModelAggregateGroup string                       `json:"route_model_aggregate_group,omitempty"` // 命中规则的聚合分组
+	RouteModelRealGroup      string                       `json:"route_model_real_group,omitempty"`      // 命中规则的真实分组
+	RouteModelName           string                       `json:"route_model_name,omitempty"`            // 命中规则的原始模型名
+	RouteModelRatioSource    string                       `json:"route_model_ratio_source,omitempty"`    // 子分组模型倍率来源（global/user）
+	ModelRatio               float64                      `json:"model_ratio,omitempty"`                 // 模型倍率
+	CompletionRatio          float64                      `json:"completion_ratio,omitempty"`            // 输出倍率
+	CacheRatio               float64                      `json:"cache_ratio,omitempty"`                 // 缓存读取倍率
+	CacheCreationRatio       float64                      `json:"cache_creation_ratio,omitempty"`        // 缓存创建倍率
+	CacheCreation5mRatio     float64                      `json:"cache_creation_5m_ratio,omitempty"`     // 5m 缓存创建倍率
+	CacheCreation1hRatio     float64                      `json:"cache_creation_1h_ratio,omitempty"`     // 1h 缓存创建倍率
+	ImageRatio               float64                      `json:"image_ratio,omitempty"`                 // 图片输入倍率
+	UsePrice                 bool                         `json:"use_price,omitempty"`                   // true 表示固定按次价格
+	OtherRatios              map[string]float64           `json:"other_ratios,omitempty"`                // 附加倍率（时长、分辨率等）
+	OriginModelName          string                       `json:"origin_model_name,omitempty"`           // 模型名称，必须为OriginModelName
+	PerCallBilling           bool                         `json:"per_call_billing,omitempty"`            // 按次计费：跳过轮询阶段的差额结算
+	BillingMode              string                       `json:"billing_mode,omitempty"`                // 计费模式快照，例如 async_image_usage_billing
+	PrechargeStrategy        string                       `json:"precharge_strategy,omitempty"`          // 预扣策略快照
+	PrechargePerImage        int                          `json:"precharge_per_image,omitempty"`         // 每张图预扣额度
+	PrechargeAmountPerImage  float64                      `json:"precharge_amount_per_image,omitempty"`  // 每张图预扣美元金额
+	ImageCount               int                          `json:"image_count,omitempty"`                 // 本次提交按 n 估算的图片数量
+	ImagePricing             *types.ImagePricingSnapshot  `json:"image_pricing,omitempty"`               // 图片参数按张计价的不可变快照
+	ConsumeLogId             int                          `json:"consume_log_id,omitempty"`              // 提交成功时的消费日志 ID，用于异步终态合并审计信息
+	RequestId                string                       `json:"request_id,omitempty"`                  // 提交请求 ID，用于异步终态日志关联
+	FinalConsumeLog          *TaskFinalConsumeLogSnapshot `json:"final_consume_log,omitempty"`           // 异步图片终态消费日志快照
+}
+
+type TaskFinalConsumeLogSnapshot struct {
+	Quota            int                    `json:"quota"`
+	PromptTokens     int                    `json:"prompt_tokens"`
+	CompletionTokens int                    `json:"completion_tokens"`
+	UseTimeSeconds   int                    `json:"use_time_seconds"`
+	Content          string                 `json:"content"`
+	Other            map[string]interface{} `json:"other,omitempty"`
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
@@ -584,10 +597,9 @@ func (Task *Task) Update() error {
 // latest task row. A callback may finish the task before submit returns, so a
 // stale in-memory Task must never overwrite terminal result data.
 func PersistTaskSubmitResult(taskID int64, upstreamTaskID string, taskData json.RawMessage, consumeLogId int) error {
-	const maxAttempts = 3
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	return DB.Transaction(func(tx *gorm.DB) error {
 		var current Task
-		if err := DB.Where("id = ?", taskID).First(&current).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", taskID).First(&current).Error; err != nil {
 			return err
 		}
 
@@ -606,17 +618,35 @@ func PersistTaskSubmitResult(taskID int64, upstreamTaskID string, taskData json.
 			updates["data"] = taskData
 		}
 
-		result := DB.Model(&Task{}).
-			Where("id = ? AND status = ?", taskID, current.Status).
-			Updates(updates)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected > 0 {
-			return nil
-		}
+		return tx.Model(&Task{}).Where("id = ?", taskID).Updates(updates).Error
+	})
+}
+
+// PersistTaskFinalConsumeLogSnapshot stores the terminal log view without
+// overwriting submit metadata that may be arriving concurrently.
+func PersistTaskFinalConsumeLogSnapshot(taskID int64, snapshot *TaskFinalConsumeLogSnapshot) error {
+	if taskID <= 0 || snapshot == nil {
+		return nil
 	}
-	return fmt.Errorf("task %d changed while persisting submit result", taskID)
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var current Task
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", taskID).First(&current).Error; err != nil {
+			return err
+		}
+		if current.Status != TaskStatusSuccess && current.Status != TaskStatusFailure {
+			return fmt.Errorf("task %d is not terminal", taskID)
+		}
+		if current.PrivateData.BillingContext == nil {
+			return fmt.Errorf("task %d has no billing context", taskID)
+		}
+		privateData := current.PrivateData
+		privateData.BillingContext.FinalConsumeLog = snapshot
+		return tx.Model(&Task{}).Where("id = ?", taskID).Updates(map[string]any{
+			"private_data": privateData,
+			"quota":        snapshot.Quota,
+			"updated_at":   time.Now().Unix(),
+		}).Error
+	})
 }
 
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
@@ -627,15 +657,51 @@ func PersistTaskSubmitResult(taskID int64, upstreamTaskID string, taskData json.
 // falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	return t.UpdateWithStatusTx(DB, fromStatus)
+	var won bool
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		won, err = t.UpdateWithStatusTx(tx, fromStatus)
+		return err
+	})
+	return won, err
 }
 
 func (t *Task) UpdateWithStatusTx(tx *gorm.DB, fromStatus TaskStatus) (bool, error) {
+	var current Task
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("private_data").Where("id = ? AND status = ?", t.ID, fromStatus).First(&current).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	mergeMonotonicTaskPrivateData(&t.PrivateData, current.PrivateData)
 	result := tx.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
 	if result.Error != nil {
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+func mergeMonotonicTaskPrivateData(incoming *TaskPrivateData, stored TaskPrivateData) {
+	if incoming.UpstreamTaskID == "" {
+		incoming.UpstreamTaskID = stored.UpstreamTaskID
+	}
+	if incoming.BillingContext == nil {
+		incoming.BillingContext = stored.BillingContext
+		return
+	}
+	if stored.BillingContext == nil {
+		return
+	}
+	if incoming.BillingContext.ConsumeLogId == 0 {
+		incoming.BillingContext.ConsumeLogId = stored.BillingContext.ConsumeLogId
+	}
+	if incoming.BillingContext.RequestId == "" {
+		incoming.BillingContext.RequestId = stored.BillingContext.RequestId
+	}
+	if incoming.BillingContext.FinalConsumeLog == nil {
+		incoming.BillingContext.FinalConsumeLog = stored.BillingContext.FinalConsumeLog
+	}
 }
 
 // TaskBulkUpdateByID performs an unconditional bulk UPDATE by primary key IDs.

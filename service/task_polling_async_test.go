@@ -88,6 +88,39 @@ func TestSweepTimedOutTasksUsesDefaultThirtyMinutesAndRefunds(t *testing.T) {
 	assert.EqualValues(t, model.TaskStatusInProgress, active.Status)
 }
 
+func TestSweepTimedOutAsyncImageTaskFinalizesZeroPrechargeLog(t *testing.T) {
+	truncate(t)
+	resetAsyncTaskSettingForTest(t)
+
+	const userID, tokenID, channelID = 401, 401, 9401
+	const initialUserQuota, initialTokenQuota = 10000, 6000
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-timeout-zero-image", initialTokenQuota)
+	seedChannel(t, channelID)
+	task := createPollingRefundTask(
+		t, "task_timeout_zero_image", "imgtask_timeout_zero", imageHandleTaskPlatform(),
+		userID, channelID, 0, tokenID, BillingSourceWallet, 0,
+	)
+	task.SubmitTime = time.Now().Add(-31 * time.Minute).Unix()
+	require.NoError(t, model.DB.Model(task).Update("submit_time", task.SubmitTime).Error)
+
+	sweepTimedOutTasks(context.Background())
+
+	reloaded := loadPollingRefundTask(t, task.ID)
+	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenQuota, getTokenRemainQuota(t, tokenID))
+	require.Equal(t, int64(1), countLogs(t))
+	logItem := getLastLog(t)
+	require.NotNil(t, logItem)
+	assert.Equal(t, model.LogTypeConsume, logItem.Type)
+	assert.Zero(t, logItem.Quota)
+	assert.Equal(t, "req-task_timeout_zero_image", logItem.RequestId)
+	other, err := common.StrToMap(logItem.Other)
+	require.NoError(t, err)
+	assert.Equal(t, "async_image_failed", other["billing_stage"])
+}
+
 func TestSweepTimedOutTasksUsesPlatformAndActionOverrides(t *testing.T) {
 	truncate(t)
 	resetAsyncTaskSettingForTest(t)

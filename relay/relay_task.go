@@ -491,6 +491,7 @@ func newAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, platform con
 		OtherRatios:              info.PriceData.OtherRatios,
 		OriginModelName:          info.OriginModelName,
 		ImagePricing:             cloneImagePricingSnapshot(info.PriceData.ImagePricing),
+		RequestId:                c.GetString(common.RequestIdKey),
 		PerCallBilling: common.StringsContains(constant.TaskPricePatches, info.OriginModelName) ||
 			info.ChannelType == constant.ChannelTypeXai ||
 			info.PriceData.UsePrice ||
@@ -672,9 +673,36 @@ func asyncImageSubmitTakeoverResult(c *gin.Context, task *model.Task) (*TaskSubm
 		UpstreamTaskID: task.PrivateData.UpstreamTaskID,
 		TaskData:       task.Data,
 		Platform:       task.Platform,
-		Quota:          task.Quota,
+		Quota:          asyncImageTakeoverSettlementQuota(task),
 		CreatedTask:    task,
 	}, nil
+}
+
+func asyncImageTakeoverSettlementQuota(task *model.Task) int {
+	if task == nil || task.PrivateData.BillingContext == nil || task.PrivateData.BillingContext.FinalConsumeLog == nil {
+		if task == nil {
+			return 0
+		}
+		return task.Quota
+	}
+	value, ok := task.PrivateData.BillingContext.FinalConsumeLog.Other["pre_consumed_quota"]
+	if !ok {
+		return task.Quota
+	}
+	switch quota := value.(type) {
+	case int:
+		return quota
+	case int64:
+		return int(quota)
+	case float64:
+		return int(quota)
+	case json.Number:
+		parsed, err := strconv.Atoi(quota.String())
+		if err == nil {
+			return parsed
+		}
+	}
+	return task.Quota
 }
 
 // A callback can advance the task while the submit HTTP response is still in

@@ -36,7 +36,14 @@ func createPollingRefundTask(
 	task.Progress = "0%"
 	task.SubmitTime = time.Now().Unix()
 	task.PrivateData.UpstreamTaskID = upstreamTaskID
+	if platform == imageHandleTaskPlatform() && task.PrivateData.BillingContext != nil {
+		task.PrivateData.BillingContext.RequestId = "req-" + taskID
+	}
 	require.NoError(t, model.DB.Create(task).Error)
+	if platform == imageHandleTaskPlatform() {
+		logItem := seedAsyncImageConsumeLog(t, task, "")
+		require.NoError(t, model.PersistTaskSubmitResult(task.ID, upstreamTaskID, nil, logItem.Id))
+	}
 	return task
 }
 
@@ -92,6 +99,11 @@ func TestFailImageHandleTaskWithRefundUsesCASAndRefundsWalletAndTokenOnce(t *tes
 	assert.Equal(t, 1, requestCount)
 	assert.Zero(t, getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(1), countLogs(t))
+	logItem := getLastLog(t)
+	require.NotNil(t, logItem)
+	assert.Equal(t, model.LogTypeConsume, logItem.Type)
+	assert.Zero(t, logItem.Quota)
+	assert.Equal(t, "req-task_public_missing_upstream", logItem.RequestId)
 }
 
 func TestResolveTaskPollingUpstreamIDPreservesSubmitGraceAndLegacyFallback(t *testing.T) {
@@ -196,6 +208,10 @@ func TestImageHandleChannelReadFailureUsesCASAndRefundsSubscriptionAndTokenOnce(
 	assert.Zero(t, userUsedQuota)
 	assert.Equal(t, 1, requestCount)
 	assert.Equal(t, int64(1), countLogs(t))
+	logItem := getLastLog(t)
+	require.NotNil(t, logItem)
+	assert.Equal(t, model.LogTypeConsume, logItem.Type)
+	assert.Zero(t, logItem.Quota)
 }
 
 func TestNonImageHandleChannelReadFailureKeepsLegacyBulkFailureWithoutRefund(t *testing.T) {

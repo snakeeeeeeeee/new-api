@@ -719,6 +719,7 @@ func runRelayTaskWithFastCallbackSubmitResponse(t *testing.T, event imageCallbac
 	common.SetContextKey(ctx, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
 	common.SetContextKey(ctx, constant.ContextKeyChannelBaseUrl, "https://real.example/v1")
 	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "real-upstream-key")
+	ctx.Set(common.RequestIdKey, "req-controller-fast")
 
 	RelayTask(ctx)
 
@@ -775,19 +776,19 @@ func TestRelayTaskFastFailureCallbackRefundsExactlyOnceBeforeSubmitSettlement(t 
 	assert.Equal(t, "public-fast-image", outcome.Task.PrivateData.BillingContext.ImagePricing.PublicModel)
 
 	expectedQuota := common.QuotaFromFloat(0.0002 * common.QuotaPerUnit)
-	assert.Equal(t, expectedQuota, outcome.Task.Quota)
+	assert.Zero(t, outcome.Task.Quota)
 	assert.Equal(t, 1000, outcome.User.Quota)
 	assert.Equal(t, 1000, outcome.Token.RemainQuota)
 	assert.Zero(t, outcome.Token.UsedQuota)
 
-	refundLogs := make([]model.Log, 0, 1)
-	for _, log := range outcome.Logs {
-		if log.Type == model.LogTypeRefund {
-			refundLogs = append(refundLogs, log)
-		}
-	}
-	require.Len(t, refundLogs, 1)
-	assert.Equal(t, expectedQuota, refundLogs[0].Quota)
+	require.Len(t, outcome.Logs, 1)
+	assert.Equal(t, model.LogTypeConsume, outcome.Logs[0].Type)
+	assert.Zero(t, outcome.Logs[0].Quota)
+	assert.Equal(t, "req-controller-fast", outcome.Logs[0].RequestId)
+	var other map[string]interface{}
+	require.NoError(t, common.Unmarshal([]byte(outcome.Logs[0].Other), &other))
+	assert.Equal(t, "async_image_failed", other["billing_stage"])
+	assert.Equal(t, float64(expectedQuota), other["pre_consumed_quota"])
 }
 
 func TestRelayTaskFastSuccessCallbackOwnsBillingWhenSubmitReturnsError(t *testing.T) {
@@ -826,14 +827,10 @@ func TestRelayTaskFastFailureCallbackDoesNotDoubleRefundWhenSubmitResponseIsMalf
 	assert.Equal(t, 1000, outcome.Token.RemainQuota)
 	assert.Zero(t, outcome.Token.UsedQuota)
 
-	refundLogs := make([]model.Log, 0, 1)
-	for _, log := range outcome.Logs {
-		if log.Type == model.LogTypeRefund {
-			refundLogs = append(refundLogs, log)
-		}
-	}
-	require.Len(t, refundLogs, 1)
-	assert.Equal(t, common.QuotaFromFloat(0.0002*common.QuotaPerUnit), refundLogs[0].Quota)
+	require.Len(t, outcome.Logs, 1)
+	assert.Equal(t, model.LogTypeConsume, outcome.Logs[0].Type)
+	assert.Zero(t, outcome.Logs[0].Quota)
+	assert.Equal(t, "req-controller-fast", outcome.Logs[0].RequestId)
 }
 
 func TestImageTaskCallbackBatchRejectsChannelMismatch(t *testing.T) {

@@ -344,6 +344,7 @@ type RecordTaskBillingLogParams struct {
 	TokenId          int
 	Group            string
 	UseTimeSeconds   int
+	RequestId        string
 	Other            map[string]interface{}
 }
 
@@ -373,6 +374,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		TokenId:          params.TokenId,
 		Group:            params.Group,
 		UseTime:          params.UseTimeSeconds,
+		RequestId:        params.RequestId,
 		Other:            common.MapToJsonStr(params.Other),
 	}
 	err := LOG_DB.Create(log).Error
@@ -385,7 +387,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 // consume log. The task ID check prevents an incorrect log association even
 // if a stale or corrupted consume_log_id is present in task private data.
 func MergeConsumeLogOther(logId int, userId int, taskId string, updates map[string]interface{}) (bool, error) {
-	return MergeConsumeLogOtherAndTokens(logId, userId, taskId, updates, nil, nil)
+	return updateConsumeLog(logId, userId, taskId, updates, nil, nil, nil, nil, nil, "")
 }
 
 // MergeConsumeLogOtherAndTokens updates execution metadata and optional real
@@ -398,8 +400,60 @@ func MergeConsumeLogOtherAndTokens(
 	promptTokens *int,
 	completionTokens *int,
 ) (bool, error) {
-	if logId <= 0 || userId <= 0 || strings.TrimSpace(taskId) == "" || len(updates) == 0 {
+	return updateConsumeLog(logId, userId, taskId, updates, nil, promptTokens, completionTokens, nil, nil, "")
+}
+
+// FinalizeAsyncImageConsumeLog turns the original precharge row into the
+// terminal billing record. Quota is always written, including explicit zero.
+func FinalizeAsyncImageConsumeLog(
+	logId int,
+	userId int,
+	taskId string,
+	requestId string,
+	snapshot *TaskFinalConsumeLogSnapshot,
+) (bool, error) {
+	if snapshot == nil {
 		return false, nil
+	}
+	quota := snapshot.Quota
+	promptTokens := snapshot.PromptTokens
+	completionTokens := snapshot.CompletionTokens
+	useTime := snapshot.UseTimeSeconds
+	content := snapshot.Content
+	return updateConsumeLog(
+		logId,
+		userId,
+		taskId,
+		snapshot.Other,
+		&quota,
+		&promptTokens,
+		&completionTokens,
+		&useTime,
+		&content,
+		requestId,
+	)
+}
+
+func updateConsumeLog(
+	logId int,
+	userId int,
+	taskId string,
+	updates map[string]interface{},
+	quota *int,
+	promptTokens *int,
+	completionTokens *int,
+	useTime *int,
+	content *string,
+	requestId string,
+) (bool, error) {
+	if logId <= 0 || userId <= 0 || strings.TrimSpace(taskId) == "" {
+		return false, nil
+	}
+	if len(updates) == 0 && quota == nil && promptTokens == nil && completionTokens == nil && useTime == nil && content == nil && strings.TrimSpace(requestId) == "" {
+		return false, nil
+	}
+	if quota != nil && *quota < 0 {
+		return false, fmt.Errorf("quota cannot be negative")
 	}
 	if promptTokens != nil && *promptTokens < 0 {
 		return false, fmt.Errorf("prompt tokens cannot be negative")
@@ -433,11 +487,23 @@ func MergeConsumeLogOtherAndTokens(
 			return false, err
 		}
 		columnUpdates := map[string]interface{}{"other": string(encoded)}
+		if quota != nil {
+			columnUpdates["quota"] = *quota
+		}
 		if promptTokens != nil {
 			columnUpdates["prompt_tokens"] = *promptTokens
 		}
 		if completionTokens != nil {
 			columnUpdates["completion_tokens"] = *completionTokens
+		}
+		if useTime != nil {
+			columnUpdates["use_time"] = *useTime
+		}
+		if content != nil {
+			columnUpdates["content"] = *content
+		}
+		if strings.TrimSpace(logItem.RequestId) == "" && strings.TrimSpace(requestId) != "" {
+			columnUpdates["request_id"] = strings.TrimSpace(requestId)
 		}
 		result := LOG_DB.Model(&Log{}).
 			Where("id = ? AND other = ?", logItem.Id, logItem.Other).

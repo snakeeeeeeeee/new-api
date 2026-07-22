@@ -1,3 +1,46 @@
+# Task Plan: Async Image Final Usage Log Reconciliation (2026-07-22)
+
+## Goal
+Keep one user-facing consume log per async image task: precharge at submission, then reconcile that same row to the real terminal quota and usage while preserving the original Request ID.
+
+## Current Phase
+Complete
+
+### Phase 1: Settlement contract and persistence ordering
+- [x] Confirm the current delta log is financially correct but produces incorrect usage-log semantics and aggregates.
+- [x] Map callback, task persistence, consume-log ID persistence, and early-completion compensation ordering.
+- **Status:** complete
+
+### Phase 2: Original-log reconciliation
+- [x] Persist the submission Request ID in the task billing snapshot for fallback correlation.
+- [x] On successful usage billing, update the original log with final quota, usage, duration, content, and settlement metadata.
+- [x] On async image failure, reconcile the original row to zero and mark the precharge refund instead of adding a refund row.
+- [x] Preserve generic non-image async billing log behavior.
+- **Status:** complete
+
+### Phase 3: Tests and Docker dev
+- [x] Cover over-precharge refund, under-precharge supplement, exact charge, failure refund, Request ID, early completion, and usage statistics.
+- [x] Run focused and full Go checks plus diff validation.
+- [x] Rebuild Docker dev and verify one real usage-billed async image record end to end.
+- **Status:** complete
+
+## Locked Decisions
+- Financial balance, subscription, token-quota, task-quota, and channel/user counters continue to settle by delta.
+- The user-facing log row stores the final actual quota, not the delta; it remains a consume row so one task counts as one request.
+- Precharge, actual quota, delta, settlement direction, and terminal state remain auditable in `other`.
+- Real usage is never estimated, and image-parameter pricing success remains anchored to its request snapshot.
+- Do not add a historical data migration in this change.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Combined planning patch used task-plan hunks out of file order | 1 | The atomic patch changed nothing; reorder the hunks and reapply. |
+| Initial Docker callback fixture read the channel callback secret from `other` instead of `settings` | 1 | Correct the test harness lookup, rerun the callback flow, and remove the disposable fixture; production code was unaffected. |
+| One Docker validation SQL query omitted a closing parenthesis | 1 | Correct the read-only validation query and rerun it successfully; no database state changed. |
+| Final manual mock health probe used `/health` instead of the configured `/healthz` | 1 | Compose already reported the mock healthy; use the configured endpoint for the explicit probe. |
+
+---
+
 # Task Plan: Async Image Token Usage Log Backfill (2026-07-22)
 
 ## Goal

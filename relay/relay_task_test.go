@@ -204,6 +204,7 @@ func TestRelayTaskSubmitImageHandleCreatesTaskAndLeaseBeforeSubmit(t *testing.T)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://real.example/v1")
 	common.SetContextKey(c, constant.ContextKeyChannelKey, "real-upstream-key")
 	common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-image-2")
+	c.Set(common.RequestIdKey, "req-task-lease-submit")
 
 	result, taskErr := RelayTaskSubmit(c, &relaycommon.RelayInfo{
 		UserId:        7,
@@ -226,6 +227,7 @@ func TestRelayTaskSubmitImageHandleCreatesTaskAndLeaseBeforeSubmit(t *testing.T)
 	assert.Equal(t, 1234, result.CreatedTask.PrivateData.BillingContext.PrechargePerImage)
 	assert.InDelta(t, 0.002468, result.CreatedTask.PrivateData.BillingContext.PrechargeAmountPerImage, 0.000001)
 	assert.Equal(t, 2, result.CreatedTask.PrivateData.BillingContext.ImageCount)
+	assert.Equal(t, "req-task-lease-submit", result.CreatedTask.PrivateData.BillingContext.RequestId)
 	executor := upstreamPayload["executor"].(map[string]any)
 	assert.Equal(t, "provider_direct_lease", executor["type"])
 	assert.NotEmpty(t, executor["lease_id"])
