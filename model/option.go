@@ -227,6 +227,11 @@ func SyncOptions(frequency int) {
 }
 
 func UpdateOption(key string, value string) error {
+	var err error
+	value, err = normalizeOpenAIReservedFunctionOption(key, value)
+	if err != nil {
+		return err
+	}
 	if key == "TokenTierPricingRules" {
 		if err := ratio_setting.ValidateTokenTierPricingRulesJSON(value); err != nil {
 			return err
@@ -279,8 +284,14 @@ func UpdateOptions(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
+	normalizedValues := make(map[string]string, len(values))
 	keys := make([]string, 0, len(values))
-	for key := range values {
+	for key, value := range values {
+		normalized, err := normalizeOpenAIReservedFunctionOption(key, value)
+		if err != nil {
+			return err
+		}
+		normalizedValues[key] = normalized
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
@@ -290,7 +301,7 @@ func UpdateOptions(values map[string]string) error {
 			if err := tx.FirstOrCreate(&option, Option{Key: key}).Error; err != nil {
 				return err
 			}
-			option.Value = values[key]
+			option.Value = normalizedValues[key]
 			if err := tx.Save(&option).Error; err != nil {
 				return err
 			}
@@ -300,7 +311,7 @@ func UpdateOptions(values map[string]string) error {
 		return err
 	}
 	for _, key := range keys {
-		if err := updateOptionMap(key, values[key]); err != nil {
+		if err := updateOptionMap(key, normalizedValues[key]); err != nil {
 			return err
 		}
 	}
@@ -723,6 +734,14 @@ func handleConfigUpdate(key, value string) (bool, error) {
 
 	configName := parts[0]
 	configKey := parts[1]
+	if configName == "global" {
+		normalized, err := normalizeOpenAIReservedFunctionOption(key, value)
+		if err != nil {
+			return true, err
+		}
+		value = normalized
+		common.OptionMap[key] = value
+	}
 	if configName == "violation_setting" {
 		if err := validateViolationConfigUpdate(configKey, value); err != nil {
 			return true, err
@@ -789,6 +808,22 @@ func handleConfigUpdate(key, value string) (bool, error) {
 	}
 
 	return true, nil // 已处理
+}
+
+func normalizeOpenAIReservedFunctionOption(key string, value string) (string, error) {
+	switch key {
+	case "global.openai_reserved_function_name_compat_enabled":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return "", errors.New("OpenAI 保留函数名兼容开关格式无效")
+		}
+		return strconv.FormatBool(enabled), nil
+	case "global.openai_reserved_function_names":
+		normalized, _, err := model_setting.NormalizeOpenAIReservedFunctionNames(value)
+		return normalized, err
+	default:
+		return value, nil
+	}
 }
 
 func normalizeImageHandleOptionValue(configKey, value string) string {

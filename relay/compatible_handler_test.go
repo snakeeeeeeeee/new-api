@@ -64,6 +64,18 @@ func TestTextHelperOpenAIToClaudePassthroughKeepsSamplingWhenCleanupDisabled(t *
 	require.Contains(t, upstreamBody, `"top_k":42`)
 }
 
+func TestTextHelperRewritesReservedFunctionNameInSerializedAndPassthroughRequests(t *testing.T) {
+	body := []byte(`{"model":"gpt-test","messages":[{"role":"user","content":"python"}],"tools":[{"type":"function","function":{"name":"python","parameters":{"type":"object"}}}]}`)
+
+	for _, passThrough := range []bool{false, true} {
+		t.Run(map[bool]string{false: "serialized", true: "passthrough"}[passThrough], func(t *testing.T) {
+			upstreamBody := runTextHelperOpenAIReservedFunctionNameCompat(t, body, passThrough)
+			require.Contains(t, upstreamBody, `"name":"run_python"`)
+			require.Contains(t, upstreamBody, `"content":"python"`)
+		})
+	}
+}
+
 func runTextHelperClaudePassthrough(t *testing.T, body []byte, applyCompat bool) string {
 	return runTextHelperClaudePassthroughWithSampling(t, body, applyCompat, false)
 }
@@ -117,6 +129,65 @@ func runTextHelperClaudePassthroughWithSampling(t *testing.T, body []byte, apply
 		RelayFormat:     types.RelayFormatOpenAI,
 		RelayMode:       relayconstant.RelayModeChatCompletions,
 		OriginModelName: "claude-sonnet-4-6",
+	}
+	info.InitRequestConversionChain()
+
+	newAPIError := TextHelper(c, info)
+	require.NotNil(t, newAPIError)
+	require.NotEmpty(t, upstreamBody)
+	return string(upstreamBody)
+}
+
+func runTextHelperOpenAIReservedFunctionNameCompat(t *testing.T, body []byte, passThrough bool) string {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	service.InitHttpClient()
+
+	globalSettings := model_setting.GetGlobalSettings()
+	oldGlobalPassThrough := globalSettings.PassThroughRequestEnabled
+	oldCompatEnabled := globalSettings.OpenAIReservedFunctionNameCompatEnabled
+	oldReservedNames := globalSettings.OpenAIReservedFunctionNames
+	globalSettings.PassThroughRequestEnabled = false
+	globalSettings.OpenAIReservedFunctionNameCompatEnabled = true
+	globalSettings.OpenAIReservedFunctionNames = "python"
+	t.Cleanup(func() {
+		globalSettings.PassThroughRequestEnabled = oldGlobalPassThrough
+		globalSettings.OpenAIReservedFunctionNameCompatEnabled = oldCompatEnabled
+		globalSettings.OpenAIReservedFunctionNames = oldReservedNames
+	})
+
+	var upstreamBody []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		upstreamBody, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"fake upstream"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	storage, err := common.CreateBodyStorage(body)
+	require.NoError(t, err)
+	c.Set(common.KeyBodyStorage, storage)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 1)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, upstream.URL)
+	common.SetContextKey(c, constant.ContextKeyChannelKey, "test-key")
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "gpt-test")
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{PassThroughBodyEnabled: passThrough})
+
+	var req dto.GeneralOpenAIRequest
+	require.NoError(t, common.Unmarshal(body, &req))
+	info := &relaycommon.RelayInfo{
+		Request:         &req,
+		RelayFormat:     types.RelayFormatOpenAI,
+		RelayMode:       relayconstant.RelayModeChatCompletions,
+		OriginModelName: "gpt-test",
 	}
 	info.InitRequestConversionChain()
 

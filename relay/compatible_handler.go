@@ -145,12 +145,25 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
 			requestBody = bytes.NewBuffer(jsonData)
 		} else {
-			if info.ChannelOtherSettings.ClaudeCacheTTLBillingCompatEnabled {
-				if jsonData, err := storage.Bytes(); err == nil {
-					relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
+			if relaycommon.ShouldApplyOpenAIReservedFunctionNameCompat(info) {
+				jsonData, err := storage.Bytes()
+				if err != nil {
+					return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 				}
+				jsonData, err = relaycommon.RewriteOpenAIReservedFunctionNamesJSON(jsonData, info)
+				if err != nil {
+					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+				}
+				relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
+				requestBody = bytes.NewBuffer(jsonData)
+			} else {
+				if info.ChannelOtherSettings.ClaudeCacheTTLBillingCompatEnabled {
+					if jsonData, err := storage.Bytes(); err == nil {
+						relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
+					}
+				}
+				requestBody = common.ReaderOnly(storage)
 			}
-			requestBody = common.ReaderOnly(storage)
 		}
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
@@ -226,6 +239,11 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			if newAPIError != nil {
 				return newAPIError
 			}
+		}
+
+		jsonData, err = relaycommon.RewriteOpenAIReservedFunctionNamesJSON(jsonData, info)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
 		logger.LogDebug(c, fmt.Sprintf("text request body: %s", string(jsonData)))

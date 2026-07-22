@@ -201,6 +201,10 @@ type RelayInfo struct {
 	// ClaudeCacheTTLBillingCompat records that the final upstream Claude request
 	// explicitly asked for 5m cache TTL and is eligible for user-side billing repricing.
 	ClaudeCacheTTLBillingCompat *ClaudeCacheTTLBillingCompatInfo
+	// OpenAIReservedFunctionNameAliases and Restores keep request-scoped aliases
+	// so upstream-reserved function names remain transparent to the client.
+	OpenAIReservedFunctionNameAliases  map[string]string
+	OpenAIReservedFunctionNameRestores map[string]string
 
 	ThinkingContentInfo
 	TokenCountMeta

@@ -26,6 +26,11 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	if data == "" {
 		return nil
 	}
+	restoredData, err := relaycommon.RestoreOpenAIReservedFunctionNamesJSON(common.StringToByteSlice(data), info)
+	if err != nil {
+		return err
+	}
+	data = string(restoredData)
 
 	if !forceFormat && !thinkToContent {
 		return helper.StringData(c, data)
@@ -218,6 +223,10 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 			logger.LogError(c, fmt.Sprintf("openrouter enterprise response success=false, data: %s", enterpriseResponse.Data))
 			return nil, types.NewOpenAIError(fmt.Errorf("openrouter response success=false"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}
+	}
+	responseBody, err = relaycommon.RestoreOpenAIReservedFunctionNamesJSON(responseBody, info)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
 	err = common.Unmarshal(responseBody, &simpleResponse)

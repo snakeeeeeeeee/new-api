@@ -1,10 +1,17 @@
 package model_setting
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/setting/config"
+)
+
+const (
+	OpenAIFunctionNameMaxLength              = 64
+	OpenAIReservedFunctionNamesMaxCount      = 128
+	OpenAIReservedFunctionNamesMaxInputBytes = 8192
 )
 
 type ChatCompletionsToResponsesPolicy struct {
@@ -33,9 +40,11 @@ func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channe
 }
 
 type GlobalSettings struct {
-	PassThroughRequestEnabled        bool                             `json:"pass_through_request_enabled"`
-	ThinkingModelBlacklist           []string                         `json:"thinking_model_blacklist"`
-	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
+	PassThroughRequestEnabled               bool                             `json:"pass_through_request_enabled"`
+	ThinkingModelBlacklist                  []string                         `json:"thinking_model_blacklist"`
+	ChatCompletionsToResponsesPolicy        ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
+	OpenAIReservedFunctionNameCompatEnabled bool                             `json:"openai_reserved_function_name_compat_enabled"`
+	OpenAIReservedFunctionNames             string                           `json:"openai_reserved_function_names"`
 }
 
 // 默认配置
@@ -49,6 +58,8 @@ var defaultOpenaiSettings = GlobalSettings{
 		Enabled:     false,
 		AllChannels: true,
 	},
+	OpenAIReservedFunctionNameCompatEnabled: true,
+	OpenAIReservedFunctionNames:             "python",
 }
 
 // 全局实例
@@ -61,6 +72,59 @@ func init() {
 
 func GetGlobalSettings() *GlobalSettings {
 	return &globalSettings
+}
+
+func NormalizeOpenAIReservedFunctionNames(value string) (string, []string, error) {
+	if len(value) > OpenAIReservedFunctionNamesMaxInputBytes {
+		return "", nil, fmt.Errorf("OpenAI 保留函数名配置不能超过 %d 字节", OpenAIReservedFunctionNamesMaxInputBytes)
+	}
+
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r'
+	})
+	names := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		name := strings.TrimSpace(part)
+		if name == "" {
+			continue
+		}
+		if err := validateOpenAIFunctionName(name); err != nil {
+			return "", nil, err
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		if len(names) >= OpenAIReservedFunctionNamesMaxCount {
+			return "", nil, fmt.Errorf("OpenAI 保留函数名最多配置 %d 个", OpenAIReservedFunctionNamesMaxCount)
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+
+	return strings.Join(names, "\n"), names, nil
+}
+
+func GetOpenAIReservedFunctionNames() []string {
+	_, names, err := NormalizeOpenAIReservedFunctionNames(globalSettings.OpenAIReservedFunctionNames)
+	if err != nil {
+		return nil
+	}
+	return names
+}
+
+func validateOpenAIFunctionName(name string) error {
+	if len(name) > OpenAIFunctionNameMaxLength {
+		return fmt.Errorf("OpenAI 函数名 %q 不能超过 %d 个字符", name, OpenAIFunctionNameMaxLength)
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '-' {
+			continue
+		}
+		return fmt.Errorf("OpenAI 函数名 %q 只能包含字母、数字、下划线和连字符", name)
+	}
+	return nil
 }
 
 // ShouldPreserveThinkingSuffix 判断模型是否配置为保留 thinking/-nothinking/-low/-high/-medium 后缀

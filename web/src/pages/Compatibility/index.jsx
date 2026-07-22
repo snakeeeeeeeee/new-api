@@ -76,6 +76,8 @@ const DEFAULT_OPTIONS = {
   'claude.response_integrity_fallback_enabled': false,
   'claude.response_integrity_first_block_timeout_seconds': '30',
   'global.chat_completions_to_responses_policy': '{}',
+  'global.openai_reserved_function_name_compat_enabled': true,
+  'global.openai_reserved_function_names': 'python',
 };
 
 const CLAUDE_DEFAULT_MAX_TOKENS_EXAMPLE = {
@@ -116,7 +118,24 @@ function optionValueForSubmit(key, value, parsedStatusCodes) {
   ) {
     return String(value || '').trim();
   }
+  if (key === 'global.openai_reserved_function_names') {
+    return normalizeOpenAIReservedFunctionNames(value).normalized;
+  }
   return value;
+}
+
+function normalizeOpenAIReservedFunctionNames(value) {
+  const rawValue = String(value || '');
+  const names = rawValue
+    .split(/[,\r\n]/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const uniqueNames = [...new Set(names)];
+  const ok =
+    new TextEncoder().encode(rawValue).length <= 8192 &&
+    uniqueNames.length <= 128 &&
+    uniqueNames.every((name) => /^[A-Za-z0-9_-]{1,64}$/.test(name));
+  return { ok, normalized: uniqueNames.join('\n') };
 }
 
 const VALIDATION_MODE_OPTIONS = [
@@ -392,6 +411,14 @@ export default function CompatibilityPage() {
       showError(t('ChatCompletions→Responses 兼容配置不是合法的 JSON 字符串'));
       return;
     }
+    if (
+      !normalizeOpenAIReservedFunctionNames(
+        inputs['global.openai_reserved_function_names'],
+      ).ok
+    ) {
+      showError(t('OpenAI 保留函数名配置格式不正确'));
+      return;
+    }
     if (Number(inputs['claude.request_size_limit_bytes']) <= 0) {
       showError(t('Claude 请求体限制必须大于 0'));
       return;
@@ -528,9 +555,7 @@ export default function CompatibilityPage() {
                         max={300}
                         step={1}
                         disabled={
-                          !inputs[
-                            'claude.response_integrity_fallback_enabled'
-                          ]
+                          !inputs['claude.response_integrity_fallback_enabled']
                         }
                         extraText={t(
                           '从发起上游请求开始计算，范围 1-300 秒，默认 30 秒；message_start 和 ping 不会重置计时。',
@@ -594,10 +619,61 @@ export default function CompatibilityPage() {
                   <SectionHeader
                     title={t('OpenAI 兼容')}
                     description={t(
-                      '承接现有全局转换配置，并为后续 OpenAI 兼容策略预留入口。',
+                      '管理 OpenAI Chat Completions 转换及上游保留函数名兼容。',
                     )}
                   />
                   <Row gutter={[16, 12]}>
+                    <Col xs={24} md={12} lg={10}>
+                      <Form.Switch
+                        label={t('保留函数名自动兼容')}
+                        field={
+                          'global.openai_reserved_function_name_compat_enabled'
+                        }
+                        extraText={t(
+                          '命中后转发为 run_<name>，响应时自动还原原名。',
+                        )}
+                        onChange={(value) =>
+                          setInputs((current) => ({
+                            ...current,
+                            'global.openai_reserved_function_name_compat_enabled':
+                              value,
+                          }))
+                        }
+                      />
+                    </Col>
+                    <Col xs={24} lg={14}>
+                      <Form.TextArea
+                        label={t('OpenAI 保留函数名')}
+                        field={'global.openai_reserved_function_names'}
+                        placeholder={'python\nxxx'}
+                        disabled={
+                          !inputs[
+                            'global.openai_reserved_function_name_compat_enabled'
+                          ]
+                        }
+                        extraText={t(
+                          '使用英文逗号或换行分隔；名称仅支持字母、数字、下划线和连字符，每项最多 64 个字符。',
+                        )}
+                        autosize={{ minRows: 3, maxRows: 8 }}
+                        trigger='blur'
+                        stopValidateWithError
+                        rules={[
+                          {
+                            validator: (rule, value) =>
+                              normalizeOpenAIReservedFunctionNames(value).ok,
+                            message: t('OpenAI 保留函数名配置格式不正确'),
+                          },
+                        ]}
+                        onChange={(value) =>
+                          setInputs((current) => ({
+                            ...current,
+                            'global.openai_reserved_function_names': value,
+                          }))
+                        }
+                      />
+                    </Col>
+                  </Row>
+                  <Row gutter={[16, 12]} className='mt-6'>
                     <Col xs={24} lg={14}>
                       <Form.TextArea
                         label={t('ChatCompletions→Responses 兼容配置')}

@@ -15,6 +15,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestOpenAIReservedFunctionNameOptionsCanBeUpdated(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+	model.InitOptionMap()
+	settings := model_setting.GetGlobalSettings()
+	originalEnabled := settings.OpenAIReservedFunctionNameCompatEnabled
+	originalNames := settings.OpenAIReservedFunctionNames
+	t.Cleanup(func() {
+		settings.OpenAIReservedFunctionNameCompatEnabled = originalEnabled
+		settings.OpenAIReservedFunctionNames = originalNames
+	})
+
+	updateOptionForTest := func(key string, value any) tokenAPIResponse {
+		t.Helper()
+		payload, err := common.Marshal(map[string]any{"key": key, "value": value})
+		require.NoError(t, err)
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(payload))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		UpdateOption(ctx)
+
+		var response tokenAPIResponse
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		return response
+	}
+
+	enabledResponse := updateOptionForTest("global.openai_reserved_function_name_compat_enabled", false)
+	require.True(t, enabledResponse.Success, enabledResponse.Message)
+	require.False(t, settings.OpenAIReservedFunctionNameCompatEnabled)
+
+	namesResponse := updateOptionForTest("global.openai_reserved_function_names", " python,xxx\npython ")
+	require.True(t, namesResponse.Success, namesResponse.Message)
+	require.Equal(t, "python\nxxx", settings.OpenAIReservedFunctionNames)
+
+	invalidResponse := updateOptionForTest("global.openai_reserved_function_names", "python.tool")
+	require.False(t, invalidResponse.Success)
+	require.Contains(t, invalidResponse.Message, "只能包含")
+	require.Equal(t, "python\nxxx", settings.OpenAIReservedFunctionNames)
+}
+
 func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	setupAggregateGroupControllerTestDB(t)
 	model.InitOptionMap()
