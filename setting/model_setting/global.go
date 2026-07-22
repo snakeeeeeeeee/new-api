@@ -40,11 +40,12 @@ func (p ChatCompletionsToResponsesPolicy) IsChannelEnabled(channelID int, channe
 }
 
 type GlobalSettings struct {
-	PassThroughRequestEnabled               bool                             `json:"pass_through_request_enabled"`
-	ThinkingModelBlacklist                  []string                         `json:"thinking_model_blacklist"`
-	ChatCompletionsToResponsesPolicy        ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
-	OpenAIReservedFunctionNameCompatEnabled bool                             `json:"openai_reserved_function_name_compat_enabled"`
-	OpenAIReservedFunctionNames             string                           `json:"openai_reserved_function_names"`
+	PassThroughRequestEnabled                 bool                             `json:"pass_through_request_enabled"`
+	ThinkingModelBlacklist                    []string                         `json:"thinking_model_blacklist"`
+	ChatCompletionsToResponsesPolicy          ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
+	OpenAIReservedFunctionNameCompatEnabled   bool                             `json:"openai_reserved_function_name_compat_enabled"`
+	OpenAIReservedFunctionNames               string                           `json:"openai_reserved_function_names"`
+	OpenAIToolSchemaNullRequiredCompatEnabled bool                             `json:"openai_tool_schema_null_required_compat_enabled"`
 }
 
 // 默认配置
@@ -58,8 +59,9 @@ var defaultOpenaiSettings = GlobalSettings{
 		Enabled:     false,
 		AllChannels: true,
 	},
-	OpenAIReservedFunctionNameCompatEnabled: true,
-	OpenAIReservedFunctionNames:             "python",
+	OpenAIReservedFunctionNameCompatEnabled:   true,
+	OpenAIReservedFunctionNames:               "python",
+	OpenAIToolSchemaNullRequiredCompatEnabled: false,
 }
 
 // 全局实例

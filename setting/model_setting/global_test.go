@@ -33,6 +33,10 @@ func TestNormalizeOpenAIReservedFunctionNamesRejectsInvalidValues(t *testing.T) 
 	}
 }
 
+func TestOpenAIToolSchemaNullRequiredCompatibilityDefaultsDisabled(t *testing.T) {
+	require.False(t, defaultOpenaiSettings.OpenAIToolSchemaNullRequiredCompatEnabled)
+}
+
 func buildOpenAIReservedFunctionNames(count int) string {
 	names := make([]string, count)
 	for i := range names {

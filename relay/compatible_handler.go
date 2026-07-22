@@ -145,10 +145,15 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
 			requestBody = bytes.NewBuffer(jsonData)
 		} else {
-			if relaycommon.ShouldApplyOpenAIReservedFunctionNameCompat(info) {
+			if relaycommon.ShouldApplyOpenAIReservedFunctionNameCompat(info) ||
+				relaycommon.ShouldApplyOpenAIToolSchemaNullRequiredCompat(info) {
 				jsonData, err := storage.Bytes()
 				if err != nil {
 					return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+				}
+				jsonData, err = relaycommon.CleanOpenAIToolSchemaNullRequiredJSON(jsonData, info)
+				if err != nil {
+					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 				}
 				jsonData, err = relaycommon.RewriteOpenAIReservedFunctionNamesJSON(jsonData, info)
 				if err != nil {
@@ -239,6 +244,11 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 			if newAPIError != nil {
 				return newAPIError
 			}
+		}
+
+		jsonData, err = relaycommon.CleanOpenAIToolSchemaNullRequiredJSON(jsonData, info)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
 		jsonData, err = relaycommon.RewriteOpenAIReservedFunctionNamesJSON(jsonData, info)

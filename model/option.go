@@ -228,7 +228,7 @@ func SyncOptions(frequency int) {
 
 func UpdateOption(key string, value string) error {
 	var err error
-	value, err = normalizeOpenAIReservedFunctionOption(key, value)
+	value, err = normalizeOpenAICompatibilityOption(key, value)
 	if err != nil {
 		return err
 	}
@@ -287,7 +287,7 @@ func UpdateOptions(values map[string]string) error {
 	normalizedValues := make(map[string]string, len(values))
 	keys := make([]string, 0, len(values))
 	for key, value := range values {
-		normalized, err := normalizeOpenAIReservedFunctionOption(key, value)
+		normalized, err := normalizeOpenAICompatibilityOption(key, value)
 		if err != nil {
 			return err
 		}
@@ -735,7 +735,7 @@ func handleConfigUpdate(key, value string) (bool, error) {
 	configName := parts[0]
 	configKey := parts[1]
 	if configName == "global" {
-		normalized, err := normalizeOpenAIReservedFunctionOption(key, value)
+		normalized, err := normalizeOpenAICompatibilityOption(key, value)
 		if err != nil {
 			return true, err
 		}
@@ -810,12 +810,18 @@ func handleConfigUpdate(key, value string) (bool, error) {
 	return true, nil // 已处理
 }
 
-func normalizeOpenAIReservedFunctionOption(key string, value string) (string, error) {
+func normalizeOpenAICompatibilityOption(key string, value string) (string, error) {
 	switch key {
 	case "global.openai_reserved_function_name_compat_enabled":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {
 			return "", errors.New("OpenAI 保留函数名兼容开关格式无效")
+		}
+		return strconv.FormatBool(enabled), nil
+	case "global.openai_tool_schema_null_required_compat_enabled":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return "", errors.New("OpenAI 工具 Schema 空 required 兼容开关格式无效")
 		}
 		return strconv.FormatBool(enabled), nil
 	case "global.openai_reserved_function_names":

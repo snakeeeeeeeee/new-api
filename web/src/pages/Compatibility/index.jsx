@@ -78,6 +78,7 @@ const DEFAULT_OPTIONS = {
   'global.chat_completions_to_responses_policy': '{}',
   'global.openai_reserved_function_name_compat_enabled': true,
   'global.openai_reserved_function_names': 'python',
+  'global.openai_tool_schema_null_required_compat_enabled': false,
 };
 
 const CLAUDE_DEFAULT_MAX_TOKENS_EXAMPLE = {
@@ -619,10 +620,30 @@ export default function CompatibilityPage() {
                   <SectionHeader
                     title={t('OpenAI 兼容')}
                     description={t(
-                      '管理 OpenAI Chat Completions 转换及上游保留函数名兼容。',
+                      '管理 OpenAI Chat Completions 转换、工具 Schema 及上游保留函数名兼容。',
                     )}
                   />
                   <Row gutter={[16, 12]}>
+                    <Col xs={24} md={12} lg={10}>
+                      <Form.Switch
+                        label={t('空 required Schema 自动清理')}
+                        field={
+                          'global.openai_tool_schema_null_required_compat_enabled'
+                        }
+                        extraText={t(
+                          '仅递归删除工具参数 Schema 中值为 null 的 required；其他非法值保持不变。默认关闭。',
+                        )}
+                        onChange={(value) =>
+                          setInputs((current) => ({
+                            ...current,
+                            'global.openai_tool_schema_null_required_compat_enabled':
+                              value,
+                          }))
+                        }
+                      />
+                    </Col>
+                  </Row>
+                  <Row gutter={[16, 12]} className='mt-4'>
                     <Col xs={24} md={12} lg={10}>
                       <Form.Switch
                         label={t('保留函数名自动兼容')}

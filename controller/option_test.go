@@ -21,9 +21,11 @@ func TestOpenAIReservedFunctionNameOptionsCanBeUpdated(t *testing.T) {
 	settings := model_setting.GetGlobalSettings()
 	originalEnabled := settings.OpenAIReservedFunctionNameCompatEnabled
 	originalNames := settings.OpenAIReservedFunctionNames
+	originalSchemaCompatEnabled := settings.OpenAIToolSchemaNullRequiredCompatEnabled
 	t.Cleanup(func() {
 		settings.OpenAIReservedFunctionNameCompatEnabled = originalEnabled
 		settings.OpenAIReservedFunctionNames = originalNames
+		settings.OpenAIToolSchemaNullRequiredCompatEnabled = originalSchemaCompatEnabled
 	})
 
 	updateOptionForTest := func(key string, value any) tokenAPIResponse {
@@ -53,6 +55,15 @@ func TestOpenAIReservedFunctionNameOptionsCanBeUpdated(t *testing.T) {
 	require.False(t, invalidResponse.Success)
 	require.Contains(t, invalidResponse.Message, "只能包含")
 	require.Equal(t, "python\nxxx", settings.OpenAIReservedFunctionNames)
+
+	schemaCompatResponse := updateOptionForTest("global.openai_tool_schema_null_required_compat_enabled", true)
+	require.True(t, schemaCompatResponse.Success, schemaCompatResponse.Message)
+	require.True(t, settings.OpenAIToolSchemaNullRequiredCompatEnabled)
+
+	invalidSchemaCompatResponse := updateOptionForTest("global.openai_tool_schema_null_required_compat_enabled", "invalid")
+	require.False(t, invalidSchemaCompatResponse.Success)
+	require.Contains(t, invalidSchemaCompatResponse.Message, "开关格式无效")
+	require.True(t, settings.OpenAIToolSchemaNullRequiredCompatEnabled)
 }
 
 func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestTextHelperOpenAIToClaudePassthroughAppliesCompatWhenEnabled(t *testing.T) {
@@ -72,6 +73,32 @@ func TestTextHelperRewritesReservedFunctionNameInSerializedAndPassthroughRequest
 			upstreamBody := runTextHelperOpenAIReservedFunctionNameCompat(t, body, passThrough)
 			require.Contains(t, upstreamBody, `"name":"run_python"`)
 			require.Contains(t, upstreamBody, `"content":"python"`)
+		})
+	}
+}
+
+func TestTextHelperCleansNullRequiredToolSchemasInSerializedAndPassthroughRequests(t *testing.T) {
+	body := []byte(`{"model":"gpt-test","messages":[{"role":"user","content":{"required":null}}],"tools":[{"type":"function","function":{"name":"knowledge_list_documents","parameters":{"type":"object","required":null,"properties":{"query":{"type":"object","required":null},"data":{"default":{"required":null}}}}}}],"functions":[{"name":"legacy","parameters":{"type":"object","required":null}}]}`)
+
+	for _, passThrough := range []bool{false, true} {
+		t.Run(map[bool]string{false: "serialized", true: "passthrough"}[passThrough], func(t *testing.T) {
+			upstreamBody := runTextHelperOpenAIToolSchemaCompat(t, body, passThrough, true)
+			require.False(t, gjson.Get(upstreamBody, "tools.0.function.parameters.required").Exists())
+			require.False(t, gjson.Get(upstreamBody, "tools.0.function.parameters.properties.query.required").Exists())
+			require.False(t, gjson.Get(upstreamBody, "functions.0.parameters.required").Exists())
+			require.Equal(t, "null", gjson.Get(upstreamBody, "messages.0.content.required").Raw)
+			require.Equal(t, "null", gjson.Get(upstreamBody, "tools.0.function.parameters.properties.data.default.required").Raw)
+		})
+	}
+}
+
+func TestTextHelperKeepsNullRequiredToolSchemasWhenCompatibilityDisabled(t *testing.T) {
+	body := []byte(`{"model":"gpt-test","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"knowledge_list_documents","parameters":{"type":"object","required":null}}}]}`)
+
+	for _, passThrough := range []bool{false, true} {
+		t.Run(map[bool]string{false: "serialized", true: "passthrough"}[passThrough], func(t *testing.T) {
+			upstreamBody := runTextHelperOpenAIToolSchemaCompat(t, body, passThrough, false)
+			require.Equal(t, "null", gjson.Get(upstreamBody, "tools.0.function.parameters.required").Raw)
 		})
 	}
 }
@@ -139,21 +166,31 @@ func runTextHelperClaudePassthroughWithSampling(t *testing.T, body []byte, apply
 }
 
 func runTextHelperOpenAIReservedFunctionNameCompat(t *testing.T, body []byte, passThrough bool) string {
+	return runTextHelperOpenAICompatibility(t, body, passThrough, func(settings *model_setting.GlobalSettings) {
+		settings.OpenAIReservedFunctionNameCompatEnabled = true
+		settings.OpenAIReservedFunctionNames = "python"
+	})
+}
+
+func runTextHelperOpenAIToolSchemaCompat(t *testing.T, body []byte, passThrough bool, enabled bool) string {
+	return runTextHelperOpenAICompatibility(t, body, passThrough, func(settings *model_setting.GlobalSettings) {
+		settings.OpenAIToolSchemaNullRequiredCompatEnabled = enabled
+	})
+}
+
+func runTextHelperOpenAICompatibility(t *testing.T, body []byte, passThrough bool, configure func(*model_setting.GlobalSettings)) string {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	service.InitHttpClient()
 
 	globalSettings := model_setting.GetGlobalSettings()
-	oldGlobalPassThrough := globalSettings.PassThroughRequestEnabled
-	oldCompatEnabled := globalSettings.OpenAIReservedFunctionNameCompatEnabled
-	oldReservedNames := globalSettings.OpenAIReservedFunctionNames
+	oldGlobalSettings := *globalSettings
 	globalSettings.PassThroughRequestEnabled = false
-	globalSettings.OpenAIReservedFunctionNameCompatEnabled = true
-	globalSettings.OpenAIReservedFunctionNames = "python"
+	globalSettings.OpenAIReservedFunctionNameCompatEnabled = false
+	globalSettings.OpenAIToolSchemaNullRequiredCompatEnabled = false
+	configure(globalSettings)
 	t.Cleanup(func() {
-		globalSettings.PassThroughRequestEnabled = oldGlobalPassThrough
-		globalSettings.OpenAIReservedFunctionNameCompatEnabled = oldCompatEnabled
-		globalSettings.OpenAIReservedFunctionNames = oldReservedNames
+		*globalSettings = oldGlobalSettings
 	})
 
 	var upstreamBody []byte

@@ -522,6 +522,11 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorMsg(c, "OpenAI 保留函数名兼容开关格式无效")
 			return
 		}
+	case "global.openai_tool_schema_null_required_compat_enabled":
+		if _, parseErr := strconv.ParseBool(option.Value.(string)); parseErr != nil {
+			common.ApiErrorMsg(c, "OpenAI 工具 Schema 空 required 兼容开关格式无效")
+			return
+		}
 	case "global.openai_reserved_function_names":
 		normalized, _, normalizeErr := model_setting.NormalizeOpenAIReservedFunctionNames(option.Value.(string))
 		if normalizeErr != nil {
