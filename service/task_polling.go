@@ -582,12 +582,16 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
-		if strings.HasPrefix(taskResult.Url, "data:") {
+		resultURL := taskResult.Url
+		if len(taskResult.VideoOutputs) > 0 && strings.TrimSpace(taskResult.VideoOutputs[0].URL) != "" {
+			resultURL = taskResult.VideoOutputs[0].URL
+		}
+		if strings.HasPrefix(resultURL, "data:") {
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
-		} else if taskResult.Url != "" {
+		} else if resultURL != "" {
 			// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
-			task.PrivateData.ResultURL = taskResult.Url
+			task.PrivateData.ResultURL = resultURL
 		} else {
 			// No URL from adaptor — construct proxy URL using public task ID
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
@@ -627,12 +631,12 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 				return updateErr
 			}
 			if task.Status == model.TaskStatusSuccess {
-				inputs := BuildAssetCreateInputs(task)
+				inputs := BuildAssetCreateInputsForResult(task, taskResult)
 				if err := model.CreateAssetsForTaskTx(tx, inputs); err != nil {
 					return err
 				}
 			}
-			return CreateImageTaskWebhookEventTx(tx, task)
+			return CreateTaskWebhookEventTx(tx, task)
 		})
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))

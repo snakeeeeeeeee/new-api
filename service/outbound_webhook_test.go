@@ -40,7 +40,7 @@ func setupOutboundWebhookTestDB(t *testing.T) *gorm.DB {
 	model.DB = db
 	model.LOG_DB = db
 	require.NoError(t, db.AutoMigrate(
-		&model.User{}, &model.Task{}, &model.ImageTaskRequest{}, &model.Asset{}, &model.AssetKey{},
+		&model.User{}, &model.Task{}, &model.ImageTaskRequest{}, &model.VideoTaskRequest{}, &model.Asset{}, &model.AssetKey{},
 		&model.WebhookEndpoint{}, &model.WebhookEvent{}, &model.WebhookDelivery{}, &model.WebhookDeliveryAttempt{},
 	))
 	require.NoError(t, db.Create(&model.User{Id: 501, Username: "webhook-user", Status: common.UserStatusEnabled, Group: "default", AffCode: "webhook501"}).Error)
@@ -305,6 +305,87 @@ func TestImageTaskTerminalEventCreatesOneAccountDelivery(t *testing.T) {
 	require.NoError(t, db.Model(&model.WebhookDelivery{}).Count(&deliveryCount).Error)
 	assert.EqualValues(t, 1, eventCount)
 	assert.EqualValues(t, 1, deliveryCount)
+}
+
+func TestVideoTaskTerminalEventCreatesAssetsAndOneAccountDelivery(t *testing.T) {
+	db := setupOutboundWebhookTestDB(t)
+	putWebhookTestConfig(t, "http://127.0.0.1:18080/hook")
+	task := &model.Task{
+		TaskID: "task_video_webhook", UserId: 501, ChannelId: 77, Group: "default",
+		Platform: constant.TaskPlatform("48"), Action: constant.TaskActionVideoEdit,
+		Status: model.TaskStatusQueued, Progress: "20%", SubmitTime: time.Now().Unix(),
+		Properties: model.Properties{OriginModelName: "grok-imagine-video-1.5", AssetType: constant.TaskAssetTypeVideo, Operation: "edit"},
+	}
+	require.NoError(t, db.Create(task).Error)
+	requestJSON, err := common.Marshal(dto.VideoTaskCreateRequest{
+		Model: "grok-imagine-video-1.5", Operation: "edit",
+		Input:             dto.VideoTaskInputRequest{Prompt: "add rain", Video: &dto.VideoTaskSource{URL: "https://example.com/source.mp4"}},
+		ClientReferenceID: "order_video", Metadata: map[string]any{"tenant": "acme"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(model.NewVideoTaskRequest(task, 501, nil, "fingerprint", "order_video", requestJSON)).Error)
+
+	result := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, Progress: "100%", VideoOutputs: []relaycommon.VideoOutput{
+		{Index: 0, URL: "https://cdn.example.com/one.mp4", MimeType: "video/mp4", DurationMS: 5000},
+		{Index: 1, URL: "https://cdn.example.com/two.mp4", MimeType: "video/mp4", DurationMS: 6000},
+	}}
+	updated, _ := ApplyTaskResult(context.Background(), &mockAdaptor{}, task, result)
+	require.True(t, updated)
+
+	var eventCount, deliveryCount, assetCount int64
+	require.NoError(t, db.Model(&model.WebhookEvent{}).Count(&eventCount).Error)
+	require.NoError(t, db.Model(&model.WebhookDelivery{}).Count(&deliveryCount).Error)
+	require.NoError(t, db.Model(&model.Asset{}).Count(&assetCount).Error)
+	assert.EqualValues(t, 1, eventCount)
+	assert.EqualValues(t, 1, deliveryCount)
+	assert.EqualValues(t, 2, assetCount)
+
+	var event model.WebhookEvent
+	require.NoError(t, db.First(&event).Error)
+	assert.Equal(t, WebhookEventVideoTaskSucceeded, event.EventType)
+	assert.Equal(t, "video.task", event.ObjectType)
+	assert.Contains(t, event.Payload, `"object":"video.task"`)
+	assert.Contains(t, event.Payload, `"client_reference_id":"order_video"`)
+	assert.Contains(t, event.Payload, `"temporary":true`)
+	assert.NotContains(t, event.Payload, "channel_id")
+	assert.NotContains(t, event.Payload, "upstream_task_id")
+	assert.NotContains(t, event.Payload, "cost_in_usd_ticks")
+
+	var saved model.Task
+	require.NoError(t, db.First(&saved, task.ID).Error)
+	updated, _ = ApplyTaskResult(context.Background(), &mockAdaptor{}, &saved, result)
+	assert.False(t, updated)
+	require.NoError(t, db.Model(&model.WebhookEvent{}).Count(&eventCount).Error)
+	assert.EqualValues(t, 1, eventCount)
+}
+
+func TestVideoTaskFailureWebhookDoesNotRequireAsset(t *testing.T) {
+	db := setupOutboundWebhookTestDB(t)
+	putWebhookTestConfig(t, "http://127.0.0.1:18080/hook")
+	task := &model.Task{
+		TaskID: "task_video_failed", UserId: 501, ChannelId: 77,
+		Platform: constant.TaskPlatform("48"), Action: constant.TaskActionVideoExtension,
+		Status: model.TaskStatusQueued, Progress: "20%", SubmitTime: time.Now().Unix(),
+		Properties: model.Properties{OriginModelName: "grok-imagine-video-1.5", AssetType: constant.TaskAssetTypeVideo, Operation: "extension"},
+	}
+	require.NoError(t, db.Create(task).Error)
+	requestJSON, err := common.Marshal(dto.VideoTaskCreateRequest{
+		Model: "grok-imagine-video-1.5", Operation: "extension",
+		Input: dto.VideoTaskInputRequest{Prompt: "continue", Video: &dto.VideoTaskSource{URL: "https://example.com/source.mp4"}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(model.NewVideoTaskRequest(task, 501, nil, "fingerprint", "", requestJSON)).Error)
+
+	updated, _ := ApplyTaskResult(context.Background(), &mockAdaptor{}, task, &relaycommon.TaskInfo{Status: model.TaskStatusFailure, Reason: "expired"})
+	require.True(t, updated)
+	var event model.WebhookEvent
+	require.NoError(t, db.First(&event).Error)
+	assert.Equal(t, WebhookEventVideoTaskFailed, event.EventType)
+	assert.Contains(t, event.Payload, `"status":"failed"`)
+	assert.Contains(t, event.Payload, `"message":"expired"`)
+	var assetCount int64
+	require.NoError(t, db.Model(&model.Asset{}).Count(&assetCount).Error)
+	assert.Zero(t, assetCount)
 }
 
 func TestWebhookDeliveryRetriesNon2xxUntilSuccess(t *testing.T) {

@@ -899,7 +899,7 @@ func RelayTask(c *gin.Context) {
 			break
 		}
 
-		if c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/image/tasks" {
+		if c.Request != nil && c.Request.URL != nil && (c.Request.URL.Path == "/v1/image/tasks" || c.Request.URL.Path == "/v1/video/tasks") {
 			break
 		}
 		shouldRetryTask := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
@@ -1041,6 +1041,10 @@ func RelayTask(c *gin.Context) {
 func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if c != nil && c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/image/tasks" {
 		writeImageTaskAPIError(c, taskErr.StatusCode, taskErr.Code, taskErr.Message, "")
+		return
+	}
+	if c != nil && c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/video/tasks" {
+		writeVideoTaskAPIError(c, taskErr.StatusCode, taskErr.Code, taskErr.Message, "")
 		return
 	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {

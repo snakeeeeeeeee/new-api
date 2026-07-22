@@ -1,3 +1,65 @@
+# Multi-provider Async Video Final Progress (2026-07-23)
+
+- Completed the normalized `/v1/video/tasks` create/list/get/batch contract, durable request/idempotency storage, provider-neutral public DTO, structured multi-output Assets, and split Token/`ak_` authentication.
+- Completed xAI generation/edit/extension conversion, provider namespace validation, explicit-zero preservation, upstream-model pass-through, and the official 1080p restriction to 1.5 single-image generation.
+- Completed Asset content resolution for public CDN, relative authenticated channels, provider resolvers, data URLs, redirects, Range, expiry mapping, and legacy task-content aliases.
+- Completed `video.task.succeeded` and `video.task.failed` creation through the existing durable Webhook event/outbox using the shared account `wk-`.
+- Added the Async Videos Resource Center page, four normalized operations, query/download examples, credential semantics, temporary-resource behavior, Webhook events, OpenAPI 3.1 schemas, filters, and all seven locale catalogs.
+- Focused Go tests, `go test ./... -count=1`, OpenAPI drift, scoped ESLint/Prettier, frontend production build, i18n status, and `git diff --check` pass. Full i18n lint remains at the repository's existing 420-item baseline with no changed-page finding.
+- Rebuilt Docker dev as image `sha256:191f82bf460d...`; `new-api-dev` is healthy at port 3001.
+- Desktop-only browser QA at 1280x720 confirmed the Async Videos tab, all documented operations, query/download guidance, credential semantics, and no document-level horizontal overflow. Mobile QA was intentionally skipped per user instruction.
+- Real task `task_Z75TXf0icNrn3pQcckUrZCdfLkRSoKJc` completed on channel 109 with a 2-second MP4; normalized `ak_` query, video Asset lookup, Asset Range, and legacy task Range all passed with HTTP 206 and 1,024 bytes.
+- The generated sub2api output is a relative authenticated `/v1/videos/{uuid}/content` path, so the public task correctly returns an Asset proxy with `url_auth=resource_api_key` rather than claiming a public xAI CDN URL.
+- The real upstream rejected edit submissions using both a downloaded data URL and the generated provider content UUID. Both became durable failed public tasks and each emitted one delivered `video.task.failed`; the successful generation emitted one delivered `video.task.succeeded`.
+- Replaying the failed edit with the same request and `Idempotency-Key` returned HTTP 202, `Idempotent-Replayed: true`, and the original failed task without another upstream call.
+- Restored the original admin Webhook URL/status/version/ciphertext/update timestamp, reset mock metrics, retained the real task records as acceptance evidence, and confirmed Docker health and `/api/status`.
+
+---
+
+# Task Log Public Video URL Follow-up Progress (2026-07-23)
+
+- Reviewed the supplied task-log modal screenshot and traced its URL to `TaskModel2Dto` rather than the OpenAI video status converter.
+- Selected DTO-boundary conversion so the dashboard gets the public `task_.../content` URL without losing the raw upstream URL needed by the backend proxy.
+- Started focused backend implementation and regression coverage; Docker task-log acceptance remains pending.
+- Confirmed no frontend component change is required: the existing task-log modal and action buttons already consume a public-compatible URL when the DTO supplies one.
+- Added a shared relative proxy-path helper and changed successful video `TaskDto.result_url` serialization to use it for all registered video actions.
+- Added regression coverage proving all video actions use the public task ID, non-video URLs remain unchanged, failure URLs remain hidden, and internal upstream storage is untouched.
+- Focused `relay`, `taskcommon`, `controller`, and `router` tests pass; Docker rebuild and browser acceptance are starting.
+- Full `go test ./... -count=1` passes.
+- Docker dev rebuilt successfully as image `sha256:9b369e0812ba...`; browser/session acceptance is next.
+- Browser acceptance reached the local login page because the controllable browser has no session. An isolated disposable administrator will be used and removed after validation.
+- The first disposable registration was rejected by the username length validator before creating data; retrying with a shorter unique fixture.
+- Registered local fixture user ID 994207 and promoted it to administrator. The task page loads the administrator layout but requires a task-log menu permission entry before data can be read.
+- Granted only `async_task`; both existing xAI rows now load in the administrator task table.
+- The first automated preview click did not create a video element, so the locator will be rebuilt from the refreshed DOM before evaluating media playback.
+- A second click with the rebuilt unique enabled locator also produced no modal; switching to component/log inspection rather than repeating that interaction.
+- The visible DOM node click also produced no modal and no application error. Final browser verification will navigate shared-session tabs directly to the task JSON and public video content endpoints.
+- Direct JSON-tab navigation was blocked locally before reaching the server; switching to an authenticated same-origin read from the task page.
+- The page sandbox also omits `fetch`; relying on the successfully rendered task rows, focused DTO tests, and a direct shared-session media navigation instead.
+- Authenticated browser media acceptance passes: the public task route fully decodes the MP4 with no error (`readyState=4`, 5.04 seconds, 848x480).
+- The first CLI session DTO check logged in but omitted `New-Api-User`, so middleware rejected it before serialization; retrying with the same header used by the frontend.
+- The corrected authenticated task API check passes and its CLI session was logged out: the existing xAI row exposes only the public `task_.../content` path.
+- The isolated browser could not invoke logout through API navigation or physical menu interaction; cleanup will close all test tabs and remove the fixture user and permission rows directly.
+- Removed fixture user 994207 and its `async_task` permission; final user/permission/token/task/log residue counts are all zero and the isolated test tabs are closed.
+- Task-log follow-up acceptance is complete: full Go tests pass, Docker is rebuilt, the real task DTO exposes the public path, and the browser decodes the authenticated MP4 successfully.
+
+---
+
+# xAI Video Provider Compatibility Progress (2026-07-23)
+
+- Reproduced the local Docker failure with a real completed xAI video task and isolated the contract mismatch from upstream generation health.
+- Removed xAI video model normalization and added canonical `grok-imagine-video-1.5` discovery support; `UpstreamModelName` is now sent unchanged.
+- Changed xAI completed status conversion to publish the public `task_...` content URL.
+- Added safe relative URL resolution, same-origin Bearer attachment, cross-origin redirect stripping, Range forwarding, and all-2xx video response handling.
+- Extended the video proxy transfer timeout from 60 seconds to 10 minutes after Docker acceptance reached the correct upstream content but a larger MP4 did not finish within the old window.
+- Added focused model pass-through, mapping, public URL, relative URL, CDN auth, unsafe URL, and redirect-secret tests.
+- Focused tests pass for `relay/channel/task/xai`, `controller`, and `router`; full regression and Docker acceptance remain in progress.
+- Final `go test ./... -count=1` and `git diff --check` pass.
+- Rebuilt Docker dev image `sha256:0ec505dac8e0...`; `new-api-dev` is healthy and `/api/status` returns 200.
+- Real canonical task `task_7gnfNoVeZOj4YrPqZ8yi3Sp2SU2gS7SS` completed with a public `task_...` metadata URL. Reusing completed task `task_dwECb8BLNtzhUNm8taOUgknsekhWgmk5`, the public content route returned HTTP 200, `video/mp4`, and a valid 1,591,016-byte MP4.
+
+---
+
 # Async Image Final Usage Log Reconciliation Progress (2026-07-22)
 
 - Loaded the required brainstorming and file-planning workflows; the user approved original-row reconciliation after diagnosis.
@@ -13,6 +75,52 @@
 - Removed all disposable users, tokens, channels, tasks, and logs; restored the image-handle base URL and reset mock metrics to zero.
 - Final diff review fixed the zero-precharge timeout edge case and added coverage proving that it updates the original failure log without changing wallet or token balances.
 - Rebuilt final Docker dev image `sha256:0f9583d0b63b...` after the edge-case fix; new-api, PostgreSQL, Redis, and the async mock all report healthy.
+
+---
+
+# OpenAI Null Required Tool Schema Compatibility Progress (2026-07-22)
+
+- Confirmed the exact cleanup boundary, default-disabled behavior, nested JSON Schema locations, desktop-only UI scope, and required Docker real-request A/B.
+- Restored the file-based planning state and mapped settings, option validation, serialized relay, raw passthrough relay, tests, and Compatibility Management integration points.
+- Added the independent hot global switch with default disabled and controller/model option coverage.
+- Implemented a bounded schema walker for modern `tools` and legacy `functions`; it recursively removes only schema-keyword `required: null` from recognized child-schema positions.
+- Integrated the cleaner into both serialized and raw passthrough OpenAI Chat Completions branches without changing unrelated request fields.
+- Added the switch to Compatibility Management -> OpenAI Compatibility and translated it across all seven locale catalogs.
+- Added focused cleaner and relay integration coverage. Affected-package tests, `go test ./... -count=1`, frontend production build, scoped ESLint/Prettier, `bun run i18n:status`, and `git diff --check` pass.
+- Rebuilt Docker dev and completed desktop-only UI validation: the switch starts disabled, toggles on, and restores off. No mobile compatibility test was run per the user's instruction.
+- Completed the identical-payload real A/B through `test-gpt兼容`, token ID 141, channel 85, and model `gpt-5.4`. Disabled Request ID `20260722094557387149380GU70SYWZ` returned the target HTTP 400; enabled Request ID `20260722094558315168755H4btF3TY` returned HTTP 200 with the forced `knowledge_list_documents` tool call.
+- Restored all temporary state: the new option row is absent so the feature remains default-disabled, upstream-error passthrough is false, the root access token is null, disposable UI user count is zero, and Docker dev remains healthy at port 3001.
+
+---
+
+# OpenAI Reserved Python Tool Compatibility Progress (2026-07-22)
+
+- Started Phase 6 to reproduce the production reserved-name 400 and, if possible, run an identical-payload disabled/enabled A/B. The supplied production Request ID is absent from all local logs and artifacts, so protocol-shape variants will be tested instead of claiming a byte-for-byte replay.
+- Phase 6 Chat Completions reproduction matrix completed five real remote attempts with compatibility disabled; every variant returned 200 and `finish_reason=tool_calls` with function name `python`. Exact cleanup restored absent option rows, null admin access token, and healthy Docker dev.
+- Completed one final direct `/v1/responses` probe through the same token and remote channel; it also returned 200/completed with tool name `python`, confirming the current remote OpenAI context accepts the name even without the Chat Completions compatibility layer.
+- Phase 6 ended without reproducing the production 400. Six authoritative Request IDs and all attempted shapes are recorded; further repetition was stopped because the remaining variable is remote sub2api account selection or unavailable production payload/context.
+- Final restoration check passes: option-row count 0, admin access token null, Docker running/healthy, `/api/status` 200, and `git diff --check` clean.
+- Started the user-requested Docker live contrast matrix. Acceptance requires 400 with the switch disabled, 400 with an enabled but nonmatching list, and 200 plus response-name restoration with an enabled matching `python` list.
+- Snapshotted the exact starting state: both new option rows are absent (code defaults apply), admin ID 1 has no access token, token `test-gpt兼容` uniquely maps to ID 141/group `gpt-new`, and `new-api-dev` is healthy on port 3001.
+- The test harness will use a process-local temporary root access token to exercise the real option API, keep the paid API token secret out of output/files, then restore the absent option rows and null admin access token before restarting to the original defaults.
+- Completed four real upstream contrast requests through `test-gpt兼容` -> `gpt-new` -> `sub2api-gpt` -> channel 85 -> OpenAI. Disabled and nonmatching configurations exposed `python` upstream; matching configuration exposed `run_python` upstream in both non-streaming and streaming calls while returning structured name `python` to the client.
+- Authoritative Request IDs are `20260722063844971541042YsFcz03T`, `20260722063848780488585coz2N5ZT`, `20260722063850406377461JHAgdMx4`, and `20260722063852209810962TUfapqgC`; all returned 200 and the streaming call emitted 13 SSE events with a usage chunk.
+- The screenshot's upstream 400 did not reproduce when the switch was disabled, so acceptance used model-observed schema names rather than incorrectly treating that external behavior as deterministic.
+- Restored the exact pre-test state: no persisted option rows, no admin access token, and healthy Docker dev on port 3001. No mobile test was performed.
+- Added focused request/response coverage for every known Chat Completions name path, disabled and empty configuration, final-format scope, collision suffixes, 64-character aliases, and content/arguments preservation.
+- Added serialized and raw passthrough `TextHelper` integration coverage; both branches forward `python` as `run_python` without changing message content.
+- Added the compact OpenAI Compatibility switch and disabled-state multiline input with matching frontend validation and translations across all seven locales; mobile testing is explicitly excluded at the user's request.
+- Desktop frontend ESLint, scoped Prettier, seven-locale i18n status, controller save/normalization coverage, and `git diff --check` pass.
+- Full `go test ./... -count=1` and the frontend production build pass. Full i18n lint remains at the existing 420-item baseline with no Compatibility-page finding.
+- Added hot global enable/list settings with bounded OpenAI-name validation and normalized comma/newline parsing.
+- Added collision-safe request-scoped aliases plus structured request rewriting and response restoration, integrated into serialized, passthrough, streaming, and non-streaming OpenAI Chat Completions paths.
+- Initial compilation and existing focused tests pass for `setting/model_setting`, `relay/common`, `relay/channel/openai`, `relay`, and `controller`.
+- Resumed the approved configurable design, loaded the required brainstorming and file-planning workflows, and confirmed the implementation diff is still empty.
+- Reconfirmed the active paths: hot `global` settings, both serialized and passthrough branches in `TextHelper`, request-scoped relay state, and OpenAI stream/non-stream response handlers.
+- Confirmed sub2api is an immutable bridge and moved the compatibility boundary to new-api.
+- Replaced the initial GPT-5.4-only scope with model-independent activation for the exact custom function name `python`; this covers other and future OpenAI models without claiming they all reserve the name.
+- Locked request-scoped bidirectional structured rewriting across normal relay, raw passthrough, streaming response, and non-streaming response paths.
+- Expanded the contract to a hot global switch plus administrator-configurable reserved-name list in the existing OpenAI Compatibility tab; default enabled list is `python`.
 
 ---
 
@@ -674,3 +782,32 @@
 - Removed the isolated users, token, channel, abilities, aggregate group, targets, exact rule, logs, Redis state, and mock server. All fixture residue counts are zero; `new-api-dev` remains healthy and `/api/status` succeeds.
 
 ---
+# Temporary Video Resource and Webhook Progress (2026-07-23)
+- Confirmed with the user that upstream-backed temporary access is sufficient; no object-storage archival will be added.
+- Recovered the completed xAI/sub2api compatibility work and audited current Resource Center authentication, asset creation, video proxying, and image-only Webhook event creation.
+- Started validating a minimal shared contract that reuses existing Asset APIs, publishes only new-api task-based proxy URLs for relative upstream results, and adds video success/failure events to the existing durable Webhook outbox.
+- Confirmed that the current content route already accepts Resource Center Keys via `TokenOrUserAuth -> AssetOrTokenAuth`; no new download endpoint or authentication system is needed.
+- Narrowed the design to task status via `/v1/videos/{task_id}`, resource discovery via `/v1/assets?asset_type=video`, and terminal `video.task.succeeded` / `video.task.failed` events.
+- The user approved the expanded multi-provider plan: normalized create/query APIs, structured multi-output results, xAI edit/extension mapping, per-asset downloads, shared video Webhooks, public docs, and Docker real-call acceptance.
+- Started backend contract implementation while preserving the existing uncommitted xAI/sub2api compatibility fixes.
+
+---
+# Multi-provider Async Video Progress (2026-07-23)
+
+- Resumed the user-approved implementation after context handoff and loaded the required brainstorming and file-planning workflows.
+- Preserved the existing xAI compatibility/proxy changes and all unrelated untracked diagnostic artifacts.
+- Confirmed the first implementation phase will reuse the image-task idempotency, user-isolation, Asset, and durable Webhook architecture while keeping a separate provider-neutral video contract.
+- Started detailed inspection of the existing relay submission, task persistence, public image DTO, Asset projection, and Webhook terminal transaction.
+- Confirmed multi-output Asset ordering is already supported by schema; no Asset migration is needed.
+- Identified the upstream-before-persistence race in ordinary video submission and added a pre-upstream idempotency reservation requirement to the implementation approach.
+- Confirmed normalized provider behavior will be an optional adaptor capability, so all existing video providers remain source-compatible and can adopt explicit normalized operations incrementally.
+- Confirmed the existing content proxy will be refactored into a shared task/Asset streaming path, retaining its current security and Range behavior.
+- Verified current xAI generation enums/ranges from the official schema and recorded the conservative 1080p model restriction used by the adaptor.
+- Added normalized video DTOs, strict preparation, durable request persistence, cursor/batch query APIs, task public projection, split mutation/query authentication, and cross-database migration registration.
+- Added the optional normalized-video adaptor contract and xAI generation/edit/extension conversion with official ranges/enums, provider namespace isolation, file references, model-aware 1080p validation, and normalized-response handling.
+- Added structured `VideoOutputs`, legacy fallback Asset creation, public CDN versus Asset proxy projection, per-Asset content streaming, internal metadata filtering, and upstream expiration mapping.
+- Generalized terminal Webhook creation so normalized video success/failure uses the same transaction/outbox and account `wk-` as image tasks.
+- First focused compile/test pass succeeded for dto, model, service, xAI adaptor, relay, controller, and router packages.
+- 2026-07-23: Started the video image-input capability correction after user confirmation. The public DTO shape remains singular `image`, array `reference_images`, and singular `video`; validation ownership is moving from the shared controller to the xAI adaptor.
+- 2026-07-23: Relaxed provider-neutral video validation while retaining operation semantics, added xAI-specific image combination/count/model/duration/output rules, corrected the reference-generation model example, and regenerated the public OpenAPI. Focused controller/xAI tests pass; broad verification is in progress.
+- 2026-07-23: Completed the video image-input correction. Full Go tests, frontend build, OpenAPI drift, targeted ESLint/Prettier, i18n status, Docker image rebuild, desktop Resource Center QA, and two Docker xAI capability probes pass. The disposable browser account was self-deleted and hard-cleaned; `new-api-dev` is healthy on image `sha256:b8c9fa2e0805...`.

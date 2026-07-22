@@ -24,6 +24,7 @@ const ChannelName = "xai"
 
 var ModelList = []string{
 	"grok-imagine-video",
+	"grok-imagine-video-1.5",
 }
 
 type requestPayload map[string]any
@@ -97,6 +98,208 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return nil
 }
 
+func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.VideoTaskCreateRequest) *dto.TaskError {
+	if info == nil {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("relay info is nil"), "invalid_request", http.StatusBadRequest)
+	}
+	if info.TaskRelayInfo == nil {
+		info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+	}
+	for namespace := range request.ProviderOptions {
+		if !strings.EqualFold(strings.TrimSpace(namespace), ChannelName) {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.%s is not supported by xAI", namespace), "invalid_provider_options", http.StatusBadRequest)
+		}
+	}
+
+	payload := requestPayload{"model": request.Model, "prompt": request.Input.Prompt}
+	switch request.Operation {
+	case "generation":
+		info.Action = constant.TaskActionVideoGeneration
+		if request.Input.Video != nil {
+			return xaiUnsupportedVideoInput("xAI generation does not accept input.video")
+		}
+		if request.Input.Image != nil && len(request.Input.ReferenceImages) > 0 {
+			return xaiUnsupportedVideoInput("xAI image and reference_images generation modes are mutually exclusive")
+		}
+		if len(request.Input.ReferenceImages) > 7 {
+			return xaiUnsupportedVideoInput("xAI reference_images supports at most 7 images")
+		}
+		if request.Output.Duration != nil {
+			if *request.Output.Duration < 1 || *request.Output.Duration > 15 {
+				return xaiNormalizedVideoError("duration must be between 1 and 15 seconds")
+			}
+			if len(request.Input.ReferenceImages) > 0 && *request.Output.Duration > 10 {
+				return xaiNormalizedVideoError("xAI reference-image generation duration must be between 1 and 10 seconds")
+			}
+			payload["duration"] = *request.Output.Duration
+		}
+		if request.Output.AspectRatio != nil {
+			if !validXAIAspectRatio(*request.Output.AspectRatio) {
+				return xaiNormalizedVideoError("aspect_ratio is not supported by xAI")
+			}
+			payload["aspect_ratio"] = *request.Output.AspectRatio
+		}
+		if request.Output.Resolution != nil {
+			if !validXAIResolution(*request.Output.Resolution) {
+				return xaiNormalizedVideoError("resolution must be 480p, 720p, or 1080p")
+			}
+			payload["resolution"] = *request.Output.Resolution
+		}
+		if request.Input.Image != nil {
+			source, taskErr := normalizedXAISource(*request.Input.Image)
+			if taskErr != nil {
+				return taskErr
+			}
+			payload["image"] = source
+		}
+		if len(request.Input.ReferenceImages) > 0 {
+			references := make([]map[string]any, 0, len(request.Input.ReferenceImages))
+			for _, input := range request.Input.ReferenceImages {
+				source, taskErr := normalizedXAISource(input)
+				if taskErr != nil {
+					return taskErr
+				}
+				references = append(references, source)
+			}
+			payload["reference_images"] = references
+		}
+	case "edit":
+		info.Action = constant.TaskActionVideoEdit
+		if request.Input.Video == nil {
+			return xaiUnsupportedVideoInput("xAI edit requires input.video")
+		}
+		if request.Input.Image != nil || len(request.Input.ReferenceImages) > 0 {
+			return xaiUnsupportedVideoInput("xAI edit does not accept image inputs")
+		}
+		if request.Output.Duration != nil || request.Output.AspectRatio != nil || request.Output.Resolution != nil {
+			return xaiNormalizedVideoError("xAI edit inherits duration, aspect ratio, and resolution from the input video")
+		}
+		source, taskErr := normalizedXAISource(*request.Input.Video)
+		if taskErr != nil {
+			return taskErr
+		}
+		payload["video"] = source
+	case "extension":
+		info.Action = constant.TaskActionVideoExtension
+		if request.Input.Video == nil {
+			return xaiUnsupportedVideoInput("xAI extension requires input.video")
+		}
+		if request.Input.Image != nil || len(request.Input.ReferenceImages) > 0 {
+			return xaiUnsupportedVideoInput("xAI extension does not accept image inputs")
+		}
+		if request.Output.AspectRatio != nil || request.Output.Resolution != nil {
+			return xaiNormalizedVideoError("extension inherits aspect ratio and resolution from the input video")
+		}
+		if request.Output.Duration != nil {
+			if *request.Output.Duration < 2 || *request.Output.Duration > 10 {
+				return xaiNormalizedVideoError("extension duration must be between 2 and 10 seconds")
+			}
+			payload["duration"] = *request.Output.Duration
+		}
+		source, taskErr := normalizedXAISource(*request.Input.Video)
+		if taskErr != nil {
+			return taskErr
+		}
+		payload["video"] = source
+	case "remix":
+		return service.TaskErrorWrapperLocal(fmt.Errorf("xAI adaptor does not support normalized remix"), "unsupported_video_operation", http.StatusBadRequest)
+	default:
+		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported normalized video operation: %s", request.Operation), "unsupported_video_operation", http.StatusBadRequest)
+	}
+
+	if options := request.ProviderOptions[ChannelName]; options != nil {
+		for key, value := range options {
+			switch key {
+			case "model", "prompt", "image", "reference_images", "video", "duration", "aspect_ratio", "resolution":
+				return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.xai.%s duplicates a public field", key), "invalid_provider_options", http.StatusBadRequest)
+			default:
+				payload[key] = value
+			}
+		}
+	}
+	info.OriginModelName = request.Model
+	c.Set("xai_video_request", payload)
+	return nil
+}
+
+func (a *TaskAdaptor) ValidateNormalizedVideoModel(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	payload, err := getPayloadFromContext(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	modelName := ""
+	if info != nil {
+		modelName = firstNonEmpty(info.UpstreamModelName, info.OriginModelName)
+	}
+	if _, hasReferences := payload["reference_images"]; hasReferences && isXAI15VideoModel(modelName) {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("xAI model %s does not support reference-image generation", modelName), "unsupported_video_model_capability", http.StatusBadRequest)
+	}
+
+	resolution := strings.ToLower(strings.TrimSpace(getString(payload, "resolution")))
+	if resolution != "1080p" {
+		return nil
+	}
+	if !strings.Contains(strings.ToLower(modelName), "1.5") {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("1080p requires an xAI 1.5 video model"), "unsupported_video_resolution", http.StatusBadRequest)
+	}
+	if info == nil || info.Action != constant.TaskActionVideoGeneration {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("1080p is only supported for xAI image-to-video generation"), "unsupported_video_resolution", http.StatusBadRequest)
+	}
+	if image, ok := payload["image"]; !ok || image == nil {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("1080p is only supported for xAI image-to-video generation"), "unsupported_video_resolution", http.StatusBadRequest)
+	}
+	return nil
+}
+
+func normalizedXAISource(source dto.VideoTaskSource) (map[string]any, *dto.TaskError) {
+	if source.URL != "" {
+		return map[string]any{"url": source.URL}, nil
+	}
+	if !strings.EqualFold(source.Provider, ChannelName) {
+		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("file reference provider %q is not supported by xAI", source.Provider), "unsupported_file_provider", http.StatusBadRequest)
+	}
+	return map[string]any{"file_id": source.FileID}, nil
+}
+
+func validXAIAspectRatio(value string) bool {
+	switch value {
+	case "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3":
+		return true
+	default:
+		return false
+	}
+}
+
+func validXAIResolution(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "480p", "720p", "1080p":
+		return true
+	default:
+		return false
+	}
+}
+
+func xaiNormalizedVideoError(message string) *dto.TaskError {
+	return service.TaskErrorWrapperLocal(fmt.Errorf("%s", message), "invalid_video_parameter", http.StatusBadRequest)
+}
+
+func xaiUnsupportedVideoInput(message string) *dto.TaskError {
+	return service.TaskErrorWrapperLocal(fmt.Errorf("%s", message), "unsupported_video_input", http.StatusBadRequest)
+}
+
+func isXAI15VideoModel(modelName string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(modelName)), "grok-imagine-video-1.5")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
 func readJSONPayload(c *gin.Context) (requestPayload, error) {
 	contentType := c.GetHeader("Content-Type")
 	if contentType != "" && !strings.HasPrefix(contentType, "application/json") {
@@ -143,18 +346,6 @@ func getString(payload requestPayload, key string) string {
 	return value
 }
 
-func normalizeXAIVideoModel(modelName string) string {
-	modelName = strings.TrimSpace(modelName)
-	if strings.HasPrefix(modelName, "grok-imagine-video-1.5-preview") ||
-		strings.HasPrefix(modelName, "grok-imagine-video-1.5-2026-05-30") {
-		return "grok-imagine-video-1.5-preview"
-	}
-	if strings.HasPrefix(modelName, "grok-imagine-video") {
-		return "grok-imagine-video"
-	}
-	return modelName
-}
-
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	action := ""
 	if info != nil && info.TaskRelayInfo != nil {
@@ -191,7 +382,6 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if upstreamModel == "" && info != nil {
 		upstreamModel = info.OriginModelName
 	}
-	upstreamModel = normalizeXAIVideoModel(upstreamModel)
 	if upstreamModel != "" {
 		payload["model"] = upstreamModel
 	}
@@ -234,7 +424,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		RequestID: publicTaskID,
 		ID:        publicTaskID,
 	}
-	c.JSON(http.StatusOK, publicResponse)
+	if _, normalized := c.Get(relaycommon.VideoTaskPublicRequestContextKey); !normalized {
+		c.JSON(http.StatusOK, publicResponse)
+	}
 	return upstreamID, responseBody, nil
 }
 
@@ -290,6 +482,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		}
 		taskResult.Status = model.TaskStatusSuccess
 		taskResult.Url = res.Video.URL
+		taskResult.VideoOutputs = []relaycommon.VideoOutput{{
+			Index: 0, URL: res.Video.URL, MimeType: "video/mp4",
+			DurationMS: int64(res.Video.Duration) * 1000,
+		}}
 	case "failed", "expired":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Reason = "task failed"
@@ -338,6 +534,9 @@ func (a *TaskAdaptor) GetChannelName() string {
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	openAIVideo := task.ToOpenAIVideo()
+	if task.Status == model.TaskStatusSuccess {
+		openAIVideo.SetMetadata("url", taskcommon.BuildProxyURL(task.TaskID))
+	}
 	if task.Status == model.TaskStatusFailure {
 		openAIVideo.Error = &dto.OpenAIVideoError{
 			Message: task.FailReason,

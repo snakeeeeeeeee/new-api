@@ -10,7 +10,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
@@ -87,26 +89,30 @@ func TestValidateAndBuildRequestBodyPassThroughOfficialFields(t *testing.T) {
 	assert.Equal(t, "https://uploads.example.com/signed", output["upload_url"])
 }
 
-func TestBuildRequestBodyNormalizesXAIVideoAliasWithoutModelMapping(t *testing.T) {
+func TestBuildRequestBodyPreservesUpstreamModelName(t *testing.T) {
 	tests := []struct {
-		name string
-		in   string
-		want string
+		name     string
+		origin   string
+		upstream string
+		want     string
 	}{
 		{
-			name: "stable short alias",
-			in:   "grok-imagine-video-15s-720p",
-			want: "grok-imagine-video",
+			name:     "canonical 1.5 model",
+			origin:   "grok-imagine-video-1.5",
+			upstream: "grok-imagine-video-1.5",
+			want:     "grok-imagine-video-1.5",
 		},
 		{
-			name: "preview quality alias",
-			in:   "grok-imagine-video-1.5-preview-15s-720p",
-			want: "grok-imagine-video-1.5-preview",
+			name:     "configured alias without mapping",
+			origin:   "grok-imagine-video-1.5-720p",
+			upstream: "grok-imagine-video-1.5-720p",
+			want:     "grok-imagine-video-1.5-720p",
 		},
 		{
-			name: "preview dated alias",
-			in:   "grok-imagine-video-1.5-2026-05-30-15s-480p",
-			want: "grok-imagine-video-1.5-preview",
+			name:     "channel model mapping",
+			origin:   "client-video-alias",
+			upstream: "cliproxy-video-model",
+			want:     "cliproxy-video-model",
 		},
 	}
 
@@ -119,12 +125,12 @@ func TestBuildRequestBodyNormalizesXAIVideoAliasWithoutModelMapping(t *testing.T
 				"duration":10,
 				"aspect_ratio":"9:16",
 				"resolution":"720p"
-			}`, tt.in)
+			}`, tt.origin)
 			c, _ := buildTestContext(t, "/v1/videos/generations", body)
 			info := &relaycommon.RelayInfo{
-				OriginModelName: tt.in,
+				OriginModelName: tt.origin,
 				ChannelMeta: &relaycommon.ChannelMeta{
-					UpstreamModelName: tt.in,
+					UpstreamModelName: tt.upstream,
 					ChannelBaseUrl:    "https://api.x.ai",
 					ApiKey:            "sk-test",
 				},
@@ -176,6 +182,285 @@ func TestBuildRequestURLUsesDefaultBaseURL(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "https://api.x.ai/v1/videos/generations", got)
+}
+
+func TestPrepareNormalizedVideoRequests(t *testing.T) {
+	duration := 8
+	aspectRatio := "9:16"
+	resolution := "720p"
+	tests := []struct {
+		name       string
+		request    dto.VideoTaskCreateRequest
+		wantAction string
+		wantURL    string
+		assertBody func(*testing.T, map[string]any)
+	}{
+		{
+			name: "generation with image and provider options",
+			request: dto.VideoTaskCreateRequest{
+				Model: "grok-imagine-video-1.5", Operation: "generation",
+				Input:           dto.VideoTaskInputRequest{Prompt: "animate", Image: &dto.VideoTaskSource{URL: "https://example.com/frame.png"}},
+				Output:          dto.VideoTaskOutputRequest{Duration: &duration, AspectRatio: &aspectRatio, Resolution: &resolution},
+				ProviderOptions: map[string]map[string]any{"xai": {"user": "customer-1"}},
+			},
+			wantAction: constant.TaskActionVideoGeneration,
+			wantURL:    "https://api.x.ai/v1/videos/generations",
+			assertBody: func(t *testing.T, payload map[string]any) {
+				assert.Equal(t, float64(8), payload["duration"])
+				assert.Equal(t, "9:16", payload["aspect_ratio"])
+				assert.Equal(t, "customer-1", payload["user"])
+				assert.Equal(t, "https://example.com/frame.png", payload["image"].(map[string]any)["url"])
+			},
+		},
+		{
+			name: "generation with reference images",
+			request: dto.VideoTaskCreateRequest{
+				Model: "grok-imagine-video", Operation: "generation",
+				Input: dto.VideoTaskInputRequest{Prompt: "keep the character", ReferenceImages: []dto.VideoTaskSource{
+					{URL: "https://example.com/reference.png"},
+					{Provider: "xai", FileID: "file_reference"},
+				}},
+				Output: dto.VideoTaskOutputRequest{Duration: common.GetPointer(10)},
+			},
+			wantAction: constant.TaskActionVideoGeneration,
+			wantURL:    "https://api.x.ai/v1/videos/generations",
+			assertBody: func(t *testing.T, payload map[string]any) {
+				references, ok := payload["reference_images"].([]any)
+				require.True(t, ok)
+				require.Len(t, references, 2)
+				assert.Equal(t, "https://example.com/reference.png", references[0].(map[string]any)["url"])
+				assert.Equal(t, "file_reference", references[1].(map[string]any)["file_id"])
+				assert.Equal(t, float64(10), payload["duration"])
+			},
+		},
+		{
+			name: "edit with xai file",
+			request: dto.VideoTaskCreateRequest{
+				Model: "grok-imagine-video-1.5", Operation: "edit",
+				Input: dto.VideoTaskInputRequest{Prompt: "add rain", Video: &dto.VideoTaskSource{Provider: "xai", FileID: "file_video"}},
+			},
+			wantAction: constant.TaskActionVideoEdit,
+			wantURL:    "https://api.x.ai/v1/videos/edits",
+			assertBody: func(t *testing.T, payload map[string]any) {
+				assert.Equal(t, "file_video", payload["video"].(map[string]any)["file_id"])
+			},
+		},
+		{
+			name: "extension duration",
+			request: dto.VideoTaskCreateRequest{
+				Model: "grok-imagine-video-1.5", Operation: "extension",
+				Input:  dto.VideoTaskInputRequest{Prompt: "continue", Video: &dto.VideoTaskSource{URL: "https://example.com/source.mp4"}},
+				Output: dto.VideoTaskOutputRequest{Duration: common.GetPointer(4)},
+			},
+			wantAction: constant.TaskActionVideoExtension,
+			wantURL:    "https://api.x.ai/v1/videos/extensions",
+			assertBody: func(t *testing.T, payload map[string]any) {
+				assert.Equal(t, float64(4), payload["duration"])
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := buildTestContext(t, "/v1/video/tasks", `{}`)
+			info := &relaycommon.RelayInfo{OriginModelName: test.request.Model, ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelBaseUrl: "https://api.x.ai", UpstreamModelName: test.request.Model,
+			}}
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+			require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, test.request))
+			assert.Equal(t, test.wantAction, info.Action)
+			requestURL, err := adaptor.BuildRequestURL(info)
+			require.NoError(t, err)
+			assert.Equal(t, test.wantURL, requestURL)
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(data, &payload))
+			test.assertBody(t, payload)
+		})
+	}
+}
+
+func TestPrepareNormalizedVideoRejectsUnsupportedCapabilities(t *testing.T) {
+	c, _ := buildTestContext(t, "/v1/video/tasks", `{}`)
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+	remix := dto.VideoTaskCreateRequest{Model: "grok-imagine-video-1.5", Operation: "remix",
+		Input: dto.VideoTaskInputRequest{Prompt: "remix", Video: &dto.VideoTaskSource{URL: "https://example.com/source.mp4"}}}
+	taskErr := adaptor.PrepareNormalizedVideoRequest(c, info, remix)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "unsupported_video_operation", taskErr.Code)
+
+	badNamespace := remix
+	badNamespace.Operation = "edit"
+	badNamespace.ProviderOptions = map[string]map[string]any{"other": {"seed": 1}}
+	taskErr = adaptor.PrepareNormalizedVideoRequest(c, info, badNamespace)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_provider_options", taskErr.Code)
+
+	tests := []struct {
+		name    string
+		request dto.VideoTaskCreateRequest
+		code    string
+	}{
+		{
+			name: "generation image and references",
+			request: dto.VideoTaskCreateRequest{Model: "grok-imagine-video", Operation: "generation", Input: dto.VideoTaskInputRequest{
+				Prompt: "generate", Image: &dto.VideoTaskSource{URL: "https://example.com/start.png"},
+				ReferenceImages: []dto.VideoTaskSource{{URL: "https://example.com/ref.png"}},
+			}},
+			code: "unsupported_video_input",
+		},
+		{
+			name: "too many reference images",
+			request: dto.VideoTaskCreateRequest{Model: "grok-imagine-video", Operation: "generation", Input: dto.VideoTaskInputRequest{
+				Prompt: "generate", ReferenceImages: []dto.VideoTaskSource{
+					{URL: "https://example.com/1.png"}, {URL: "https://example.com/2.png"},
+					{URL: "https://example.com/3.png"}, {URL: "https://example.com/4.png"},
+					{URL: "https://example.com/5.png"}, {URL: "https://example.com/6.png"},
+					{URL: "https://example.com/7.png"}, {URL: "https://example.com/8.png"},
+				},
+			}},
+			code: "unsupported_video_input",
+		},
+		{
+			name: "reference duration over ten seconds",
+			request: dto.VideoTaskCreateRequest{Model: "grok-imagine-video", Operation: "generation", Input: dto.VideoTaskInputRequest{
+				Prompt: "generate", ReferenceImages: []dto.VideoTaskSource{{URL: "https://example.com/ref.png"}},
+			}, Output: dto.VideoTaskOutputRequest{Duration: common.GetPointer(11)}},
+			code: "invalid_video_parameter",
+		},
+		{
+			name: "edit with reference image",
+			request: dto.VideoTaskCreateRequest{Model: "grok-imagine-video-1.5", Operation: "edit", Input: dto.VideoTaskInputRequest{
+				Prompt: "edit", Video: &dto.VideoTaskSource{URL: "https://example.com/video.mp4"},
+				ReferenceImages: []dto.VideoTaskSource{{URL: "https://example.com/ref.png"}},
+			}},
+			code: "unsupported_video_input",
+		},
+		{
+			name: "edit output override",
+			request: dto.VideoTaskCreateRequest{Model: "grok-imagine-video-1.5", Operation: "edit",
+				Input:  dto.VideoTaskInputRequest{Prompt: "edit", Video: &dto.VideoTaskSource{URL: "https://example.com/video.mp4"}},
+				Output: dto.VideoTaskOutputRequest{Resolution: common.GetPointer("720p")}},
+			code: "invalid_video_parameter",
+		},
+		{
+			name: "extension with primary image",
+			request: dto.VideoTaskCreateRequest{Model: "grok-imagine-video-1.5", Operation: "extension", Input: dto.VideoTaskInputRequest{
+				Prompt: "extend", Video: &dto.VideoTaskSource{URL: "https://example.com/video.mp4"},
+				Image: &dto.VideoTaskSource{URL: "https://example.com/start.png"},
+			}},
+			code: "unsupported_video_input",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := buildTestContext(t, "/v1/video/tasks", `{}`)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+			taskErr := adaptor.PrepareNormalizedVideoRequest(c, info, test.request)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, test.code, taskErr.Code)
+		})
+	}
+}
+
+func TestValidateNormalizedVideoModelRestricts1080p(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	tests := []struct {
+		name     string
+		payload  requestPayload
+		model    string
+		action   string
+		wantCode string
+	}{
+		{
+			name: "1.5 image generation",
+			payload: requestPayload{
+				"resolution": "1080p",
+				"image":      map[string]any{"url": "https://example.com/frame.png"},
+			},
+			model:  "grok-imagine-video-1.5",
+			action: constant.TaskActionVideoGeneration,
+		},
+		{
+			name:     "legacy model",
+			payload:  requestPayload{"resolution": "1080p", "image": map[string]any{"url": "https://example.com/frame.png"}},
+			model:    "grok-imagine-video",
+			action:   constant.TaskActionVideoGeneration,
+			wantCode: "unsupported_video_resolution",
+		},
+		{
+			name:     "text generation",
+			payload:  requestPayload{"resolution": "1080p"},
+			model:    "grok-imagine-video-1.5",
+			action:   constant.TaskActionVideoGeneration,
+			wantCode: "unsupported_video_resolution",
+		},
+		{
+			name: "reference image generation",
+			payload: requestPayload{
+				"resolution":       "1080p",
+				"reference_images": []any{map[string]any{"url": "https://example.com/ref.png"}},
+			},
+			model:    "grok-imagine-video-1.5",
+			action:   constant.TaskActionVideoGeneration,
+			wantCode: "unsupported_video_model_capability",
+		},
+		{
+			name:     "non-generation action",
+			payload:  requestPayload{"resolution": "1080p", "image": map[string]any{"url": "https://example.com/frame.png"}},
+			model:    "grok-imagine-video-1.5",
+			action:   constant.TaskActionVideoEdit,
+			wantCode: "unsupported_video_resolution",
+		},
+		{
+			name:    "lower resolution is unaffected",
+			payload: requestPayload{"resolution": "720p"},
+			model:   "grok-imagine-video",
+			action:  constant.TaskActionVideoGeneration,
+		},
+		{
+			name: "1.5 reference generation is unsupported at 720p",
+			payload: requestPayload{
+				"resolution":       "720p",
+				"reference_images": []any{map[string]any{"url": "https://example.com/ref.png"}},
+			},
+			model:    "grok-imagine-video-1.5",
+			action:   constant.TaskActionVideoGeneration,
+			wantCode: "unsupported_video_model_capability",
+		},
+		{
+			name: "base model reference generation is supported",
+			payload: requestPayload{
+				"resolution":       "720p",
+				"reference_images": []any{map[string]any{"url": "https://example.com/ref.png"}},
+			},
+			model:  "grok-imagine-video",
+			action: constant.TaskActionVideoGeneration,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := buildTestContext(t, "/v1/video/tasks", `{}`)
+			c.Set("xai_video_request", test.payload)
+			info := &relaycommon.RelayInfo{
+				TaskRelayInfo: &relaycommon.TaskRelayInfo{Action: test.action},
+				ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: test.model},
+			}
+
+			taskErr := adaptor.ValidateNormalizedVideoModel(c, info)
+			if test.wantCode != "" {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, test.wantCode, taskErr.Code)
+				return
+			}
+			assert.Nil(t, taskErr)
+		})
+	}
 }
 
 func TestDoResponseHidesUpstreamRequestID(t *testing.T) {
@@ -275,5 +560,5 @@ func TestConvertToOpenAIVideoUsesLocalTaskIDAndResultURL(t *testing.T) {
 	assert.Equal(t, "completed", payload["status"])
 	assert.Equal(t, "grok-imagine-video-1.5-preview-15s-480p", payload["model"])
 	metadata := payload["metadata"].(map[string]any)
-	assert.Equal(t, "https://vidgen.x.ai/video.mp4", metadata["url"])
+	assert.Equal(t, taskcommon.BuildProxyURL("task_public"), metadata["url"])
 }

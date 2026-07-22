@@ -48,11 +48,12 @@ func TestImageTaskAndWebhookSchemaAcrossDatabases(t *testing.T) {
 			t.Cleanup(func() { DB = originalDB })
 
 			models := []any{
-				&ImageTaskRequest{}, &ImageTaskDispatch{}, &WebhookEndpoint{},
+				&ImageTaskRequest{}, &VideoTaskRequest{}, &ImageTaskDispatch{}, &WebhookEndpoint{},
 				&WebhookEvent{}, &WebhookDelivery{}, &WebhookDeliveryAttempt{},
 			}
 			require.NoError(t, db.AutoMigrate(models...))
 			require.True(t, db.Migrator().HasIndex(&ImageTaskRequest{}, "idx_image_task_idempotency"))
+			require.True(t, db.Migrator().HasIndex(&VideoTaskRequest{}, "idx_video_task_idempotency"))
 			require.True(t, db.Migrator().HasIndex(&WebhookEvent{}, "idx_webhook_event_object"))
 			require.True(t, db.Migrator().HasIndex(&WebhookDelivery{}, "idx_webhook_delivery_target"))
 			require.True(t, db.Migrator().HasIndex(&WebhookEndpoint{}, "idx_webhook_config_owner"))
@@ -67,6 +68,14 @@ func TestImageTaskAndWebhookSchemaAcrossDatabases(t *testing.T) {
 				CreatedAt: now, UpdatedAt: now,
 			}
 			require.NoError(t, db.Create(request).Error)
+			videoKey := "cross-db-video-key"
+			videoRequest := &VideoTaskRequest{
+				TaskRecordID: 2, TaskID: "task_cross_db_video", UserID: 101,
+				IdempotencyKey: &videoKey, RequestFingerprint: "video-fingerprint",
+				ClientReferenceID: "video_order", RequestJSON: `{"operation":"edit","output":{"duration":0}}`,
+				CreatedAt: now, UpdatedAt: now,
+			}
+			require.NoError(t, db.Create(videoRequest).Error)
 
 			dispatch := &ImageTaskDispatch{
 				DispatchID: "dispatch_cross_db_1", TaskRecordID: 1, TaskID: request.TaskID,
@@ -129,9 +138,14 @@ func TestImageTaskAndWebhookSchemaAcrossDatabases(t *testing.T) {
 
 			conflictingRequest := *request
 			conflictingRequest.ID = 0
-			conflictingRequest.TaskRecordID = 2
+			conflictingRequest.TaskRecordID = 3
 			conflictingRequest.TaskID = "task_cross_db_2"
 			require.Error(t, db.Create(&conflictingRequest).Error)
+			conflictingVideoRequest := *videoRequest
+			conflictingVideoRequest.ID = 0
+			conflictingVideoRequest.TaskRecordID = 4
+			conflictingVideoRequest.TaskID = "task_cross_db_video_2"
+			require.Error(t, db.Create(&conflictingVideoRequest).Error)
 
 			duplicateEvent := *event
 			duplicateEvent.ID = 0

@@ -34,10 +34,12 @@ type AssetBatchURLRequest struct {
 }
 
 type AssetURLItem struct {
-	AssetID string `json:"asset_id"`
-	TaskID  string `json:"task_id"`
-	Type    string `json:"asset_type"`
-	URL     string `json:"url"`
+	AssetID   string `json:"asset_id"`
+	TaskID    string `json:"task_id"`
+	Type      string `json:"asset_type"`
+	URL       string `json:"url"`
+	Temporary bool   `json:"temporary,omitempty"`
+	URLAuth   string `json:"url_auth,omitempty"`
 }
 
 type AssetBlockRequest struct {
@@ -75,6 +77,8 @@ type AssetAPIItem struct {
 	Index        int            `json:"index"`
 	Type         string         `json:"type"`
 	URL          string         `json:"url"`
+	Temporary    bool           `json:"temporary,omitempty"`
+	URLAuth      string         `json:"url_auth,omitempty"`
 	ThumbnailURL string         `json:"thumbnail_url,omitempty"`
 	MimeType     string         `json:"mime_type,omitempty"`
 	Filename     string         `json:"filename,omitempty"`
@@ -83,8 +87,6 @@ type AssetAPIItem struct {
 	Height       int            `json:"height,omitempty"`
 	DurationMS   int64          `json:"duration_ms,omitempty"`
 	Model        string         `json:"model,omitempty"`
-	Platform     string         `json:"platform,omitempty"`
-	Action       string         `json:"action,omitempty"`
 	Status       string         `json:"status"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
 	CreatedAt    int64          `json:"created_at"`

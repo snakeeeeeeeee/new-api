@@ -29,7 +29,10 @@ import (
 
 const imageCredentialLeaseTTLSeconds = 30 * 60
 
-var errImageTaskIdempotencyConflict = errors.New("idempotency_key_conflict")
+var (
+	errImageTaskIdempotencyConflict = errors.New("idempotency_key_conflict")
+	errVideoTaskIdempotencyConflict = errors.New("idempotency_key_conflict")
+)
 
 type TaskSubmitResult struct {
 	UpstreamTaskID string
@@ -176,7 +179,15 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
 	}
 	adaptor.Init(info)
-	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+	if normalizedRequest, err := relaycommon.GetVideoTaskPublicRequest(c); err == nil {
+		normalizedAdaptor, ok := adaptor.(channel.NormalizedVideoTaskAdaptor)
+		if !ok {
+			return nil, service.TaskErrorWrapperLocal(fmt.Errorf("selected provider does not support normalized video tasks"), "unsupported_video_provider", http.StatusBadRequest)
+		}
+		if taskErr := normalizedAdaptor.PrepareNormalizedVideoRequest(c, info, normalizedRequest); taskErr != nil {
+			return nil, taskErr
+		}
+	} else if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
 		return nil, taskErr
 	}
 
@@ -204,6 +215,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	info.UpstreamModelName = modelName
 	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
+	}
+	if _, normalized := c.Get(relaycommon.VideoTaskPublicRequestContextKey); normalized {
+		normalizedAdaptor := adaptor.(channel.NormalizedVideoTaskAdaptor)
+		if taskErr := normalizedAdaptor.ValidateNormalizedVideoModel(c, info); taskErr != nil {
+			return nil, taskErr
+		}
 	}
 
 	// 3. 预生成公开 task ID（仅首次）
@@ -328,23 +345,49 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, service.TaskErrorWrapper(err, "create_image_lease_failed", http.StatusInternalServerError)
 		}
 	}
+	if _, normalized := c.Get(relaycommon.VideoTaskPublicRequestContextKey); normalized {
+		var existingTask *model.Task
+		var createErr error
+		createdTask, existingTask, createErr = createDurableVideoTask(c, info, platform, info.PriceData.Quota)
+		if createErr != nil {
+			if errors.Is(createErr, errVideoTaskIdempotencyConflict) {
+				return nil, service.TaskErrorWrapperLocal(createErr, "idempotency_key_conflict", http.StatusConflict)
+			}
+			return nil, service.TaskErrorWrapper(createErr, "create_video_task_failed", http.StatusInternalServerError)
+		}
+		if existingTask != nil {
+			if info.Billing != nil {
+				info.Billing.Refund(c)
+				info.Billing = nil
+			}
+			publicTask, buildErr := service.BuildPublicVideoTask(existingTask)
+			if buildErr != nil {
+				return nil, service.TaskErrorWrapper(buildErr, "build_task_response_failed", http.StatusInternalServerError)
+			}
+			c.Header("Idempotent-Replayed", "true")
+			c.Header("Location", "/v1/video/tasks/"+existingTask.TaskID)
+			c.Header("Retry-After", "2")
+			c.JSON(http.StatusAccepted, publicTask)
+			return &TaskSubmitResult{Platform: platform, Quota: existingTask.Quota, ExistingTask: existingTask}, nil
+		}
+	}
 
 	// 8. 构建请求体
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
-		return resolveAsyncImageSubmitFailure(c, createdTask, createdLease,
+		return resolveTaskSubmitFailure(c, createdTask, createdLease,
 			service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError))
 	}
 
 	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		return resolveAsyncImageSubmitFailure(c, createdTask, createdLease,
+		return resolveTaskSubmitFailure(c, createdTask, createdLease,
 			service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError))
 	}
 	if resp != nil && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
 		responseBody, _ := io.ReadAll(resp.Body)
-		return resolveAsyncImageSubmitFailure(c, createdTask, createdLease,
+		return resolveTaskSubmitFailure(c, createdTask, createdLease,
 			service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode))
 	}
 
@@ -359,7 +402,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 11. 解析响应
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
 	if taskErr != nil {
-		return resolveAsyncImageSubmitFailure(c, createdTask, createdLease, taskErr)
+		return resolveTaskSubmitFailure(c, createdTask, createdLease, taskErr)
 	}
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
@@ -369,6 +412,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		finalQuota = recalcQuotaFromRatios(info, adjustedRatios)
 		info.PriceData.OtherRatios = adjustedRatios
 		info.PriceData.Quota = finalQuota
+	}
+	if createdTask != nil {
+		if request, err := relaycommon.GetVideoTaskPublicRequest(c); err == nil {
+			publicTask := service.BuildPublicVideoTaskFromRequest(createdTask, &request)
+			c.Header("Location", "/v1/video/tasks/"+createdTask.TaskID)
+			c.Header("Retry-After", "2")
+			c.JSON(http.StatusAccepted, publicTask)
+		}
 	}
 
 	return &TaskSubmitResult{
@@ -382,6 +433,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 func isAsyncImageTaskPath(c *gin.Context) bool {
 	return c != nil && c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/image/tasks"
+}
+
+func isNormalizedVideoTask(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	_, ok := c.Get(relaycommon.VideoTaskPublicRequestContextKey)
+	return ok
 }
 
 func applyAsyncImageUsagePrecharge(c *gin.Context, info *relaycommon.RelayInfo) {
@@ -603,6 +662,118 @@ func createDurableAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, pl
 		return nil, nil, err
 	}
 	return nil, existingTask, nil
+}
+
+func createDurableVideoTask(c *gin.Context, info *relaycommon.RelayInfo, platform constant.TaskPlatform, quota int) (*model.Task, *model.Task, error) {
+	request, err := relaycommon.GetVideoTaskPublicRequest(c)
+	if err != nil {
+		return nil, nil, err
+	}
+	requestJSONValue, ok := c.Get(relaycommon.VideoTaskPublicRequestJSONContextKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("normalized video task request JSON is missing")
+	}
+	requestJSON, ok := requestJSONValue.([]byte)
+	if !ok || len(requestJSON) == 0 {
+		return nil, nil, fmt.Errorf("normalized video task request JSON is invalid")
+	}
+	fingerprint := c.GetString(relaycommon.VideoTaskFingerprintContextKey)
+	idempotencyKeyValue := strings.TrimSpace(c.GetString(relaycommon.VideoTaskIdempotencyKeyContextKey))
+	var idempotencyKey *string
+	if idempotencyKeyValue != "" {
+		idempotencyKey = &idempotencyKeyValue
+	}
+
+	task := model.InitTask(platform, info)
+	task.Quota = quota
+	task.Action = info.Action
+	task.Status = model.TaskStatusQueued
+	task.Progress = taskcommon.ProgressQueued
+	task.Properties.AssetType = constant.TaskAssetTypeVideo
+	task.Properties.Operation = request.Operation
+	task.PrivateData.BillingSource = info.BillingSource
+	task.PrivateData.SubscriptionId = info.SubscriptionId
+	task.PrivateData.TokenId = info.TokenId
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelPrice:               info.PriceData.ModelPrice,
+		GroupRatio:               info.PriceData.GroupRatioInfo.GroupRatio,
+		OriginalGroupRatio:       info.PriceData.GroupRatioInfo.OriginalGroupRatio,
+		RatioOverride:            info.PriceData.GroupRatioInfo.RatioOverride,
+		GroupSpecialRatio:        info.PriceData.GroupRatioInfo.GroupSpecialRatio,
+		HasSpecialRatio:          info.PriceData.GroupRatioInfo.HasSpecialRatio,
+		HasRatioOverride:         info.PriceData.GroupRatioInfo.HasRatioOverride,
+		RatioOverrideApplied:     info.PriceData.GroupRatioInfo.RatioOverrideApplied,
+		RouteModelGroupRatio:     info.PriceData.GroupRatioInfo.RouteModelGroupRatio,
+		HasRouteModelGroupRatio:  info.PriceData.GroupRatioInfo.HasRouteModelGroupRatio,
+		RouteModelAggregateGroup: info.PriceData.GroupRatioInfo.RouteModelRatioAggregateGroup,
+		RouteModelRealGroup:      info.PriceData.GroupRatioInfo.RouteModelRatioRealGroup,
+		RouteModelName:           info.PriceData.GroupRatioInfo.RouteModelRatioModelName,
+		RouteModelRatioSource:    info.PriceData.GroupRatioInfo.RouteModelGroupRatioSource,
+		ModelRatio:               info.PriceData.ModelRatio,
+		CompletionRatio:          info.PriceData.CompletionRatio,
+		CacheRatio:               info.PriceData.CacheRatio,
+		CacheCreationRatio:       info.PriceData.CacheCreationRatio,
+		CacheCreation5mRatio:     info.PriceData.CacheCreation5mRatio,
+		CacheCreation1hRatio:     info.PriceData.CacheCreation1hRatio,
+		ImageRatio:               info.PriceData.ImageRatio,
+		UsePrice:                 info.PriceData.UsePrice,
+		OtherRatios:              info.PriceData.OtherRatios,
+		OriginModelName:          info.OriginModelName,
+		RequestId:                c.GetString(common.RequestIdKey),
+		PerCallBilling:           common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.ChannelType == constant.ChannelTypeXai || info.PriceData.UsePrice,
+	}
+
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(task).Error; err != nil {
+			return err
+		}
+		requestRecord := model.NewVideoTaskRequest(task, info.UserId, idempotencyKey, fingerprint, request.ClientReferenceID, requestJSON)
+		return tx.Create(requestRecord).Error
+	})
+	if err == nil {
+		return task, nil, nil
+	}
+	if idempotencyKey == nil {
+		return nil, nil, err
+	}
+	existingRequest, exists, lookupErr := model.GetVideoTaskRequestByIdempotencyKey(info.UserId, idempotencyKeyValue)
+	if lookupErr != nil || !exists {
+		return nil, nil, err
+	}
+	if existingRequest.RequestFingerprint != fingerprint {
+		return nil, nil, errVideoTaskIdempotencyConflict
+	}
+	existingTask, taskExists, taskErr := model.GetPublicVideoTask(info.UserId, existingRequest.TaskID)
+	if taskErr != nil || !taskExists {
+		return nil, nil, err
+	}
+	return nil, existingTask, nil
+}
+
+func resolveTaskSubmitFailure(c *gin.Context, task *model.Task, lease *model.ImageCredentialLease, taskErr *dto.TaskError) (*TaskSubmitResult, *dto.TaskError) {
+	if !isNormalizedVideoTask(c) {
+		return resolveAsyncImageSubmitFailure(c, task, lease, taskErr)
+	}
+	if task == nil {
+		return nil, taskErr
+	}
+	now := time.Now().Unix()
+	snapshot := task.Snapshot()
+	task.Status = model.TaskStatusFailure
+	task.Progress = taskcommon.ProgressComplete
+	task.FailReason = taskErr.Message
+	task.FinishTime = now
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		won, err := task.UpdateWithStatusTx(tx, snapshot.Status)
+		if err != nil || !won {
+			return err
+		}
+		return service.CreateTaskWebhookEventTx(tx, task)
+	})
+	if err != nil {
+		common.SysError("mark normalized video submit failed: " + err.Error())
+	}
+	return nil, taskErr
 }
 
 func markAsyncImageSubmitFailed(task *model.Task, lease *model.ImageCredentialLease, reason string) (bool, error) {
@@ -1171,6 +1342,9 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	resultURL := ""
 	if task.Status == model.TaskStatusSuccess {
 		resultURL = task.GetResultURL()
+		if constant.TaskActionAssetType(task.Action) == constant.TaskAssetTypeVideo {
+			resultURL = taskcommon.BuildProxyPath(task.TaskID)
+		}
 	}
 	displayPlatform := taskDisplayPlatform(task)
 	return &dto.TaskDto{

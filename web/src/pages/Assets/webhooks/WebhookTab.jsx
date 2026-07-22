@@ -148,7 +148,9 @@ export default function WebhookTab() {
             {t('任务 Webhook')}
           </Title>
           <Text type='tertiary'>
-            {t('图片任务完成后发送成功或失败事件；后续任务类型共用此配置')}
+            {t(
+              '图片和视频任务完成后发送成功或失败事件；所有任务类型共用此配置',
+            )}
           </Text>
           <Text type='tertiary' size='small' className='mt-1 block'>
             {t(

@@ -84,6 +84,8 @@ type Properties struct {
 	Input             string `json:"input"`
 	UpstreamModelName string `json:"upstream_model_name,omitempty"`
 	OriginModelName   string `json:"origin_model_name,omitempty"`
+	AssetType         string `json:"asset_type,omitempty"`
+	Operation         string `json:"operation,omitempty"`
 }
 
 func (m *Properties) Scan(val interface{}) error {

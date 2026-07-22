@@ -364,6 +364,8 @@ const WebhookDeliveriesTab = ({ refreshToken }) => {
               optionList={[
                 'image.task.succeeded',
                 'image.task.failed',
+                'video.task.succeeded',
+                'video.task.failed',
                 'webhook.test',
               ].map((value) => ({ value, label: value }))}
             />

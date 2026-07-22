@@ -53,6 +53,11 @@ const OPERATION_TITLES = {
   listImageTasks: '查询异步图片任务列表',
   getImageTask: '查询单个异步图片任务',
   queryImageTasks: '批量查询异步图片任务',
+  createVideoTask: '创建异步视频任务',
+  listVideoTasks: '查询异步视频任务列表',
+  getVideoTask: '查询单个异步视频任务',
+  queryVideoTasks: '批量查询异步视频任务',
+  downloadVideoAsset: '下载视频资源',
   uploadImageInputs: '预上传图片',
   uploadBase64ImageInputs: '预上传 Base64 图片',
 };
@@ -142,6 +147,149 @@ Retry-After: 2
   "completed_at": null,
   "updated_at": 1784250000
 }`;
+
+const VIDEO_GENERATION_REQUEST = `curl "$BASE_URL/v1/video/tasks" \\
+  -X POST \\
+  -H "Authorization: Bearer $MODEL_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: order-123-video" \\
+  -d '{
+    "model": "grok-imagine-video-1.5",
+    "operation": "generation",
+    "input": {"prompt": "A paper boat crossing a rain puddle"},
+    "output": {"duration": 5, "aspect_ratio": "16:9", "resolution": "720p"},
+    "client_reference_id": "order_video_123",
+    "metadata": {"campaign": "spring"}
+  }'`;
+
+const VIDEO_IMAGE_GENERATION_REQUEST = `curl "$BASE_URL/v1/video/tasks" \\
+  -X POST \\
+  -H "Authorization: Bearer $MODEL_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "grok-imagine-video-1.5",
+    "operation": "generation",
+    "input": {
+      "prompt": "Animate the camera moving toward the product",
+      "image": {"url": "https://cdn.example.com/product.png"}
+    },
+    "output": {"duration": 5, "aspect_ratio": "9:16", "resolution": "720p"}
+  }'`;
+
+const VIDEO_REFERENCE_GENERATION_REQUEST = `curl "$BASE_URL/v1/video/tasks" \\
+  -X POST \\
+  -H "Authorization: Bearer $MODEL_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "grok-imagine-video",
+    "operation": "generation",
+    "input": {
+      "prompt": "Use the references to keep the character consistent",
+      "reference_images": [
+        {"url": "https://cdn.example.com/reference-1.png"},
+        {"provider": "xai", "file_id": "file_reference_2"}
+      ]
+    },
+    "output": {"duration": 5, "resolution": "720p"}
+  }'`;
+
+const VIDEO_EDIT_REQUEST = `curl "$BASE_URL/v1/video/tasks" \\
+  -X POST \\
+  -H "Authorization: Bearer $MODEL_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "grok-imagine-video-1.5",
+    "operation": "edit",
+    "input": {
+      "prompt": "Add rain and a moody atmosphere",
+      "video": {"url": "https://cdn.example.com/source.mp4"}
+    },
+    "provider_options": {"xai": {}}
+  }'`;
+
+const VIDEO_EXTENSION_REQUEST = `curl "$BASE_URL/v1/video/tasks" \\
+  -X POST \\
+  -H "Authorization: Bearer $MODEL_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "grok-imagine-video-1.5",
+    "operation": "extension",
+    "input": {
+      "prompt": "Continue as the camera rises above the city",
+      "video": {"url": "https://cdn.example.com/source.mp4"}
+    },
+    "output": {"duration": 5}
+  }'`;
+
+const VIDEO_CREATE_RESPONSE = `HTTP/1.1 202 Accepted
+Location: /v1/video/tasks/task_video_xxx
+Retry-After: 2
+
+{
+  "id": "task_video_xxx",
+  "object": "video.task",
+  "model": "grok-imagine-video-1.5",
+  "operation": "generation",
+  "status": "queued",
+  "progress": 0,
+  "result": null,
+  "error": null,
+  "client_reference_id": "order_video_123",
+  "metadata": {"campaign": "spring"},
+  "created_at": 1784250000,
+  "started_at": null,
+  "completed_at": null,
+  "updated_at": 1784250000
+}`;
+
+const VIDEO_TASK_QUERY_REQUEST = `curl "$BASE_URL/v1/video/tasks/task_video_xxx" \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY"`;
+
+const VIDEO_TASK_QUERY_RESPONSE = `{
+  "id": "task_video_xxx",
+  "object": "video.task",
+  "model": "grok-imagine-video-1.5",
+  "operation": "generation",
+  "status": "succeeded",
+  "progress": 100,
+  "result": {
+    "videos": [
+      {
+        "asset_id": "asset_video_xxx",
+        "index": 0,
+        "url": "/v1/assets/asset_video_xxx/content",
+        "mime_type": "video/mp4",
+        "duration_ms": 5000,
+        "temporary": true,
+        "url_auth": "resource_api_key"
+      }
+    ]
+  },
+  "error": null,
+  "client_reference_id": "order_video_123",
+  "metadata": {"campaign": "spring"},
+  "created_at": 1784250000,
+  "started_at": 1784250002,
+  "completed_at": 1784250060,
+  "updated_at": 1784250060
+}`;
+
+const VIDEO_TASK_LIST_REQUEST = `curl "$BASE_URL/v1/video/tasks?status=succeeded&operation=generation&limit=20" \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY"`;
+
+const VIDEO_TASK_BATCH_REQUEST = `curl "$BASE_URL/v1/video/tasks/query" \\
+  -X POST \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"task_ids": ["task_video_xxx", "task_not_found"]}'`;
+
+const VIDEO_ASSET_LIST_REQUEST = `curl "$BASE_URL/v1/assets?asset_type=video&page=1&page_size=20" \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY"`;
+
+const VIDEO_ASSET_DOWNLOAD_REQUEST = `curl "$BASE_URL/v1/assets/asset_video_xxx/content" \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY" \\
+  -H "Range: bytes=0-1048575" \\
+  --output video.part`;
 
 const IMAGE_UPLOAD_REQUEST = `curl "$BASE_URL/v1/image/uploads" \\
   -X POST \\
@@ -417,8 +565,8 @@ const ASSET_EXPORT_RESPONSE = `HTTP/1.1 200 OK
 Content-Type: text/csv; charset=utf-8
 Content-Disposition: attachment; filename=assets.csv
 
-asset_id,task_id,asset_type,url,filename,model,platform,action,created_at
-asset_xxx,task_xxx,image,https://cdn.example.com/image.png,image.png,gpt-image-2,image_handle,image_generation,1784250060`;
+asset_id,task_id,asset_type,url,filename,model,created_at
+asset_xxx,task_xxx,image,https://cdn.example.com/image.png,image.png,gpt-image-2,1784250060`;
 
 const WEBHOOK_HEADERS = `POST https://your-service.example.com/webhooks/new-api HTTP/1.1
 Authorization: Bearer wk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -486,6 +634,46 @@ const WEBHOOK_FAILED_PAYLOAD = `{
         "retryable": false
       },
       "client_reference_id": "order_456",
+      "metadata": {},
+      "created_at": 1784250000,
+      "started_at": 1784250002,
+      "completed_at": 1784250060,
+      "updated_at": 1784250060
+    }
+  }
+}`;
+
+const VIDEO_WEBHOOK_SUCCEEDED_PAYLOAD = `{
+  "id": "evt_video_xxx",
+  "object": "event",
+  "api_version": "2026-07-17",
+  "type": "video.task.succeeded",
+  "created_at": 1784250060,
+  "data": {
+    "object": ${VIDEO_TASK_QUERY_RESPONSE}
+  }
+}`;
+
+const VIDEO_WEBHOOK_FAILED_PAYLOAD = `{
+  "id": "evt_video_yyy",
+  "object": "event",
+  "api_version": "2026-07-17",
+  "type": "video.task.failed",
+  "created_at": 1784250060,
+  "data": {
+    "object": {
+      "id": "task_video_yyy",
+      "object": "video.task",
+      "model": "video-model",
+      "operation": "extension",
+      "status": "failed",
+      "progress": 100,
+      "result": null,
+      "error": {
+        "code": "video_task_failed",
+        "message": "Video task failed",
+        "retryable": false
+      },
       "metadata": {},
       "created_at": 1784250000,
       "started_at": 1784250002,
@@ -638,7 +826,7 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
       <DocumentationSection
         title={t('三类凭据，各自负责一件事')}
         description={t(
-          '异步生图提交、资源查询和 Webhook 回调验证使用相互独立的凭据。',
+          '异步图片/视频任务创建、资源访问和 Webhook 回调验证使用相互独立的凭据。',
         )}
       >
         <Space wrap className='mb-3'>
@@ -657,12 +845,14 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
           columns={[t('使用场景'), t('API Key'), t('Authorization')]}
           rows={[
             [
-              t('创建异步图片任务'),
+              t('创建异步图片或视频任务'),
               t('普通 API Token（sk-...）'),
               'Bearer sk-...',
             ],
             [
-              t('查询异步图片任务、预上传图片，以及查询和导出生成资源'),
+              t(
+                '查询异步图片/视频任务、预上传图片，以及查询、下载和导出生成资源',
+              ),
               t('资源 API Key（ak_...）'),
               'Bearer ak_...',
             ],
@@ -680,28 +870,40 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
         </Text>
         <Text type='tertiary'>
           {t(
-            '现有视频任务接口的认证方式保持不变；本页重点列出规范化异步图片与资源接口。',
+            '现有 /v1/videos 兼容接口保持不变；新集成建议使用规范化 /v1/video/tasks。',
           )}
         </Text>
       </DocumentationSection>
 
       <DocumentationSection
-        title={t('异步图片调用流程')}
+        title={t('异步任务调用流程')}
         description={t(
-          '编辑任务可直接通过 multipart 上传本地图片，也可先预上传后使用 URL。',
+          '创建使用普通 API Token；轮询、资源查询和代理下载使用资源 API Key。',
         )}
       >
         <DocsTable
           columns={[t('步骤'), t('接口'), t('说明')]}
           rows={[
-            ['1', '/v1/image/uploads', t('可选：预上传编辑所需的图片或遮罩')],
-            ['2', '/v1/image/tasks', t('创建生成或编辑任务，立即获得 task ID')],
+            [
+              '1',
+              '/v1/image/uploads',
+              t('可选：预上传图片编辑所需的图片或遮罩'),
+            ],
+            [
+              '2',
+              '/v1/image/tasks 或 /v1/video/tasks',
+              t('创建任务并立即获得 task ID'),
+            ],
             [
               '3',
-              '/v1/image/tasks/{task_id}',
+              '/v1/{image|video}/tasks/{task_id}',
               t('轮询任务；也可以配置 Webhook 等待主动通知'),
             ],
-            ['4', '/v1/assets/{asset_id}', t('按需查询或下载任务生成的资源')],
+            [
+              '4',
+              '/v1/assets/{asset_id}',
+              t('查询结果；视频代理地址使用 /content 下载'),
+            ],
           ]}
         />
       </DocumentationSection>
@@ -853,6 +1055,153 @@ function AsyncImageDocs({ t }) {
   );
 }
 
+function AsyncVideoDocs({ t }) {
+  return (
+    <div>
+      <DocumentationSection
+        title={t('接口列表')}
+        description={t(
+          '创建任务使用普通 API Token（sk-...）；任务查询和视频代理下载使用资源 API Key（ak_...）。',
+        )}
+      >
+        <EndpointTable
+          tags={['Async Videos']}
+          apiKey={(operation) =>
+            operation.operationId === 'createVideoTask'
+              ? t('普通 API Token')
+              : t('资源 API Key')
+          }
+          t={t}
+        />
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('文本或图片生成')} · POST /v1/video/tasks`}
+        description={t(
+          'image 是单个主图对象，reference_images 是多图数组；具体操作允许的组合与数量由供应商 adaptor 校验。',
+        )}
+      >
+        <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
+          <CodeExample title={t('文生视频')}>
+            {VIDEO_GENERATION_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('图生视频')}>
+            {VIDEO_IMAGE_GENERATION_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('202 响应')}>
+            {VIDEO_CREATE_RESPONSE}
+          </CodeExample>
+        </div>
+        <Text type='tertiary'>
+          {t(
+            '建议为可重试的创建请求设置 Idempotency-Key；同一个 Key 与同一请求会返回原任务，不同请求返回 409。',
+          )}
+        </Text>
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('参考图生成')} · POST /v1/video/tasks`}
+        description={t(
+          '输入源支持公共 URL、供应商支持的 data URL，以及 provider + file_id 文件引用。',
+        )}
+      >
+        <CodeExample title={t('请求示例')}>
+          {VIDEO_REFERENCE_GENERATION_REQUEST}
+        </CodeExample>
+        <Text type='tertiary'>
+          {t(
+            '需要 ak_ 鉴权的 Asset URL 不保证上游能够读取；应使用公开 URL 或供应商文件引用。',
+          )}
+        </Text>
+        <Text type='tertiary'>
+          {t(
+            'xAI 参考图生成最多支持 7 张图片，当前应使用 grok-imagine-video；grok-imagine-video-1.5 不支持 reference_images。',
+          )}
+        </Text>
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={t('编辑、扩展与 Remix')}
+        description={t(
+          '三种操作都必须提供 input.video；公共协议允许附加 image 或 reference_images，实际支持情况由供应商 adaptor 决定，当前 xAI 编辑与扩展不接受图片输入。',
+        )}
+      >
+        <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
+          <CodeExample title={t('视频编辑')}>{VIDEO_EDIT_REQUEST}</CodeExample>
+          <CodeExample title={t('视频扩展')}>
+            {VIDEO_EXTENSION_REQUEST}
+          </CodeExample>
+        </div>
+        <DocsTable
+          columns={[t('操作'), t('关键语义')]}
+          rows={[
+            [
+              'edit',
+              t('继承输入视频的时长、宽高比和分辨率，不能在 output 中覆盖'),
+            ],
+            [
+              'extension',
+              t('output.duration 表示新增片段长度，不是最终视频总时长'),
+            ],
+            [
+              'remix',
+              t('仅在所选模型与供应商声明支持时可用，否则返回能力错误'),
+            ],
+          ]}
+        />
+        <Text type='tertiary'>
+          {t(
+            '供应商专属参数只能放在 provider_options 的对应命名空间中，例如 provider_options.xai。',
+          )}
+        </Text>
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={t('查询视频任务')}
+        description={t(
+          '列表使用 last_id 作为下一页 after 游标；批量查询最多 100 个 ID，并保持请求顺序。',
+        )}
+      >
+        <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
+          <CodeExample title={t('查询单个任务')}>
+            {VIDEO_TASK_QUERY_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('任务结果')}>
+            {VIDEO_TASK_QUERY_RESPONSE}
+          </CodeExample>
+          <CodeExample title={t('查询任务列表')}>
+            {VIDEO_TASK_LIST_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('批量查询任务')}>
+            {VIDEO_TASK_BATCH_REQUEST}
+          </CodeExample>
+        </div>
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={t('查询与下载视频资源')}
+        description={t(
+          '先检查 url_auth：none 可直接访问；resource_api_key 必须携带 ak_ 访问返回的 Asset /content 地址。',
+        )}
+      >
+        <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
+          <CodeExample title={t('查询视频资源')}>
+            {VIDEO_ASSET_LIST_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('Range 下载')}>
+            {VIDEO_ASSET_DOWNLOAD_REQUEST}
+          </CodeExample>
+        </div>
+        <Text type='tertiary'>
+          {t(
+            '视频只依赖上游临时资源，不会归档到对象存储；上游过期后代理下载返回 410。',
+          )}
+        </Text>
+      </DocumentationSection>
+    </div>
+  );
+}
+
 function AssetApiDocs({ t }) {
   return (
     <div>
@@ -882,6 +1231,17 @@ function AssetApiDocs({ t }) {
           request={ASSET_GET_REQUEST}
           response={ASSET_GET_RESPONSE}
         />
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('下载视频资源')} · GET /v1/assets/{asset_id}/content`}
+        description={t(
+          '仅用于 url_auth=resource_api_key 的视频；支持 Range，请求上游已过期时返回 410。',
+        )}
+      >
+        <CodeExample title={t('Range 下载')}>
+          {VIDEO_ASSET_DOWNLOAD_REQUEST}
+        </CodeExample>
       </DocumentationSection>
 
       <DocumentationSection
@@ -963,7 +1323,7 @@ function WebhookDocs({ onOpenWebhook, t }) {
       <DocumentationSection
         title={t('回调 Payload')}
         description={t(
-          'data.object 与任务查询接口返回的对象一致，event id 可用于记录和排查。',
+          'data.object 与对应的图片或视频任务查询 DTO 完全一致，event id 可用于幂等去重和排查。',
         )}
       >
         <Collapse defaultActiveKey={['succeeded']}>
@@ -978,6 +1338,27 @@ function WebhookDocs({ onOpenWebhook, t }) {
           <Collapse.Panel header={t('image.task.failed')} itemKey='failed'>
             <CodeExample title={t('失败事件')}>
               {WEBHOOK_FAILED_PAYLOAD}
+            </CodeExample>
+          </Collapse.Panel>
+          <Collapse.Panel
+            header={t('video.task.succeeded')}
+            itemKey='video-succeeded'
+          >
+            <Text type='tertiary' className='mb-3 block'>
+              {t(
+                '视频 URL 是上游临时资源；根据 url_auth 决定直接访问或携带 ak_ 下载。',
+              )}
+            </Text>
+            <CodeExample title={t('视频成功事件')}>
+              {VIDEO_WEBHOOK_SUCCEEDED_PAYLOAD}
+            </CodeExample>
+          </Collapse.Panel>
+          <Collapse.Panel
+            header={t('video.task.failed')}
+            itemKey='video-failed'
+          >
+            <CodeExample title={t('视频失败事件')}>
+              {VIDEO_WEBHOOK_FAILED_PAYLOAD}
             </CodeExample>
           </Collapse.Panel>
           <Collapse.Panel header={t('webhook.test')} itemKey='test'>
@@ -1066,6 +1447,7 @@ export default function ResourceCenterDocs({ onOpenApiKeys, onOpenWebhook }) {
         tabList={[
           { tab: t('API 概览'), itemKey: 'overview' },
           { tab: t('异步图片'), itemKey: 'async-images' },
+          { tab: t('异步视频'), itemKey: 'async-videos' },
           { tab: t('资源 API'), itemKey: 'assets' },
           { tab: 'Webhook', itemKey: 'webhook' },
         ]}
@@ -1079,6 +1461,7 @@ export default function ResourceCenterDocs({ onOpenApiKeys, onOpenWebhook }) {
         />
       )}
       {activeSection === 'async-images' && <AsyncImageDocs t={t} />}
+      {activeSection === 'async-videos' && <AsyncVideoDocs t={t} />}
       {activeSection === 'assets' && <AssetApiDocs t={t} />}
       {activeSection === 'webhook' && (
         <WebhookDocs onOpenWebhook={onOpenWebhook} t={t} />

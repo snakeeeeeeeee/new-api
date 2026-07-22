@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -33,6 +34,8 @@ const (
 	WebhookAPIVersion              = "2026-07-17"
 	WebhookEventImageTaskSucceeded = "image.task.succeeded"
 	WebhookEventImageTaskFailed    = "image.task.failed"
+	WebhookEventVideoTaskSucceeded = "video.task.succeeded"
+	WebhookEventVideoTaskFailed    = "video.task.failed"
 	WebhookEventTest               = "webhook.test"
 	webhookKeyPrefix               = "wk-"
 	webhookKeyRandomLength         = 48
@@ -55,7 +58,10 @@ var (
 )
 
 func accountWebhookEventTypesJSON() string {
-	body, _ := common.Marshal([]string{WebhookEventImageTaskFailed, WebhookEventImageTaskSucceeded})
+	body, _ := common.Marshal([]string{
+		WebhookEventImageTaskFailed, WebhookEventImageTaskSucceeded,
+		WebhookEventVideoTaskFailed, WebhookEventVideoTaskSucceeded,
+	})
 	return string(body)
 }
 
@@ -341,29 +347,59 @@ func DisableAccountWebhookConfig(userID int) error {
 }
 
 func CreateImageTaskWebhookEventTx(tx *gorm.DB, task *model.Task) error {
+	return CreateTaskWebhookEventTx(tx, task)
+}
+
+func CreateTaskWebhookEventTx(tx *gorm.DB, task *model.Task) error {
 	if tx == nil || task == nil {
 		return nil
 	}
-	if !tx.Migrator().HasTable(&model.ImageTaskRequest{}) || !tx.Migrator().HasTable(&model.WebhookEvent{}) {
+	if !tx.Migrator().HasTable(&model.WebhookEvent{}) {
 		return nil
 	}
-	eventType := ""
-	switch task.Status {
-	case model.TaskStatusSuccess:
-		eventType = WebhookEventImageTaskSucceeded
-	case model.TaskStatusFailure:
-		eventType = WebhookEventImageTaskFailed
-	default:
-		return nil
-	}
-	publicTask, exists, err := BuildPublicImageTaskTx(tx, task)
-	if err != nil || !exists {
-		return err
+	eventType, objectType := "", ""
+	var publicTask any
+	if task.Properties.AssetType == constant.TaskAssetTypeVideo || constant.TaskActionAssetType(task.Action) == constant.TaskAssetTypeVideo {
+		if !tx.Migrator().HasTable(&model.VideoTaskRequest{}) {
+			return nil
+		}
+		switch task.Status {
+		case model.TaskStatusSuccess:
+			eventType = WebhookEventVideoTaskSucceeded
+		case model.TaskStatusFailure:
+			eventType = WebhookEventVideoTaskFailed
+		default:
+			return nil
+		}
+		objectType = "video.task"
+		built, exists, err := BuildPublicVideoTaskTx(tx, task)
+		if err != nil || !exists {
+			return err
+		}
+		publicTask = built
+	} else {
+		if !tx.Migrator().HasTable(&model.ImageTaskRequest{}) {
+			return nil
+		}
+		switch task.Status {
+		case model.TaskStatusSuccess:
+			eventType = WebhookEventImageTaskSucceeded
+		case model.TaskStatusFailure:
+			eventType = WebhookEventImageTaskFailed
+		default:
+			return nil
+		}
+		objectType = "image.task"
+		built, exists, err := BuildPublicImageTaskTx(tx, task)
+		if err != nil || !exists {
+			return err
+		}
+		publicTask = built
 	}
 	now := time.Now().Unix()
 	event := &model.WebhookEvent{
 		EventID: model.NewWebhookEventID(), UserID: task.UserId, EventType: eventType,
-		ObjectType: "image.task", ObjectID: task.TaskID, APIVersion: WebhookAPIVersion, CreatedAt: now,
+		ObjectType: objectType, ObjectID: task.TaskID, APIVersion: WebhookAPIVersion, CreatedAt: now,
 	}
 	payload, err := common.Marshal(dto.WebhookEventEnvelope{
 		ID: event.EventID, Object: "event", APIVersion: event.APIVersion, Type: event.EventType,

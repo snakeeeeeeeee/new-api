@@ -28,18 +28,40 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestTaskModel2DtoOnlyReturnsResultURLForSuccessfulTask(t *testing.T) {
+func TestTaskModel2DtoReturnsPublicProxyPathForSuccessfulVideoTasks(t *testing.T) {
+	for _, action := range constant.TaskActionsByAssetType(constant.TaskAssetTypeVideo) {
+		t.Run(action, func(t *testing.T) {
+			task := &model.Task{
+				TaskID: "task_success",
+				Action: action,
+				Status: model.TaskStatusSuccess,
+				PrivateData: model.TaskPrivateData{
+					ResultURL: "/v1/videos/upstream-uuid/content",
+				},
+			}
+
+			assert.Equal(t, taskcommon.BuildProxyPath(task.TaskID), TaskModel2Dto(task).ResultURL)
+			assert.Equal(t, "/v1/videos/upstream-uuid/content", task.GetResultURL())
+		})
+	}
+}
+
+func TestTaskModel2DtoPreservesSuccessfulNonVideoResultURL(t *testing.T) {
 	success := &model.Task{
 		TaskID: "task_success",
+		Action: constant.TaskActionImageGeneration,
 		Status: model.TaskStatusSuccess,
 		PrivateData: model.TaskPrivateData{
-			ResultURL: "https://vidgen.x.ai/video.mp4",
+			ResultURL: "https://cdn.example.com/image.png",
 		},
 	}
-	assert.Equal(t, "https://vidgen.x.ai/video.mp4", TaskModel2Dto(success).ResultURL)
+	assert.Equal(t, "https://cdn.example.com/image.png", TaskModel2Dto(success).ResultURL)
+}
 
+func TestTaskModel2DtoOmitsFailedTaskResultURL(t *testing.T) {
 	failure := &model.Task{
 		TaskID:     "task_failure",
+		Action:     constant.TaskActionVideoGeneration,
 		Status:     model.TaskStatusFailure,
 		FailReason: "Generated video rejected by content moderation.",
 	}

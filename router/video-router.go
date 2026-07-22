@@ -25,6 +25,7 @@ func SetVideoRouter(router *gin.Engine) {
 	videoProxyRouter.Use(middleware.TokenOrUserAuth())
 	{
 		videoProxyRouter.GET("/videos/:task_id/content", controller.VideoProxy)
+		videoProxyRouter.GET("/assets/:asset_id/content", controller.VideoAssetContent)
 	}
 
 	imageTaskQueryRouter := router.Group("/v1")
@@ -38,23 +39,38 @@ func SetVideoRouter(router *gin.Engine) {
 		imageTaskQueryRouter.POST("/image/uploads/base64", controller.ProxyImageTaskUpload)
 	}
 
-	videoV1Router := router.Group("/v1")
-	videoV1Router.Use(middleware.RouteTag("relay"))
-	videoV1Router.Use(middleware.AssetOrTokenAuth(), middleware.Distribute())
+	videoTaskQueryRouter := router.Group("/v1")
+	videoTaskQueryRouter.Use(middleware.RouteTag("relay"))
+	videoTaskQueryRouter.Use(middleware.AssetKeyAuth())
 	{
-		videoV1Router.POST("/video/generations", controller.RelayTask)
-		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
-		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
+		videoTaskQueryRouter.GET("/video/tasks", controller.ListVideoTasks)
+		videoTaskQueryRouter.GET("/video/tasks/:task_id", controller.GetVideoTask)
+		videoTaskQueryRouter.POST("/video/tasks/query", controller.QueryVideoTasks)
 	}
+
+	videoCreateRouter := router.Group("/v1")
+	videoCreateRouter.Use(middleware.RouteTag("relay"))
+	videoCreateRouter.Use(middleware.TokenAuth(), middleware.Distribute())
+	{
+		videoCreateRouter.POST("/video/tasks", controller.PrepareVideoTaskRequest, controller.RelayTask)
+		videoCreateRouter.POST("/video/generations", controller.RelayTask)
+		videoCreateRouter.POST("/videos/:video_id/remix", controller.RelayTask)
+		videoCreateRouter.POST("/videos/generations", controller.RelayTask)
+		videoCreateRouter.POST("/videos/edits", controller.RelayTask)
+		videoCreateRouter.POST("/videos/extensions", controller.RelayTask)
+		videoCreateRouter.POST("/videos", controller.RelayTask)
+	}
+
+	videoQueryRouter := router.Group("/v1")
+	videoQueryRouter.Use(middleware.RouteTag("relay"))
+	videoQueryRouter.Use(middleware.AssetOrTokenAuth(), middleware.Distribute())
+	{
+		videoQueryRouter.GET("/video/generations/:task_id", controller.RelayTaskFetch)
+		videoQueryRouter.GET("/videos/:task_id", controller.RelayTaskFetch)
+	}
+
 	// openai compatible API video routes
 	// docs: https://platform.openai.com/docs/api-reference/videos/create
-	{
-		videoV1Router.POST("/videos/generations", controller.RelayTask)
-		videoV1Router.POST("/videos/edits", controller.RelayTask)
-		videoV1Router.POST("/videos/extensions", controller.RelayTask)
-		videoV1Router.POST("/videos", controller.RelayTask)
-		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
-	}
 
 	imageTaskCreateRouter := router.Group("/v1")
 	imageTaskCreateRouter.Use(middleware.RouteTag("relay"))

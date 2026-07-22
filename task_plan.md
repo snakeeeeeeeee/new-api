@@ -1,3 +1,156 @@
+# Task Plan: Multi-provider Async Video Resource API (2026-07-23)
+
+## Goal
+Add a provider-neutral asynchronous video create/query contract, per-asset temporary downloads, and video terminal Webhooks while preserving all existing OpenAI/CLIProxyAPI/sub2api compatibility endpoints.
+
+## Current Phase
+Complete
+
+### Phase 1: Public contract and persistence
+- [x] Add normalized video create/query/result DTOs with explicit optional scalar pointers.
+- [x] Persist normalized requests, idempotency, asset type, and operation cross-database.
+- [x] Add create/list/get/batch routes with the approved token and `ak_` boundaries.
+**Status:** complete
+
+### Phase 2: Provider and asset pipeline
+- [x] Add structured video outputs with legacy single-URL fallback.
+- [x] Implement xAI normalized generation/edit/extension conversion and validation.
+- [x] Add provider-neutral public URL projection and per-asset content proxying.
+**Status:** complete
+
+### Phase 3: Webhook and documentation
+- [x] Emit `video.task.succeeded` and `video.task.failed` through the existing account Webhook.
+- [x] Add the Async Videos OpenAPI and Resource Center documentation, examples, filters, and all locales.
+**Status:** complete
+
+### Phase 4: Verification
+- [x] Run focused, cross-database, full backend, OpenAPI, frontend, and i18n checks.
+- [x] Rebuild Docker dev and verify real Grok generation, query, Asset/legacy Range downloads, idempotent replay, and success/failure Webhooks.
+- [x] Exercise normalized edit through the real channel and document that the current sub2api upstream rejects both data URL and provider-file inputs before a successful edit can run.
+- [x] Restore the temporary Webhook target, reset the mock, and confirm final container health.
+**Status:** complete
+
+### Phase 5: Image-input capability correction
+- [x] Keep `image` as one primary image, `reference_images` as an array, and `video` as one source in the public DTO.
+- [x] Remove provider-specific image-combination and edit-output restrictions from the public controller.
+- [x] Enforce current xAI generation/edit/extension combinations, reference-image count/model/duration limits, and explicit errors in the xAI adaptor.
+- [x] Correct OpenAPI, Resource Center examples, and all affected locales; verify backend, spec, Docker dev, and desktop frontend.
+**Status:** complete
+
+## Locked Decisions
+- Existing `/v1/videos/*` wire formats remain compatible; normalized clients use `/v1/video/tasks`.
+- Video create/edit/extension/remix POST routes require ordinary API Tokens; `ak_` is read/download only.
+- Public video tasks and Webhooks are provider-neutral and may contain multiple video Assets.
+- Private upstream URLs stay internal; public cross-origin HTTPS URLs may bypass new-api, while relative/same-origin/private sources use `/v1/assets/{asset_id}/content`.
+- Images and videos share one account Webhook URL and `wk-` Key.
+- Video resources remain upstream-backed and temporary; no object-storage archive or retention guarantee is added.
+- xAI 1080p is accepted only for `grok-imagine-video-1.5` single-image generation; text and reference-image generation are rejected by the normalized adaptor.
+- Public `image` is a singular primary image and `reference_images` is a multi-image array; adaptors, not the public controller, decide which operation/input combinations they support.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Combined Asset DTO/controller patch referenced a controller symbol while applying to the DTO file | 1 | Split the patch by real file context and applied the DTO and controller changes with exact anchors. |
+| xAI normalized-model test initialized a promoted RelayInfo field directly | 1 | Put `UpstreamModelName` in the embedded `ChannelMeta`, matching production construction. |
+| Scoped Prettier found one mechanical formatting difference in `WebhookTab.jsx` | 1 | Run Prettier on that file and repeat the complete scoped check successfully. |
+| Full i18n lint reports the repository's existing 420-item hardcoded-string baseline | 1 | Confirm none of the changed Resource Center/Webhook files appears in the findings; all seven locale catalogs parse and i18n status completes. |
+| Real channel 109 rejects normalized video edit for both a downloaded data URL and the generated provider content UUID | 2 | Preserve the provider-neutral edit implementation and record the upstream limitation; current sub2api source exposes generation/status routes but no usable edit route. |
+| Combined planning patch referenced a findings heading that does not exist verbatim | 1 | The atomic patch changed nothing; patch the active task section and append findings/progress separately. |
+| Desktop acceptance initially showed the previous 1.5 reference-image example | 1 | Source and local build were correct; rebuild and recreate only `new-api-dev`, then repeat the desktop check against the embedded frontend. |
+| PostgreSQL cleanup probe used the nonexistent default `postgres` role | 1 | Read the dev Compose configuration and use its configured `root` role for the exact disposable-user cleanup. |
+| First Docker capability probes used the token display name as the Bearer value | 1 | Resolve the active Key for the named local token without printing it, add the required `sk-` prefix, and rerun both probes successfully. |
+
+---
+
+# Task Plan: Task Log Public Video URL Follow-up (2026-07-23)
+
+## Goal
+Make task-log video preview, copy, and open actions use the authenticated public `task_.../content` route while preserving the raw upstream result URL internally for proxy retrieval.
+
+## Current Phase
+Complete
+
+### Phase 1: Diagnose the remaining UI path
+- [x] Confirm the task log receives `TaskDto.result_url`, not the OpenAI video status representation.
+- [x] Confirm `TaskModel2Dto` currently exposes `task.GetResultURL()` unchanged.
+- [x] Reject database replacement because the proxy still needs the original upstream URL.
+**Status:** complete
+
+### Phase 2: Public DTO conversion
+- [x] Convert successful video task DTO result URLs to the public proxy route.
+- [x] Preserve non-video task result URLs and internal task storage unchanged.
+- [x] Add focused regression coverage.
+**Status:** complete
+
+### Phase 3: Docker task-log acceptance
+- [x] Rebuild Docker dev and verify the task API returns a public URL for existing xAI tasks.
+- [x] Verify authenticated browser playback through the same public route used by the task-log modal.
+- [x] Run final backend/frontend checks and confirm container health.
+**Status:** complete
+
+## Locked Decisions
+- Do not rewrite `Task.PrivateData.ResultURL`; it remains the upstream fetch location.
+- Apply the public URL at the task DTO boundary so every task-log consumer receives the same safe value.
+- Scope conversion to video actions/platforms so image and audio result behavior is unchanged.
+- Use a same-origin relative path for dashboard/session compatibility; retain absolute proxy URLs in external OpenAI video status responses.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| The only controllable browser has no local login session and redirects task logs to `/login` | 1 | Create an isolated disposable local administrator for UI playback acceptance, then remove it without touching existing accounts. |
+| The first disposable username exceeded the existing username length limit | 1 | Registration rejected it before creating data; use a shorter unique fixture name. |
+| The disposable administrator lacks task-log menu permission | 1 | Grant only the task-log menu key to the fixture, then remove it with the account. |
+| Playwright clicks on the unique preview button did not open the modal | 2 | Inspect the bound modal component and browser logs, then use the stable visible DOM node or direct media-state evidence instead of repeating the same click path. |
+| Visible DOM click on the same icon button also did not change React modal state | 1 | Stop click retries; validate the task DTO and authenticated media URL directly in tabs sharing the same browser session. |
+| Browser client blocks direct navigation to the JSON API with `ERR_BLOCKED_BY_CLIENT` | 1 | Issue the same read-only same-origin GET from the authenticated task page instead. |
+| The browser's read-only page sandbox does not expose `fetch` | 1 | Use the already-rendered task rows plus direct authenticated browser navigation to the public media route for playback evidence. |
+| CLI session request omitted the frontend's `New-Api-User` header | 1 | Login succeeded but task API rejected the request; repeat with the fixture user ID header and log out in the same command. |
+| Browser logout API navigation and physical account-menu click are blocked by the in-app browser | 3 | Stop UI retries, close all isolated tabs, and delete the disposable account so its remaining browser session no longer identifies an existing user. |
+
+---
+
+# Task Plan: xAI Video Provider Compatibility (2026-07-23)
+
+## Goal
+Keep the xAI video relay compatible with both CLIProxyAPI and sub2api by preserving configured upstream model names and proxying completed video content through the public task ID.
+
+## Current Phase
+Complete
+
+### Phase 1: Contract diagnosis
+- [x] Reproduce a real local xAI video task through Docker dev.
+- [x] Confirm that model normalization changes `grok-imagine-video-1.5` incorrectly.
+- [x] Confirm that sub2api returns a relative content URL which the current proxy cannot request.
+**Status:** complete
+
+### Phase 2: Generic compatibility implementation
+- [x] Preserve `UpstreamModelName` exactly and leave provider aliases to channel model mapping.
+- [x] Return the public `task_...` content URL from xAI status responses.
+- [x] Resolve relative result URLs against the channel base URL and attach Bearer auth only for same-origin targets.
+- [x] Preserve absolute CDN URLs without channel auth and strip auth across cross-origin redirects.
+- [x] Allow bounded long-running video downloads instead of truncating them at 60 seconds.
+**Status:** complete
+
+### Phase 3: Regression verification
+- [x] Add focused adaptor and proxy URL/auth tests.
+- [x] Run the full Go test suite and diff validation.
+**Status:** complete
+
+### Phase 4: Docker dev acceptance
+- [x] Rebuild and recreate Docker dev from the final source.
+- [x] Verify canonical model handling with a real xAI video task.
+- [x] Verify status and public content download end to end.
+**Status:** complete
+
+## Locked Decisions
+- The shared xAI adaptor does not normalize or infer model aliases.
+- CLIProxyAPI/sub2api model differences are expressed only through channel `model_mapping`.
+- Both compatible upstreams use the generic create and status routes under `/v1/videos`.
+- Clients receive only the public new-api task content URL, never an upstream task ID path.
+- Relative result URLs may use channel credentials; absolute cross-origin CDN URLs never receive them.
+
+---
+
 # Task Plan: Async Image Final Usage Log Reconciliation (2026-07-22)
 
 ## Goal
@@ -38,6 +191,116 @@ Complete
 | Initial Docker callback fixture read the channel callback secret from `other` instead of `settings` | 1 | Correct the test harness lookup, rerun the callback flow, and remove the disposable fixture; production code was unaffected. |
 | One Docker validation SQL query omitted a closing parenthesis | 1 | Correct the read-only validation query and rerun it successfully; no database state changed. |
 | Final manual mock health probe used `/health` instead of the configured `/healthz` | 1 | Compose already reported the mock healthy; use the configured endpoint for the explicit probe. |
+
+---
+
+# Task Plan: OpenAI Null Required Tool Schema Compatibility (2026-07-22)
+
+## Goal
+Allow administrators to opt into a narrowly scoped OpenAI Chat Completions compatibility cleanup that removes JSON Schema keyword `required` only when its value is `null`, including nested schemas and raw passthrough requests.
+
+## Current Phase
+Complete
+
+### Phase 1: Setting and bounded schema cleaner
+- [x] Add an independent hot global switch that defaults disabled.
+- [x] Recursively remove only schema-keyword `required: null` from recognized child-schema locations.
+- [x] Cover both `tools[].function.parameters` and legacy `functions[].parameters`.
+**Status:** complete
+
+### Phase 2: Relay and desktop UI integration
+- [x] Apply the cleaner to serialized and raw passthrough OpenAI Chat Completions requests.
+- [x] Add the switch to Compatibility Management -> OpenAI Compatibility and all seven locales.
+- [x] Run backend tests and scoped frontend build/lint/format/i18n checks without mobile QA.
+**Status:** complete
+
+### Phase 3: Docker live A/B
+- [x] Rebuild Docker dev and snapshot the original setting.
+- [x] Send an identical real payload through `test-gpt兼容`: disabled must reproduce upstream 400, enabled must return a successful response/tool call.
+- [x] Restore the setting to disabled and confirm Docker health and fixture cleanup.
+**Status:** complete
+
+## Locked Decisions
+- This feature is independent from reserved-function-name compatibility and defaults disabled.
+- Only `required: null` is removed; other invalid schema types are preserved for upstream validation.
+- Recursion follows JSON Schema child-schema keywords and never enters data-bearing `default`, `const`, `enum`, or `examples` values.
+- Messages, tool-call arguments, content, and unrelated JSON remain byte-semantically untouched.
+- Mobile UI compatibility testing is explicitly excluded.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| The first Docker A/B SQL helper used an incompatible placeholder form | 1 | PostgreSQL rejected the helper before any option mutation or API request; replace it with the correct parameter handling and continue. |
+| The first disabled request surfaced as client HTTP 500 because local upstream-error passthrough was disabled | 1 | Logs confirmed the target upstream 400; temporarily enable passthrough for the identical-payload A/B, then restore its original disabled state. |
+| Initial disposable UI fixture values exceeded existing validation limits | 1 | Shorten only the fixture fields and rerun desktop UI validation; production validation was unchanged. |
+| Initial UI fixture cleanup observed a cached root role after database mutation | 1 | Delete the fixture through the normal management endpoint, then verify the database count is zero. |
+
+---
+
+# Task Plan: OpenAI Reserved Python Tool Compatibility (2026-07-22)
+
+## Goal
+Transparently support OpenAI Chat Completions clients whose custom function names collide with configurable upstream reserved names when an upstream or intermediate bridge converts the request to Responses.
+
+## Current Phase
+Complete
+
+### Phase 1: Settings and request-scoped alias contract
+- [x] Add hot global compatibility settings with an enable switch and configurable reserved-name list.
+- [x] Add a collision-safe `run_<name>` alias mapping to relay request state.
+- [x] Rewrite structured Chat Completions function-name references in normal and raw passthrough requests.
+**Status:** complete
+
+### Phase 2: Response restoration
+- [x] Restore aliases in non-streaming Chat Completions responses.
+- [x] Restore aliases in streaming Chat Completions chunks without changing unrelated JSON fields.
+**Status:** complete
+
+### Phase 3: Verification
+- [x] Cover model scope, alias collisions, request history, tool choice, normal responses, and streaming responses.
+- [x] Run focused and package-level Go tests plus formatting and diff checks.
+**Status:** complete
+
+### Phase 4: Compatibility management UI
+- [x] Add the switch and reserved-name input to the existing OpenAI compatibility tab.
+- [x] Add all frontend translations and verify desktop form behavior; mobile testing was excluded by user request.
+**Status:** complete
+
+### Phase 5: Docker live contrast matrix
+- [x] Snapshot the live compatibility settings and resolve the authorized `test-gpt兼容` token without exposing its secret.
+- [x] Verify disabled + `python` forwards the original name using a model-reported tool-schema observation.
+- [x] Verify enabled + nonmatching keyword + `python` still forwards the original name.
+- [x] Verify enabled + matching `python` exposes `run_python` upstream while restoring the client-visible structured name to `python`, for non-streaming and streaming requests.
+- [x] Restore the original compatibility settings and confirm Docker dev remains healthy.
+**Status:** complete
+
+### Phase 6: Original 400 reproduction and identical-payload A/B
+- [x] Trace Request ID `202607220331435264898266qI0WOpT` through local logs, consume/error records, and request snapshots without exposing credentials.
+- [x] Test bounded request-shape variants for a custom function named `python`, stopping once the exact upstream reserved-name 400 is reproduced.
+- [x] Confirm the identical-payload 400/200 branch is not applicable because no disabled request reproduced the 400; retain the completed upstream-visible alias A/B as compatibility proof.
+- [x] Document every attempted shape and the missing external condition instead of claiming a successful 400/200 contrast.
+- [x] Restore the exact pre-test configuration and verify Docker dev health.
+**Status:** complete
+
+## Locked Decisions
+- Compatibility is implemented entirely in new-api because sub2api is an immutable bridge.
+- Automatic rewriting is model-independent and activates only for configured reserved names declared by an OpenAI Chat Completions request.
+- The global setting defaults to enabled with `python`; administrators may enter comma- or newline-separated names in Compatibility Management.
+- Aliases default to `run_<original>` and add a numeric suffix on collision.
+- Rewriting is bidirectional and request-scoped; clients continue to see `python`.
+- JSON function-name fields are rewritten structurally. Arbitrary byte replacement is forbidden because aliases may occur in tool arguments or ordinary content.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| OpenAI documentation MCP was registered but is not loaded in the current task; direct official-doc fetches returned HTTP 403 | 1 | Treat the captured OpenAI 400 response as runtime evidence and avoid claiming an unverified complete reserved-name list. |
+| Initial compatibility tests over-escaped nested `arguments` JSON inside raw string literals, making the fixtures invalid | 1 | Keep a single JSON escape layer inside `arguments` and rerun the same focused tests. |
+| Full frontend i18n lint reports 420 repository-wide hardcoded-string issues | 1 | Confirm this matches the existing baseline and that `src/pages/Compatibility` has no findings; scoped locale status passes. |
+| A planning-only patch matched the first generic `Current Phase` heading instead of the OpenAI section | 1 | Restore the unrelated completed phase and scope the update by the OpenAI task heading; no product code or runtime configuration changed. |
+| The first inline live-test command collided with JavaScript template interpolation before shell execution | 1 | No request or mutation occurred; create the secret-free harness under `tmp/` with `apply_patch`, execute it directly, then remove only that file. |
+| The temporary root access token was generated as 64 characters but the local column is `char(32)` | 1 | PostgreSQL rejected the update before any option write or upstream call; cleanup confirmed the exact original state, then reduce the process-local token to 32 characters. |
+| Disabled + `python` returned 200 instead of the assumed reserved-name 400 | 1 | Confirmed it still used channel 85/sub2api; inspect live configuration observability and reproduce the original request shape before interpreting the compatibility result. |
+| The live harness attempted to iterate an empty request-header ID array after all four assertions passed | 1 | Cleanup still restored the exact state; obtain authoritative Request IDs from the four new token logs instead of resending paid requests. |
 
 ---
 

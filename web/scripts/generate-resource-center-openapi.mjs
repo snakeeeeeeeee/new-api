@@ -101,6 +101,73 @@ const webhookFailedExample = {
   },
 };
 
+const videoWebhookSucceededExample = {
+  id: 'evt_video_xxx',
+  object: 'event',
+  api_version: '2026-07-17',
+  type: 'video.task.succeeded',
+  created_at: 1784250060,
+  data: {
+    object: {
+      id: 'task_video_xxx',
+      object: 'video.task',
+      model: 'grok-imagine-video-1.5',
+      operation: 'generation',
+      status: 'succeeded',
+      progress: 100,
+      result: {
+        videos: [
+          {
+            asset_id: 'asset_video_xxx',
+            index: 0,
+            url: 'https://cdn.example.com/video.mp4',
+            mime_type: 'video/mp4',
+            duration_ms: 5000,
+            temporary: true,
+            url_auth: 'none',
+          },
+        ],
+      },
+      error: null,
+      client_reference_id: 'order_video_123',
+      metadata: {},
+      created_at: 1784250000,
+      started_at: 1784250002,
+      completed_at: 1784250060,
+      updated_at: 1784250060,
+    },
+  },
+};
+
+const videoWebhookFailedExample = {
+  id: 'evt_video_yyy',
+  object: 'event',
+  api_version: '2026-07-17',
+  type: 'video.task.failed',
+  created_at: 1784250060,
+  data: {
+    object: {
+      id: 'task_video_yyy',
+      object: 'video.task',
+      model: 'video-model',
+      operation: 'extension',
+      status: 'failed',
+      progress: 100,
+      result: null,
+      error: {
+        code: 'video_task_failed',
+        message: 'Video task failed',
+        retryable: false,
+      },
+      metadata: {},
+      created_at: 1784250000,
+      started_at: 1784250002,
+      completed_at: 1784250060,
+      updated_at: 1784250060,
+    },
+  },
+};
+
 const commonErrorResponses = {
   400: responseRef('BadRequest'),
   401: responseRef('Unauthorized'),
@@ -117,13 +184,6 @@ const assetFilterParameters = [
   ),
   queryParameter('task_id', { type: 'string' }, 'Filter by exact task ID.'),
   queryParameter('model', { type: 'string' }, 'Filter by exact model.'),
-  queryParameter(
-    'platform',
-    { type: 'string' },
-    'Filter by internal task platform name.',
-  ),
-  queryParameter('action', { type: 'string' }, 'Filter by task action.'),
-  queryParameter('channel_id', { type: 'integer' }, 'Filter by channel ID.'),
   queryParameter(
     'keyword',
     { type: 'string' },
@@ -179,14 +239,53 @@ const imageTaskListParameters = [
   ),
 ];
 
+const videoTaskListParameters = [
+  queryParameter(
+    'status',
+    ref('VideoTaskStatus'),
+    'Filter by one public task status.',
+  ),
+  queryParameter(
+    'operation',
+    ref('VideoTaskOperation'),
+    'Filter by generation, edit, extension, or remix.',
+  ),
+  queryParameter(
+    'client_reference_id',
+    { type: 'string' },
+    'Filter by the caller business reference.',
+  ),
+  queryParameter(
+    'created_after',
+    { type: 'integer', format: 'int64', minimum: 0 },
+    'Inclusive lower creation-time bound in Unix seconds.',
+  ),
+  queryParameter(
+    'created_before',
+    { type: 'integer', format: 'int64', minimum: 0 },
+    'Inclusive upper creation-time bound in Unix seconds.',
+  ),
+  queryParameter(
+    'after',
+    { type: 'string' },
+    'Task ID cursor returned by the previous page.',
+  ),
+  queryParameter(
+    'limit',
+    { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+    'Page size.',
+  ),
+];
+
 const spec = {
   openapi: '3.1.0',
   info: {
     title: 'new-api Resource Center API',
-    version: '2026-07-22',
-    summary: 'Assets, asynchronous image tasks, uploads, and Webhooks.',
+    version: '2026-07-23',
+    summary:
+      'Assets, asynchronous image and video tasks, uploads, and Webhooks.',
     description:
-      'Public Resource Center API. Creating an asynchronous image task uses a standard API Token; task queries, uploads, and assets use a Resource Center API Key; outbound Webhook verification uses a dedicated Webhook Key.',
+      'Public Resource Center API. Creating asynchronous image or video tasks uses a standard API Token; task queries, uploads, assets, and proxied video downloads use a Resource Center API Key; outbound Webhook verification uses a dedicated Webhook Key.',
   },
   jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
   servers: [
@@ -208,6 +307,11 @@ const spec = {
     {
       name: 'Async Images',
       description: 'Create and query durable image generation/edit tasks.',
+    },
+    {
+      name: 'Async Videos',
+      description:
+        'Create and query provider-neutral video generation, edit, extension, and remix tasks.',
     },
     {
       name: 'Image Uploads',
@@ -255,6 +359,61 @@ const spec = {
         },
       },
     },
+    '/v1/assets/{asset_id}/content': {
+      get: {
+        tags: ['Assets'],
+        operationId: 'downloadVideoAsset',
+        summary: 'Download video asset content',
+        description:
+          'Streams a temporary upstream-backed video. Range requests are supported. A 410 response means the upstream resource expired. Public CDN URLs may be returned directly by Asset and task responses instead of using this proxy.',
+        security: [{ ResourceCenterAuth: [] }, { ModelTokenAuth: [] }],
+        parameters: [
+          pathParameter('asset_id', 'Video Asset ID such as asset_xxx.'),
+          {
+            name: 'Range',
+            in: 'header',
+            required: false,
+            description: 'Optional RFC 9110 byte range.',
+            schema: { type: 'string', examples: ['bytes=0-1048575'] },
+          },
+        ],
+        responses: {
+          200: {
+            description: 'Complete video content.',
+            headers: {
+              'Accept-Ranges': {
+                schema: { type: 'string', const: 'bytes' },
+              },
+              'Cache-Control': { schema: { type: 'string' } },
+            },
+            content: {
+              'video/mp4': { schema: { type: 'string', format: 'binary' } },
+              'application/octet-stream': {
+                schema: { type: 'string', format: 'binary' },
+              },
+            },
+          },
+          206: {
+            description: 'Partial video content.',
+            headers: {
+              'Content-Range': { schema: { type: 'string' } },
+              'Accept-Ranges': {
+                schema: { type: 'string', const: 'bytes' },
+              },
+            },
+            content: {
+              'video/mp4': { schema: { type: 'string', format: 'binary' } },
+              'application/octet-stream': {
+                schema: { type: 'string', format: 'binary' },
+              },
+            },
+          },
+          404: responseRef('NotFound'),
+          410: responseRef('ResourceExpired'),
+          ...commonErrorResponses,
+        },
+      },
+    },
     '/v1/assets/query': {
       post: {
         tags: ['Assets'],
@@ -298,7 +457,7 @@ const spec = {
         responses: {
           200: {
             description:
-              'CSV with asset_id, task_id, asset_type, url, filename, model, platform, action, and created_at.',
+              'CSV with asset_id, task_id, asset_type, url, filename, model, and created_at.',
             content: { 'text/csv': { schema: { type: 'string' } } },
           },
           401: responseRef('Unauthorized'),
@@ -462,6 +621,100 @@ const spec = {
         },
       },
     },
+    '/v1/video/tasks': {
+      post: {
+        tags: ['Async Videos'],
+        operationId: 'createVideoTask',
+        summary: 'Create an asynchronous video task',
+        description:
+          'Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated by the selected provider adaptor. Compatibility endpoints under /v1/videos remain unchanged.',
+        security: modelTokenSecurity,
+        parameters: [
+          {
+            name: 'Idempotency-Key',
+            in: 'header',
+            required: false,
+            description:
+              'Optional caller key, unique per user. Maximum 128 characters. The same key and request replay the original task; a different request returns 409.',
+            schema: { type: 'string', maxLength: 128 },
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: jsonContent(ref('VideoTaskCreateRequest')),
+        },
+        responses: {
+          202: jsonResponse('Task accepted.', ref('VideoTask'), {
+            Location: {
+              description: 'Canonical task URL.',
+              schema: { type: 'string' },
+            },
+            'Retry-After': {
+              description: 'Suggested polling delay in seconds.',
+              schema: { type: 'integer' },
+            },
+            'Idempotent-Replayed': {
+              description: 'true when the original task is replayed.',
+              schema: { type: 'boolean' },
+            },
+          }),
+          409: responseRef('Conflict'),
+          502: responseRef('BadGateway'),
+          ...commonErrorResponses,
+        },
+      },
+      get: {
+        tags: ['Async Videos'],
+        operationId: 'listVideoTasks',
+        summary: 'List asynchronous video tasks',
+        security: resourceSecurity,
+        parameters: videoTaskListParameters,
+        responses: {
+          200: jsonResponse(
+            'Cursor-paginated task list.',
+            ref('VideoTaskListResponse'),
+          ),
+          ...commonErrorResponses,
+        },
+      },
+    },
+    '/v1/video/tasks/{task_id}': {
+      get: {
+        tags: ['Async Videos'],
+        operationId: 'getVideoTask',
+        summary: 'Get an asynchronous video task',
+        security: resourceSecurity,
+        parameters: [
+          pathParameter('task_id', 'Public task ID such as task_xxx.'),
+        ],
+        responses: {
+          200: jsonResponse('Task.', ref('VideoTask')),
+          404: responseRef('NotFound'),
+          ...commonErrorResponses,
+        },
+      },
+    },
+    '/v1/video/tasks/query': {
+      post: {
+        tags: ['Async Videos'],
+        operationId: 'queryVideoTasks',
+        summary: 'Query up to 100 video tasks',
+        description:
+          'Returned tasks preserve request order. Unknown or unauthorized IDs are listed in missing.',
+        security: resourceSecurity,
+        requestBody: {
+          required: true,
+          content: jsonContent(ref('VideoTaskBatchQueryRequest')),
+        },
+        responses: {
+          200: jsonResponse(
+            'Ordered task list with missing IDs.',
+            ref('VideoTaskBatchResponse'),
+          ),
+          ...commonErrorResponses,
+        },
+      },
+    },
   },
   webhooks: {
     imageTaskSucceeded: {
@@ -520,6 +773,62 @@ const spec = {
         },
       },
     },
+    videoTaskSucceeded: {
+      post: {
+        operationId: 'receiveVideoTaskSucceededWebhook',
+        summary: 'video.task.succeeded callback',
+        description:
+          'Sent for every normalized video operation with Authorization: Bearer wk-.... data.object is identical to GET /v1/video/tasks/{task_id}. Video URLs are temporary and may require an ak_ Resource Center API Key when url_auth is resource_api_key.',
+        security: webhookSecurity,
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: ref('WebhookEvent'),
+              example: videoWebhookSucceededExample,
+            },
+          },
+        },
+        responses: {
+          '2XX': {
+            description: 'Delivery accepted. The response body is ignored.',
+          },
+          default: {
+            description:
+              'Delivery failed and is retried until the configured maximum attempt count is reached.',
+          },
+        },
+      },
+    },
+    videoTaskFailed: {
+      post: {
+        operationId: 'receiveVideoTaskFailedWebhook',
+        summary: 'video.task.failed callback',
+        description:
+          'Sent for failed generation, edit, extension, or remix tasks with Authorization: Bearer wk-.... No Asset is required for a failure event.',
+        security: webhookSecurity,
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: ref('WebhookEvent'),
+              example: videoWebhookFailedExample,
+            },
+          },
+        },
+        responses: {
+          '2XX': {
+            description: 'Delivery accepted. The response body is ignored.',
+          },
+          default: {
+            description:
+              'Delivery failed and is retried until the configured maximum attempt count is reached.',
+          },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -528,14 +837,14 @@ const spec = {
         scheme: 'bearer',
         bearerFormat: 'sk-...',
         description:
-          'A standard API Token from Token Management. Its model limits, group, quota, and audit identity apply when creating asynchronous image tasks.',
+          'A standard API Token from Token Management. Its model limits, group, quota, and audit identity apply when creating asynchronous image or video tasks. It may also download an owned proxied video Asset.',
       },
       ResourceCenterAuth: {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'ak_...',
         description:
-          'A Resource Center API Key generated on the Resource Center API Key tab. It authorizes task queries, uploads, and asset reads, but cannot create asynchronous image tasks or authenticate Webhooks.',
+          'A Resource Center API Key generated on the Resource Center API Key tab. It authorizes image/video task queries, uploads, asset reads, and proxied video downloads, but cannot create tasks or authenticate Webhooks.',
       },
       WebhookAuth: {
         type: 'http',
@@ -585,7 +894,12 @@ const spec = {
           task_id: { type: 'string', examples: ['task_xxx'] },
           index: { type: 'integer', minimum: 0 },
           type: ref('AssetType'),
-          url: { type: 'string', format: 'uri' },
+          url: { type: 'string', format: 'uri-reference' },
+          temporary: { type: 'boolean' },
+          url_auth: {
+            type: 'string',
+            enum: ['none', 'resource_api_key'],
+          },
           thumbnail_url: { type: 'string', format: 'uri' },
           mime_type: { type: 'string' },
           filename: { type: 'string' },
@@ -594,8 +908,6 @@ const spec = {
           height: { type: 'integer', minimum: 0 },
           duration_ms: { type: 'integer', format: 'int64', minimum: 0 },
           model: { type: 'string' },
-          platform: { type: 'string' },
-          action: { type: 'string' },
           status: { const: 'available' },
           metadata: { type: 'object', additionalProperties: true },
           created_at: { type: 'integer', format: 'int64', minimum: 0 },
@@ -627,8 +939,6 @@ const spec = {
           asset_type: ref('AssetType'),
           task_id: { type: 'string' },
           model: { type: 'string' },
-          platform: { type: 'string' },
-          action: { type: 'string' },
           start_timestamp: { type: 'integer', format: 'int64', minimum: 0 },
           end_timestamp: { type: 'integer', format: 'int64', minimum: 0 },
           page: { type: 'integer', minimum: 1, default: 1 },
@@ -656,7 +966,12 @@ const spec = {
           asset_id: { type: 'string' },
           task_id: { type: 'string' },
           asset_type: ref('AssetType'),
-          url: { type: 'string', format: 'uri' },
+          url: { type: 'string', format: 'uri-reference' },
+          temporary: { type: 'boolean' },
+          url_auth: {
+            type: 'string',
+            enum: ['none', 'resource_api_key'],
+          },
         },
       },
       AssetURLListResponse: {
@@ -888,6 +1203,234 @@ const spec = {
           missing: { type: 'array', items: { type: 'string' } },
         },
       },
+      VideoTaskOperation: {
+        type: 'string',
+        enum: ['generation', 'edit', 'extension', 'remix'],
+      },
+      VideoTaskStatus: {
+        type: 'string',
+        enum: ['queued', 'in_progress', 'succeeded', 'failed'],
+      },
+      VideoTaskSource: {
+        oneOf: [
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['url'],
+            properties: {
+              url: {
+                type: 'string',
+                format: 'uri',
+                pattern: '^(https?://|data:)',
+                description:
+                  'A public HTTP(S) URL or a provider-supported data URL. Asset URLs that require ak_ authentication are not guaranteed to be readable by an upstream provider.',
+              },
+            },
+          },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['provider', 'file_id'],
+            properties: {
+              provider: { type: 'string', minLength: 1 },
+              file_id: { type: 'string', minLength: 1 },
+            },
+          },
+        ],
+      },
+      VideoTaskInput: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['prompt'],
+        properties: {
+          prompt: { type: 'string', minLength: 1 },
+          image: {
+            ...ref('VideoTaskSource'),
+            description:
+              'One primary image source. For xAI generation this is the starting frame. Support in other operations is provider-specific.',
+          },
+          reference_images: {
+            type: 'array',
+            minItems: 1,
+            items: ref('VideoTaskSource'),
+            description:
+              'Multiple reference image sources. Allowed combinations and provider-specific limits are validated by the selected adaptor.',
+          },
+          video: {
+            ...ref('VideoTaskSource'),
+            description:
+              'One source video for edit, extension, or remix operations.',
+          },
+        },
+      },
+      VideoTaskOutput: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          duration: {
+            type: 'integer',
+            description:
+              'Requested output duration. For extension this is the new segment duration. Provider-specific bounds are validated by the selected adaptor.',
+          },
+          aspect_ratio: { type: 'string' },
+          resolution: { type: 'string' },
+        },
+      },
+      VideoTaskCreateRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['model', 'operation', 'input'],
+        properties: {
+          model: { type: 'string', minLength: 1 },
+          operation: ref('VideoTaskOperation'),
+          input: ref('VideoTaskInput'),
+          output: ref('VideoTaskOutput'),
+          client_reference_id: { type: 'string', maxLength: 191 },
+          metadata: { type: 'object', additionalProperties: true },
+          provider_options: {
+            type: 'object',
+            description:
+              'Provider-specific options keyed by provider namespace, for example provider_options.xai.',
+            additionalProperties: {
+              type: 'object',
+              additionalProperties: true,
+            },
+          },
+        },
+        allOf: [
+          {
+            if: {
+              properties: { operation: { const: 'generation' } },
+              required: ['operation'],
+            },
+            then: {
+              properties: { input: { not: { required: ['video'] } } },
+            },
+            else: {
+              properties: {
+                input: {
+                  required: ['video'],
+                },
+              },
+            },
+          },
+        ],
+      },
+      VideoTaskResultVideo: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['asset_id', 'index', 'url', 'temporary', 'url_auth'],
+        properties: {
+          asset_id: { type: 'string', pattern: '^asset_' },
+          index: { type: 'integer', minimum: 0 },
+          url: { type: 'string', format: 'uri-reference' },
+          mime_type: { type: 'string' },
+          filename: { type: 'string' },
+          width: { type: 'integer', minimum: 0 },
+          height: { type: 'integer', minimum: 0 },
+          duration_ms: { type: 'integer', format: 'int64', minimum: 0 },
+          temporary: { const: true },
+          url_auth: {
+            type: 'string',
+            enum: ['none', 'resource_api_key'],
+          },
+        },
+      },
+      VideoTaskResult: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['videos'],
+        properties: {
+          videos: { type: 'array', items: ref('VideoTaskResultVideo') },
+        },
+      },
+      VideoTaskError: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['code', 'message', 'retryable'],
+        properties: {
+          code: { type: 'string' },
+          message: { type: 'string' },
+          retryable: { type: 'boolean' },
+        },
+      },
+      VideoTask: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'id',
+          'object',
+          'model',
+          'operation',
+          'status',
+          'progress',
+          'result',
+          'error',
+          'created_at',
+          'started_at',
+          'completed_at',
+          'updated_at',
+        ],
+        properties: {
+          id: { type: 'string', pattern: '^task_' },
+          object: { const: 'video.task' },
+          model: { type: 'string' },
+          operation: ref('VideoTaskOperation'),
+          status: ref('VideoTaskStatus'),
+          progress: { type: 'integer', minimum: 0, maximum: 100 },
+          result: { oneOf: [ref('VideoTaskResult'), { type: 'null' }] },
+          error: { oneOf: [ref('VideoTaskError'), { type: 'null' }] },
+          client_reference_id: { type: 'string' },
+          metadata: { type: 'object', additionalProperties: true },
+          created_at: { type: 'integer', format: 'int64', minimum: 0 },
+          started_at: {
+            type: ['integer', 'null'],
+            format: 'int64',
+            minimum: 0,
+          },
+          completed_at: {
+            type: ['integer', 'null'],
+            format: 'int64',
+            minimum: 0,
+          },
+          updated_at: { type: 'integer', format: 'int64', minimum: 0 },
+        },
+      },
+      VideoTaskListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['object', 'data', 'has_more'],
+        properties: {
+          object: { const: 'list' },
+          data: { type: 'array', items: ref('VideoTask') },
+          first_id: { type: 'string' },
+          last_id: { type: 'string' },
+          has_more: { type: 'boolean' },
+        },
+      },
+      VideoTaskBatchQueryRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['task_ids'],
+        properties: {
+          task_ids: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 100,
+            items: { type: 'string' },
+          },
+        },
+      },
+      VideoTaskBatchResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['object', 'data'],
+        properties: {
+          object: { const: 'list' },
+          data: { type: 'array', items: ref('VideoTask') },
+          missing: { type: 'array', items: { type: 'string' } },
+        },
+      },
       ImageMultipartUploadRequest: {
         type: 'object',
         additionalProperties: false,
@@ -984,7 +1527,12 @@ const spec = {
       },
       WebhookEventType: {
         type: 'string',
-        enum: ['image.task.succeeded', 'image.task.failed'],
+        enum: [
+          'image.task.succeeded',
+          'image.task.failed',
+          'video.task.succeeded',
+          'video.task.failed',
+        ],
       },
       WebhookEvent: {
         type: 'object',
@@ -1000,7 +1548,9 @@ const spec = {
             type: 'object',
             additionalProperties: false,
             required: ['object'],
-            properties: { object: ref('ImageTask') },
+            properties: {
+              object: { oneOf: [ref('ImageTask'), ref('VideoTask')] },
+            },
           },
         },
       },
@@ -1020,6 +1570,10 @@ const spec = {
       },
       NotFound: {
         description: 'The resource was not found for the authenticated user.',
+        content: jsonContent(ref('ErrorResponse')),
+      },
+      ResourceExpired: {
+        description: 'The temporary upstream video resource has expired.',
         content: jsonContent(ref('ErrorResponse')),
       },
       Conflict: {

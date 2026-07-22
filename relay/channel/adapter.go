@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"context"
 	"io"
 	"net/http"
 
@@ -76,6 +77,21 @@ type TaskAdaptor interface {
 
 	FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error)
 	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
+}
+
+// NormalizedVideoTaskAdaptor is implemented by providers that accept the
+// provider-neutral /v1/video/tasks contract. Compatibility video endpoints do
+// not use this interface and retain their existing wire formats.
+type NormalizedVideoTaskAdaptor interface {
+	PrepareNormalizedVideoRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.VideoTaskCreateRequest) *dto.TaskError
+	ValidateNormalizedVideoModel(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
+}
+
+// VideoContentResolver is optional. Providers implement it when a completed
+// output is an opaque reference or requires a provider-specific content API
+// instead of a directly fetchable URL.
+type VideoContentResolver interface {
+	ResolveVideoContent(ctx context.Context, channel *model.Channel, task *model.Task, output relaycommon.VideoOutput, headers http.Header) (*http.Response, error)
 }
 
 type OpenAIVideoConverter interface {

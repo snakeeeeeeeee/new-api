@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -295,7 +296,7 @@ func ExportAssetsByAPIKey(c *gin.Context) {
 		writeAssetAPIError(c, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
-	writeAssetCSV(c, items)
+	writePublicAssetCSV(c, items)
 }
 
 func parseAssetQuery(c *gin.Context, admin bool) model.AssetQueryParams {
@@ -367,13 +368,22 @@ func assetToAPIItem(asset *model.Asset) *dto.AssetAPIItem {
 	if asset == nil {
 		return nil
 	}
+	publicURL := asset.URL
+	urlAuth := ""
+	temporary := false
+	if asset.AssetType == model.AssetTypeVideo {
+		publicURL, urlAuth = service.PublicVideoAssetURL(asset)
+		temporary = true
+	}
 	return &dto.AssetAPIItem{
 		Object:       "asset",
 		ID:           asset.AssetID,
 		TaskID:       asset.TaskID,
 		Index:        asset.AssetIndex,
 		Type:         string(asset.AssetType),
-		URL:          asset.URL,
+		URL:          publicURL,
+		Temporary:    temporary,
+		URLAuth:      urlAuth,
 		ThumbnailURL: asset.ThumbnailURL,
 		MimeType:     asset.MimeType,
 		Filename:     asset.Filename,
@@ -382,13 +392,32 @@ func assetToAPIItem(asset *model.Asset) *dto.AssetAPIItem {
 		Height:       asset.Height,
 		DurationMS:   asset.DurationMS,
 		Model:        asset.Model,
-		Platform:     string(asset.Platform),
-		Action:       asset.Action,
 		Status:       string(asset.Status),
-		Metadata:     asset.Metadata,
+		Metadata:     publicAssetMetadata(asset.Metadata),
 		CreatedAt:    asset.CreatedAt,
 		UpdatedAt:    asset.UpdatedAt,
 	}
+}
+
+func publicAssetMetadata(metadata model.AssetMetadata) map[string]any {
+	if len(metadata) == 0 {
+		return nil
+	}
+	public := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		switch key {
+		case "source", "resolver", "provider_reference", "execution":
+			continue
+		}
+		if strings.HasPrefix(key, "internal_") {
+			continue
+		}
+		public[key] = value
+	}
+	if len(public) == 0 {
+		return nil
+	}
+	return public
 }
 
 func assetsToAPIItems(assets []*model.Asset) []*dto.AssetAPIItem {
@@ -519,11 +548,20 @@ func normalizeAssetIDs(assetIDs []string, limit int) []string {
 func assetsToURLItems(assets []*model.Asset) []dto.AssetURLItem {
 	items := make([]dto.AssetURLItem, 0, len(assets))
 	for _, asset := range assets {
+		publicURL := asset.URL
+		urlAuth := ""
+		temporary := false
+		if asset.AssetType == model.AssetTypeVideo {
+			publicURL, urlAuth = service.PublicVideoAssetURL(asset)
+			temporary = true
+		}
 		items = append(items, dto.AssetURLItem{
-			AssetID: asset.AssetID,
-			TaskID:  asset.TaskID,
-			Type:    string(asset.AssetType),
-			URL:     asset.URL,
+			AssetID:   asset.AssetID,
+			TaskID:    asset.TaskID,
+			Type:      string(asset.AssetType),
+			URL:       publicURL,
+			Temporary: temporary,
+			URLAuth:   urlAuth,
 		})
 	}
 	return items
@@ -549,6 +587,30 @@ func writeAssetCSV(c *gin.Context, assets []*model.Asset) {
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", "attachment; filename=assets.csv")
 	c.String(200, buffer.String())
+}
+
+func writePublicAssetCSV(c *gin.Context, assets []*model.Asset) {
+	var buffer bytes.Buffer
+	buffer.WriteString("asset_id,task_id,asset_type,url,filename,model,created_at\n")
+	for _, asset := range assets {
+		publicURL := asset.URL
+		if asset.AssetType == model.AssetTypeVideo {
+			publicURL, _ = service.PublicVideoAssetURL(asset)
+		}
+		row := []string{
+			asset.AssetID,
+			asset.TaskID,
+			string(asset.AssetType),
+			publicURL,
+			asset.Filename,
+			asset.Model,
+			strconv.FormatInt(asset.CreatedAt, 10),
+		}
+		buffer.WriteString(csvLine(row))
+	}
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename=assets.csv")
+	c.String(http.StatusOK, buffer.String())
 }
 
 func csvLine(fields []string) string {

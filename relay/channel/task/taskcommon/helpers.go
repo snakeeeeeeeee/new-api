@@ -60,10 +60,14 @@ func DecodeLocalTaskID(id string) (string, error) {
 	return string(b), nil
 }
 
-// BuildProxyURL constructs the video proxy URL using the public task ID.
-// e.g., "https://your-server.com/v1/videos/task_xxxx/content"
+// BuildProxyPath constructs the same-origin video proxy path using the public task ID.
+func BuildProxyPath(taskID string) string {
+	return fmt.Sprintf("/v1/videos/%s/content", taskID)
+}
+
+// BuildProxyURL constructs the absolute video proxy URL using the public task ID.
 func BuildProxyURL(taskID string) string {
-	return fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, taskID)
+	return system_setting.ServerAddress + BuildProxyPath(taskID)
 }
 
 // Status-to-progress mapping constants for polling updates.

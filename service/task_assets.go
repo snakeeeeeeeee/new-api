@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
 type taskAssetImage struct {
@@ -129,6 +130,44 @@ func BuildAssetCreateInputs(task *model.Task) []model.AssetCreateInput {
 	appendURL(data.URL, "", "", "", 0, 0, 0, 0, model.AssetMetadata{"source": "data.url"})
 	appendURL(task.GetResultURL(), "", "", "", 0, 0, 0, 0, model.AssetMetadata{"source": "private_data.result_url"})
 
+	return inputs
+}
+
+func BuildAssetCreateInputsForResult(task *model.Task, taskResult *relaycommon.TaskInfo) []model.AssetCreateInput {
+	if task == nil || task.Status != model.TaskStatusSuccess || taskResult == nil || len(taskResult.VideoOutputs) == 0 {
+		return BuildAssetCreateInputs(task)
+	}
+	inputs := make([]model.AssetCreateInput, 0, len(taskResult.VideoOutputs))
+	seen := make(map[string]bool)
+	for position, output := range taskResult.VideoOutputs {
+		source := strings.TrimSpace(output.URL)
+		if source == "" {
+			source = strings.TrimSpace(output.ProviderReference)
+		}
+		if source == "" || seen[source] {
+			continue
+		}
+		seen[source] = true
+		index := output.Index
+		if index < 0 {
+			index = position
+		}
+		metadata := model.AssetMetadata{"source": "task_info.video_outputs"}
+		if output.ProviderReference != "" {
+			metadata["provider_reference"] = output.ProviderReference
+		}
+		if output.Resolver != "" {
+			metadata["resolver"] = output.Resolver
+		}
+		inputs = append(inputs, model.AssetCreateInput{
+			Task: task, AssetIndex: index, AssetType: model.AssetTypeVideo, URL: source,
+			ThumbnailURL: output.ThumbnailURL, MimeType: output.MimeType, Filename: output.Filename,
+			Width: output.Width, Height: output.Height, DurationMS: output.DurationMS, Metadata: metadata,
+		})
+	}
+	if len(inputs) == 0 {
+		return BuildAssetCreateInputs(task)
+	}
 	return inputs
 }
 

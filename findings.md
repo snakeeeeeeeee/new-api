@@ -1,3 +1,55 @@
+# Multi-provider Async Video Final Findings (2026-07-23)
+
+- The normalized public contract is provider-neutral: public requests, tasks, Assets, and Webhooks do not expose channel IDs, platform IDs, upstream task IDs, quota, provider cost, raw responses, or internal Asset metadata.
+- Current official xAI documentation limits 1080p to `grok-imagine-video-1.5` image-to-video generation. The final adaptor therefore also rejects 1080p text-only and reference-image generation; compatibility `/v1/videos/*` payloads remain unvalidated passthrough.
+- The local channel 109 is xAI-compatible sub2api, not direct xAI. Its completed task response exposes `/v1/videos/6d75b77c-fe60-9641-91a2-2f29ad076852/content`, and anonymous access to that upstream endpoint returns 401.
+- Because that URL is relative and channel-authenticated, returning it as a public CDN URL would be incorrect and would leak an unusable address. The normalized result correctly projects `/v1/assets/{asset_id}/content` with `url_auth=resource_api_key`; the Asset proxy attaches channel auth server-side.
+- This means the public result URL cannot be supplied directly to a remote provider as an edit input. The approved contract explicitly does not promise that `ak_`-protected Asset URLs are upstream-readable.
+- A real data-URL edit and a real `{provider:"xai",file_id}` edit both reached channel 109 and were immediately rejected with the same blank sub2api upstream error. The checked local latest sub2api source registers Grok video generation/status routes but no usable edit/extension route.
+- Successful edit acceptance therefore requires a channel whose upstream actually implements xAI `/v1/videos/edits` and can consume the chosen input source. Adding new-api-side public unauthenticated media hosting would contradict the approved authenticated temporary-resource design.
+- Immediate upstream rejection still creates a durable failed normalized task before returning the synchronous error. Query, Webhook, and idempotent replay all work: each terminal transition creates one event, and same-key replay returns the original task without duplicate delivery.
+- Real generation evidence confirms the important external workflow: create with normal Token, poll/query with `ak_`, discover the video Asset, and download either Asset or legacy task content with Range. Both download routes returned HTTP 206 with `video/mp4`.
+- Docker UI verification was desktop-only by request. At 1280x720 the document width stayed exactly 1280 pixels and no visible-overflow element widened the page.
+
+---
+
+# Task Log Public Video URL Follow-up Findings (2026-07-23)
+
+- The screenshot shows `/v1/videos/b0c80724-3aee-9916-b53d-c758bc6cacb1/content`, which is the stored upstream UUID path rather than the public new-api task path.
+- The previous fix only changes xAI `ConvertToOpenAIVideo`, used by `GET /v1/videos/{task_id}`. The dashboard task log uses `TaskModel2Dto`, a separate response path.
+- `TaskModel2Dto` currently assigns successful `result_url` directly from `task.GetResultURL()`, so the frontend faithfully receives and displays the internal relative URL.
+- The frontend task-log video modal is not the correct normalization boundary: preview, copy, and open actions all consume the same DTO field, and other clients can consume the task API too.
+- Replacing the database value would break `VideoProxy`, which needs the stored upstream relative or absolute URL. The public conversion belongs only in outward task DTO serialization.
+- The task-log frontend's `buildVideoResultUrl` already falls back to `/v1/videos/{task_id}/content`, but only when `record.result_url` is empty. Any stored upstream URL therefore overrides the correct fallback.
+- Preview, browser-open, and modal copy actions all reuse that same selected URL, so one backend DTO correction fixes every task-log video action without frontend changes.
+- `constant.TaskActionAssetType` already defines the same complete video-action set as the task-log frontend, including legacy provider actions and the OpenAI-style generation/edit/extension actions.
+- The dashboard DTO should use a relative public path, not `ServerAddress + path`: a relative URL preserves same-origin session cookies when Docker is opened as `localhost` even if the configured server address is `host.docker.internal`.
+- The preview modal uses a native `<video src>` element. A same-origin relative proxy path automatically carries the dashboard session cookie; no custom frontend authorization or Blob transport is needed.
+- Both administrator `/api/task/` and user `/api/task/self` lists serialize through `TaskModel2Dto`, so the DTO fix covers both task-log views.
+- Docker serves the rebuilt page correctly, but the available in-app browser has no local authentication state and redirects `/console/task` to `/login`; no alternate browser session is available.
+- The disposable account's administrator role is active, as shown by administrator-only task table columns, but the existing per-admin menu permission layer rejects the task API until its task-log menu key is granted.
+- The exact guarded permission for administrator task listing is `async_task`; granting only that key is sufficient for this fixture.
+- The rebuilt table displays both xAI task rows without new console errors. Browser automation clicks on the icon-only preview button do not update React modal state in this environment, so endpoint-level browser evidence is more reliable for final acceptance.
+- Direct navigation in the same authenticated browser session to `/v1/videos/task_dwEC.../content` creates a native video element with `readyState=4`, no media error, duration 5.041667 seconds, and decoded dimensions 848x480.
+- A real authenticated `GET /api/task/` for the existing task returns `result_url=/v1/videos/task_dwECb8BLNtzhUNm8taOUgknsekhWgmk5/content`, exactly matching the public task ID path.
+- The disposable fixture cleanup is exact: user, menu permission, token, task, and log counts for user ID 994207 are all zero, and all isolated browser tabs were closed.
+
+---
+
+# xAI Video Provider Compatibility Findings (2026-07-23)
+
+- Local Docker channel 109 reaches a sub2api-compatible xAI video upstream and successfully completes `grok-imagine-video-1.5` tasks.
+- The current adaptor normalizes canonical `grok-imagine-video-1.5` to legacy `grok-imagine-video`, despite channel model mapping already being the intended provider-specific translation boundary.
+- The upstream completed response stores `/v1/videos/{upstream_uuid}/content` as a relative result URL; the old video proxy passes it directly to `http.Client`, causing `unsupported protocol scheme ""` and a public 502.
+- Querying new-api with the upstream UUID is expected to return `Task not found` because public task lookup is keyed by the generated `task_...` ID.
+- Direct authenticated retrieval of the same relative upstream content succeeds with HTTP 206 and MP4 bytes, proving generation and upstream storage are healthy.
+- The public xAI status representation must override the stored upstream result with `/v1/videos/{public_task_id}/content`; the proxy remains responsible for resolving and authenticating the actual upstream location.
+- Absolute cross-origin result URLs are treated as CDN locations and receive no channel key. Relative and absolute same-origin locations use the configured channel Bearer key.
+- The first post-fix content download reached the correct upstream URL but exposed the old proxy's fixed 60-second context limit on a larger generated MP4; video transfers need a longer bounded window than ordinary API responses.
+- sub2api's completed task representation reports its internal model as `grok-imagine-video` even when new-api sends canonical `grok-imagine-video-1.5`. This upstream response field cannot be used as evidence of new-api request normalization; the outbound adaptor boundary is covered directly by request-body tests.
+
+---
+
 # Async Image Final Usage Log Reconciliation Findings (2026-07-22)
 
 - The screenshot's balance is financially correct: `$0.500000 - $0.458664 = $0.041336` actual charge, but the real `5/196` tokens are attached to the refund delta row.
@@ -14,6 +66,73 @@
 - Real PostgreSQL E2E produced one successful task with exactly one consume log and no refund log: precharge `50000`, final quota `4913`, prompt/completion tokens `5/196`, matching Request ID, and request count `1`.
 - No historical migration is required; reconciliation applies to newly settled async image tasks and leaves existing rows unchanged.
 - Final review found timeout sweeping still gated reconciliation on nonzero quota; image tasks now enter failure reconciliation even at zero precharge, while the refund helper continues to skip all balance mutations when there is no amount to return.
+
+---
+
+# OpenAI Null Required Tool Schema Compatibility Findings (2026-07-22)
+
+- The upstream 400 `Invalid schema for function 'knowledge_list_documents': None is not of type 'array'` identifies an invalid request-side function schema, most plausibly the JSON Schema keyword `required` carrying JSON `null` instead of an array.
+- The upstream/sub2api emits the rejection, while new-api can prevent it by cleaning the outbound request before forwarding; it is unrelated to reserved function names.
+- The repository's existing generic tool-schema compatibility can normalize multiple schema defects for Claude/AWS channels, so reusing it directly would violate the approved narrow OpenAI contract.
+- OpenAI Chat Completions has two outbound paths in `relay/compatible_handler.go`: normal DTO serialization and raw body passthrough. Both must invoke the same targeted cleaner.
+- `GeneralOpenAIRequest.Tools[].Function.Parameters` uses `any`, while legacy `functions` is retained as `json.RawMessage`; a raw structural cleaner applied after marshaling covers both without expanding DTO coercion.
+- The compatibility setting is `global.openai_tool_schema_null_required_compat_enabled`; it is hot-reloadable, independent from reserved-function-name aliasing, and defaults to `false` when no option row exists.
+- The cleaner walks only recognized JSON Schema child-schema positions. It removes a schema object's own `required` member only when the value is JSON `null`; valid arrays and other invalid types remain unchanged for upstream validation.
+- Data-bearing keywords such as `default`, `const`, `enum`, and `examples` are intentionally opaque, so a nested object stored there cannot be mistaken for a child schema. Messages, tool arguments, content, and unrelated request JSON are outside the mutation boundary.
+- Focused tests cover modern tools, legacy functions, nested properties/definitions/items/combinators/conditionals/additional-property schemas, raw passthrough, serialized requests, disabled behavior, and preservation of non-null or data-bearing values.
+- The full backend suite, frontend production build, scoped ESLint/Prettier, seven-locale i18n status, and whitespace checks pass.
+- Docker dev was rebuilt and is healthy at `http://localhost:3001`. Desktop UI verification confirmed the new OpenAI Compatibility switch starts off, toggles on, and toggles back off; mobile QA was intentionally not performed.
+- The real disabled/enabled A/B used the same `gpt-5.4` payload, forced `knowledge_list_documents`, and included both top-level and nested `required: null` values through token ID 141 and channel 85.
+- Disabled Request ID `20260722094557387149380GU70SYWZ` returned HTTP 400 with `Invalid schema for function 'knowledge_list_documents': None is not of type 'array'.`
+- Enabled Request ID `20260722094558315168755H4btF3TY` returned HTTP 200 and a `knowledge_list_documents` tool call, directly confirming the outbound cleanup resolves this validator failure.
+- Cleanup restored the original runtime state: the new option has no database row and therefore remains default-disabled, upstream-error passthrough is false, root access token is null, no disposable UI user remains, and Docker dev is healthy.
+
+---
+
+# OpenAI Reserved Python Tool Compatibility Findings (2026-07-22)
+
+- Reproduction Phase 6 found no local match for production Request ID `202607220331435264898266qI0WOpT` in the Docker logs, PostgreSQL `logs` table, `logs-dev`, `tmp`, `outputs`, or `data-dev`. The original client payload is therefore unavailable locally and cannot be replayed byte-for-byte.
+- The screenshot's sub2api UUID and the supplied new-api-style Request ID identify different hops of the production request. Local Docker contains an `error_snapshots` table, but the initial Request ID lookup did not find a corresponding local log row.
+- The local `error_snapshots` table is empty, and no consume/error log contains the reserved-name message. There is no recoverable local client or upstream request fragment for the production failure.
+- The bounded reproduction set is limited to modern `tools` with automatic and forced selection, legacy `functions/function_call`, and a multi-turn request carrying historical tool-call names. Repeating the same successful shape would only add cost without isolating a condition.
+- A local sub2api checkout/container is available under `/Users/zhangyu/code/myProject/supertoken-projects/sub2api`, but new-api channel 85 targets remote `http://185.150.190.236:18888`; local container logs cannot reveal that remote deployment's account selection.
+- Channel 85 advertises `gpt-5.4` directly and has one gateway key. Its local new-api model mapping is empty, so the model name is not changed before reaching remote sub2api.
+- Read-only sub2api source inspection confirms it does not originate the reserved-name error and contains no `python` reservation rule. For OpenAI accounts that support Responses, it converts both modern `tools` and legacy `functions` into Responses tools and forwards the function name unchanged.
+- Consequently, a 400 with `param=tools` is consistent with a real OpenAI-side validation collision after sub2api conversion. Whether it reproduces locally can still depend on which remote OpenAI account/type sub2api selects for the gateway key.
+- With new-api compatibility explicitly disabled, five distinct Chat Completions shapes all returned HTTP 200 and a real `python` tool call through remote channel 85: modern automatic tools, modern forced strict tools, legacy `functions/function_call`, historical tool-call continuation, and a multi-tool request.
+- Those results disprove a request-shape-only rule in the current remote route: neither modern versus legacy definition, tool choice, history, nor multiple tools was sufficient to reproduce the production 400. A single direct Responses request is the remaining bounded isolation check.
+- The direct `/v1/responses` isolation probe also returned HTTP 200 with `status=completed` and a function call named `python`. It bypassed the new Chat Completions compatibility scope, so the current remote OpenAI account/model context itself accepted the name.
+- Phase 6 Request IDs are `202607220715557642407975Peqpvqw`, `20260722071558727322923Fcs0H9s1`, `20260722071600708053716b6q1QuR0`, `202607220716033247284253YsAmGzw`, `202607220716048952756344wTgDeDQ`, and direct Responses `202607220718061811798023CIvh2Zl`; every record uses channel 85 and model `gpt-5.4`.
+- The direct Responses account path injected substantial upstream context (4,430 input tokens), unlike the compact Chat Completions probes. No more paid repetitions are justified without the production client body or a way to pin remote sub2api to the screenshot's `nailong-PRO` account.
+- Best-supported diagnosis: the production request did define a custom function named `python`, sub2api passed it unchanged into Responses, and the specific OpenAI account/model context selected at that time treated `python` as reserved. Current remote routing does not reproduce that validator behavior.
+- Docker contrast-test preflight found no persisted rows for either new option, so the live starting state is the code default: compatibility enabled with reserved-name list `python`.
+- The authorized token name resolves uniquely to token ID 141 in group `gpt-new`; its 48-character secret will remain in shell-local variables and will not be printed or written to artifacts.
+- The earlier two successful requests both reached aggregate route `sub2api-gpt`, channel 85, and returned HTTP 200 for model `gpt-5.4`; these are the positive-control baseline, not yet proof of the switch or nonmatching-list behavior.
+- The first disabled live control unexpectedly returned HTTP 200 and created consume log 34526 with Request ID `20260722063336944699594mb9wLWI5` on channel 85. This disproves the initial assumption that any forced Chat Completions function named `python` deterministically reproduces the upstream 400.
+- The disabled-control result did not bypass sub2api: its log records aggregate route `sub2api-gpt`, channel 85, model `gpt-5.4`, and normal upstream usage. The next diagnostic must distinguish a hot-setting failure from payload-dependent or changed upstream reserved-name behavior.
+- Screenshot inspection confirms the original failure used sub2api account `nailong-PRO`, inbound Chat Completions, outbound Responses, and model `gpt-5.4`, but it does not expose the original tools payload. Channel 85 currently points to a remote sub2api deployment with one configured gateway key, so its internal OpenAI-account selection is not locally observable.
+- A deterministic black-box contrast can avoid depending on the upstream 400: force a tool call whose required `observed_name` argument must equal the function name shown to the model. Compatibility intentionally restores only structured function-name fields, so the argument reveals `python` versus `run_python` without leaking the alias accidentally.
+- The four-request black-box matrix passed: disabled + `python` reported `python`; enabled + nonmatching `not_a_reserved_keyword` reported `python`; enabled + matching `python` reported `run_python` in both non-streaming and streaming tool arguments while the client-visible structured name remained `python`.
+- Consume logs 34527 through 34530 provide the authoritative route evidence. Their Request IDs are `20260722063844971541042YsFcz03T`, `20260722063848780488585coz2N5ZT`, `20260722063850406377461JHAgdMx4`, and `20260722063852209810962TUfapqgC`; all used channel 85 and the last is streaming.
+- The original upstream reserved-name 400 was not reproducible while compatibility was disabled in the current sub2api routing state. This does not weaken the alias proof, but it means the 400 is likely dependent on sub2api's internal OpenAI account/request context or has changed since the screenshot; claiming a deterministic global OpenAI rejection would be unsupported.
+- Post-test restoration is exact: both newly introduced option rows are absent again, admin ID 1's access token is null, Docker is running/healthy, and `/api/status` returns 200. Startup therefore uses the intended default enabled + `python` state.
+- Session recovery confirmed there are no existing functional changes for this compatibility feature; only its planning artifacts are modified.
+- `GlobalSettings` is already hot-registered under the `global` configuration namespace, so the new switch and text setting can reuse `global.*` option persistence without a schema migration.
+- The final outbound JSON is the correct normalization boundary: request DTOs intentionally preserve legacy and unknown fields through `json.RawMessage`/`any`, while `gjson`/`sjson` can update only known name paths without re-decoding numbers or touching arguments/content.
+- Compatibility must be gated by the final outbound relay format being OpenAI Chat Completions. Applying it to Claude/Gemini native payloads would introduce aliases where the observed upstream restriction does not apply.
+- The captured request entered sub2api through `/v1/chat/completions`, was converted there to `/v1/responses`, and received an OpenAI-style 400 `invalid_request_error` with `param=tools` because custom function name `python` was reserved by the selected model.
+- Only the observed model behavior is confirmed; there is no verified complete cross-model reserved-name list in the currently available official documentation sources.
+- sub2api is immutable in this deployment, so new-api must alias the Chat Completions request before forwarding and restore the alias after sub2api converts the Responses result back to Chat Completions.
+- Model-name gating is brittle and unnecessary. A request-scoped bidirectional alias can activate only when the exact declared custom function name `python` is present, independent of model name.
+- One-way channel parameter override is insufficient because downstream clients dispatch tool calls by the original function name.
+- Arbitrary byte replacement is unsafe: aliases can appear in JSON arguments or normal text. Only known function-name fields should be changed.
+- The user selected a configurable global reserved-name set rather than a hard-coded `python` rule. The default is enabled with `python`, while future names can be added without a deployment.
+- Compatibility Management already has an OpenAI tab. The new switch and comma/newline text area fit that existing form hierarchy and avoid a new route or nested card.
+- Alias generation uses `run_<original>` and must avoid collisions with all modern and legacy declared function names.
+- Alias candidates must also avoid every configured reserved name, not only names declared in the current request; otherwise configuring both `python` and `run_python` could produce another upstream-rejected name.
+- Response restoration must depend only on the request-scoped reverse map. Re-reading the hot enable switch during response handling would leak aliases if an administrator changed the setting while a request was in flight.
+- Config normalization belongs below the controller as well as in it: direct single-option writes, batch writes, and startup database loads all reach the model option layer and must reject the same invalid boolean/name values.
+- The UI/UX workflow confirmed that the existing data-dense admin form is the correct surface. The new switch and disabled-state textarea reuse Semi Design and the existing grid without adding nested cards or a separate page.
 
 ---
 
@@ -770,3 +889,40 @@
 - The isolated Docker fixture and all matching PostgreSQL/Redis records were removed after acceptance, leaving the application healthy.
 
 ---
+# Temporary Video Resource and Webhook Findings (2026-07-23)
+- The user explicitly accepts temporary video access backed by the upstream provider; expiration does not require archival, repair, or retention guarantees.
+- Existing `ak_` authentication already covers `/v1/assets*`, video status, and video content proxy routes.
+- Successful video tasks already create `video` assets, but current asset URLs can preserve sub2api's internal UUID content path and therefore fail when resolved against new-api.
+- The current durable outbound Webhook infrastructure is reusable, but event creation is image-specific and skips video tasks because it depends on normalized image request metadata.
+- The preferred API shape is to reuse `/v1/assets?asset_type=video` for resource collection queries and retain `/v1/videos/{task_id}` for a single task status, avoiding a second task-list abstraction unless a concrete consumer requires it.
+- `TokenOrUserAuth` delegates non-session requests to `AssetOrTokenAuth`, so the existing `/v1/videos/{task_id}/content` route already accepts `ak_` credentials and enforces the owning user through the task lookup.
+- Resource Center video downloads therefore need no new route. The missing contract is a correct public URL projection in Asset/Webhook output; a relative sub2api UUID path must never be returned as though it belonged to new-api.
+- Webhook fetch authentication remains intentionally split: outbound delivery uses the account `wk-` Bearer Key, while a receiver follows an authenticated new-api video URL with its separate Resource Center `ak_` Key.
+- A normalized `video.task` Webhook object can be built from the generic task plus its video assets; unlike normalized image tasks, it must not require an `ImageTaskRequest` row.
+- Final approved scope adds normalized creation, not only query: `POST /v1/video/tasks` covers generation, edit, extension, and remix while compatibility POST routes remain unchanged.
+- xAI official contracts use separate generation, edit, and extension endpoints. Edit inherits source duration/aspect/resolution; extension duration is the added segment; input sources can be URLs, data URLs, or provider file IDs.
+- The current task relay is single-output (`TaskInfo.Url`) and identifies video mainly from action names. The provider-neutral implementation needs persisted asset type/operation plus structured video outputs with a single-URL fallback.
+- Per-asset content routes are required for multi-output tasks. The existing task content route remains a first-result compatibility alias.
+
+---
+# Multi-provider Async Video Implementation Findings (2026-07-23)
+
+- The approved design is already specific enough to satisfy the brainstorming workflow; implementation can proceed without reopening product choices.
+- Existing `TokenOrUserAuth` and Asset APIs already provide most read/download authentication primitives, while mutation routes need to be split away from `AssetOrTokenAuth` so `ak_` cannot submit video work.
+- `model.Asset` already supports multiple records per task and ordered `asset_index`; the missing contract is structured provider output plus a public projection that hides internal metadata and selects direct CDN versus authenticated Asset proxy URLs.
+- `service.ApplyTaskResult` already performs terminal task persistence, Asset creation, and image Webhook outbox creation in one transaction; video events should extend this transaction rather than introduce another worker.
+- The normalized video request should follow the existing image request/idempotency persistence pattern but remain a separate `VideoTaskRequest`, because its operation/input/output/provider namespace contract is materially different.
+- Existing `/v1/videos/*` compatibility routes and raw provider DTO parsing must remain untouched by normalized validation. The new `/v1/video/tasks` controller should translate its DTO before entering the established relay path.
+- Ordinary video adaptors currently call upstream before the Task row is inserted. A normalized idempotency contract cannot be race-safe if it merely records the request after that call; it needs a database-unique reservation before the upstream mutation, with replay/conflict decisions made from the persisted fingerprint.
+- `model.Asset` already has a `(task_id, asset_index)` unique key and ordered task lookup, so multi-output persistence does not require a schema change to Asset itself.
+- `Task.Properties` is the correct durable place for provider-neutral `asset_type` and `operation`; query compatibility can fall back to existing task actions for historical rows.
+- Normalized creation must remain independent of the image-handle-only platform override in `RelayTaskSubmit`; it should preserve normal channel distribution/model mapping and only inject a normalized request context plus provider conversion behavior.
+- xAI already selects generation/edit/extension from the compatibility request path. For the normalized route it must instead consume the standard operation from request context, while the compatibility paths retain their existing raw-payload logic and response shape.
+- `TaskAdaptor` can gain an optional normalized-video interface instead of forcing every existing adaptor to implement new methods immediately. Unsupported operations then produce a provider capability error, and a non-xAI mock can prove the common layer has no xAI assumptions.
+- Existing video content proxy logic already handles Range, same-origin channel auth, redirect credential stripping, data URLs, Gemini, Vertex, and provider content endpoints. It should be extracted behind a shared task/asset resolver rather than duplicated in a second handler.
+- Video terminal persistence currently sets `PrivateData.ResultURL` from the legacy single `TaskInfo.Url` and only then parses raw task data for Assets. Structured outputs should be added to `TaskInfo`, copied into Asset inputs first, with the current `Url`/raw-data behavior preserved as fallback.
+- Current official xAI generation schema confirms duration `[1,15]`, aspect ratios `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `3:2`, `2:3`, and resolutions `480p`, `720p`, `1080p`.
+- Current xAI documentation states that 1080p is supported only by `grok-imagine-video-1.5` for image-to-video generation; normalized validation rejects non-1.5 models plus text-only and reference-image modes while compatibility endpoints remain passthrough.
+- 2026-07-23 video input follow-up: xAI `image` is one primary/start-frame source, while `reference_images` is an array of up to seven sources. Current xAI edit and extension accept a video source but do not document auxiliary images.
+- The public controller currently rejects images for every non-generation operation and globally rejects `image` plus `reference_images`; these are provider capability decisions and prevent future adaptors from supporting video-plus-image workflows.
+- The current Resource Center reference-to-video example incorrectly uses `grok-imagine-video-1.5`; current xAI documentation limits reference-to-video to `grok-imagine-video`.

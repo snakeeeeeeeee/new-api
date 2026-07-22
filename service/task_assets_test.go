@@ -43,6 +43,42 @@ func TestBuildAssetCreateInputsMultipleImages(t *testing.T) {
 	assert.Equal(t, "https://cdn.example.com/2.webp", inputs[1].URL)
 }
 
+func TestBuildAssetCreateInputsUsesStructuredVideoOutputs(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_videos", Status: model.TaskStatusSuccess,
+		Action: constant.TaskActionVideoGeneration, UserId: 1,
+		Properties: model.Properties{OriginModelName: "video-model", AssetType: constant.TaskAssetTypeVideo},
+	}
+	result := &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+		Url:    "https://legacy.example.com/video.mp4",
+		VideoOutputs: []relaycommon.VideoOutput{
+			{Index: 0, URL: "https://cdn.example.com/first.mp4", MimeType: "video/mp4", Filename: "first.mp4", Width: 1280, Height: 720, DurationMS: 5000},
+			{Index: 1, URL: "https://cdn.example.com/second.mp4", ThumbnailURL: "https://cdn.example.com/second.jpg", DurationMS: 7000},
+		},
+	}
+
+	inputs := BuildAssetCreateInputsForResult(task, result)
+
+	require.Len(t, inputs, 2)
+	assert.Equal(t, "https://cdn.example.com/first.mp4", inputs[0].URL)
+	assert.Equal(t, "first.mp4", inputs[0].Filename)
+	assert.EqualValues(t, 5000, inputs[0].DurationMS)
+	assert.Equal(t, 1, inputs[1].AssetIndex)
+	assert.Equal(t, "https://cdn.example.com/second.jpg", inputs[1].ThumbnailURL)
+}
+
+func TestBuildAssetCreateInputsFallsBackToLegacyVideoURL(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_legacy_video", Status: model.TaskStatusSuccess,
+		Action:      constant.TaskActionVideoGeneration,
+		PrivateData: model.TaskPrivateData{ResultURL: "https://cdn.example.com/legacy.mp4"},
+	}
+	inputs := BuildAssetCreateInputsForResult(task, &relaycommon.TaskInfo{Url: "https://cdn.example.com/legacy.mp4"})
+	require.Len(t, inputs, 1)
+	assert.Equal(t, "https://cdn.example.com/legacy.mp4", inputs[0].URL)
+}
+
 func TestBuildAssetCreateInputsKeepsImageHandleMetadata(t *testing.T) {
 	task := &model.Task{
 		TaskID:    "task_image_metadata",

@@ -924,19 +924,33 @@ func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 	return nil
 }
 
+type VideoOutput struct {
+	Index             int    `json:"index"`
+	URL               string `json:"url,omitempty"`
+	ProviderReference string `json:"provider_reference,omitempty"`
+	ThumbnailURL      string `json:"thumbnail_url,omitempty"`
+	MimeType          string `json:"mime_type,omitempty"`
+	Filename          string `json:"filename,omitempty"`
+	Width             int    `json:"width,omitempty"`
+	Height            int    `json:"height,omitempty"`
+	DurationMS        int64  `json:"duration_ms,omitempty"`
+	Resolver          string `json:"resolver,omitempty"`
+}
+
 type TaskInfo struct {
-	Code             int        `json:"code"`
-	TaskID           string     `json:"task_id"`
-	Status           string     `json:"status"`
-	Reason           string     `json:"reason,omitempty"`
-	Url              string     `json:"url,omitempty"`
-	RemoteUrl        string     `json:"remote_url,omitempty"`
-	Progress         string     `json:"progress,omitempty"`
-	CompletionTokens int        `json:"completion_tokens,omitempty"` // 用于按倍率计费
-	TotalTokens      int        `json:"total_tokens,omitempty"`      // 用于按倍率计费
-	Usage            *dto.Usage `json:"usage,omitempty"`             // 任务终态的完整用量，用于异步真实结算
-	ActualQuota      int        `json:"actual_quota,omitempty"`      // 上游/执行器返回的额度，仅作为兜底
-	Data             []byte     `json:"-"`                           // 任务结果原始小 JSON，用于终态写回 tasks.data
+	Code             int           `json:"code"`
+	TaskID           string        `json:"task_id"`
+	Status           string        `json:"status"`
+	Reason           string        `json:"reason,omitempty"`
+	Url              string        `json:"url,omitempty"`
+	RemoteUrl        string        `json:"remote_url,omitempty"`
+	Progress         string        `json:"progress,omitempty"`
+	CompletionTokens int           `json:"completion_tokens,omitempty"` // 用于按倍率计费
+	TotalTokens      int           `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	Usage            *dto.Usage    `json:"usage,omitempty"`             // 任务终态的完整用量，用于异步真实结算
+	ActualQuota      int           `json:"actual_quota,omitempty"`      // 上游/执行器返回的额度，仅作为兜底
+	VideoOutputs     []VideoOutput `json:"video_outputs,omitempty"`     // 供应商无关的视频结果；Url 保留为旧 adaptor fallback
+	Data             []byte        `json:"-"`                           // 任务结果原始小 JSON，用于终态写回 tasks.data
 }
 
 func FailTaskInfo(reason string) *TaskInfo {
