@@ -290,6 +290,10 @@ func TestProcessChannelErrorRecordsStreamState(t *testing.T) {
 	ctx.Set("channel_type", 1)
 	ctx.Set(common.RequestIdKey, "req-stream-error")
 	common.SetContextKey(ctx, constant.ContextKeyRelayIsStream, true)
+	common.SetContextKey(ctx, constant.ContextKeyExecutionMode, "image_handle_sync")
+	common.SetContextKey(ctx, constant.ContextKeyImageHandleSyncClientTaskID, "task_trace")
+	common.SetContextKey(ctx, constant.ContextKeyImageHandleSyncProviderTaskID, "imgtask_trace")
+	common.SetContextKey(ctx, constant.ContextKeyImageHandleSyncCredentialLeaseID, "lease_trace")
 
 	apiErr := types.NewOpenAIError(assertErr("upstream capacity exceeded"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
 	processChannelError(ctx, *types.NewChannelError(3003, 1, "stream-channel", false, "", false), apiErr)
@@ -307,6 +311,10 @@ func TestProcessChannelErrorRecordsStreamState(t *testing.T) {
 	require.Equal(t, true, other["client_response_wrapped"])
 	require.Equal(t, float64(http.StatusTooManyRequests), other["upstream_status_code"])
 	require.Equal(t, "upstream capacity exceeded", other["upstream_error_message"])
+	require.Equal(t, "req-stream-error", other["image_handle_sync_request_id"])
+	require.Equal(t, "task_trace", other["image_handle_sync_client_task_id"])
+	require.Equal(t, "imgtask_trace", other["image_handle_sync_provider_task_id"])
+	require.Equal(t, "lease_trace", other["image_handle_sync_credential_lease_id"])
 }
 
 func TestProcessChannelErrorMarksInternalRetryLog(t *testing.T) {

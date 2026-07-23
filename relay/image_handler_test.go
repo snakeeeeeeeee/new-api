@@ -495,11 +495,18 @@ func TestImageHandleSyncStatusErrorTreatsAcceptedAsTimeout(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 
-	err := imageHandleSyncStatusError(ctx, http.StatusAccepted, []byte(`{"status":"processing"}`))
+	err := imageHandleSyncStatusError(ctx, http.StatusAccepted, []byte(`{
+		"task_id":"imgtask_processing",
+		"provider_task_id":"imgtask_processing",
+		"client_task_id":"task_processing",
+		"status":"processing"
+	}`))
 
 	require.NotNil(t, err)
 	require.Equal(t, http.StatusGatewayTimeout, err.StatusCode)
 	require.Equal(t, "image_handle_sync_timeout", string(err.GetErrorCode()))
+	require.Equal(t, "imgtask_processing", common.GetContextKeyString(ctx, constant.ContextKeyImageHandleSyncProviderTaskID))
+	require.Equal(t, "task_processing", common.GetContextKeyString(ctx, constant.ContextKeyImageHandleSyncClientTaskID))
 }
 
 func TestImageHandleSyncStatusErrorUsesImageHandleHTTPErrorBody(t *testing.T) {
@@ -605,6 +612,23 @@ func TestRecordImageHandleSyncErrorDetailStoresContextMap(t *testing.T) {
 	require.Equal(t, "upstream_error", detail["code"])
 	require.Equal(t, "bad size", detail["provider_error_message"])
 	require.Equal(t, float64(400), detail["upstream_status"])
+}
+
+func TestRecordImageHandleSyncTracePreservesLocalClientTaskID(t *testing.T) {
+	t.Parallel()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	common.SetContextKey(ctx, constant.ContextKeyImageHandleSyncClientTaskID, "task_local")
+
+	recordImageHandleSyncTrace(ctx, imageHandleSyncResponse{
+		TaskID:       "imgtask_response",
+		ClientTaskID: "task_response",
+	})
+
+	require.Equal(t, "task_local", common.GetContextKeyString(ctx, constant.ContextKeyImageHandleSyncClientTaskID))
+	require.Equal(t, "imgtask_response", common.GetContextKeyString(ctx, constant.ContextKeyImageHandleSyncProviderTaskID))
 }
 
 func TestRecordImageHandleSyncErrorDetailMasksNestedNetworkLocations(t *testing.T) {

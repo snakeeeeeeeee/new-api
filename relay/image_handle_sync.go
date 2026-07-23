@@ -210,6 +210,7 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 	clientTaskID := model.GenerateTaskID()
+	common.SetContextKey(c, constant.ContextKeyImageHandleSyncClientTaskID, clientTaskID)
 	action := constant.TaskActionImageGeneration
 	operation := "generation"
 	if info.RelayMode == relayconstant.RelayModeImagesEdits {
@@ -223,6 +224,7 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 	task := initImageHandleSyncTask(info, request, clientTaskID, action)
 	lease := model.NewImageCredentialLease(task, operation, info.UpstreamModelName, 1800)
 	lease.TaskRecordID = 0
+	common.SetContextKey(c, constant.ContextKeyImageHandleSyncCredentialLeaseID, lease.LeaseID)
 	if err := model.CreateImageCredentialLease(lease); err != nil {
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeUpdateDataError, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
 	}
@@ -263,6 +265,7 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 		_ = model.MarkImageCredentialLeaseFailed(lease.LeaseID)
 		return nil, types.NewOpenAIError(fmt.Errorf("unmarshal image-handle sync response failed: %w", err), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	recordImageHandleSyncTrace(c, syncResp)
 	status := strings.ToLower(strings.TrimSpace(syncResp.Status))
 	if status == "failed" {
 		_ = model.MarkImageCredentialLeaseFailed(lease.LeaseID)
@@ -304,8 +307,6 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 			logger.LogError(c, fmt.Sprintf("create image-handle sync assets failed: %s", err.Error()))
 		}
 	}
-	c.Set("image_handle_sync_provider_task_id", task.PrivateData.UpstreamTaskID)
-	c.Set("image_handle_sync_lease_id", lease.LeaseID)
 	return usage, nil
 }
 
@@ -1564,6 +1565,7 @@ func imageHandleSyncBestErrorMessage(errBody *imageHandleSyncError) string {
 }
 
 func recordImageHandleSyncErrorDetail(c *gin.Context, syncResp imageHandleSyncResponse) {
+	recordImageHandleSyncTrace(c, syncResp)
 	detail := imageHandleSyncErrorDetailFromResponse(syncResp)
 	if detail == nil {
 		return
@@ -1579,10 +1581,25 @@ func recordImageHandleSyncErrorDetailFromBody(c *gin.Context, responseBody []byt
 		return
 	}
 	var syncResp imageHandleSyncResponse
-	if err := common.Unmarshal(responseBody, &syncResp); err != nil || syncResp.Error == nil {
+	if err := common.Unmarshal(responseBody, &syncResp); err != nil {
+		return
+	}
+	recordImageHandleSyncTrace(c, syncResp)
+	if syncResp.Error == nil {
 		return
 	}
 	recordImageHandleSyncErrorDetail(c, syncResp)
+}
+
+func recordImageHandleSyncTrace(c *gin.Context, syncResp imageHandleSyncResponse) {
+	if providerTaskID := firstNonEmpty(syncResp.ProviderTaskID, syncResp.TaskID); providerTaskID != "" {
+		common.SetContextKey(c, constant.ContextKeyImageHandleSyncProviderTaskID, providerTaskID)
+	}
+	if common.GetContextKeyString(c, constant.ContextKeyImageHandleSyncClientTaskID) == "" {
+		if clientTaskID := strings.TrimSpace(syncResp.ClientTaskID); clientTaskID != "" {
+			common.SetContextKey(c, constant.ContextKeyImageHandleSyncClientTaskID, clientTaskID)
+		}
+	}
 }
 
 func imageHandleSyncErrorDetailFromResponse(syncResp imageHandleSyncResponse) *imageHandleSyncErrorDetail {

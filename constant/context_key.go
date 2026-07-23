@@ -100,9 +100,12 @@ const (
 
 	// ContextKeyAdminRejectReason stores an admin-only reject/block reason extracted from upstream responses.
 	// It is not returned to end users, but can be persisted into consume/error logs for debugging.
-	ContextKeyAdminRejectReason          ContextKey = "admin_reject_reason"
-	ContextKeyExecutionMode              ContextKey = "execution_mode"
-	ContextKeyImageHandleSyncErrorDetail ContextKey = "image_handle_sync_error_detail"
+	ContextKeyAdminRejectReason                ContextKey = "admin_reject_reason"
+	ContextKeyExecutionMode                    ContextKey = "execution_mode"
+	ContextKeyImageHandleSyncErrorDetail       ContextKey = "image_handle_sync_error_detail"
+	ContextKeyImageHandleSyncClientTaskID      ContextKey = "image_handle_sync_client_task_id"
+	ContextKeyImageHandleSyncProviderTaskID    ContextKey = "image_handle_sync_provider_task_id"
+	ContextKeyImageHandleSyncCredentialLeaseID ContextKey = "image_handle_sync_credential_lease_id"
 
 	// ContextKeyLanguage stores the user's language preference for i18n
 	ContextKeyLanguage ContextKey = "language"

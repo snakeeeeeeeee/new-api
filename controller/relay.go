@@ -710,6 +710,19 @@ func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError, internalRetry b
 		if executionMode := common.GetContextKeyString(c, constant.ContextKeyExecutionMode); executionMode != "" {
 			other["execution_mode"] = executionMode
 		}
+		if requestID := c.GetString(common.RequestIdKey); requestID != "" &&
+			common.GetContextKeyString(c, constant.ContextKeyExecutionMode) == "image_handle_sync" {
+			other["image_handle_sync_request_id"] = requestID
+		}
+		for field, contextKey := range map[string]constant.ContextKey{
+			"image_handle_sync_client_task_id":      constant.ContextKeyImageHandleSyncClientTaskID,
+			"image_handle_sync_provider_task_id":    constant.ContextKeyImageHandleSyncProviderTaskID,
+			"image_handle_sync_credential_lease_id": constant.ContextKeyImageHandleSyncCredentialLeaseID,
+		} {
+			if value := common.GetContextKeyString(c, contextKey); value != "" {
+				other[field] = value
+			}
+		}
 		if detail, ok := common.GetContextKey(c, constant.ContextKeyImageHandleSyncErrorDetail); ok && detail != nil {
 			other["image_handle_sync_error"] = common.MaskSensitiveValue(detail)
 		}
