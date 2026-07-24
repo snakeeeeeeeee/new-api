@@ -1600,6 +1600,496 @@ const spec = {
   },
 };
 
+const defaultPropertyDescriptions = {
+  object: 'Stable object discriminator for client-side dispatch.',
+  id: 'Public identifier for this object.',
+  task_id: 'Public task identifier.',
+  asset_id: 'Public Asset identifier.',
+  index: 'Zero-based output position within the task.',
+  type: 'Public object, Asset, or event type.',
+  url: 'URL used to read this input or output.',
+  temporary: 'Whether the URL points to a temporary upstream resource.',
+  url_auth: 'Authentication required when requesting url.',
+  thumbnail_url: 'Optional public thumbnail URL.',
+  mime_type: 'IANA media type when known.',
+  filename: 'Suggested filename when known.',
+  size_bytes: 'File size in bytes when known.',
+  width: 'Pixel width when known.',
+  height: 'Pixel height when known.',
+  duration_ms: 'Video duration in milliseconds when known.',
+  model: 'Model requested for the task or associated with the Asset.',
+  status: 'Current public status.',
+  metadata: 'Caller metadata returned unchanged with the public object.',
+  created_at: 'Creation time as Unix seconds.',
+  started_at: 'Execution start time as Unix seconds, or null before start.',
+  completed_at:
+    'Terminal completion time as Unix seconds, or null before completion.',
+  updated_at: 'Last update time as Unix seconds.',
+  data: 'Objects returned by this list or envelope.',
+  page: 'One-based page number.',
+  page_size: 'Maximum number of objects returned per page.',
+  total: 'Total number of matching objects.',
+  has_more: 'Whether another page is available.',
+  asset_ids: 'Public Asset IDs to query.',
+  asset_type: 'Asset type filter.',
+  start_timestamp: 'Inclusive lower creation-time bound in Unix seconds.',
+  end_timestamp: 'Inclusive upper creation-time bound in Unix seconds.',
+  operation: 'Requested task operation.',
+  input: 'Inputs used to execute the task.',
+  output: 'Requested output options or provider output metadata.',
+  prompt: 'Natural-language instruction for generation or editing.',
+  images: 'Image inputs or image outputs, depending on the containing object.',
+  image: 'One image input or a repeated multipart image file field.',
+  mask: 'Optional mask input.',
+  count: 'Requested number of image outputs.',
+  n: 'Requested number of image outputs.',
+  size: 'Requested image dimensions.',
+  quality: 'Requested provider-supported quality level.',
+  format: 'Image format when known.',
+  output_format: 'Requested output image format.',
+  compression: 'Requested output compression from 0 to 100.',
+  output_compression: 'Requested output compression from 0 to 100.',
+  background: 'Requested provider-supported background mode.',
+  client_reference_id: 'Optional caller business identifier for correlation.',
+  progress: 'Best-known task progress percentage from 0 to 100.',
+  result: 'Terminal task output, or null before success.',
+  usage: 'Provider-reported usage data when available.',
+  error: 'Terminal failure details, or null when no failure is present.',
+  code: 'Stable machine-readable error code.',
+  message: 'Human-readable error message.',
+  retryable: 'Whether retrying the operation may succeed.',
+  param: 'Request field associated with the error when known.',
+  request_id: 'Request identifier for support and diagnostics.',
+  first_id: 'First task ID in the current page.',
+  last_id: 'Last task ID in the current page; use it as the after cursor.',
+  task_ids: 'Public task IDs to query in request order.',
+  missing: 'Requested IDs that were not found or do not belong to the user.',
+  provider: 'Provider namespace for a provider-managed file reference.',
+  file_id: 'Provider-managed file identifier.',
+  reference_images: 'Reference image sources used to guide generation.',
+  video: 'Source video for edit, extension, or remix.',
+  duration: 'Requested output or extension duration in seconds.',
+  aspect_ratio: 'Requested provider-supported output aspect ratio.',
+  resolution: 'Requested provider-supported output resolution.',
+  provider_options: 'Provider-specific options grouped by provider namespace.',
+  videos: 'Ordered video outputs produced by the task.',
+  uploads: 'Base64 uploads with an optional image or mask field designation.',
+  field: 'Upload role: image or mask.',
+  b64_json: 'Image bytes encoded as base64.',
+  base64: 'Image bytes encoded as base64.',
+  api_version: 'Version of the outbound Webhook payload contract.',
+};
+
+const schemaDescriptions = {
+  Error: 'Machine-readable error details returned inside an error envelope.',
+  ErrorResponse: 'Shared JSON error envelope.',
+  Asset: 'A user-visible generated Asset.',
+  AssetListResponse: 'Page-based list of generated Assets.',
+  AssetQueryRequest:
+    'Asset filters. When asset_ids is present, up to 100 IDs are returned in request order and other filters are ignored.',
+  AssetBatchURLRequest: 'Up to 100 Asset IDs whose current URLs are needed.',
+  AssetURLItem: 'Current public URL and access requirements for one Asset.',
+  AssetURLListResponse: 'Current URLs for requested Assets that were found.',
+  ImageTaskSource: 'Public HTTP(S) image input.',
+  ImageTaskInput: 'Prompt and optional URL-based image inputs.',
+  ImageTaskOutput: 'Optional image output controls.',
+  ImageTaskCreateRequest:
+    'Normalized JSON image task request. Edit requires at least one input.images item.',
+  ImageTaskMultipartCreateRequest:
+    'Multipart image edit request using local files. image may be repeated up to 10 times.',
+  ImageTaskResultImage: 'One generated image and its Asset metadata.',
+  ImageTaskResult: 'Successful image task output.',
+  ImageTaskError: 'Terminal image task failure.',
+  ImageTask: 'Public image task snapshot.',
+  ImageTaskListResponse: 'Cursor-paginated image task list.',
+  ImageTaskBatchQueryRequest: 'One to 100 image task IDs.',
+  ImageTaskBatchResponse:
+    'Image tasks in request order plus IDs that were not visible to the user.',
+  VideoTaskSource:
+    'Exactly one source form: url, or provider together with file_id.',
+  VideoTaskInput:
+    'Prompt plus provider-neutral image or video sources. Non-generation operations require video.',
+  VideoTaskOutput: 'Optional provider-neutral video output controls.',
+  VideoTaskCreateRequest:
+    'Normalized video generation, edit, extension, or remix request.',
+  VideoTaskResultVideo: 'One temporary video output and its access metadata.',
+  VideoTaskResult: 'Successful video task output.',
+  VideoTaskError: 'Terminal video task failure.',
+  VideoTask: 'Public video task snapshot.',
+  VideoTaskListResponse: 'Cursor-paginated video task list.',
+  VideoTaskBatchQueryRequest: 'One to 100 video task IDs.',
+  VideoTaskBatchResponse:
+    'Video tasks in request order plus IDs that were not visible to the user.',
+  ImageMultipartUploadRequest:
+    'Temporary multipart upload containing up to 10 image files and at most one mask.',
+  ImageBase64UploadItem:
+    'Plain base64, a data URL, or an object containing b64_json, base64, or data.',
+  ImageBase64UploadRequest:
+    'Provide uploads, images, or mask. At most 10 image inputs and one mask are accepted.',
+  ImageUpload: 'One temporary uploaded image or mask.',
+  ImageUploadListResponse:
+    'Uploaded objects plus URL arrays ready for an image edit task.',
+  WebhookEvent:
+    'Outbound terminal task event. data.object matches the corresponding task query DTO.',
+};
+
+const schemaPropertyOverrides = {
+  Error: {
+    type: 'Error category for broad client handling.',
+  },
+  Asset: {
+    status: 'Public Assets returned by these APIs are available.',
+  },
+  ImageTaskInput: {
+    images:
+      'URL-based image inputs. Required with at least one item when operation is edit.',
+    mask: 'Optional HTTP(S) mask URL used by supported edit models.',
+  },
+  ImageTaskCreateRequest: {
+    metadata: 'Arbitrary JSON object, stored and returned with the task.',
+  },
+  ImageTaskMultipartCreateRequest: {
+    operation: 'Optional; multipart requests always create edit tasks.',
+    image: 'Repeatable local PNG, JPEG, or WebP file; one to 10 files.',
+    mask: 'Optional single local PNG, JPEG, or WebP mask file.',
+    metadata: 'JSON-encoded object in a multipart text field.',
+  },
+  ImageUploadListResponse: {
+    images: 'Temporary image URLs ready for input.images.',
+    mask: 'Temporary mask URL ready for input.mask, or null.',
+  },
+  VideoTaskInput: {
+    image: 'One primary image source, commonly used as a starting frame.',
+    reference_images:
+      'Reference sources; supported combinations and item limits depend on the selected provider adaptor.',
+    video: 'Required source video for edit, extension, and remix.',
+  },
+  VideoTaskOutput: {
+    duration:
+      'Requested duration in seconds; for extension, this is the new segment duration.',
+  },
+  WebhookEvent: {
+    id: 'Stable event ID; use it to make receiver processing idempotent.',
+    type: 'Terminal image or video task event type.',
+    data: 'Event data containing the public task snapshot in data.object.',
+  },
+};
+
+const defaultPropertyDescriptionsZhCN = {
+  object: '用于客户端识别对象类型的稳定标识。',
+  id: '当前对象的公开 ID。',
+  task_id: '公开任务 ID。',
+  asset_id: '公开资源 ID。',
+  index: '该输出在任务结果中的位置，从 0 开始。',
+  type: '当前对象、资源或事件的公开类型。',
+  url: '用于读取该输入或输出的 URL。',
+  temporary: '该 URL 是否指向上游临时资源。',
+  url_auth: '请求 url 时需要使用的鉴权方式。',
+  thumbnail_url: '可选的公开缩略图 URL。',
+  mime_type: '已知时返回标准 MIME 类型。',
+  filename: '已知时返回建议文件名。',
+  size_bytes: '已知时返回文件字节数。',
+  width: '已知时返回像素宽度。',
+  height: '已知时返回像素高度。',
+  duration_ms: '已知时返回视频时长，单位为毫秒。',
+  model: '任务请求使用的模型，或生成该资源的模型。',
+  status: '当前公开状态。',
+  metadata: '调用方元数据，会随公开对象原样返回。',
+  created_at: '创建时间，Unix 秒。',
+  started_at: '执行开始时间，Unix 秒；尚未开始时为 null。',
+  completed_at: '任务终态时间，Unix 秒；尚未完成时为 null。',
+  updated_at: '最后更新时间，Unix 秒。',
+  data: '当前列表或封装对象中包含的数据。',
+  page: '页码，从 1 开始。',
+  page_size: '每页最多返回的对象数量。',
+  total: '符合条件的对象总数。',
+  has_more: '是否还有下一页。',
+  asset_ids: '要查询的公开资源 ID 列表。',
+  asset_type: '资源类型筛选条件。',
+  start_timestamp: '创建时间下限，Unix 秒，包含该时间。',
+  end_timestamp: '创建时间上限，Unix 秒，包含该时间。',
+  operation: '请求执行的任务操作。',
+  input: '执行任务所需的输入。',
+  output: '请求的输出选项，或供应商返回的输出元数据。',
+  prompt: '用于生成或编辑的自然语言指令。',
+  images: '图片输入或图片输出，具体含义取决于所在对象。',
+  image: '单张图片输入，或可重复提交的 multipart 图片文件字段。',
+  mask: '可选的遮罩图片输入。',
+  count: '请求生成的图片数量。',
+  n: '请求生成的图片数量。',
+  size: '请求的图片尺寸。',
+  quality: '供应商支持的图片质量级别。',
+  format: '已知时返回图片格式。',
+  output_format: '请求的输出图片格式。',
+  compression: '请求的输出压缩率，取值 0 到 100。',
+  output_compression: '请求的输出压缩率，取值 0 到 100。',
+  background: '供应商支持的背景模式。',
+  client_reference_id: '可选的调用方业务关联 ID。',
+  progress: '当前已知的任务进度百分比，取值 0 到 100。',
+  result: '任务成功后的输出；成功前为 null。',
+  usage: '供应商返回的用量数据，没有时为空对象。',
+  error: '任务失败详情；没有失败时为 null。',
+  code: '稳定、可供程序判断的错误码。',
+  message: '便于阅读的错误说明。',
+  retryable: '重试该操作是否可能成功。',
+  param: '已知时返回与错误相关的请求字段。',
+  request_id: '用于支持和问题排查的请求 ID。',
+  first_id: '当前页第一条任务的 ID。',
+  last_id: '当前页最后一条任务的 ID，可作为下一页 after 游标。',
+  task_ids: '按请求顺序提交的公开任务 ID 列表。',
+  missing: '未找到或不属于当前用户的请求 ID。',
+  provider: '供应商托管文件所属的命名空间。',
+  file_id: '供应商托管文件的 ID。',
+  reference_images: '用于指导生成结果的参考图片来源。',
+  video: '编辑、扩展或 Remix 使用的源视频。',
+  duration: '请求的输出时长或扩展片段时长，单位为秒。',
+  aspect_ratio: '供应商支持的输出宽高比。',
+  resolution: '供应商支持的输出分辨率。',
+  provider_options: '按供应商命名空间组织的专属参数。',
+  videos: '任务生成的有序视频输出列表。',
+  uploads: 'Base64 上传列表，可指定每项是 image 还是 mask。',
+  field: '上传用途：image 或 mask。',
+  b64_json: '使用 Base64 编码的图片字节。',
+  base64: '使用 Base64 编码的图片字节。',
+  api_version: '出站 Webhook Payload 的协议版本。',
+};
+
+const schemaDescriptionsZhCN = {
+  Error: '错误响应中的机器可读错误详情。',
+  ErrorResponse: '所有公开接口共用的 JSON 错误封装。',
+  Asset: '用户可见的生成资源。',
+  AssetListResponse: '使用页码分页的生成资源列表。',
+  AssetQueryRequest:
+    '资源筛选条件。提供 asset_ids 时，最多按请求顺序返回 100 个 ID，其他筛选条件会被忽略。',
+  AssetBatchURLRequest: '需要获取当前 URL 的资源 ID，最多 100 个。',
+  AssetURLItem: '单个资源的当前公开 URL 及其访问要求。',
+  AssetURLListResponse: '请求的资源中已找到资源的当前 URL。',
+  ImageTaskSource: '使用公开 HTTP(S) URL 的图片输入。',
+  ImageTaskInput: '提示词和可选的 URL 图片输入。',
+  ImageTaskOutput: '可选的图片输出控制参数。',
+  ImageTaskCreateRequest:
+    '规范化 JSON 图片任务请求。operation 为 edit 时，input.images 至少需要一项。',
+  ImageTaskMultipartCreateRequest:
+    '使用本地文件的 multipart 图片编辑请求，image 字段最多可重复 10 次。',
+  ImageTaskResultImage: '一张生成图片及其资源元数据。',
+  ImageTaskResult: '图片任务成功后的输出。',
+  ImageTaskError: '图片任务的终态失败信息。',
+  ImageTask: '公开图片任务快照。',
+  ImageTaskListResponse: '使用游标分页的图片任务列表。',
+  ImageTaskBatchQueryRequest: '1 到 100 个图片任务 ID。',
+  ImageTaskBatchResponse: '按请求顺序返回图片任务，并列出当前用户不可见的 ID。',
+  VideoTaskSource: '只能选择一种来源：url，或 provider 与 file_id 组合。',
+  VideoTaskInput:
+    '提示词及供应商无关的图片或视频来源。非 generation 操作必须提供 video。',
+  VideoTaskOutput: '可选的供应商无关视频输出控制参数。',
+  VideoTaskCreateRequest: '规范化的视频生成、编辑、扩展或 Remix 请求。',
+  VideoTaskResultVideo: '一个临时视频输出及其访问元数据。',
+  VideoTaskResult: '视频任务成功后的输出。',
+  VideoTaskError: '视频任务的终态失败信息。',
+  VideoTask: '公开视频任务快照。',
+  VideoTaskListResponse: '使用游标分页的视频任务列表。',
+  VideoTaskBatchQueryRequest: '1 到 100 个视频任务 ID。',
+  VideoTaskBatchResponse: '按请求顺序返回视频任务，并列出当前用户不可见的 ID。',
+  ImageMultipartUploadRequest:
+    '临时 multipart 上传，最多包含 10 张 image 和 1 张 mask。',
+  ImageBase64UploadItem:
+    '可以是纯 Base64、data URL，或包含 b64_json、base64、data 任一字段的对象。',
+  ImageBase64UploadRequest:
+    '至少提供 uploads、images 或 mask 之一；最多接受 10 张 image 和 1 张 mask。',
+  ImageUpload: '一张临时上传的图片或遮罩。',
+  ImageUploadListResponse: '上传对象，以及可直接用于图片编辑任务的 URL。',
+  WebhookEvent:
+    '任务终态出站事件，data.object 与对应任务查询接口返回的 DTO 一致。',
+};
+
+const schemaPropertyOverridesZhCN = {
+  Error: {
+    type: '便于客户端进行大类处理的错误类型。',
+  },
+  Asset: {
+    status: '这些公开接口返回的资源状态固定为 available。',
+  },
+  ImageTaskInput: {
+    images: '使用 URL 的图片输入；operation 为 edit 时至少需要一项。',
+    mask: '受模型支持时用于编辑任务的可选 HTTP(S) 遮罩 URL。',
+  },
+  ImageTaskCreateRequest: {
+    metadata: '任意 JSON 对象，保存后随任务原样返回。',
+  },
+  ImageTaskMultipartCreateRequest: {
+    operation: '可选；multipart 请求始终创建 edit 任务。',
+    image: '可重复提交的本地 PNG、JPEG 或 WebP 文件，数量为 1 到 10。',
+    mask: '可选的单个本地 PNG、JPEG 或 WebP 遮罩文件。',
+    metadata: 'multipart 文本字段中的 JSON 对象字符串。',
+  },
+  ImageUploadListResponse: {
+    images: '可直接放入 input.images 的临时图片 URL。',
+    mask: '可直接放入 input.mask 的临时遮罩 URL，没有时为 null。',
+  },
+  VideoTaskInput: {
+    image: '单个主图片来源，通常用作视频起始帧。',
+    reference_images:
+      '参考图片来源；允许的组合和数量限制由所选供应商适配器决定。',
+    video: 'edit、extension 和 remix 操作必填的源视频。',
+  },
+  VideoTaskOutput: {
+    duration: '请求时长，单位为秒；extension 操作中表示新增片段时长。',
+  },
+  WebhookEvent: {
+    id: '稳定事件 ID，接收端应使用它进行幂等处理。',
+    type: '图片或视频任务的终态事件类型。',
+    data: '事件数据，公开任务快照位于 data.object。',
+  },
+};
+
+const extraDescriptionTranslationsZhCN = {
+  'Filter by asset type.': '按资源类型筛选。',
+  'Public APIs return available assets.':
+    '公开接口只返回 available 状态的资源。',
+  'Filter by exact task ID.': '按任务 ID 精确筛选。',
+  'Filter by exact model.': '按模型名称精确筛选。',
+  'Search asset ID, task ID, filename, or URL.':
+    '搜索资源 ID、任务 ID、文件名或 URL。',
+  'Minimum creation time in Unix seconds.': '创建时间下限，Unix 秒。',
+  'Maximum creation time in Unix seconds.': '创建时间上限，Unix 秒。',
+  'Page number. Alias: p.': '页码，别名为 p。',
+  'Page size. Aliases: ps and size.': '每页数量，别名为 ps 和 size。',
+  'Filter by one public task status.': '按一个公开任务状态筛选。',
+  'Filter by generation or edit.': '按 generation 或 edit 操作筛选。',
+  'Filter by generation, edit, extension, or remix.':
+    '按 generation、edit、extension 或 remix 操作筛选。',
+  'Filter by the caller business reference.': '按调用方业务关联 ID 筛选。',
+  'Exclusive lower creation-time bound in Unix seconds.':
+    '创建时间下限，Unix 秒，不包含该时间。',
+  'Exclusive upper creation-time bound in Unix seconds.':
+    '创建时间上限，Unix 秒，不包含该时间。',
+  'Inclusive lower creation-time bound in Unix seconds.':
+    '创建时间下限，Unix 秒，包含该时间。',
+  'Inclusive upper creation-time bound in Unix seconds.':
+    '创建时间上限，Unix 秒，包含该时间。',
+  'Task ID cursor returned by the previous page.': '上一页返回的任务 ID 游标。',
+  'Page size.': '每页数量。',
+  'Optional caller key, unique per user. Maximum 128 characters.':
+    '可选的调用方幂等 Key，同一用户内唯一，最长 128 个字符。',
+  'Optional caller key, unique per user. Maximum 128 characters. The same key and request replay the original task; a different request returns 409.':
+    '可选的调用方幂等 Key，同一用户内唯一，最长 128 个字符。相同 Key 和请求会返回原任务，不同请求返回 409。',
+  'Asset ID such as asset_xxx.': '资源 ID，例如 asset_xxx。',
+  'Video Asset ID such as asset_xxx.': '视频资源 ID，例如 asset_xxx。',
+  'Optional RFC 9110 byte range.': '可选的 RFC 9110 字节范围。',
+  'Public task ID such as task_xxx.': '公开任务 ID，例如 task_xxx。',
+  'Canonical task URL.': '该任务的规范查询 URL。',
+  'Suggested polling delay in seconds.': '建议的轮询间隔，单位为秒。',
+  'true when the original task is replayed.': '返回原幂等任务时为 true。',
+  'Asset list.': '资源列表。',
+  'Asset URL list.': '资源 URL 列表。',
+  'Asset.': '单个资源。',
+  'Complete video content.': '完整视频内容。',
+  'Partial video content.': '部分视频内容。',
+  'Task accepted.': '任务已受理。',
+  'Cursor-paginated task list.': '使用游标分页的任务列表。',
+  'Task.': '单个任务。',
+  'Ordered task list with missing IDs.': '按请求顺序返回任务，并列出缺失 ID。',
+  'Temporary uploaded URLs.': '临时上传 URL。',
+  'Invalid request.': '请求无效。',
+  'Missing or invalid credential.': '鉴权凭据缺失或无效。',
+  'API Key, IP, expiry, or user policy denied access.':
+    'API Key、IP、有效期或用户策略拒绝访问。',
+  'The resource was not found for the authenticated user.':
+    '当前鉴权用户下未找到该资源。',
+  'The temporary upstream video resource has expired.':
+    '上游临时视频资源已过期。',
+  'Idempotency conflict or endpoint limit.': '幂等冲突或端点数量超限。',
+  'Upload request or file is too large.': '上传请求或文件过大。',
+  'The internal upload service failed.': '内部上传服务执行失败。',
+  'The internal upload service is not configured.': '内部上传服务尚未配置。',
+  'Internal server error.': '服务端内部错误。',
+  'Optional. Multipart requests always create edit tasks.':
+    '可选；multipart 请求始终创建 edit 任务。',
+  'A JSON-encoded object.': '使用 JSON 编码的对象字符串。',
+  'Plain base64 or an image data URL.': '纯 Base64 或图片 data URL。',
+  'A public HTTP(S) URL or a provider-supported data URL. Asset URLs that require ak_ authentication are not guaranteed to be readable by an upstream provider.':
+    '公开 HTTP(S) URL 或供应商支持的 data URL。需要 ak_ 鉴权的资源 URL 不保证上游可读取。',
+  'One primary image source. For xAI generation this is the starting frame. Support in other operations is provider-specific.':
+    '单个主图片来源；对 xAI generation 来说是起始帧，其他操作是否支持由供应商决定。',
+  'Multiple reference image sources. Allowed combinations and provider-specific limits are validated by the selected adaptor.':
+    '多个参考图片来源；允许的组合和供应商限制由所选适配器校验。',
+  'One source video for edit, extension, or remix operations.':
+    'edit、extension 或 remix 操作使用的单个源视频。',
+  'Requested output duration. For extension this is the new segment duration. Provider-specific bounds are validated by the selected adaptor.':
+    '请求输出时长；extension 中表示新增片段时长，具体范围由所选适配器校验。',
+  'Provider-specific options keyed by provider namespace, for example provider_options.xai.':
+    '按供应商命名空间组织的专属选项，例如 provider_options.xai。',
+  'CSV with asset_id, task_id, asset_type, url, filename, model, and created_at.':
+    'CSV 包含 asset_id、task_id、asset_type、url、filename、model 和 created_at。',
+};
+
+const descriptionTranslationsZhCN = new Map();
+
+function collectDescriptionTranslations(source, translated) {
+  for (const key of Object.keys(source)) {
+    if (source[key] && translated[key]) {
+      descriptionTranslationsZhCN.set(source[key], translated[key]);
+    }
+  }
+}
+
+collectDescriptionTranslations(
+  defaultPropertyDescriptions,
+  defaultPropertyDescriptionsZhCN,
+);
+collectDescriptionTranslations(schemaDescriptions, schemaDescriptionsZhCN);
+for (const schemaName of Object.keys(schemaPropertyOverrides)) {
+  collectDescriptionTranslations(
+    schemaPropertyOverrides[schemaName],
+    schemaPropertyOverridesZhCN[schemaName] || {},
+  );
+}
+for (const [english, chinese] of Object.entries(
+  extraDescriptionTranslationsZhCN,
+)) {
+  descriptionTranslationsZhCN.set(english, chinese);
+}
+
+function applySchemaDescriptions(schema, overrides, propertyPath = '') {
+  if (!schema || typeof schema !== 'object') return;
+  for (const [name, property] of Object.entries(schema.properties || {})) {
+    const path = propertyPath ? `${propertyPath}.${name}` : name;
+    property.description ||=
+      overrides[path] || defaultPropertyDescriptions[name];
+    applySchemaDescriptions(property, overrides, path);
+  }
+  if (schema.items)
+    applySchemaDescriptions(schema.items, overrides, propertyPath);
+  for (const keyword of ['oneOf', 'anyOf', 'allOf']) {
+    for (const candidate of schema[keyword] || []) {
+      applySchemaDescriptions(candidate, overrides, propertyPath);
+    }
+  }
+  if (schema.if) applySchemaDescriptions(schema.if, overrides, propertyPath);
+  if (schema.then)
+    applySchemaDescriptions(schema.then, overrides, propertyPath);
+  if (schema.else)
+    applySchemaDescriptions(schema.else, overrides, propertyPath);
+}
+
+for (const [name, schema] of Object.entries(spec.components.schemas)) {
+  schema.description ||= schemaDescriptions[name];
+  applySchemaDescriptions(schema, schemaPropertyOverrides[name] || {});
+}
+
+function applyLocalizedDescriptions(value) {
+  if (!value || typeof value !== 'object') return;
+  if (value.description) {
+    const translated = descriptionTranslationsZhCN.get(value.description);
+    if (translated) value['x-description-zh-CN'] = translated;
+  }
+  for (const child of Object.values(value)) {
+    applyLocalizedDescriptions(child);
+  }
+}
+
+applyLocalizedDescriptions(spec);
+
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const outputPath = path.resolve(
   scriptDirectory,

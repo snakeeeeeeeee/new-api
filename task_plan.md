@@ -62,6 +62,48 @@ Complete
 
 ---
 
+# Task Plan: Image-handle Trace Search and Task Table Diagnostics (2026-07-23)
+
+## Goal
+Make synchronous image failures traceable across new-api and image-handle, add administrator search by new-api Request ID/client task ID/image-handle provider task ID, prevent the image task table from overflowing, and expose task execution duration.
+
+## Current Phase
+Complete
+
+### Phase 1: Trace contract and persistence
+- [x] Record new-api `client_task_id` and credential `lease_id` before calling image-handle.
+- [x] Record image-handle `provider_task_id` from every structured sync response, including failure and timeout.
+- [x] Persist all available trace identifiers in new-api error-log `other`.
+- [x] Add an image-handle `request_id` index and exact trace-ID task filtering.
+**Status:** complete
+
+### Phase 2: Image-handle administration UI
+- [x] Add one exact trace search control for new-api Request ID, new-api task ID, and image-handle provider task ID.
+- [x] Keep long parameters, usage, errors, IDs, and URLs inside stable table columns with ellipsis and accessible full-value inspection.
+- [x] Display task execution duration using persisted timestamps, including a live elapsed value for active work.
+**Status:** complete
+
+### Phase 3: Verification
+- [x] Add focused backend tests for trace capture, task filtering, and duration projection; verify the migration contains the request-ID index.
+- [x] Run image-handle tests/build and focused new-api tests.
+- [x] Start an isolated local service and verify desktop/mobile table layout with screenshots and DOM geometry.
+**Status:** complete
+
+## Locked Decisions
+- Search is administrator-only and exact-match across `request_id`, `client_task_id`, and `provider_task_id`; public task lookup semantics do not change.
+- Existing image-handle task rows already contain all three identifiers, so no data backfill is required.
+- Duration is derived from `started_at` and `finished_at`/current time; no redundant duration column is persisted.
+- Long values remain inspectable through tooltip/detail presentation instead of expanding table tracks.
+- Existing unrelated untracked files and historical planning records remain untouched.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Existing planning files contain completed historical tasks | 1 | Append a separate current task section and preserve all prior records. |
+| Mobile loading text disappeared before the browser wait locator was counted | 1 | Refresh the DOM snapshot and continue from the already loaded dashboard; no application failure occurred. |
+
+---
+
 # Task Plan: Task Log Public Video URL Follow-up (2026-07-23)
 
 ## Goal
@@ -1357,5 +1399,52 @@ Complete
 | --- | --- | --- |
 | Full i18n lint still reports the repository's pre-existing hardcoded-string baseline | 1 | Confirm the feature adds no new finding, validate all new locale keys, and keep changed frontend files clean with targeted ESLint and Prettier. |
 | Browser telemetry to Statsig timed out during local UI acceptance | 1 | Treat it as external browser-tool telemetry; local page DOM, network contracts, console timing, and application health checks completed successfully. |
+
+---
+# Task Plan: Resource Center DTO Documentation (2026-07-24)
+
+## Goal
+Make every Resource Center API operation self-contained by documenting request and response fields, types, requiredness, constraints, enums, and nested objects from the OpenAPI 3.1 contract without changing runtime API behavior.
+
+## Current Phase
+Complete
+
+### Phase 1: Contract audit
+- [x] Inventory every operation presented in API Overview, Async Images, Async Videos, and Resource API.
+- [x] Compare the generated OpenAPI schemas with backend DTOs/controllers and record missing field metadata.
+**Status:** complete
+
+### Phase 2: OpenAPI and UI implementation
+- [x] Complete request, success response, and shared error schemas in the OpenAPI generator.
+- [x] Add reusable responsive schema-definition rendering beside each operation's examples.
+- [x] Add only the presentation translations required across all seven locales.
+**Status:** complete
+
+### Phase 3: Verification
+- [x] Run OpenAPI drift/validation, targeted frontend formatting/lint, production build, i18n checks, and diff checks.
+- [x] Rebuild Docker dev and inspect desktop, 560px, and 375x812 documentation layouts for overflow and completeness.
+**Status:** complete
+
+### Phase 4: Field-table visibility follow-up
+- [x] Remove the outer schema collapse so every operation shows its field definitions directly.
+- [x] Split the table into Name, Type, Required, Description, and Notes while retaining responsive mobile rows.
+- [x] Rebuild Docker dev and verify the visible tables on desktop and 375x812.
+**Status:** complete
+
+## Locked Decisions
+- OpenAPI 3.1 is the single source of truth for field definitions; the React page must not maintain a second hand-written DTO catalog.
+- Preserve existing curl and response examples and place request/response definitions close to each operation.
+- Do not change API behavior or authentication boundaries in this documentation-only task.
+- Keep ordinary API Token (`sk-`), Resource API Key (`ak_`), and Webhook Key (`wk-`) terminology distinct.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Existing planning files contain extensive completed and unrelated work | 1 | Append a separate current task section and preserve every existing section and workspace artifact. |
+| Docker health loop used zsh's read-only `status` variable | 1 | Rename the task-local variable to `health_state` before repeating the health check. |
+| Browser section text filter matched ancestor sections, and the supported locator `has` filter failed inside the browser client | 2 | Stop refining text/role locators; resolve the exact section index with one read-only DOM query, confirm the section count, then use the permitted indexed locator. |
+| An initial Chinese-description audit checked unused OpenAPI top-level metadata and outbound operation prose, reporting 30 irrelevant missing extensions | 1 | Restrict the assertion to every schema, parameter, request body, success response, and header the dashboard renderer can display; the resulting missing count is zero. |
+| Reused browser capability bindings targeted a finalized older tab, so the first responsive override and one scoped locator evaluation did not apply to the active page | 2 | Obtain fresh uniquely named bindings, use the tab-scoped CDP fallback for the exact mobile viewport, refresh the DOM state, and complete the 375x812 geometry check without retrying stale locators. |
+| The first UI/UX recommendation command used the short skill alias as if it were a real scripts directory | 1 | Resolve and run the installed skill from `/Users/zhangyu/.agents/skills/ui-ux-pro-max`; the data-dense documentation-table guidance completed successfully. |
 
 ---

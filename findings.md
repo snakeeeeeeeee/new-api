@@ -13,6 +13,28 @@
 
 ---
 
+# Image-handle Trace Search and Task Table Findings (2026-07-23)
+
+- new-api generates a synchronous image `client_task_id` and credential `lease_id` before submitting to image-handle, but currently writes the provider task ID and lease ID into Gin context only after success.
+- Structured image-handle failed responses already carry `provider_task_id`, `client_task_id`, and `task_id`; new-api stores these under `logs.other.image_handle_sync_error`, but the usage-log UI does not display the nested identifiers.
+- A transport failure before an image-handle response loses the locally available `client_task_id`/`lease_id` from the new-api error log.
+- image-handle PostgreSQL already persists `request_id`, `client_task_id`, and `provider_task_id`; `provider_task_id` is the primary key and `client_task_id` is indexed, while `request_id` lacks an index.
+- The image-handle admin task endpoint currently supports pagination only. Its record projection already returns all three identifiers, task timestamps, attempts, parameters, usage, and error summary.
+- The task table overflow shown by the user is caused by unbounded error/content cells competing with timestamp and URL columns. Stable tracks, ellipsis, and full-value inspection are required rather than hiding diagnostic content.
+- Task duration can be derived from existing `started_at` and `finished_at`; active tasks can use current time. No schema column is needed.
+- UI/UX guidance selected for this operational table: stable data tracks, no page-level horizontal overflow, readable ellipsis with tooltip/detail access, exact search feedback, keyboard-accessible controls, and responsive validation.
+- image-handle's admin task API currently calls `getAdminTasksPage(page, pageSize)` with no filter object; the React task table already receives `request_id`, `client_task_id`, `provider_task_id`, `started_at`, `finished_at`, and `updated_at`.
+- The existing admin task projection intentionally exposes only safe execution metadata and not prompts or credentials, so trace filtering can stay within the existing redacted response contract.
+- The admin UI uses one large React entry file and a shared CSS table system. The task overflow fix should be scoped with a task-table class so other operational tables retain their current behavior.
+- The image-handle admin route is session-protected. Extending it is safer than adding alternate ID lookup to the public provider-key task endpoints.
+- Final new-api error logs now expose `image_handle_sync_request_id`, `image_handle_sync_client_task_id`, `image_handle_sync_provider_task_id`, and `image_handle_sync_credential_lease_id` whenever available. Transport failures retain the locally generated IDs even without an image-handle response.
+- The image-handle administrator query uses parameterized exact matching across the three indexed identifier columns. Public task lookup behavior is unchanged.
+- Desktop geometry confirms the 1,348px error text is clipped within a 320px error column; the adjacent 90px duration and 170px updated-time columns do not overlap.
+- At a 390px viewport the document width remains 390px, the search form ends at 353px, and the 2,900px task table remains contained in its 314px horizontal scroller.
+- The isolated UI fixture produced zero browser console errors and was stopped after acceptance.
+
+---
+
 # Task Log Public Video URL Follow-up Findings (2026-07-23)
 
 - The screenshot shows `/v1/videos/b0c80724-3aee-9916-b53d-c758bc6cacb1/content`, which is the stored upstream UUID path rather than the public new-api task path.
@@ -926,3 +948,31 @@
 - 2026-07-23 video input follow-up: xAI `image` is one primary/start-frame source, while `reference_images` is an array of up to seven sources. Current xAI edit and extension accept a video source but do not document auxiliary images.
 - The public controller currently rejects images for every non-generation operation and globally rejects `image` plus `reference_images`; these are provider capability decisions and prevent future adaptors from supporting video-plus-image workflows.
 - The current Resource Center reference-to-video example incorrectly uses `grok-imagine-video-1.5`; current xAI documentation limits reference-to-video to `grok-imagine-video`.
+# Resource Center DTO Documentation Findings (2026-07-24)
+
+- The current Resource Center already has executable request/response examples, but users cannot reliably infer required fields, scalar types, nested shapes, constraints, or enums from examples alone.
+- The generated OpenAPI document should remain authoritative; a reusable schema renderer can expose the same contract in the dashboard without creating duplicate field metadata in JSX.
+- This task is documentation-only. Authentication remains split between ordinary API Token submission, Resource API Key query/upload/asset access, and the independent outbound Webhook Key.
+- The page currently advertises 16 operations: four image-task operations, four video-task operations, two upload operations, five Asset operations, and one video-content download operation.
+- `ResourceCenterDocs.jsx` already imports the generated JSON document, so schema lookup/rendering can be added without a new runtime dependency or network request.
+- The existing UI uses operation IDs as stable identifiers and keeps hand-written examples in the same component; the new renderer should bind definitions by operation ID and leave those examples intact.
+- Existing schemas already encode many structural rules (`required`, `enum`, numeric bounds, item limits, conditionals), but most properties have no human-readable `description`, so a renderer alone would still leave important semantics unclear.
+- Operation inputs are split across path/query/header parameters and JSON or multipart request bodies. The UI must render both groups, not only `requestBody`, otherwise list/get/export operations would still lack their DTO-equivalent contract.
+- Successful outputs include JSON task/asset objects, binary video content, and CSV export. The definition component needs a concise non-JSON representation for binary/text responses instead of pretending all responses are object schemas.
+- Backend DTOs confirm optional image/video output scalars are pointers, while `model`, `operation`, `input`, and `input.prompt` are required. Public task timestamps are Unix seconds and terminal/start times are nullable.
+- Image task creation supports both `application/json` generation/edit requests and `multipart/form-data` edit requests on the same operation; multipart `image` is repeatable (1-10 files), `mask` is optional, the total body limit is 100 MiB, and each file is capped at 20 MiB.
+- Asset query DTOs also contain `platform` and `action`, even though the existing hand-written “常用查询参数” table omits them. Rendering directly from the OpenAPI operation will prevent this sort of partial coverage.
+- Public video task source is a union: either `url`, or `provider + file_id`. Non-generation operations require `input.video`; selected provider adaptors may impose tighter capability constraints.
+- A generated-schema audit shows nearly every request/response property currently lacks `description`; the useful metadata already present is mostly structural. Key semantics must therefore be added to the generator before the UI is considered complete.
+- Image JSON validation accepts only absolute HTTP(S) input URLs; multipart upload accepts PNG/JPEG/WebP, up to 10 images plus one mask, 20 MiB per file and 100 MiB total. Base64 accepts plain base64 or data URLs with the same file/count/type limits.
+- Asset public list/export parsing internally still accepts `platform` and `action`, but the public Asset DTO and existing OpenAPI intentionally omit those routing details. They remain outside the public contract; the incorrect hand-written single-Asset example that exposed them must be corrected instead.
+- The Asset error envelope currently omits `param` and `request_id` at runtime even though task APIs include them. The documentation must not falsely mark those fields as universally required; all five inner error fields should remain optional except `code/message/type` only where guaranteed by the shared response schema.
+- Chinese dashboard descriptions are sourced from generated `x-description-zh-CN` values. Chinese locales deliberately do not fall back to the standard English OpenAPI `description`, so a missing translation renders no English sentence.
+- The displayed-contract audit covers schemas, operation parameters, JSON/multipart request bodies, success responses, and response headers; every displayed description has a Chinese extension (`missingCount: 0`).
+- `oneOf` requiredness must distinguish fields shared by every object variant from fields required by only one variant. Browser acceptance confirms video source `url` and `provider + file_id` are conditionally required, while the image/video task fields shared by every Webhook variant remain required.
+- At 375x812, the schema renderer hides its desktop table and exposes stacked field definitions. The final document, body, and main scroll widths all equal 375 CSS pixels, and the inspected long field names remain within the viewport.
+- The first implementation technically used tables, but an outer `Collapse` hid every definition behind “请求与返回参数”; this explains why users could not discover the field contract. Field definitions should be visible by default, with Name, Type, Required, Description, and Notes as distinct information columns.
+- Rebuilt desktop acceptance confirms the Async Images page contains the visible five-column header and real `model` field row immediately after selecting the tab; there is no remaining schema-collapse button.
+- The rebuilt 375x812 view renders the same information as labeled stacked rows (`类型`, `描述`, `备注`), including `model`, requiredness, Chinese description, request-body location, and constraints. Document, body, and main widths remain exactly 375 CSS pixels.
+
+---

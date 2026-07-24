@@ -16,6 +16,24 @@
 
 ---
 
+# Image-handle Trace Search and Task Table Progress (2026-07-23)
+
+- Loaded the required brainstorming, file-planning, and UI/UX workflows.
+- Inspected both repositories without modifying existing application code.
+- Confirmed the traceability gap, existing image-handle identifier persistence, pagination-only admin API, missing request-ID index, table overflow cause, and timestamp-derived duration design.
+- Locked an administrator-only unified exact search across new-api Request ID, new-api client task ID, and image-handle provider task ID.
+- Started Phase 1 implementation planning while preserving all unrelated worktree artifacts.
+- Inspected the image-handle admin route, PostgreSQL task-store projection, React task table, scripts, and CSS structure.
+- Confirmed the admin task response already carries all required trace identifiers and timestamps; implementation can remain backward-compatible by adding optional query parameters and derived display fields.
+- Added early new-api trace context capture, structured-response provider task capture, and correlated error-log fields with focused relay/controller coverage.
+- Added the image-handle request-ID index, administrator-only exact trace filtering, and timestamp-derived `duration_ms`.
+- Added the task-table trace search, Request ID and duration columns, fixed column tracks, ellipsis, and accessible full-value titles.
+- `go test ./relay ./controller`, image-handle server/admin builds, 73 image-handle tests, and both repositories' `git diff --check` pass.
+- Desktop and 390px mobile browser QA passed search/apply/clear behavior, long-error containment, responsive search controls, page-width bounds, and console-error checks.
+- Stopped the isolated local UI fixture and preserved all unrelated worktree files.
+
+---
+
 # Task Log Public Video URL Follow-up Progress (2026-07-23)
 
 - Reviewed the supplied task-log modal screenshot and traced its URL to `TaskModel2Dto` rather than the OpenAI video status converter.
@@ -811,3 +829,27 @@
 - 2026-07-23: Started the video image-input capability correction after user confirmation. The public DTO shape remains singular `image`, array `reference_images`, and singular `video`; validation ownership is moving from the shared controller to the xAI adaptor.
 - 2026-07-23: Relaxed provider-neutral video validation while retaining operation semantics, added xAI-specific image combination/count/model/duration/output rules, corrected the reference-generation model example, and regenerated the public OpenAPI. Focused controller/xAI tests pass; broad verification is in progress.
 - 2026-07-23: Completed the video image-input correction. Full Go tests, frontend build, OpenAPI drift, targeted ESLint/Prettier, i18n status, Docker image rebuild, desktop Resource Center QA, and two Docker xAI capability probes pass. The disposable browser account was self-deleted and hard-cleaned; `new-api-dev` is healthy on image `sha256:b8c9fa2e0805...`.
+# Resource Center DTO Documentation Progress (2026-07-24)
+
+- Loaded the required brainstorming, UI/UX, and file-planning workflows and recovered the existing workspace state.
+- Locked the implementation direction: audit real DTOs, complete OpenAPI field metadata, then render reusable request/response definitions in the existing documentation page.
+- Preserved all unrelated modified planning records and untracked diagnostics.
+- Audited all 16 public Resource Center operations against image/video/Asset DTOs and controller validation.
+- Added a standalone OpenAPI schema renderer with desktop tables and mobile stacked rows, including path/query/header parameters, JSON and multipart bodies, response headers, JSON DTOs, CSV, and binary response bodies.
+- Connected definitions to every request example in Async Images, Async Videos, Assets, the common error envelope, and the outbound Webhook payload.
+- Added generated OpenAPI descriptions for every public schema property and corrected the single-Asset example so it no longer exposes nonexistent public `platform`/`action` fields.
+- Added the new presentation labels to all seven locale catalogs. Targeted ESLint, OpenAPI drift, i18n status, and `git diff --check` pass.
+- Browser acceptance exposed English OpenAPI descriptions inside the Chinese dashboard. Added localized OpenAPI description extensions and changed the renderer so Chinese locales never fall back to English descriptions; constraint labels are localized through the normal seven-locale catalogs.
+- Completed the final union-requiredness pass: shared fields across every `oneOf` object remain required, variant-only and nullable nested fields are labeled conditionally required.
+- Filled the existing empty `可选` translation in zh-TW, en, fr, ru, ja, and vi so the new requirement tag is visible in every supported locale.
+- Final targeted ESLint, OpenAPI drift check, i18n status, production frontend build, displayed Chinese-description completeness check, and `git diff --check` pass.
+- Rebuilt and recreated `new-api-dev` as image `sha256:226fb59e02bc...`; the container is healthy and `/api/status` succeeds at `http://localhost:3001`.
+- Desktop browser acceptance confirms Chinese descriptions, video-source conditional requirements, Webhook shared required fields, and zero console errors. Final 375x812 acceptance confirms stacked field rows, no page-level horizontal overflow, and no text overlap.
+- Started the field-table visibility follow-up after confirming the existing definitions were hidden by an outer Collapse.
+- Removed the schema Collapse, split desktop tables into 名称/类型/是否必须/描述/备注, moved parameter location and structural constraints into Notes, and retained a labeled mobile stacked layout.
+- Added localized location and required-column labels across all seven locales. Targeted ESLint, OpenAPI drift, i18n status, production build, and whitespace checks pass.
+- Rebuilt Docker dev on image `sha256:8e4867473528...`; the container is healthy. Desktop browser acceptance confirms the five-column table is directly visible with Chinese field descriptions and no schema-collapse control.
+- Mobile browser acceptance confirms the direct field definitions retain every column's meaning in stacked form at 375x812 with no page-level horizontal overflow.
+- Final desktop/mobile console error counts are zero. The field-table visibility follow-up is complete, and the rebuilt Async Images page is left open for user inspection.
+
+---

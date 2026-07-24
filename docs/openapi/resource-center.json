@@ -58,7 +58,8 @@
             "description": "Filter by asset type.",
             "schema": {
               "$ref": "#/components/schemas/AssetType"
-            }
+            },
+            "x-description-zh-CN": "按资源类型筛选。"
           },
           {
             "name": "status",
@@ -70,7 +71,8 @@
               "enum": [
                 "available"
               ]
-            }
+            },
+            "x-description-zh-CN": "公开接口只返回 available 状态的资源。"
           },
           {
             "name": "task_id",
@@ -79,7 +81,8 @@
             "description": "Filter by exact task ID.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "按任务 ID 精确筛选。"
           },
           {
             "name": "model",
@@ -88,7 +91,8 @@
             "description": "Filter by exact model.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "按模型名称精确筛选。"
           },
           {
             "name": "keyword",
@@ -97,7 +101,8 @@
             "description": "Search asset ID, task ID, filename, or URL.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "搜索资源 ID、任务 ID、文件名或 URL。"
           },
           {
             "name": "start_timestamp",
@@ -108,7 +113,8 @@
               "type": "integer",
               "format": "int64",
               "minimum": 0
-            }
+            },
+            "x-description-zh-CN": "创建时间下限，Unix 秒。"
           },
           {
             "name": "end_timestamp",
@@ -119,7 +125,8 @@
               "type": "integer",
               "format": "int64",
               "minimum": 0
-            }
+            },
+            "x-description-zh-CN": "创建时间上限，Unix 秒。"
           },
           {
             "name": "page",
@@ -130,7 +137,8 @@
               "type": "integer",
               "minimum": 1,
               "default": 1
-            }
+            },
+            "x-description-zh-CN": "页码，别名为 p。"
           },
           {
             "name": "page_size",
@@ -142,7 +150,8 @@
               "minimum": 1,
               "maximum": 100,
               "default": 20
-            }
+            },
+            "x-description-zh-CN": "每页数量，别名为 ps 和 size。"
           }
         ],
         "responses": {
@@ -154,7 +163,8 @@
                   "$ref": "#/components/schemas/AssetListResponse"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "资源列表。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -191,7 +201,8 @@
             "description": "Asset ID such as asset_xxx.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "资源 ID，例如 asset_xxx。"
           }
         ],
         "responses": {
@@ -203,7 +214,8 @@
                   "$ref": "#/components/schemas/Asset"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "单个资源。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -247,7 +259,8 @@
             "description": "Video Asset ID such as asset_xxx.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "视频资源 ID，例如 asset_xxx。"
           },
           {
             "name": "Range",
@@ -259,7 +272,8 @@
               "examples": [
                 "bytes=0-1048575"
               ]
-            }
+            },
+            "x-description-zh-CN": "可选的 RFC 9110 字节范围。"
           }
         ],
         "responses": {
@@ -291,7 +305,8 @@
                   "format": "binary"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "完整视频内容。"
           },
           "206": {
             "description": "Partial video content.",
@@ -321,7 +336,8 @@
                   "format": "binary"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "部分视频内容。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -375,7 +391,8 @@
                   "$ref": "#/components/schemas/AssetListResponse"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "资源列表。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -423,7 +440,8 @@
                   "$ref": "#/components/schemas/AssetURLListResponse"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "资源 URL 列表。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -461,7 +479,8 @@
             "description": "Filter by asset type.",
             "schema": {
               "$ref": "#/components/schemas/AssetType"
-            }
+            },
+            "x-description-zh-CN": "按资源类型筛选。"
           },
           {
             "name": "status",
@@ -473,7 +492,8 @@
               "enum": [
                 "available"
               ]
-            }
+            },
+            "x-description-zh-CN": "公开接口只返回 available 状态的资源。"
           },
           {
             "name": "task_id",
@@ -482,7 +502,8 @@
             "description": "Filter by exact task ID.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "按任务 ID 精确筛选。"
           },
           {
             "name": "model",
@@ -491,7 +512,8 @@
             "description": "Filter by exact model.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "按模型名称精确筛选。"
           },
           {
             "name": "keyword",
@@ -500,7 +522,8 @@
             "description": "Search asset ID, task ID, filename, or URL.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "搜索资源 ID、任务 ID、文件名或 URL。"
           },
           {
             "name": "start_timestamp",
@@ -511,7 +534,8 @@
               "type": "integer",
               "format": "int64",
               "minimum": 0
-            }
+            },
+            "x-description-zh-CN": "创建时间下限，Unix 秒。"
           },
           {
             "name": "end_timestamp",
@@ -522,7 +546,8 @@
               "type": "integer",
               "format": "int64",
               "minimum": 0
-            }
+            },
+            "x-description-zh-CN": "创建时间上限，Unix 秒。"
           }
         ],
         "responses": {
@@ -534,7 +559,8 @@
                   "type": "string"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "CSV 包含 asset_id、task_id、asset_type、url、filename、model 和 created_at。"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -570,7 +596,8 @@
             "schema": {
               "type": "string",
               "maxLength": 128
-            }
+            },
+            "x-description-zh-CN": "可选的调用方幂等 Key，同一用户内唯一，最长 128 个字符。"
           }
         ],
         "requestBody": {
@@ -602,19 +629,22 @@
                 "description": "Canonical task URL.",
                 "schema": {
                   "type": "string"
-                }
+                },
+                "x-description-zh-CN": "该任务的规范查询 URL。"
               },
               "Retry-After": {
                 "description": "Suggested polling delay in seconds.",
                 "schema": {
                   "type": "integer"
-                }
+                },
+                "x-description-zh-CN": "建议的轮询间隔，单位为秒。"
               },
               "Idempotent-Replayed": {
                 "description": "true when the original task is replayed.",
                 "schema": {
                   "type": "boolean"
-                }
+                },
+                "x-description-zh-CN": "返回原幂等任务时为 true。"
               }
             },
             "content": {
@@ -623,7 +653,8 @@
                   "$ref": "#/components/schemas/ImageTask"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "任务已受理。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -670,7 +701,8 @@
             "description": "Filter by one public task status.",
             "schema": {
               "$ref": "#/components/schemas/ImageTaskStatus"
-            }
+            },
+            "x-description-zh-CN": "按一个公开任务状态筛选。"
           },
           {
             "name": "operation",
@@ -679,7 +711,8 @@
             "description": "Filter by generation or edit.",
             "schema": {
               "$ref": "#/components/schemas/ImageTaskOperation"
-            }
+            },
+            "x-description-zh-CN": "按 generation 或 edit 操作筛选。"
           },
           {
             "name": "client_reference_id",
@@ -688,7 +721,8 @@
             "description": "Filter by the caller business reference.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "按调用方业务关联 ID 筛选。"
           },
           {
             "name": "created_after",
@@ -699,7 +733,8 @@
               "type": "integer",
               "format": "int64",
               "minimum": 0
-            }
+            },
+            "x-description-zh-CN": "创建时间下限，Unix 秒，不包含该时间。"
           },
           {
             "name": "created_before",
@@ -710,7 +745,8 @@
               "type": "integer",
               "format": "int64",
               "minimum": 0
-            }
+            },
+            "x-description-zh-CN": "创建时间上限，Unix 秒，不包含该时间。"
           },
           {
             "name": "after",
@@ -719,7 +755,8 @@
             "description": "Task ID cursor returned by the previous page.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "上一页返回的任务 ID 游标。"
           },
           {
             "name": "limit",
@@ -731,7 +768,8 @@
               "minimum": 1,
               "maximum": 100,
               "default": 20
-            }
+            },
+            "x-description-zh-CN": "每页数量。"
           }
         ],
         "responses": {
@@ -743,7 +781,8 @@
                   "$ref": "#/components/schemas/ImageTaskListResponse"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "使用游标分页的任务列表。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -780,7 +819,8 @@
             "description": "Public task ID such as task_xxx.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "公开任务 ID，例如 task_xxx。"
           }
         ],
         "responses": {
@@ -792,7 +832,8 @@
                   "$ref": "#/components/schemas/ImageTask"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "单个任务。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -844,7 +885,8 @@
                   "$ref": "#/components/schemas/ImageTaskBatchResponse"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "按请求顺序返回任务，并列出缺失 ID。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -899,7 +941,8 @@
                   "$ref": "#/components/schemas/ImageUploadListResponse"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "临时上传 URL。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -957,7 +1000,8 @@
                   "$ref": "#/components/schemas/ImageUploadListResponse"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "临时上传 URL。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -1005,7 +1049,8 @@
             "schema": {
               "type": "string",
               "maxLength": 128
-            }
+            },
+            "x-description-zh-CN": "可选的调用方幂等 Key，同一用户内唯一，最长 128 个字符。相同 Key 和请求会返回原任务，不同请求返回 409。"
           }
         ],
         "requestBody": {
@@ -1026,19 +1071,22 @@
                 "description": "Canonical task URL.",
                 "schema": {
                   "type": "string"
-                }
+                },
+                "x-description-zh-CN": "该任务的规范查询 URL。"
               },
               "Retry-After": {
                 "description": "Suggested polling delay in seconds.",
                 "schema": {
                   "type": "integer"
-                }
+                },
+                "x-description-zh-CN": "建议的轮询间隔，单位为秒。"
               },
               "Idempotent-Replayed": {
                 "description": "true when the original task is replayed.",
                 "schema": {
                   "type": "boolean"
-                }
+                },
+                "x-description-zh-CN": "返回原幂等任务时为 true。"
               }
             },
             "content": {
@@ -1047,7 +1095,8 @@
                   "$ref": "#/components/schemas/VideoTask"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "任务已受理。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -1088,7 +1137,8 @@
             "description": "Filter by one public task status.",
             "schema": {
               "$ref": "#/components/schemas/VideoTaskStatus"
-            }
+            },
+            "x-description-zh-CN": "按一个公开任务状态筛选。"
           },
           {
             "name": "operation",
@@ -1097,7 +1147,8 @@
             "description": "Filter by generation, edit, extension, or remix.",
             "schema": {
               "$ref": "#/components/schemas/VideoTaskOperation"
-            }
+            },
+            "x-description-zh-CN": "按 generation、edit、extension 或 remix 操作筛选。"
           },
           {
             "name": "client_reference_id",
@@ -1106,7 +1157,8 @@
             "description": "Filter by the caller business reference.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "按调用方业务关联 ID 筛选。"
           },
           {
             "name": "created_after",
@@ -1117,7 +1169,8 @@
               "type": "integer",
               "format": "int64",
               "minimum": 0
-            }
+            },
+            "x-description-zh-CN": "创建时间下限，Unix 秒，包含该时间。"
           },
           {
             "name": "created_before",
@@ -1128,7 +1181,8 @@
               "type": "integer",
               "format": "int64",
               "minimum": 0
-            }
+            },
+            "x-description-zh-CN": "创建时间上限，Unix 秒，包含该时间。"
           },
           {
             "name": "after",
@@ -1137,7 +1191,8 @@
             "description": "Task ID cursor returned by the previous page.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "上一页返回的任务 ID 游标。"
           },
           {
             "name": "limit",
@@ -1149,7 +1204,8 @@
               "minimum": 1,
               "maximum": 100,
               "default": 20
-            }
+            },
+            "x-description-zh-CN": "每页数量。"
           }
         ],
         "responses": {
@@ -1161,7 +1217,8 @@
                   "$ref": "#/components/schemas/VideoTaskListResponse"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "使用游标分页的任务列表。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -1198,7 +1255,8 @@
             "description": "Public task ID such as task_xxx.",
             "schema": {
               "type": "string"
-            }
+            },
+            "x-description-zh-CN": "公开任务 ID，例如 task_xxx。"
           }
         ],
         "responses": {
@@ -1210,7 +1268,8 @@
                   "$ref": "#/components/schemas/VideoTask"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "单个任务。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -1262,7 +1321,8 @@
                   "$ref": "#/components/schemas/VideoTaskBatchResponse"
                 }
               }
-            }
+            },
+            "x-description-zh-CN": "按请求顺序返回任务，并列出缺失 ID。"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -1573,22 +1633,34 @@
         "properties": {
           "type": {
             "type": "string",
-            "example": "invalid_request_error"
+            "example": "invalid_request_error",
+            "description": "Error category for broad client handling.",
+            "x-description-zh-CN": "便于客户端进行大类处理的错误类型。"
           },
           "code": {
             "type": "string",
-            "example": "invalid_request"
+            "example": "invalid_request",
+            "description": "Stable machine-readable error code.",
+            "x-description-zh-CN": "稳定、可供程序判断的错误码。"
           },
           "message": {
-            "type": "string"
+            "type": "string",
+            "description": "Human-readable error message.",
+            "x-description-zh-CN": "便于阅读的错误说明。"
           },
           "param": {
-            "type": "string"
+            "type": "string",
+            "description": "Request field associated with the error when known.",
+            "x-description-zh-CN": "已知时返回与错误相关的请求字段。"
           },
           "request_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Request identifier for support and diagnostics.",
+            "x-description-zh-CN": "用于支持和问题排查的请求 ID。"
           }
-        }
+        },
+        "description": "Machine-readable error details returned inside an error envelope.",
+        "x-description-zh-CN": "错误响应中的机器可读错误详情。"
       },
       "ErrorResponse": {
         "type": "object",
@@ -1598,9 +1670,13 @@
         ],
         "properties": {
           "error": {
-            "$ref": "#/components/schemas/Error"
+            "$ref": "#/components/schemas/Error",
+            "description": "Terminal failure details, or null when no failure is present.",
+            "x-description-zh-CN": "任务失败详情；没有失败时为 null。"
           }
-        }
+        },
+        "description": "Shared JSON error envelope.",
+        "x-description-zh-CN": "所有公开接口共用的 JSON 错误封装。"
       },
       "AssetType": {
         "type": "string",
@@ -1627,90 +1703,132 @@
         ],
         "properties": {
           "object": {
-            "const": "asset"
+            "const": "asset",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "id": {
             "type": "string",
             "examples": [
               "asset_xxx"
-            ]
+            ],
+            "description": "Public identifier for this object.",
+            "x-description-zh-CN": "当前对象的公开 ID。"
           },
           "task_id": {
             "type": "string",
             "examples": [
               "task_xxx"
-            ]
+            ],
+            "description": "Public task identifier.",
+            "x-description-zh-CN": "公开任务 ID。"
           },
           "index": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Zero-based output position within the task.",
+            "x-description-zh-CN": "该输出在任务结果中的位置，从 0 开始。"
           },
           "type": {
-            "$ref": "#/components/schemas/AssetType"
+            "$ref": "#/components/schemas/AssetType",
+            "description": "Public object, Asset, or event type.",
+            "x-description-zh-CN": "当前对象、资源或事件的公开类型。"
           },
           "url": {
             "type": "string",
-            "format": "uri-reference"
+            "format": "uri-reference",
+            "description": "URL used to read this input or output.",
+            "x-description-zh-CN": "用于读取该输入或输出的 URL。"
           },
           "temporary": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the URL points to a temporary upstream resource.",
+            "x-description-zh-CN": "该 URL 是否指向上游临时资源。"
           },
           "url_auth": {
             "type": "string",
             "enum": [
               "none",
               "resource_api_key"
-            ]
+            ],
+            "description": "Authentication required when requesting url.",
+            "x-description-zh-CN": "请求 url 时需要使用的鉴权方式。"
           },
           "thumbnail_url": {
             "type": "string",
-            "format": "uri"
+            "format": "uri",
+            "description": "Optional public thumbnail URL.",
+            "x-description-zh-CN": "可选的公开缩略图 URL。"
           },
           "mime_type": {
-            "type": "string"
+            "type": "string",
+            "description": "IANA media type when known.",
+            "x-description-zh-CN": "已知时返回标准 MIME 类型。"
           },
           "filename": {
-            "type": "string"
+            "type": "string",
+            "description": "Suggested filename when known.",
+            "x-description-zh-CN": "已知时返回建议文件名。"
           },
           "size_bytes": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "File size in bytes when known.",
+            "x-description-zh-CN": "已知时返回文件字节数。"
           },
           "width": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Pixel width when known.",
+            "x-description-zh-CN": "已知时返回像素宽度。"
           },
           "height": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Pixel height when known.",
+            "x-description-zh-CN": "已知时返回像素高度。"
           },
           "duration_ms": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Video duration in milliseconds when known.",
+            "x-description-zh-CN": "已知时返回视频时长，单位为毫秒。"
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model requested for the task or associated with the Asset.",
+            "x-description-zh-CN": "任务请求使用的模型，或生成该资源的模型。"
           },
           "status": {
-            "const": "available"
+            "const": "available",
+            "description": "Public Assets returned by these APIs are available.",
+            "x-description-zh-CN": "这些公开接口返回的资源状态固定为 available。"
           },
           "metadata": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "description": "Caller metadata returned unchanged with the public object.",
+            "x-description-zh-CN": "调用方元数据，会随公开对象原样返回。"
           },
           "created_at": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Creation time as Unix seconds.",
+            "x-description-zh-CN": "创建时间，Unix 秒。"
           },
           "updated_at": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Last update time as Unix seconds.",
+            "x-description-zh-CN": "最后更新时间，Unix 秒。"
           }
-        }
+        },
+        "description": "A user-visible generated Asset.",
+        "x-description-zh-CN": "用户可见的生成资源。"
       },
       "AssetListResponse": {
         "type": "object",
@@ -1725,32 +1843,46 @@
         ],
         "properties": {
           "object": {
-            "const": "list"
+            "const": "list",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "data": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Asset"
-            }
+            },
+            "description": "Objects returned by this list or envelope.",
+            "x-description-zh-CN": "当前列表或封装对象中包含的数据。"
           },
           "page": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "description": "One-based page number.",
+            "x-description-zh-CN": "页码，从 1 开始。"
           },
           "page_size": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100
+            "maximum": 100,
+            "description": "Maximum number of objects returned per page.",
+            "x-description-zh-CN": "每页最多返回的对象数量。"
           },
           "total": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Total number of matching objects.",
+            "x-description-zh-CN": "符合条件的对象总数。"
           },
           "has_more": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether another page is available.",
+            "x-description-zh-CN": "是否还有下一页。"
           }
-        }
+        },
+        "description": "Page-based list of generated Assets.",
+        "x-description-zh-CN": "使用页码分页的生成资源列表。"
       },
       "AssetQueryRequest": {
         "type": "object",
@@ -1761,39 +1893,57 @@
             "maxItems": 100,
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Public Asset IDs to query.",
+            "x-description-zh-CN": "要查询的公开资源 ID 列表。"
           },
           "asset_type": {
-            "$ref": "#/components/schemas/AssetType"
+            "$ref": "#/components/schemas/AssetType",
+            "description": "Asset type filter.",
+            "x-description-zh-CN": "资源类型筛选条件。"
           },
           "task_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Public task identifier.",
+            "x-description-zh-CN": "公开任务 ID。"
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model requested for the task or associated with the Asset.",
+            "x-description-zh-CN": "任务请求使用的模型，或生成该资源的模型。"
           },
           "start_timestamp": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Inclusive lower creation-time bound in Unix seconds.",
+            "x-description-zh-CN": "创建时间下限，Unix 秒，包含该时间。"
           },
           "end_timestamp": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Inclusive upper creation-time bound in Unix seconds.",
+            "x-description-zh-CN": "创建时间上限，Unix 秒，包含该时间。"
           },
           "page": {
             "type": "integer",
             "minimum": 1,
-            "default": 1
+            "default": 1,
+            "description": "One-based page number.",
+            "x-description-zh-CN": "页码，从 1 开始。"
           },
           "page_size": {
             "type": "integer",
             "minimum": 1,
             "maximum": 100,
-            "default": 20
+            "default": 20,
+            "description": "Maximum number of objects returned per page.",
+            "x-description-zh-CN": "每页最多返回的对象数量。"
           }
-        }
+        },
+        "description": "Asset filters. When asset_ids is present, up to 100 IDs are returned in request order and other filters are ignored.",
+        "x-description-zh-CN": "资源筛选条件。提供 asset_ids 时，最多按请求顺序返回 100 个 ID，其他筛选条件会被忽略。"
       },
       "AssetBatchURLRequest": {
         "type": "object",
@@ -1808,9 +1958,13 @@
             "maxItems": 100,
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Public Asset IDs to query.",
+            "x-description-zh-CN": "要查询的公开资源 ID 列表。"
           }
-        }
+        },
+        "description": "Up to 100 Asset IDs whose current URLs are needed.",
+        "x-description-zh-CN": "需要获取当前 URL 的资源 ID，最多 100 个。"
       },
       "AssetURLItem": {
         "type": "object",
@@ -1823,29 +1977,43 @@
         ],
         "properties": {
           "asset_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Public Asset identifier.",
+            "x-description-zh-CN": "公开资源 ID。"
           },
           "task_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Public task identifier.",
+            "x-description-zh-CN": "公开任务 ID。"
           },
           "asset_type": {
-            "$ref": "#/components/schemas/AssetType"
+            "$ref": "#/components/schemas/AssetType",
+            "description": "Asset type filter.",
+            "x-description-zh-CN": "资源类型筛选条件。"
           },
           "url": {
             "type": "string",
-            "format": "uri-reference"
+            "format": "uri-reference",
+            "description": "URL used to read this input or output.",
+            "x-description-zh-CN": "用于读取该输入或输出的 URL。"
           },
           "temporary": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether the URL points to a temporary upstream resource.",
+            "x-description-zh-CN": "该 URL 是否指向上游临时资源。"
           },
           "url_auth": {
             "type": "string",
             "enum": [
               "none",
               "resource_api_key"
-            ]
+            ],
+            "description": "Authentication required when requesting url.",
+            "x-description-zh-CN": "请求 url 时需要使用的鉴权方式。"
           }
-        }
+        },
+        "description": "Current public URL and access requirements for one Asset.",
+        "x-description-zh-CN": "单个资源的当前公开 URL 及其访问要求。"
       },
       "AssetURLListResponse": {
         "type": "object",
@@ -1856,15 +2024,21 @@
         ],
         "properties": {
           "object": {
-            "const": "list"
+            "const": "list",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "data": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/AssetURLItem"
-            }
+            },
+            "description": "Objects returned by this list or envelope.",
+            "x-description-zh-CN": "当前列表或封装对象中包含的数据。"
           }
-        }
+        },
+        "description": "Current URLs for requested Assets that were found.",
+        "x-description-zh-CN": "请求的资源中已找到资源的当前 URL。"
       },
       "ImageTaskOperation": {
         "type": "string",
@@ -1892,9 +2066,13 @@
           "url": {
             "type": "string",
             "format": "uri",
-            "pattern": "^https?://"
+            "pattern": "^https?://",
+            "description": "URL used to read this input or output.",
+            "x-description-zh-CN": "用于读取该输入或输出的 URL。"
           }
-        }
+        },
+        "description": "Public HTTP(S) image input.",
+        "x-description-zh-CN": "使用公开 HTTP(S) URL 的图片输入。"
       },
       "ImageTaskInput": {
         "type": "object",
@@ -1905,19 +2083,27 @@
         "properties": {
           "prompt": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Natural-language instruction for generation or editing.",
+            "x-description-zh-CN": "用于生成或编辑的自然语言指令。"
           },
           "images": {
             "type": "array",
             "minItems": 1,
             "items": {
               "$ref": "#/components/schemas/ImageTaskSource"
-            }
+            },
+            "description": "URL-based image inputs. Required with at least one item when operation is edit.",
+            "x-description-zh-CN": "使用 URL 的图片输入；operation 为 edit 时至少需要一项。"
           },
           "mask": {
-            "$ref": "#/components/schemas/ImageTaskSource"
+            "$ref": "#/components/schemas/ImageTaskSource",
+            "description": "Optional HTTP(S) mask URL used by supported edit models.",
+            "x-description-zh-CN": "受模型支持时用于编辑任务的可选 HTTP(S) 遮罩 URL。"
           }
-        }
+        },
+        "description": "Prompt and optional URL-based image inputs.",
+        "x-description-zh-CN": "提示词和可选的 URL 图片输入。"
       },
       "ImageTaskOutput": {
         "type": "object",
@@ -1926,38 +2112,52 @@
           "count": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 10
+            "maximum": 10,
+            "description": "Requested number of image outputs.",
+            "x-description-zh-CN": "请求生成的图片数量。"
           },
           "size": {
             "type": "string",
             "examples": [
               "1024x1024"
-            ]
+            ],
+            "description": "Requested image dimensions.",
+            "x-description-zh-CN": "请求的图片尺寸。"
           },
           "quality": {
             "type": "string",
             "examples": [
               "high"
-            ]
+            ],
+            "description": "Requested provider-supported quality level.",
+            "x-description-zh-CN": "供应商支持的图片质量级别。"
           },
           "format": {
             "type": "string",
             "examples": [
               "png"
-            ]
+            ],
+            "description": "Image format when known.",
+            "x-description-zh-CN": "已知时返回图片格式。"
           },
           "compression": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 100
+            "maximum": 100,
+            "description": "Requested output compression from 0 to 100.",
+            "x-description-zh-CN": "请求的输出压缩率，取值 0 到 100。"
           },
           "background": {
             "type": "string",
             "examples": [
               "auto"
-            ]
+            ],
+            "description": "Requested provider-supported background mode.",
+            "x-description-zh-CN": "供应商支持的背景模式。"
           }
-        }
+        },
+        "description": "Optional image output controls.",
+        "x-description-zh-CN": "可选的图片输出控制参数。"
       },
       "ImageTaskCreateRequest": {
         "type": "object",
@@ -1970,24 +2170,36 @@
         "properties": {
           "model": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Model requested for the task or associated with the Asset.",
+            "x-description-zh-CN": "任务请求使用的模型，或生成该资源的模型。"
           },
           "operation": {
-            "$ref": "#/components/schemas/ImageTaskOperation"
+            "$ref": "#/components/schemas/ImageTaskOperation",
+            "description": "Requested task operation.",
+            "x-description-zh-CN": "请求执行的任务操作。"
           },
           "input": {
-            "$ref": "#/components/schemas/ImageTaskInput"
+            "$ref": "#/components/schemas/ImageTaskInput",
+            "description": "Inputs used to execute the task.",
+            "x-description-zh-CN": "执行任务所需的输入。"
           },
           "output": {
-            "$ref": "#/components/schemas/ImageTaskOutput"
+            "$ref": "#/components/schemas/ImageTaskOutput",
+            "description": "Requested output options or provider output metadata.",
+            "x-description-zh-CN": "请求的输出选项，或供应商返回的输出元数据。"
           },
           "client_reference_id": {
             "type": "string",
-            "maxLength": 191
+            "maxLength": 191,
+            "description": "Optional caller business identifier for correlation.",
+            "x-description-zh-CN": "可选的调用方业务关联 ID。"
           },
           "metadata": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "description": "Arbitrary JSON object, stored and returned with the task.",
+            "x-description-zh-CN": "任意 JSON 对象，保存后随任务原样返回。"
           }
         },
         "allOf": [
@@ -1995,7 +2207,9 @@
             "if": {
               "properties": {
                 "operation": {
-                  "const": "edit"
+                  "const": "edit",
+                  "description": "Requested task operation.",
+                  "x-description-zh-CN": "请求执行的任务操作。"
                 }
               },
               "required": [
@@ -2012,17 +2226,23 @@
                       "minItems": 1,
                       "items": {
                         "$ref": "#/components/schemas/ImageTaskSource"
-                      }
+                      },
+                      "description": "Image inputs or image outputs, depending on the containing object.",
+                      "x-description-zh-CN": "图片输入或图片输出，具体含义取决于所在对象。"
                     }
                   },
                   "required": [
                     "images"
-                  ]
+                  ],
+                  "description": "Inputs used to execute the task.",
+                  "x-description-zh-CN": "执行任务所需的输入。"
                 }
               }
             }
           }
-        ]
+        ],
+        "description": "Normalized JSON image task request. Edit requires at least one input.images item.",
+        "x-description-zh-CN": "规范化 JSON 图片任务请求。operation 为 edit 时，input.images 至少需要一项。"
       },
       "ImageTaskMultipartCreateRequest": {
         "type": "object",
@@ -2035,17 +2255,22 @@
         "properties": {
           "model": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Model requested for the task or associated with the Asset.",
+            "x-description-zh-CN": "任务请求使用的模型，或生成该资源的模型。"
           },
           "operation": {
             "type": "string",
             "const": "edit",
             "default": "edit",
-            "description": "Optional. Multipart requests always create edit tasks."
+            "description": "Optional. Multipart requests always create edit tasks.",
+            "x-description-zh-CN": "可选；multipart 请求始终创建 edit 任务。"
           },
           "prompt": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Natural-language instruction for generation or editing.",
+            "x-description-zh-CN": "用于生成或编辑的自然语言指令。"
           },
           "image": {
             "type": "array",
@@ -2054,58 +2279,79 @@
             "items": {
               "type": "string",
               "format": "binary"
-            }
+            },
+            "description": "Repeatable local PNG, JPEG, or WebP file; one to 10 files.",
+            "x-description-zh-CN": "可重复提交的本地 PNG、JPEG 或 WebP 文件，数量为 1 到 10。"
           },
           "mask": {
             "type": "string",
-            "format": "binary"
+            "format": "binary",
+            "description": "Optional single local PNG, JPEG, or WebP mask file.",
+            "x-description-zh-CN": "可选的单个本地 PNG、JPEG 或 WebP 遮罩文件。"
           },
           "n": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 10
+            "maximum": 10,
+            "description": "Requested number of image outputs.",
+            "x-description-zh-CN": "请求生成的图片数量。"
           },
           "size": {
             "type": "string",
             "examples": [
               "1024x1024"
-            ]
+            ],
+            "description": "Requested image dimensions.",
+            "x-description-zh-CN": "请求的图片尺寸。"
           },
           "quality": {
             "type": "string",
             "examples": [
               "high"
-            ]
+            ],
+            "description": "Requested provider-supported quality level.",
+            "x-description-zh-CN": "供应商支持的图片质量级别。"
           },
           "output_format": {
             "type": "string",
             "examples": [
               "png"
-            ]
+            ],
+            "description": "Requested output image format.",
+            "x-description-zh-CN": "请求的输出图片格式。"
           },
           "output_compression": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 100
+            "maximum": 100,
+            "description": "Requested output compression from 0 to 100.",
+            "x-description-zh-CN": "请求的输出压缩率，取值 0 到 100。"
           },
           "background": {
             "type": "string",
             "examples": [
               "auto"
-            ]
+            ],
+            "description": "Requested provider-supported background mode.",
+            "x-description-zh-CN": "供应商支持的背景模式。"
           },
           "client_reference_id": {
             "type": "string",
-            "maxLength": 191
+            "maxLength": 191,
+            "description": "Optional caller business identifier for correlation.",
+            "x-description-zh-CN": "可选的调用方业务关联 ID。"
           },
           "metadata": {
             "type": "string",
             "description": "A JSON-encoded object.",
             "examples": [
               "{\"order_id\":\"order_123\"}"
-            ]
+            ],
+            "x-description-zh-CN": "使用 JSON 编码的对象字符串。"
           }
-        }
+        },
+        "description": "Multipart image edit request using local files. image may be repeated up to 10 times.",
+        "x-description-zh-CN": "使用本地文件的 multipart 图片编辑请求，image 字段最多可重复 10 次。"
       },
       "ImageTaskResultImage": {
         "type": "object",
@@ -2116,38 +2362,56 @@
         ],
         "properties": {
           "asset_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Public Asset identifier.",
+            "x-description-zh-CN": "公开资源 ID。"
           },
           "url": {
             "type": "string",
-            "format": "uri"
+            "format": "uri",
+            "description": "URL used to read this input or output.",
+            "x-description-zh-CN": "用于读取该输入或输出的 URL。"
           },
           "mime_type": {
-            "type": "string"
+            "type": "string",
+            "description": "IANA media type when known.",
+            "x-description-zh-CN": "已知时返回标准 MIME 类型。"
           },
           "format": {
-            "type": "string"
+            "type": "string",
+            "description": "Image format when known.",
+            "x-description-zh-CN": "已知时返回图片格式。"
           },
           "width": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Pixel width when known.",
+            "x-description-zh-CN": "已知时返回像素宽度。"
           },
           "height": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Pixel height when known.",
+            "x-description-zh-CN": "已知时返回像素高度。"
           },
           "size_bytes": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "File size in bytes when known.",
+            "x-description-zh-CN": "已知时返回文件字节数。"
           },
           "filename": {
-            "type": "string"
+            "type": "string",
+            "description": "Suggested filename when known.",
+            "x-description-zh-CN": "已知时返回建议文件名。"
           },
           "revised_prompt": {
             "type": "string"
           }
-        }
+        },
+        "description": "One generated image and its Asset metadata.",
+        "x-description-zh-CN": "一张生成图片及其资源元数据。"
       },
       "ImageTaskResult": {
         "type": "object",
@@ -2160,13 +2424,19 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ImageTaskResultImage"
-            }
+            },
+            "description": "Image inputs or image outputs, depending on the containing object.",
+            "x-description-zh-CN": "图片输入或图片输出，具体含义取决于所在对象。"
           },
           "output": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "description": "Requested output options or provider output metadata.",
+            "x-description-zh-CN": "请求的输出选项，或供应商返回的输出元数据。"
           }
-        }
+        },
+        "description": "Successful image task output.",
+        "x-description-zh-CN": "图片任务成功后的输出。"
       },
       "ImageTaskError": {
         "type": "object",
@@ -2178,15 +2448,23 @@
         ],
         "properties": {
           "code": {
-            "type": "string"
+            "type": "string",
+            "description": "Stable machine-readable error code.",
+            "x-description-zh-CN": "稳定、可供程序判断的错误码。"
           },
           "message": {
-            "type": "string"
+            "type": "string",
+            "description": "Human-readable error message.",
+            "x-description-zh-CN": "便于阅读的错误说明。"
           },
           "retryable": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether retrying the operation may succeed.",
+            "x-description-zh-CN": "重试该操作是否可能成功。"
           }
-        }
+        },
+        "description": "Terminal image task failure.",
+        "x-description-zh-CN": "图片任务的终态失败信息。"
       },
       "ImageTask": {
         "type": "object",
@@ -2209,24 +2487,36 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^task_"
+            "pattern": "^task_",
+            "description": "Public identifier for this object.",
+            "x-description-zh-CN": "当前对象的公开 ID。"
           },
           "object": {
-            "const": "image.task"
+            "const": "image.task",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model requested for the task or associated with the Asset.",
+            "x-description-zh-CN": "任务请求使用的模型，或生成该资源的模型。"
           },
           "operation": {
-            "$ref": "#/components/schemas/ImageTaskOperation"
+            "$ref": "#/components/schemas/ImageTaskOperation",
+            "description": "Requested task operation.",
+            "x-description-zh-CN": "请求执行的任务操作。"
           },
           "status": {
-            "$ref": "#/components/schemas/ImageTaskStatus"
+            "$ref": "#/components/schemas/ImageTaskStatus",
+            "description": "Current public status.",
+            "x-description-zh-CN": "当前公开状态。"
           },
           "progress": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 100
+            "maximum": 100,
+            "description": "Best-known task progress percentage from 0 to 100.",
+            "x-description-zh-CN": "当前已知的任务进度百分比，取值 0 到 100。"
           },
           "result": {
             "oneOf": [
@@ -2236,11 +2526,15 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Terminal task output, or null before success.",
+            "x-description-zh-CN": "任务成功后的输出；成功前为 null。"
           },
           "usage": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "description": "Provider-reported usage data when available.",
+            "x-description-zh-CN": "供应商返回的用量数据，没有时为空对象。"
           },
           "error": {
             "oneOf": [
@@ -2250,19 +2544,27 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Terminal failure details, or null when no failure is present.",
+            "x-description-zh-CN": "任务失败详情；没有失败时为 null。"
           },
           "client_reference_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional caller business identifier for correlation.",
+            "x-description-zh-CN": "可选的调用方业务关联 ID。"
           },
           "metadata": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "description": "Caller metadata returned unchanged with the public object.",
+            "x-description-zh-CN": "调用方元数据，会随公开对象原样返回。"
           },
           "created_at": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Creation time as Unix seconds.",
+            "x-description-zh-CN": "创建时间，Unix 秒。"
           },
           "started_at": {
             "type": [
@@ -2270,7 +2572,9 @@
               "null"
             ],
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Execution start time as Unix seconds, or null before start.",
+            "x-description-zh-CN": "执行开始时间，Unix 秒；尚未开始时为 null。"
           },
           "completed_at": {
             "type": [
@@ -2278,14 +2582,20 @@
               "null"
             ],
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Terminal completion time as Unix seconds, or null before completion.",
+            "x-description-zh-CN": "任务终态时间，Unix 秒；尚未完成时为 null。"
           },
           "updated_at": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Last update time as Unix seconds.",
+            "x-description-zh-CN": "最后更新时间，Unix 秒。"
           }
-        }
+        },
+        "description": "Public image task snapshot.",
+        "x-description-zh-CN": "公开图片任务快照。"
       },
       "ImageTaskListResponse": {
         "type": "object",
@@ -2297,24 +2607,36 @@
         ],
         "properties": {
           "object": {
-            "const": "list"
+            "const": "list",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "data": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ImageTask"
-            }
+            },
+            "description": "Objects returned by this list or envelope.",
+            "x-description-zh-CN": "当前列表或封装对象中包含的数据。"
           },
           "first_id": {
-            "type": "string"
+            "type": "string",
+            "description": "First task ID in the current page.",
+            "x-description-zh-CN": "当前页第一条任务的 ID。"
           },
           "last_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Last task ID in the current page; use it as the after cursor.",
+            "x-description-zh-CN": "当前页最后一条任务的 ID，可作为下一页 after 游标。"
           },
           "has_more": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether another page is available.",
+            "x-description-zh-CN": "是否还有下一页。"
           }
-        }
+        },
+        "description": "Cursor-paginated image task list.",
+        "x-description-zh-CN": "使用游标分页的图片任务列表。"
       },
       "ImageTaskBatchQueryRequest": {
         "type": "object",
@@ -2329,9 +2651,13 @@
             "maxItems": 100,
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Public task IDs to query in request order.",
+            "x-description-zh-CN": "按请求顺序提交的公开任务 ID 列表。"
           }
-        }
+        },
+        "description": "One to 100 image task IDs.",
+        "x-description-zh-CN": "1 到 100 个图片任务 ID。"
       },
       "ImageTaskBatchResponse": {
         "type": "object",
@@ -2342,21 +2668,29 @@
         ],
         "properties": {
           "object": {
-            "const": "list"
+            "const": "list",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "data": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ImageTask"
-            }
+            },
+            "description": "Objects returned by this list or envelope.",
+            "x-description-zh-CN": "当前列表或封装对象中包含的数据。"
           },
           "missing": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Requested IDs that were not found or do not belong to the user.",
+            "x-description-zh-CN": "未找到或不属于当前用户的请求 ID。"
           }
-        }
+        },
+        "description": "Image tasks in request order plus IDs that were not visible to the user.",
+        "x-description-zh-CN": "按请求顺序返回图片任务，并列出当前用户不可见的 ID。"
       },
       "VideoTaskOperation": {
         "type": "string",
@@ -2389,7 +2723,8 @@
                 "type": "string",
                 "format": "uri",
                 "pattern": "^(https?://|data:)",
-                "description": "A public HTTP(S) URL or a provider-supported data URL. Asset URLs that require ak_ authentication are not guaranteed to be readable by an upstream provider."
+                "description": "A public HTTP(S) URL or a provider-supported data URL. Asset URLs that require ak_ authentication are not guaranteed to be readable by an upstream provider.",
+                "x-description-zh-CN": "公开 HTTP(S) URL 或供应商支持的 data URL。需要 ak_ 鉴权的资源 URL 不保证上游可读取。"
               }
             }
           },
@@ -2403,15 +2738,21 @@
             "properties": {
               "provider": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "description": "Provider namespace for a provider-managed file reference.",
+                "x-description-zh-CN": "供应商托管文件所属的命名空间。"
               },
               "file_id": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "description": "Provider-managed file identifier.",
+                "x-description-zh-CN": "供应商托管文件的 ID。"
               }
             }
           }
-        ]
+        ],
+        "description": "Exactly one source form: url, or provider together with file_id.",
+        "x-description-zh-CN": "只能选择一种来源：url，或 provider 与 file_id 组合。"
       },
       "VideoTaskInput": {
         "type": "object",
@@ -2422,11 +2763,14 @@
         "properties": {
           "prompt": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Natural-language instruction for generation or editing.",
+            "x-description-zh-CN": "用于生成或编辑的自然语言指令。"
           },
           "image": {
             "$ref": "#/components/schemas/VideoTaskSource",
-            "description": "One primary image source. For xAI generation this is the starting frame. Support in other operations is provider-specific."
+            "description": "One primary image source. For xAI generation this is the starting frame. Support in other operations is provider-specific.",
+            "x-description-zh-CN": "单个主图片来源；对 xAI generation 来说是起始帧，其他操作是否支持由供应商决定。"
           },
           "reference_images": {
             "type": "array",
@@ -2434,13 +2778,17 @@
             "items": {
               "$ref": "#/components/schemas/VideoTaskSource"
             },
-            "description": "Multiple reference image sources. Allowed combinations and provider-specific limits are validated by the selected adaptor."
+            "description": "Multiple reference image sources. Allowed combinations and provider-specific limits are validated by the selected adaptor.",
+            "x-description-zh-CN": "多个参考图片来源；允许的组合和供应商限制由所选适配器校验。"
           },
           "video": {
             "$ref": "#/components/schemas/VideoTaskSource",
-            "description": "One source video for edit, extension, or remix operations."
+            "description": "One source video for edit, extension, or remix operations.",
+            "x-description-zh-CN": "edit、extension 或 remix 操作使用的单个源视频。"
           }
-        }
+        },
+        "description": "Prompt plus provider-neutral image or video sources. Non-generation operations require video.",
+        "x-description-zh-CN": "提示词及供应商无关的图片或视频来源。非 generation 操作必须提供 video。"
       },
       "VideoTaskOutput": {
         "type": "object",
@@ -2448,15 +2796,22 @@
         "properties": {
           "duration": {
             "type": "integer",
-            "description": "Requested output duration. For extension this is the new segment duration. Provider-specific bounds are validated by the selected adaptor."
+            "description": "Requested output duration. For extension this is the new segment duration. Provider-specific bounds are validated by the selected adaptor.",
+            "x-description-zh-CN": "请求输出时长；extension 中表示新增片段时长，具体范围由所选适配器校验。"
           },
           "aspect_ratio": {
-            "type": "string"
+            "type": "string",
+            "description": "Requested provider-supported output aspect ratio.",
+            "x-description-zh-CN": "供应商支持的输出宽高比。"
           },
           "resolution": {
-            "type": "string"
+            "type": "string",
+            "description": "Requested provider-supported output resolution.",
+            "x-description-zh-CN": "供应商支持的输出分辨率。"
           }
-        }
+        },
+        "description": "Optional provider-neutral video output controls.",
+        "x-description-zh-CN": "可选的供应商无关视频输出控制参数。"
       },
       "VideoTaskCreateRequest": {
         "type": "object",
@@ -2469,24 +2824,36 @@
         "properties": {
           "model": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Model requested for the task or associated with the Asset.",
+            "x-description-zh-CN": "任务请求使用的模型，或生成该资源的模型。"
           },
           "operation": {
-            "$ref": "#/components/schemas/VideoTaskOperation"
+            "$ref": "#/components/schemas/VideoTaskOperation",
+            "description": "Requested task operation.",
+            "x-description-zh-CN": "请求执行的任务操作。"
           },
           "input": {
-            "$ref": "#/components/schemas/VideoTaskInput"
+            "$ref": "#/components/schemas/VideoTaskInput",
+            "description": "Inputs used to execute the task.",
+            "x-description-zh-CN": "执行任务所需的输入。"
           },
           "output": {
-            "$ref": "#/components/schemas/VideoTaskOutput"
+            "$ref": "#/components/schemas/VideoTaskOutput",
+            "description": "Requested output options or provider output metadata.",
+            "x-description-zh-CN": "请求的输出选项，或供应商返回的输出元数据。"
           },
           "client_reference_id": {
             "type": "string",
-            "maxLength": 191
+            "maxLength": 191,
+            "description": "Optional caller business identifier for correlation.",
+            "x-description-zh-CN": "可选的调用方业务关联 ID。"
           },
           "metadata": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "description": "Caller metadata returned unchanged with the public object.",
+            "x-description-zh-CN": "调用方元数据，会随公开对象原样返回。"
           },
           "provider_options": {
             "type": "object",
@@ -2494,7 +2861,8 @@
             "additionalProperties": {
               "type": "object",
               "additionalProperties": true
-            }
+            },
+            "x-description-zh-CN": "按供应商命名空间组织的专属选项，例如 provider_options.xai。"
           }
         },
         "allOf": [
@@ -2502,7 +2870,9 @@
             "if": {
               "properties": {
                 "operation": {
-                  "const": "generation"
+                  "const": "generation",
+                  "description": "Requested task operation.",
+                  "x-description-zh-CN": "请求执行的任务操作。"
                 }
               },
               "required": [
@@ -2516,7 +2886,9 @@
                     "required": [
                       "video"
                     ]
-                  }
+                  },
+                  "description": "Inputs used to execute the task.",
+                  "x-description-zh-CN": "执行任务所需的输入。"
                 }
               }
             },
@@ -2525,12 +2897,16 @@
                 "input": {
                   "required": [
                     "video"
-                  ]
+                  ],
+                  "description": "Inputs used to execute the task.",
+                  "x-description-zh-CN": "执行任务所需的输入。"
                 }
               }
             }
           }
-        ]
+        ],
+        "description": "Normalized video generation, edit, extension, or remix request.",
+        "x-description-zh-CN": "规范化的视频生成、编辑、扩展或 Remix 请求。"
       },
       "VideoTaskResultVideo": {
         "type": "object",
@@ -2545,46 +2921,68 @@
         "properties": {
           "asset_id": {
             "type": "string",
-            "pattern": "^asset_"
+            "pattern": "^asset_",
+            "description": "Public Asset identifier.",
+            "x-description-zh-CN": "公开资源 ID。"
           },
           "index": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Zero-based output position within the task.",
+            "x-description-zh-CN": "该输出在任务结果中的位置，从 0 开始。"
           },
           "url": {
             "type": "string",
-            "format": "uri-reference"
+            "format": "uri-reference",
+            "description": "URL used to read this input or output.",
+            "x-description-zh-CN": "用于读取该输入或输出的 URL。"
           },
           "mime_type": {
-            "type": "string"
+            "type": "string",
+            "description": "IANA media type when known.",
+            "x-description-zh-CN": "已知时返回标准 MIME 类型。"
           },
           "filename": {
-            "type": "string"
+            "type": "string",
+            "description": "Suggested filename when known.",
+            "x-description-zh-CN": "已知时返回建议文件名。"
           },
           "width": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Pixel width when known.",
+            "x-description-zh-CN": "已知时返回像素宽度。"
           },
           "height": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Pixel height when known.",
+            "x-description-zh-CN": "已知时返回像素高度。"
           },
           "duration_ms": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Video duration in milliseconds when known.",
+            "x-description-zh-CN": "已知时返回视频时长，单位为毫秒。"
           },
           "temporary": {
-            "const": true
+            "const": true,
+            "description": "Whether the URL points to a temporary upstream resource.",
+            "x-description-zh-CN": "该 URL 是否指向上游临时资源。"
           },
           "url_auth": {
             "type": "string",
             "enum": [
               "none",
               "resource_api_key"
-            ]
+            ],
+            "description": "Authentication required when requesting url.",
+            "x-description-zh-CN": "请求 url 时需要使用的鉴权方式。"
           }
-        }
+        },
+        "description": "One temporary video output and its access metadata.",
+        "x-description-zh-CN": "一个临时视频输出及其访问元数据。"
       },
       "VideoTaskResult": {
         "type": "object",
@@ -2597,9 +2995,13 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/VideoTaskResultVideo"
-            }
+            },
+            "description": "Ordered video outputs produced by the task.",
+            "x-description-zh-CN": "任务生成的有序视频输出列表。"
           }
-        }
+        },
+        "description": "Successful video task output.",
+        "x-description-zh-CN": "视频任务成功后的输出。"
       },
       "VideoTaskError": {
         "type": "object",
@@ -2611,15 +3013,23 @@
         ],
         "properties": {
           "code": {
-            "type": "string"
+            "type": "string",
+            "description": "Stable machine-readable error code.",
+            "x-description-zh-CN": "稳定、可供程序判断的错误码。"
           },
           "message": {
-            "type": "string"
+            "type": "string",
+            "description": "Human-readable error message.",
+            "x-description-zh-CN": "便于阅读的错误说明。"
           },
           "retryable": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether retrying the operation may succeed.",
+            "x-description-zh-CN": "重试该操作是否可能成功。"
           }
-        }
+        },
+        "description": "Terminal video task failure.",
+        "x-description-zh-CN": "视频任务的终态失败信息。"
       },
       "VideoTask": {
         "type": "object",
@@ -2641,24 +3051,36 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^task_"
+            "pattern": "^task_",
+            "description": "Public identifier for this object.",
+            "x-description-zh-CN": "当前对象的公开 ID。"
           },
           "object": {
-            "const": "video.task"
+            "const": "video.task",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "model": {
-            "type": "string"
+            "type": "string",
+            "description": "Model requested for the task or associated with the Asset.",
+            "x-description-zh-CN": "任务请求使用的模型，或生成该资源的模型。"
           },
           "operation": {
-            "$ref": "#/components/schemas/VideoTaskOperation"
+            "$ref": "#/components/schemas/VideoTaskOperation",
+            "description": "Requested task operation.",
+            "x-description-zh-CN": "请求执行的任务操作。"
           },
           "status": {
-            "$ref": "#/components/schemas/VideoTaskStatus"
+            "$ref": "#/components/schemas/VideoTaskStatus",
+            "description": "Current public status.",
+            "x-description-zh-CN": "当前公开状态。"
           },
           "progress": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 100
+            "maximum": 100,
+            "description": "Best-known task progress percentage from 0 to 100.",
+            "x-description-zh-CN": "当前已知的任务进度百分比，取值 0 到 100。"
           },
           "result": {
             "oneOf": [
@@ -2668,7 +3090,9 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Terminal task output, or null before success.",
+            "x-description-zh-CN": "任务成功后的输出；成功前为 null。"
           },
           "error": {
             "oneOf": [
@@ -2678,19 +3102,27 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Terminal failure details, or null when no failure is present.",
+            "x-description-zh-CN": "任务失败详情；没有失败时为 null。"
           },
           "client_reference_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Optional caller business identifier for correlation.",
+            "x-description-zh-CN": "可选的调用方业务关联 ID。"
           },
           "metadata": {
             "type": "object",
-            "additionalProperties": true
+            "additionalProperties": true,
+            "description": "Caller metadata returned unchanged with the public object.",
+            "x-description-zh-CN": "调用方元数据，会随公开对象原样返回。"
           },
           "created_at": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Creation time as Unix seconds.",
+            "x-description-zh-CN": "创建时间，Unix 秒。"
           },
           "started_at": {
             "type": [
@@ -2698,7 +3130,9 @@
               "null"
             ],
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Execution start time as Unix seconds, or null before start.",
+            "x-description-zh-CN": "执行开始时间，Unix 秒；尚未开始时为 null。"
           },
           "completed_at": {
             "type": [
@@ -2706,14 +3140,20 @@
               "null"
             ],
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Terminal completion time as Unix seconds, or null before completion.",
+            "x-description-zh-CN": "任务终态时间，Unix 秒；尚未完成时为 null。"
           },
           "updated_at": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Last update time as Unix seconds.",
+            "x-description-zh-CN": "最后更新时间，Unix 秒。"
           }
-        }
+        },
+        "description": "Public video task snapshot.",
+        "x-description-zh-CN": "公开视频任务快照。"
       },
       "VideoTaskListResponse": {
         "type": "object",
@@ -2725,24 +3165,36 @@
         ],
         "properties": {
           "object": {
-            "const": "list"
+            "const": "list",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "data": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/VideoTask"
-            }
+            },
+            "description": "Objects returned by this list or envelope.",
+            "x-description-zh-CN": "当前列表或封装对象中包含的数据。"
           },
           "first_id": {
-            "type": "string"
+            "type": "string",
+            "description": "First task ID in the current page.",
+            "x-description-zh-CN": "当前页第一条任务的 ID。"
           },
           "last_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Last task ID in the current page; use it as the after cursor.",
+            "x-description-zh-CN": "当前页最后一条任务的 ID，可作为下一页 after 游标。"
           },
           "has_more": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Whether another page is available.",
+            "x-description-zh-CN": "是否还有下一页。"
           }
-        }
+        },
+        "description": "Cursor-paginated video task list.",
+        "x-description-zh-CN": "使用游标分页的视频任务列表。"
       },
       "VideoTaskBatchQueryRequest": {
         "type": "object",
@@ -2757,9 +3209,13 @@
             "maxItems": 100,
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Public task IDs to query in request order.",
+            "x-description-zh-CN": "按请求顺序提交的公开任务 ID 列表。"
           }
-        }
+        },
+        "description": "One to 100 video task IDs.",
+        "x-description-zh-CN": "1 到 100 个视频任务 ID。"
       },
       "VideoTaskBatchResponse": {
         "type": "object",
@@ -2770,21 +3226,29 @@
         ],
         "properties": {
           "object": {
-            "const": "list"
+            "const": "list",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "data": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/VideoTask"
-            }
+            },
+            "description": "Objects returned by this list or envelope.",
+            "x-description-zh-CN": "当前列表或封装对象中包含的数据。"
           },
           "missing": {
             "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Requested IDs that were not found or do not belong to the user.",
+            "x-description-zh-CN": "未找到或不属于当前用户的请求 ID。"
           }
-        }
+        },
+        "description": "Video tasks in request order plus IDs that were not visible to the user.",
+        "x-description-zh-CN": "按请求顺序返回视频任务，并列出当前用户不可见的 ID。"
       },
       "ImageMultipartUploadRequest": {
         "type": "object",
@@ -2808,19 +3272,26 @@
             "items": {
               "type": "string",
               "format": "binary"
-            }
+            },
+            "description": "One image input or a repeated multipart image file field.",
+            "x-description-zh-CN": "单张图片输入，或可重复提交的 multipart 图片文件字段。"
           },
           "mask": {
             "type": "string",
-            "format": "binary"
+            "format": "binary",
+            "description": "Optional mask input.",
+            "x-description-zh-CN": "可选的遮罩图片输入。"
           }
-        }
+        },
+        "description": "Temporary multipart upload containing up to 10 image files and at most one mask.",
+        "x-description-zh-CN": "临时 multipart 上传，最多包含 10 张 image 和 1 张 mask。"
       },
       "ImageBase64UploadItem": {
         "oneOf": [
           {
             "type": "string",
-            "description": "Plain base64 or an image data URL."
+            "description": "Plain base64 or an image data URL.",
+            "x-description-zh-CN": "纯 Base64 或图片 data URL。"
           },
           {
             "type": "object",
@@ -2831,23 +3302,33 @@
                 "enum": [
                   "image",
                   "mask"
-                ]
+                ],
+                "description": "Upload role: image or mask.",
+                "x-description-zh-CN": "上传用途：image 或 mask。"
               },
               "b64_json": {
-                "type": "string"
+                "type": "string",
+                "description": "Image bytes encoded as base64.",
+                "x-description-zh-CN": "使用 Base64 编码的图片字节。"
               },
               "base64": {
-                "type": "string"
+                "type": "string",
+                "description": "Image bytes encoded as base64.",
+                "x-description-zh-CN": "使用 Base64 编码的图片字节。"
               },
               "data": {
-                "type": "string"
+                "type": "string",
+                "description": "Objects returned by this list or envelope.",
+                "x-description-zh-CN": "当前列表或封装对象中包含的数据。"
               }
             },
             "anyOf": [
               {
                 "properties": {
                   "b64_json": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Image bytes encoded as base64.",
+                    "x-description-zh-CN": "使用 Base64 编码的图片字节。"
                   }
                 },
                 "required": [
@@ -2857,7 +3338,9 @@
               {
                 "properties": {
                   "base64": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Image bytes encoded as base64.",
+                    "x-description-zh-CN": "使用 Base64 编码的图片字节。"
                   }
                 },
                 "required": [
@@ -2867,7 +3350,9 @@
               {
                 "properties": {
                   "data": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Objects returned by this list or envelope.",
+                    "x-description-zh-CN": "当前列表或封装对象中包含的数据。"
                   }
                 },
                 "required": [
@@ -2876,7 +3361,9 @@
               }
             ]
           }
-        ]
+        ],
+        "description": "Plain base64, a data URL, or an object containing b64_json, base64, or data.",
+        "x-description-zh-CN": "可以是纯 Base64、data URL，或包含 b64_json、base64、data 任一字段的对象。"
       },
       "ImageBase64UploadRequest": {
         "type": "object",
@@ -2888,7 +3375,9 @@
             "maxItems": 11,
             "items": {
               "$ref": "#/components/schemas/ImageBase64UploadItem"
-            }
+            },
+            "description": "Base64 uploads with an optional image or mask field designation.",
+            "x-description-zh-CN": "Base64 上传列表，可指定每项是 image 还是 mask。"
           },
           "images": {
             "type": "array",
@@ -2896,10 +3385,14 @@
             "maxItems": 10,
             "items": {
               "$ref": "#/components/schemas/ImageBase64UploadItem"
-            }
+            },
+            "description": "Image inputs or image outputs, depending on the containing object.",
+            "x-description-zh-CN": "图片输入或图片输出，具体含义取决于所在对象。"
           },
           "mask": {
-            "$ref": "#/components/schemas/ImageBase64UploadItem"
+            "$ref": "#/components/schemas/ImageBase64UploadItem",
+            "description": "Optional mask input.",
+            "x-description-zh-CN": "可选的遮罩图片输入。"
           }
         },
         "anyOf": [
@@ -2918,7 +3411,9 @@
               "mask"
             ]
           }
-        ]
+        ],
+        "description": "Provide uploads, images, or mask. At most 10 image inputs and one mask are accepted.",
+        "x-description-zh-CN": "至少提供 uploads、images 或 mask 之一；最多接受 10 张 image 和 1 张 mask。"
       },
       "ImageUpload": {
         "type": "object",
@@ -2932,45 +3427,67 @@
         ],
         "properties": {
           "id": {
-            "type": "string"
+            "type": "string",
+            "description": "Public identifier for this object.",
+            "x-description-zh-CN": "当前对象的公开 ID。"
           },
           "object": {
-            "const": "image.upload"
+            "const": "image.upload",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "field": {
             "type": "string",
             "enum": [
               "image",
               "mask"
-            ]
+            ],
+            "description": "Upload role: image or mask.",
+            "x-description-zh-CN": "上传用途：image 或 mask。"
           },
           "url": {
             "type": "string",
-            "format": "uri"
+            "format": "uri",
+            "description": "URL used to read this input or output.",
+            "x-description-zh-CN": "用于读取该输入或输出的 URL。"
           },
           "mime_type": {
-            "type": "string"
+            "type": "string",
+            "description": "IANA media type when known.",
+            "x-description-zh-CN": "已知时返回标准 MIME 类型。"
           },
           "size_bytes": {
             "type": "integer",
             "format": "int64",
-            "minimum": 0
+            "minimum": 0,
+            "description": "File size in bytes when known.",
+            "x-description-zh-CN": "已知时返回文件字节数。"
           },
           "width": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Pixel width when known.",
+            "x-description-zh-CN": "已知时返回像素宽度。"
           },
           "height": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Pixel height when known.",
+            "x-description-zh-CN": "已知时返回像素高度。"
           },
           "format": {
-            "type": "string"
+            "type": "string",
+            "description": "Image format when known.",
+            "x-description-zh-CN": "已知时返回图片格式。"
           },
           "temporary": {
-            "const": true
+            "const": true,
+            "description": "Whether the URL points to a temporary upstream resource.",
+            "x-description-zh-CN": "该 URL 是否指向上游临时资源。"
           }
-        }
+        },
+        "description": "One temporary uploaded image or mask.",
+        "x-description-zh-CN": "一张临时上传的图片或遮罩。"
       },
       "ImageUploadListResponse": {
         "type": "object",
@@ -2983,29 +3500,39 @@
         ],
         "properties": {
           "object": {
-            "const": "image.upload.list"
+            "const": "image.upload.list",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "data": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ImageUpload"
-            }
+            },
+            "description": "Objects returned by this list or envelope.",
+            "x-description-zh-CN": "当前列表或封装对象中包含的数据。"
           },
           "images": {
             "type": "array",
             "items": {
               "type": "string",
               "format": "uri"
-            }
+            },
+            "description": "Temporary image URLs ready for input.images.",
+            "x-description-zh-CN": "可直接放入 input.images 的临时图片 URL。"
           },
           "mask": {
             "type": [
               "string",
               "null"
             ],
-            "format": "uri"
+            "format": "uri",
+            "description": "Temporary mask URL ready for input.mask, or null.",
+            "x-description-zh-CN": "可直接放入 input.mask 的临时遮罩 URL，没有时为 null。"
           }
-        }
+        },
+        "description": "Uploaded objects plus URL arrays ready for an image edit task.",
+        "x-description-zh-CN": "上传对象，以及可直接用于图片编辑任务的 URL。"
       },
       "WebhookEventType": {
         "type": "string",
@@ -3030,20 +3557,30 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^evt_"
+            "pattern": "^evt_",
+            "description": "Stable event ID; use it to make receiver processing idempotent.",
+            "x-description-zh-CN": "稳定事件 ID，接收端应使用它进行幂等处理。"
           },
           "object": {
-            "const": "event"
+            "const": "event",
+            "description": "Stable object discriminator for client-side dispatch.",
+            "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
           },
           "api_version": {
-            "const": "2026-07-17"
+            "const": "2026-07-17",
+            "description": "Version of the outbound Webhook payload contract.",
+            "x-description-zh-CN": "出站 Webhook Payload 的协议版本。"
           },
           "type": {
-            "$ref": "#/components/schemas/WebhookEventType"
+            "$ref": "#/components/schemas/WebhookEventType",
+            "description": "Terminal image or video task event type.",
+            "x-description-zh-CN": "图片或视频任务的终态事件类型。"
           },
           "created_at": {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "description": "Creation time as Unix seconds.",
+            "x-description-zh-CN": "创建时间，Unix 秒。"
           },
           "data": {
             "type": "object",
@@ -3060,11 +3597,17 @@
                   {
                     "$ref": "#/components/schemas/VideoTask"
                   }
-                ]
+                ],
+                "description": "Stable object discriminator for client-side dispatch.",
+                "x-description-zh-CN": "用于客户端识别对象类型的稳定标识。"
               }
-            }
+            },
+            "description": "Event data containing the public task snapshot in data.object.",
+            "x-description-zh-CN": "事件数据，公开任务快照位于 data.object。"
           }
-        }
+        },
+        "description": "Outbound terminal task event. data.object matches the corresponding task query DTO.",
+        "x-description-zh-CN": "任务终态出站事件，data.object 与对应任务查询接口返回的 DTO 一致。"
       }
     },
     "responses": {
@@ -3076,7 +3619,8 @@
               "$ref": "#/components/schemas/ErrorResponse"
             }
           }
-        }
+        },
+        "x-description-zh-CN": "请求无效。"
       },
       "Unauthorized": {
         "description": "Missing or invalid credential.",
@@ -3086,7 +3630,8 @@
               "$ref": "#/components/schemas/ErrorResponse"
             }
           }
-        }
+        },
+        "x-description-zh-CN": "鉴权凭据缺失或无效。"
       },
       "Forbidden": {
         "description": "API Key, IP, expiry, or user policy denied access.",
@@ -3096,7 +3641,8 @@
               "$ref": "#/components/schemas/ErrorResponse"
             }
           }
-        }
+        },
+        "x-description-zh-CN": "API Key、IP、有效期或用户策略拒绝访问。"
       },
       "NotFound": {
         "description": "The resource was not found for the authenticated user.",
@@ -3106,7 +3652,8 @@
               "$ref": "#/components/schemas/ErrorResponse"
             }
           }
-        }
+        },
+        "x-description-zh-CN": "当前鉴权用户下未找到该资源。"
       },
       "ResourceExpired": {
         "description": "The temporary upstream video resource has expired.",
@@ -3116,7 +3663,8 @@
               "$ref": "#/components/schemas/ErrorResponse"
             }
           }
-        }
+        },
+        "x-description-zh-CN": "上游临时视频资源已过期。"
       },
       "Conflict": {
         "description": "Idempotency conflict or endpoint limit.",
@@ -3126,7 +3674,8 @@
               "$ref": "#/components/schemas/ErrorResponse"
             }
           }
-        }
+        },
+        "x-description-zh-CN": "幂等冲突或端点数量超限。"
       },
       "PayloadTooLarge": {
         "description": "Upload request or file is too large.",
@@ -3136,7 +3685,8 @@
               "$ref": "#/components/schemas/ErrorResponse"
             }
           }
-        }
+        },
+        "x-description-zh-CN": "上传请求或文件过大。"
       },
       "BadGateway": {
         "description": "The internal upload service failed.",
@@ -3146,7 +3696,8 @@
               "$ref": "#/components/schemas/ErrorResponse"
             }
           }
-        }
+        },
+        "x-description-zh-CN": "内部上传服务执行失败。"
       },
       "ServiceUnavailable": {
         "description": "The internal upload service is not configured.",
@@ -3156,7 +3707,8 @@
               "$ref": "#/components/schemas/ErrorResponse"
             }
           }
-        }
+        },
+        "x-description-zh-CN": "内部上传服务尚未配置。"
       },
       "ServerError": {
         "description": "Internal server error.",
@@ -3166,7 +3718,8 @@
               "$ref": "#/components/schemas/ErrorResponse"
             }
           }
-        }
+        },
+        "x-description-zh-CN": "服务端内部错误。"
       }
     }
   }

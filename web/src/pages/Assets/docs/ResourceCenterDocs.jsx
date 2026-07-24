@@ -31,6 +31,10 @@ import { Copy as CopyIcon, Download, ExternalLink, Eye } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { copy, downloadTextAsFile, showSuccess } from '../../../helpers';
 import RESOURCE_CENTER_OPENAPI_SPEC from '../../../../../docs/openapi/resource-center.json';
+import {
+  OperationSchemaDefinition,
+  StandaloneSchemaDefinition,
+} from './OpenAPISchemaDefinition';
 
 const { Text, Title } = Typography;
 const OPENAPI_HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete']);
@@ -512,8 +516,6 @@ const ASSET_GET_RESPONSE = `{
   "width": 1024,
   "height": 1024,
   "model": "gpt-image-2",
-  "platform": "image_handle",
-  "action": "image_generation",
   "status": "available",
   "metadata": {},
   "created_at": 1784250060,
@@ -935,6 +937,10 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
   }
 }`}</CodeExample>
         </div>
+        <StandaloneSchemaDefinition
+          schemaName='ErrorResponse'
+          title={t('错误字段定义')}
+        />
       </DocumentationSection>
     </div>
   );
@@ -971,6 +977,7 @@ function AsyncImageDocs({ t }) {
           response={ASYNC_CREATE_RESPONSE}
           responseTitle={t('202 响应')}
         />
+        <OperationSchemaDefinition operationId='createImageTask' />
         <Text type='tertiary'>
           {t(
             '建议为可重试的创建请求设置 Idempotency-Key；同一个 Key 只能对应同一份请求。',
@@ -993,6 +1000,7 @@ function AsyncImageDocs({ t }) {
           </CodeExample>
           <CodeExample title={t('202 响应')}>{ASYNC_EDIT_RESPONSE}</CodeExample>
         </div>
+        <OperationSchemaDefinition operationId='createImageTask' />
       </DocumentationSection>
 
       <DocumentationSection
@@ -1002,6 +1010,7 @@ function AsyncImageDocs({ t }) {
           request={TASK_LIST_REQUEST}
           response={TASK_LIST_RESPONSE}
         />
+        <OperationSchemaDefinition operationId='listImageTasks' />
         <Text type='tertiary'>
           {t(
             '下一页把上页返回的 last_id 作为 after 参数，并保持其他筛选条件不变。',
@@ -1016,6 +1025,7 @@ function AsyncImageDocs({ t }) {
           request={TASK_QUERY_REQUEST}
           response={TASK_QUERY_RESPONSE}
         />
+        <OperationSchemaDefinition operationId='getImageTask' />
       </DocumentationSection>
 
       <DocumentationSection
@@ -1026,6 +1036,7 @@ function AsyncImageDocs({ t }) {
           request={TASK_BATCH_QUERY_REQUEST}
           response={TASK_BATCH_QUERY_RESPONSE}
         />
+        <OperationSchemaDefinition operationId='queryImageTasks' />
       </DocumentationSection>
 
       <DocumentationSection
@@ -1038,6 +1049,7 @@ function AsyncImageDocs({ t }) {
           request={IMAGE_UPLOAD_REQUEST}
           response={IMAGE_UPLOAD_RESPONSE}
         />
+        <OperationSchemaDefinition operationId='uploadImageInputs' />
       </DocumentationSection>
 
       <DocumentationSection
@@ -1050,6 +1062,7 @@ function AsyncImageDocs({ t }) {
           request={IMAGE_BASE64_UPLOAD_REQUEST}
           response={IMAGE_UPLOAD_RESPONSE}
         />
+        <OperationSchemaDefinition operationId='uploadBase64ImageInputs' />
       </DocumentationSection>
     </div>
   );
@@ -1092,6 +1105,7 @@ function AsyncVideoDocs({ t }) {
             {VIDEO_CREATE_RESPONSE}
           </CodeExample>
         </div>
+        <OperationSchemaDefinition operationId='createVideoTask' />
         <Text type='tertiary'>
           {t(
             '建议为可重试的创建请求设置 Idempotency-Key；同一个 Key 与同一请求会返回原任务，不同请求返回 409。',
@@ -1176,6 +1190,20 @@ function AsyncVideoDocs({ t }) {
             {VIDEO_TASK_BATCH_REQUEST}
           </CodeExample>
         </div>
+        <div className='flex min-w-0 flex-col gap-2'>
+          <OperationSchemaDefinition
+            operationId='listVideoTasks'
+            title={t('列表查询参数与返回')}
+          />
+          <OperationSchemaDefinition
+            operationId='getVideoTask'
+            title={t('单个查询参数与返回')}
+          />
+          <OperationSchemaDefinition
+            operationId='queryVideoTasks'
+            title={t('批量查询参数与返回')}
+          />
+        </div>
       </DocumentationSection>
 
       <DocumentationSection
@@ -1191,6 +1219,16 @@ function AsyncVideoDocs({ t }) {
           <CodeExample title={t('Range 下载')}>
             {VIDEO_ASSET_DOWNLOAD_REQUEST}
           </CodeExample>
+        </div>
+        <div className='flex min-w-0 flex-col gap-2'>
+          <OperationSchemaDefinition
+            operationId='listAssets'
+            title={t('资源列表参数与返回')}
+          />
+          <OperationSchemaDefinition
+            operationId='downloadVideoAsset'
+            title={t('视频下载参数与返回')}
+          />
         </div>
         <Text type='tertiary'>
           {t(
@@ -1222,6 +1260,7 @@ function AssetApiDocs({ t }) {
           request={ASSET_LIST_REQUEST}
           response={ASSET_LIST_RESPONSE}
         />
+        <OperationSchemaDefinition operationId='listAssets' />
       </DocumentationSection>
 
       <DocumentationSection
@@ -1231,6 +1270,7 @@ function AssetApiDocs({ t }) {
           request={ASSET_GET_REQUEST}
           response={ASSET_GET_RESPONSE}
         />
+        <OperationSchemaDefinition operationId='getAsset' />
       </DocumentationSection>
 
       <DocumentationSection
@@ -1242,6 +1282,7 @@ function AssetApiDocs({ t }) {
         <CodeExample title={t('Range 下载')}>
           {VIDEO_ASSET_DOWNLOAD_REQUEST}
         </CodeExample>
+        <OperationSchemaDefinition operationId='downloadVideoAsset' />
       </DocumentationSection>
 
       <DocumentationSection
@@ -1251,6 +1292,7 @@ function AssetApiDocs({ t }) {
           request={ASSET_QUERY_REQUEST}
           response={ASSET_LIST_RESPONSE}
         />
+        <OperationSchemaDefinition operationId='queryAssets' />
       </DocumentationSection>
 
       <DocumentationSection
@@ -1260,6 +1302,7 @@ function AssetApiDocs({ t }) {
           request={ASSET_URLS_REQUEST}
           response={ASSET_URLS_RESPONSE}
         />
+        <OperationSchemaDefinition operationId='getAssetURLs' />
       </DocumentationSection>
 
       <DocumentationSection
@@ -1270,6 +1313,7 @@ function AssetApiDocs({ t }) {
           request={ASSET_EXPORT_REQUEST}
           response={ASSET_EXPORT_RESPONSE}
         />
+        <OperationSchemaDefinition operationId='exportAssets' />
       </DocumentationSection>
 
       <DocumentationSection
@@ -1370,6 +1414,10 @@ function WebhookDocs({ onOpenWebhook, t }) {
             </CodeExample>
           </Collapse.Panel>
         </Collapse>
+        <StandaloneSchemaDefinition
+          schemaName='WebhookEvent'
+          title={t('Webhook Payload 字段定义')}
+        />
       </DocumentationSection>
 
       <DocumentationSection
