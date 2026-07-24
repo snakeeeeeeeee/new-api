@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -8,9 +9,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func AssetKeyAuth() func(c *gin.Context) {
@@ -26,7 +29,12 @@ func AssetKeyAuth() func(c *gin.Context) {
 
 		assetKey, err := model.GetAssetKeyByKey(keyValue)
 		if err != nil {
-			abortWithOpenAiMessage(c, http.StatusUnauthorized, "无效的资源 API Key", types.ErrorCodeAccessDenied)
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				abortWithOpenAiMessage(c, http.StatusUnauthorized, "无效的资源 API Key", types.ErrorCodeAccessDenied)
+				return
+			}
+			logger.LogError(c.Request.Context(), "query resource API key failed: "+err.Error())
+			abortWithOpenAiMessage(c, http.StatusInternalServerError, "查询资源 API Key 失败", types.ErrorCodeQueryDataError)
 			return
 		}
 		if assetKey.Status != model.AssetKeyStatusEnabled {

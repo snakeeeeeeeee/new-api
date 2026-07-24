@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -124,6 +125,30 @@ func TestAssetKeyAuthRejectsNormalTokenFormat(t *testing.T) {
 
 	require.False(t, called)
 	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+}
+
+func TestAssetKeyAuthRejectsUnknownResourceKey(t *testing.T) {
+	setupAssetKeyAuthTestDB(t)
+
+	recorder, _, called := runAssetKeyAuthRequest("ak_unknown")
+
+	require.False(t, called)
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "无效的资源 API Key")
+}
+
+func TestAssetKeyAuthReturnsServerErrorForDatabaseFailure(t *testing.T) {
+	setupAssetKeyAuthTestDB(t)
+	sqlDB, err := model.DB.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	recorder, _, called := runAssetKeyAuthRequest("ak_database_failure")
+
+	require.False(t, called)
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Contains(t, recorder.Body.String(), string(types.ErrorCodeQueryDataError))
+	require.NotContains(t, recorder.Body.String(), "无效的资源 API Key")
 }
 
 func TestAssetOrTokenAuthAcceptsNormalToken(t *testing.T) {

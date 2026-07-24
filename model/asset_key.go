@@ -247,8 +247,9 @@ func GetAssetKeyByKey(keyValue string) (*AssetKey, error) {
 	if keyValue == "" {
 		return nil, errors.New("key is empty")
 	}
+	ensureCommonColumnsInitialized()
 	var key AssetKey
-	if err := DB.Where("key = ?", keyValue).First(&key).Error; err != nil {
+	if err := DB.Where(commonKeyCol+" = ?", keyValue).First(&key).Error; err != nil {
 		return nil, err
 	}
 	var current AssetKey
