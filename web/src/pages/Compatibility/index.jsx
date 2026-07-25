@@ -268,7 +268,8 @@ export default function CompatibilityPage() {
       {
         key: 'claude.validate_output_effort_enabled',
         label: 'output_config.effort 等级校验',
-        extra: '校验 low/medium/high/xhigh/max 与模型支持范围。',
+        extra:
+          '只校验 low/medium/high/xhigh/max 枚举值，具体模型是否支持由上游判断。',
       },
       {
         key: 'claude.normalize_simple_message_content_enabled',

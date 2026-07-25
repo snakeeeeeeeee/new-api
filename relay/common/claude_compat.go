@@ -840,7 +840,7 @@ func normalizeClaudeRequestCompat(request *dto.ClaudeRequest, info *RelayInfo) *
 		normalizeClaudeSampling(request, modelName)
 	}
 	if settings.ValidateOutputEffortEnabled {
-		if err := validateClaudeOutputEffort(request, modelName); err != nil {
+		if err := validateClaudeOutputEffort(request); err != nil {
 			return err
 		}
 	}
@@ -1327,40 +1327,23 @@ func isClaudeOpus47OrLater(model string) bool {
 	return strings.Contains(model, "claude-opus-4-7") || strings.Contains(model, "claude-opus-4-8")
 }
 
-func validateClaudeOutputEffort(request *dto.ClaudeRequest, modelName string) *claudeCompatViolation {
+func validateClaudeOutputEffort(request *dto.ClaudeRequest) *claudeCompatViolation {
 	effort := strings.TrimSpace(strings.ToLower(request.GetEfforts()))
 	if effort == "" {
 		return nil
 	}
 	switch effort {
-	case "minimal", "low", "medium", "high":
+	case "low", "medium", "high", "xhigh", "max":
 		return nil
-	case "xhigh":
-		if supportsClaudeXHighEffort(modelName) {
-			return nil
-		}
-	case "max":
-		if supportsClaudeMaxEffort(modelName) {
-			return nil
-		}
 	default:
 		return &claudeCompatViolation{
 			param: "output_config.effort",
 			code:  ClaudeCompatCodeInvalidOutputEffort,
 			message: fmt.Sprintf(
-				"Invalid request for Claude: output_config.effort=%q is unsupported; allowed values are minimal, low, medium, high, xhigh, and max.",
+				"Invalid request for Claude: output_config.effort=%q is unsupported; allowed values are low, medium, high, xhigh, and max.",
 				effort,
 			),
 		}
-	}
-	return &claudeCompatViolation{
-		param: "output_config.effort",
-		code:  ClaudeCompatCodeInvalidOutputEffort,
-		message: fmt.Sprintf(
-			"Invalid request for Claude: output_config.effort=%q is not supported by model %q.",
-			effort,
-			modelName,
-		),
 	}
 }
 
@@ -1374,17 +1357,6 @@ func supportsClaudeXHighEffort(model string) bool {
 
 func requiresClaudeAdaptiveThinking(model string) bool {
 	return supportsClaudeXHighEffort(model)
-}
-
-func supportsClaudeMaxEffort(model string) bool {
-	model = strings.ToLower(model)
-	return strings.Contains(model, "claude-opus-4-6") ||
-		strings.Contains(model, "claude-opus-4-7") ||
-		strings.Contains(model, "claude-opus-4-8") ||
-		strings.Contains(model, "claude-sonnet-4-6") ||
-		strings.Contains(model, "claude-sonnet-4-7") ||
-		strings.Contains(model, "claude-sonnet-5") ||
-		strings.Contains(model, "claude-fable-5")
 }
 
 func validateClaudeNames(request *dto.ClaudeRequest) *claudeCompatViolation {

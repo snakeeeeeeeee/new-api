@@ -2,6 +2,7 @@ package common
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -374,59 +375,34 @@ func TestNormalizeClaudeRequestCompatEffortValidation(t *testing.T) {
 	withClaudeSettings(t, func(settings *model_setting.ClaudeSettings) {
 		settings.ValidateOutputEffortEnabled = true
 	})
-	xhighReq := baseClaudeCompatRequest("claude-opus-4-7")
-	xhighReq.OutputConfig = []byte(`{"effort":"xhigh"}`)
-	require.Nil(t, NormalizeClaudeRequestCompat(xhighReq, nil))
+	for _, testCase := range []struct {
+		model  string
+		effort string
+	}{
+		{model: "claude-opus-4-6", effort: "xhigh"},
+		{model: "claude-opus-5", effort: "max"},
+		{model: "claude-sonnet-4-6", effort: "xhigh"},
+		{model: "claude-sonnet-5", effort: "max"},
+		{model: "claude-fable-5", effort: "low"},
+		{model: "claude-haiku-4-5", effort: "max"},
+	} {
+		t.Run(testCase.model+"_"+testCase.effort, func(t *testing.T) {
+			request := baseClaudeCompatRequest(testCase.model)
+			request.OutputConfig = []byte(fmt.Sprintf(`{"effort":%q}`, testCase.effort))
+			require.Nil(t, NormalizeClaudeRequestCompat(request, nil))
+		})
+	}
 
-	sonnetReq := baseClaudeCompatRequest("claude-sonnet-4-6")
-	sonnetReq.OutputConfig = []byte(`{"effort":"xhigh"}`)
-	err := NormalizeClaudeRequestCompat(sonnetReq, nil)
-	require.NotNil(t, err)
-	require.Equal(t, "output_config.effort", err.ToOpenAIError().Param)
-
-	sonnetMaxReq := baseClaudeCompatRequest("claude-sonnet-4-6")
-	sonnetMaxReq.OutputConfig = []byte(`{"effort":"max"}`)
-	require.Nil(t, NormalizeClaudeRequestCompat(sonnetMaxReq, nil))
-
-	maxReq := baseClaudeCompatRequest("claude-opus-4-6")
-	maxReq.OutputConfig = []byte(`{"effort":"max"}`)
-	require.Nil(t, NormalizeClaudeRequestCompat(maxReq, nil))
-
-	opus46XHighReq := baseClaudeCompatRequest("claude-opus-4-6")
-	opus46XHighReq.OutputConfig = []byte(`{"effort":"xhigh"}`)
-	err = NormalizeClaudeRequestCompat(opus46XHighReq, nil)
-	require.NotNil(t, err)
-	require.Equal(t, "output_config.effort", err.ToOpenAIError().Param)
-
-	opus48MaxReq := baseClaudeCompatRequest("claude-opus-4-8")
-	opus48MaxReq.OutputConfig = []byte(`{"effort":"max"}`)
-	require.Nil(t, NormalizeClaudeRequestCompat(opus48MaxReq, nil))
-
-	fableMaxReq := baseClaudeCompatRequest("claude-fable-5")
-	fableMaxReq.OutputConfig = []byte(`{"effort":"max"}`)
-	require.Nil(t, NormalizeClaudeRequestCompat(fableMaxReq, nil))
-
-	fableXHighReq := baseClaudeCompatRequest("claude-fable-5")
-	fableXHighReq.OutputConfig = []byte(`{"effort":"xhigh"}`)
-	require.Nil(t, NormalizeClaudeRequestCompat(fableXHighReq, nil))
-
-	sonnet5XHighReq := baseClaudeCompatRequest("claude-sonnet-5")
-	sonnet5XHighReq.OutputConfig = []byte(`{"effort":"xhigh"}`)
-	require.Nil(t, NormalizeClaudeRequestCompat(sonnet5XHighReq, nil))
-
-	sonnet5MaxReq := baseClaudeCompatRequest("claude-sonnet-5")
-	sonnet5MaxReq.OutputConfig = []byte(`{"effort":"max"}`)
-	require.Nil(t, NormalizeClaudeRequestCompat(sonnet5MaxReq, nil))
-
-	minimalReq := baseClaudeCompatRequest("claude-sonnet-5")
-	minimalReq.OutputConfig = []byte(`{"effort":"minimal"}`)
-	require.Nil(t, NormalizeClaudeRequestCompat(minimalReq, nil))
-
-	unknownReq := baseClaudeCompatRequest("claude-opus-4-7")
-	unknownReq.OutputConfig = []byte(`{"effort":"extreme"}`)
-	err = NormalizeClaudeRequestCompat(unknownReq, nil)
-	require.NotNil(t, err)
-	require.Equal(t, ClaudeCompatCodeInvalidOutputEffort, err.ToOpenAIError().Code)
+	for _, effort := range []string{"minimal", "ultra", "extreme"} {
+		t.Run("reject_"+effort, func(t *testing.T) {
+			request := baseClaudeCompatRequest("claude-opus-5")
+			request.OutputConfig = []byte(fmt.Sprintf(`{"effort":%q}`, effort))
+			err := NormalizeClaudeRequestCompat(request, nil)
+			require.NotNil(t, err)
+			require.Equal(t, ClaudeCompatCodeInvalidOutputEffort, err.ToOpenAIError().Code)
+			require.Equal(t, "output_config.effort", err.ToOpenAIError().Param)
+		})
+	}
 }
 
 func TestNormalizeClaudeRequestCompatAssistantPrefillValidation(t *testing.T) {
@@ -531,9 +507,10 @@ func TestNormalizeClaudeRequestCompatJSONUsesRelayInfoModelWhenBodyOmitsModel(t 
 	require.Contains(t, string(out), `"output_config"`)
 
 	sonnetInfo := &RelayInfo{ChannelMeta: &ChannelMeta{UpstreamModelName: "claude-sonnet-4-6"}}
-	_, err = NormalizeClaudeRequestCompatJSON(body, sonnetInfo)
-	require.NotNil(t, err)
-	require.Equal(t, ClaudeCompatCodeInvalidOutputEffort, err.ToOpenAIError().Code)
+	out, err = NormalizeClaudeRequestCompatJSON(body, sonnetInfo)
+	require.Nil(t, err)
+	require.Contains(t, string(out), `"output_config"`)
+	require.Contains(t, string(out), `"temperature"`)
 }
 
 func TestNormalizeClaudeRequestCompatJSONNormalizesSimpleInvalidContent(t *testing.T) {
