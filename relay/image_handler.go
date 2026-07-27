@@ -37,6 +37,11 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
+	if imageHandleSyncIsGeminiRequest(info, request) {
+		if validationErr := validateAndNormalizeGeminiSyncImageRequest(c, request); validationErr != nil {
+			return validationErr
+		}
+	}
 	if canUseImageHandleSyncForRequest(info, request) {
 		usage, syncErr := relayImageHandleSync(c, info, *request)
 		if syncErr != nil {

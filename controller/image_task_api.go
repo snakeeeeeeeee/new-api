@@ -207,6 +207,7 @@ func parseMultipartImageTaskRequest(c *gin.Context) (multipartImageTaskPreparati
 		"model": true, "operation": true, "prompt": true, "n": true, "size": true,
 		"quality": true, "output_format": true, "output_compression": true,
 		"background": true, "client_reference_id": true, "metadata": true,
+		"provider_options": true,
 	}
 	var uploadBody bytes.Buffer
 	uploadWriter := multipart.NewWriter(&uploadBody)
@@ -370,6 +371,19 @@ func multipartImageTaskRequestFromFields(fields map[string]string, imageHashes [
 			return request, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: "metadata must be a JSON object", param: "metadata"}
 		}
 	}
+	if value, exists := fields["provider_options"]; exists {
+		if strings.TrimSpace(value) == "" ||
+			!strings.HasPrefix(strings.TrimSpace(value), "{") ||
+			common.UnmarshalStrict([]byte(value), &request.ProviderOptions) != nil ||
+			request.ProviderOptions == nil {
+			return request, &imageTaskAPIProblem{
+				status:  http.StatusBadRequest,
+				code:    "invalid_request",
+				message: "provider_options must be a JSON object",
+				param:   "provider_options",
+			}
+		}
+	}
 	if param, message := validateImageTaskCreateRequest(&request); message != "" {
 		return request, &imageTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: message, param: multipartImageTaskParam(param)}
 	}
@@ -459,6 +473,20 @@ func validateImageTaskCreateRequest(request *dto.ImageTaskCreateRequest) (string
 	request.Operation = strings.ToLower(strings.TrimSpace(request.Operation))
 	request.Input.Prompt = strings.TrimSpace(request.Input.Prompt)
 	request.ClientReferenceID = strings.TrimSpace(request.ClientReferenceID)
+	if len(request.ProviderOptions) > 0 {
+		normalized := make(map[string]map[string]any, len(request.ProviderOptions))
+		for namespace, options := range request.ProviderOptions {
+			key := strings.ToLower(strings.TrimSpace(namespace))
+			if key == "" || options == nil {
+				return "provider_options", "provider_options must use non-empty provider namespaces with object values"
+			}
+			if _, exists := normalized[key]; exists {
+				return "provider_options", "provider_options contains duplicate provider namespaces"
+			}
+			normalized[key] = options
+		}
+		request.ProviderOptions = normalized
+	}
 	if request.Model == "" {
 		return "model", "model is required"
 	}
@@ -507,6 +535,9 @@ func normalizedImageTaskToLegacy(request dto.ImageTaskCreateRequest) relaycommon
 	metadata := make(map[string]any, 8)
 	metadata["operation"] = request.Operation
 	metadata["result_data_format"] = "url"
+	if len(request.ProviderOptions) > 0 {
+		metadata["provider_options"] = request.ProviderOptions
+	}
 	legacy := relaycommon.TaskSubmitReq{
 		Prompt:   request.Input.Prompt,
 		Model:    request.Model,

@@ -991,7 +991,7 @@ func RelayTask(c *gin.Context) {
 				common.SysError("update pre-created task error: " + updateErr.Error())
 			}
 			service.ReconcileCompletedAsyncImageConsumeLog(result.CreatedTask.ID)
-			service.MergeCompletedImagePricingExecutionAudit(result.CreatedTask.ID)
+			service.MergeCompletedImageExecutionAudit(result.CreatedTask.ID)
 			return
 		}
 

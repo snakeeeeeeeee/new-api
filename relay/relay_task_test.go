@@ -89,6 +89,146 @@ func TestAsyncImagePrechargeQuotaPerImageSaturatesHugeAmount(t *testing.T) {
 	require.Equal(t, common.MaxQuota, quota)
 }
 
+func TestGeminiProFixedPriceSkipsGlobalAsyncImageUsagePrecharge(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	})
+	*image_handle_setting.GetImageHandleSetting() = image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
+		UsagePrechargeEnabled:   true,
+		PrechargeAmountPerImage: 0.1,
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  service.GeminiImageModelPro,
+		Prompt: "draw",
+	})
+	expectedQuota := common.QuotaFromFloat(0.5 * common.QuotaPerUnit)
+	info := &relaycommon.RelayInfo{
+		UserId:          7,
+		TokenId:         77,
+		OriginModelName: service.GeminiImageModelPro,
+		ChannelMeta:     &relaycommon.ChannelMeta{},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_gemini_pro_fixed_price"},
+		PriceData: types.PriceData{
+			ModelPrice: 0.5,
+			Quota:      expectedQuota,
+			UsePrice:   true,
+		},
+	}
+
+	applyAsyncImageUsagePrecharge(ctx, info)
+	assert.Equal(t, expectedQuota, info.PriceData.Quota)
+	assert.Empty(t, info.PriceData.OtherRatios)
+
+	task, _, err := newAsyncImageTask(ctx, info, constant.TaskPlatform("58"), info.PriceData.Quota)
+	require.NoError(t, err)
+	require.NotNil(t, task.PrivateData.BillingContext)
+	assert.True(t, task.PrivateData.BillingContext.UsePrice)
+	assert.Equal(t, 0.5, task.PrivateData.BillingContext.ModelPrice)
+	assert.Empty(t, task.PrivateData.BillingContext.BillingMode)
+	assert.Empty(t, task.PrivateData.BillingContext.PrechargeStrategy)
+	assert.Zero(t, task.PrivateData.BillingContext.PrechargePerImage)
+	assert.Zero(t, task.PrivateData.BillingContext.ImageCount)
+}
+
+func TestAsyncImageTokenPricingKeepsGlobalUsagePrecharge(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	})
+	*image_handle_setting.GetImageHandleSetting() = image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
+		UsagePrechargeEnabled:   true,
+		PrechargeAmountPerImage: 0.1,
+	})
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	count := 2
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  "token-priced-image-model",
+		Prompt: "draw",
+		N:      &count,
+		Metadata: map[string]interface{}{
+			"n": count,
+		},
+	})
+	info := &relaycommon.RelayInfo{
+		UserId:          7,
+		TokenId:         77,
+		OriginModelName: "token-priced-image-model",
+		ChannelMeta:     &relaycommon.ChannelMeta{},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_token_priced_image"},
+		PriceData: types.PriceData{
+			ModelPrice: -1,
+			ModelRatio: 2,
+			UsePrice:   false,
+		},
+	}
+
+	applyAsyncImageUsagePrecharge(ctx, info)
+	expectedPerImage := common.QuotaFromFloat(0.1 * common.QuotaPerUnit)
+	assert.Equal(t, expectedPerImage*count, info.PriceData.Quota)
+	assert.Equal(t, float64(expectedPerImage), info.PriceData.OtherRatios["async_image_precharge_quota_per_image"])
+
+	task, _, err := newAsyncImageTask(ctx, info, constant.TaskPlatform("58"), info.PriceData.Quota)
+	require.NoError(t, err)
+	require.NotNil(t, task.PrivateData.BillingContext)
+	assert.False(t, task.PrivateData.BillingContext.UsePrice)
+	assert.Equal(t, "async_image_usage_billing", task.PrivateData.BillingContext.BillingMode)
+	assert.Equal(t, "per_image_x_n", task.PrivateData.BillingContext.PrechargeStrategy)
+	assert.Equal(t, expectedPerImage, task.PrivateData.BillingContext.PrechargePerImage)
+	assert.Equal(t, count, task.PrivateData.BillingContext.ImageCount)
+}
+
+func TestValidateAndNormalizeGeminiAsyncImageRequest(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", nil)
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  "gemini-3.1-flash-image",
+		Prompt: "draw",
+		Size:   "1024x1536",
+		Metadata: map[string]interface{}{
+			"provider_options": map[string]any{
+				"google": map[string]any{
+					"generation_config": map[string]any{"top_p": 0.8, "seed": float64(13)},
+				},
+			},
+		},
+	})
+
+	taskErr := validateAndNormalizeGeminiAsyncImageRequest(context)
+
+	require.Nil(t, taskErr)
+	request, err := relaycommon.GetTaskRequest(context)
+	require.NoError(t, err)
+	options := request.Metadata["provider_options"].(map[string]any)
+	generationConfig := options["google"].(map[string]any)["generationConfig"].(map[string]any)
+	assert.Equal(t, 0.8, generationConfig["topP"])
+	assert.Equal(t, int64(13), generationConfig["seed"])
+}
+
+func TestValidateAndNormalizeGeminiAsyncImageRequestRejectsUnsupportedCount(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", nil)
+	count := 2
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  "gemini-3-pro-image-count",
+		Prompt: "draw",
+		N:      &count,
+	})
+
+	taskErr := validateAndNormalizeGeminiAsyncImageRequest(context)
+
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "unsupported_image_count", taskErr.Code)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+}
+
 func TestNewAsyncImageTaskPreservesEffectiveRouteRatioSnapshot(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -156,7 +296,7 @@ func setupRelayTaskTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func TestRelayTaskSubmitImageHandleCreatesTaskAndLeaseBeforeSubmit(t *testing.T) {
+func TestRelayTaskSubmitImageHandlePreservesFixedModelPriceBeforeSubmit(t *testing.T) {
 	db := setupRelayTaskTestDB(t)
 	originalSetting := *image_handle_setting.GetImageHandleSetting()
 	originalModelPrice := ratio_setting.ModelPrice2JSONString()
@@ -241,14 +381,17 @@ func TestRelayTaskSubmitImageHandleCreatesTaskAndLeaseBeforeSubmit(t *testing.T)
 	require.NotNil(t, result.CreatedTask)
 	assert.Equal(t, "task_lease_submit", result.CreatedTask.TaskID)
 	assert.Equal(t, "imgtask_lease", result.UpstreamTaskID)
-	assert.Equal(t, 2468, result.Quota)
-	assert.Equal(t, 2468, result.CreatedTask.Quota)
+	expectedQuota := common.QuotaFromFloat(0.0001 * common.QuotaPerUnit)
+	assert.Equal(t, expectedQuota, result.Quota)
+	assert.Equal(t, expectedQuota, result.CreatedTask.Quota)
 	require.NotNil(t, result.CreatedTask.PrivateData.BillingContext)
-	assert.Equal(t, "async_image_usage_billing", result.CreatedTask.PrivateData.BillingContext.BillingMode)
-	assert.Equal(t, "per_image_x_n", result.CreatedTask.PrivateData.BillingContext.PrechargeStrategy)
-	assert.Equal(t, 1234, result.CreatedTask.PrivateData.BillingContext.PrechargePerImage)
-	assert.InDelta(t, 0.002468, result.CreatedTask.PrivateData.BillingContext.PrechargeAmountPerImage, 0.000001)
-	assert.Equal(t, 2, result.CreatedTask.PrivateData.BillingContext.ImageCount)
+	assert.True(t, result.CreatedTask.PrivateData.BillingContext.UsePrice)
+	assert.Equal(t, 0.0001, result.CreatedTask.PrivateData.BillingContext.ModelPrice)
+	assert.Empty(t, result.CreatedTask.PrivateData.BillingContext.BillingMode)
+	assert.Empty(t, result.CreatedTask.PrivateData.BillingContext.PrechargeStrategy)
+	assert.Zero(t, result.CreatedTask.PrivateData.BillingContext.PrechargePerImage)
+	assert.Zero(t, result.CreatedTask.PrivateData.BillingContext.PrechargeAmountPerImage)
+	assert.Zero(t, result.CreatedTask.PrivateData.BillingContext.ImageCount)
 	assert.Equal(t, "req-task-lease-submit", result.CreatedTask.PrivateData.BillingContext.RequestId)
 	executor := upstreamPayload["executor"].(map[string]any)
 	assert.Equal(t, "provider_direct_lease", executor["type"])

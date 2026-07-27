@@ -102,6 +102,26 @@ Retry-After: 2
   "updated_at": 1784250000
 }`;
 
+const GEMINI_ASYNC_CREATE_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
+  -X POST \\
+  -H "Authorization: Bearer $MODEL_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: order-123-gemini" \\
+  -d '{
+    "model": "gemini-3.1-flash-image",
+    "operation": "generation",
+    "input": {"prompt": "A product photo on a white background"},
+    "output": {"count": 1, "size": "1024x1024", "format": "png"},
+    "provider_options": {
+      "google": {
+        "generationConfig": {
+          "temperature": 0.8,
+          "thinkingConfig": {"thinkingLevel": "HIGH"}
+        }
+      }
+    }
+  }'`;
+
 const ASYNC_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
   -X POST \\
   -H "Authorization: Bearer $MODEL_API_KEY" \\
@@ -115,6 +135,20 @@ const ASYNC_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
       "mask": {"url": "https://cdn.example.com/mask.png"}
     },
     "output": {"size": "1024x1024", "format": "png"}
+  }'`;
+
+const GEMINI_ASYNC_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
+  -X POST \\
+  -H "Authorization: Bearer $MODEL_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "gemini-3-pro-image-count",
+    "operation": "edit",
+    "input": {
+      "prompt": "Replace the background with a studio wall",
+      "images": [{"url": "https://cdn.example.com/input.png"}]
+    },
+    "output": {"count": 1, "size": "2048x2048", "format": "png"}
   }'`;
 
 const ASYNC_MULTIPART_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
@@ -645,6 +679,47 @@ const WEBHOOK_FAILED_PAYLOAD = `{
   }
 }`;
 
+const GEMINI_WEBHOOK_SUCCEEDED_PAYLOAD = `{
+  "id": "evt_gemini_xxx",
+  "object": "event",
+  "api_version": "2026-07-17",
+  "type": "image.task.succeeded",
+  "created_at": 1784250060,
+  "data": {
+    "object": {
+      "id": "task_gemini_xxx",
+      "object": "image.task",
+      "model": "gemini-3.1-flash-image",
+      "operation": "generation",
+      "status": "succeeded",
+      "progress": 100,
+      "result": {
+        "images": [{
+          "asset_id": "asset_gemini_xxx",
+          "url": "https://cdn.example.com/gemini-image.png",
+          "mime_type": "image/png",
+          "format": "png",
+          "width": 1024,
+          "height": 1024
+        }]
+      },
+      "usage": {
+        "prompt_tokens": 25,
+        "completion_tokens": 1680,
+        "total_tokens": 1705,
+        "input_tokens": 25,
+        "output_tokens": 1680,
+        "completion_tokens_details": {"reasoning_tokens": 0}
+      },
+      "error": null,
+      "created_at": 1784250000,
+      "started_at": 1784250002,
+      "completed_at": 1784250060,
+      "updated_at": 1784250060
+    }
+  }
+}`;
+
 const VIDEO_WEBHOOK_SUCCEEDED_PAYLOAD = `{
   "id": "evt_video_xxx",
   "object": "event",
@@ -880,7 +955,7 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
       <DocumentationSection
         title={t('异步任务调用流程')}
         description={t(
-          '创建使用普通 API Token；轮询、资源查询和代理下载使用资源 API Key。',
+          'GPT-Image 与 Gemini Images 使用同一套任务、资源和 Webhook 协议；创建使用普通 API Token，轮询与资源查询使用资源 API Key。',
         )}
       >
         <DocsTable
@@ -969,14 +1044,20 @@ function AsyncImageDocs({ t }) {
       <DocumentationSection
         title={`${t('创建生成任务')} · POST /v1/image/tasks`}
         description={t(
-          '成功创建后返回 202；使用 Location 查询任务，或等待 Webhook 通知。',
+          '成功创建后返回 202；GPT-Image 与 Gemini 仅在模型能力和 provider_options 上存在差异。',
         )}
       >
-        <RequestResponseExamples
-          request={ASYNC_CREATE_REQUEST}
-          response={ASYNC_CREATE_RESPONSE}
-          responseTitle={t('202 响应')}
-        />
+        <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
+          <CodeExample title={t('GPT-Image 生成')}>
+            {ASYNC_CREATE_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('Gemini 生成')}>
+            {GEMINI_ASYNC_CREATE_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('统一 202 响应')}>
+            {ASYNC_CREATE_RESPONSE}
+          </CodeExample>
+        </div>
         <OperationSchemaDefinition operationId='createImageTask' />
         <Text type='tertiary'>
           {t(
@@ -988,14 +1069,17 @@ function AsyncImageDocs({ t }) {
       <DocumentationSection
         title={`${t('创建编辑任务')} · POST /v1/image/tasks`}
         description={t(
-          '编辑任务必须提供 prompt 和至少一张图片；可直接上传本地文件，也可使用 URL JSON，mask 可选。',
+          '编辑任务必须提供 prompt 和至少一张图片。GPT-Image 可使用 mask；Gemini 只支持无 mask 编辑且固定单图输出。',
         )}
       >
         <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
-          <CodeExample title={t('JSON 图片 URL')}>
+          <CodeExample title={t('GPT-Image URL 编辑')}>
             {ASYNC_EDIT_REQUEST}
           </CodeExample>
-          <CodeExample title={t('multipart 本地文件')}>
+          <CodeExample title={t('Gemini URL 编辑')}>
+            {GEMINI_ASYNC_EDIT_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('GPT-Image multipart 编辑')}>
             {ASYNC_MULTIPART_EDIT_REQUEST}
           </CodeExample>
           <CodeExample title={t('202 响应')}>{ASYNC_EDIT_RESPONSE}</CodeExample>
@@ -1377,6 +1461,19 @@ function WebhookDocs({ onOpenWebhook, t }) {
           >
             <CodeExample title={t('成功事件')}>
               {WEBHOOK_SUCCEEDED_PAYLOAD}
+            </CodeExample>
+          </Collapse.Panel>
+          <Collapse.Panel
+            header={t('image.task.succeeded · Gemini')}
+            itemKey='gemini-succeeded'
+          >
+            <Text type='tertiary' className='mb-3 block'>
+              {t(
+                'Gemini 与 GPT-Image 使用相同事件类型；模型名与归一化 usage 用于区分执行结果和计费信息。',
+              )}
+            </Text>
+            <CodeExample title={t('Gemini 成功事件')}>
+              {GEMINI_WEBHOOK_SUCCEEDED_PAYLOAD}
             </CodeExample>
           </Collapse.Panel>
           <Collapse.Panel header={t('image.task.failed')} itemKey='failed'>

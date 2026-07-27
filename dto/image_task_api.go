@@ -20,12 +20,13 @@ type ImageTaskOutputRequest struct {
 }
 
 type ImageTaskCreateRequest struct {
-	Model             string                 `json:"model"`
-	Operation         string                 `json:"operation"`
-	Input             ImageTaskInputRequest  `json:"input"`
-	Output            ImageTaskOutputRequest `json:"output,omitempty"`
-	ClientReferenceID string                 `json:"client_reference_id,omitempty"`
-	Metadata          map[string]any         `json:"metadata,omitempty"`
+	Model             string                    `json:"model"`
+	Operation         string                    `json:"operation"`
+	Input             ImageTaskInputRequest     `json:"input"`
+	Output            ImageTaskOutputRequest    `json:"output,omitempty"`
+	ClientReferenceID string                    `json:"client_reference_id,omitempty"`
+	Metadata          map[string]any            `json:"metadata,omitempty"`
+	ProviderOptions   map[string]map[string]any `json:"provider_options,omitempty"`
 }
 
 type ImageTaskBatchQueryRequest struct {

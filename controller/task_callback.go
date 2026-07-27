@@ -68,21 +68,22 @@ type imageCallbackImage struct {
 }
 
 type imageCallbackUsage struct {
-	TotalTokens              int `json:"total_tokens"`
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	PromptTokens             int `json:"prompt_tokens"`
-	CompletionTokens         int `json:"completion_tokens"`
-	CachedTokens             int `json:"cached_tokens"`
-	CacheReadTokens          int `json:"cache_read_tokens"`
-	PromptCacheHitTokens     int `json:"prompt_cache_hit_tokens"`
-	CacheCreationTokens      int `json:"cache_creation_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheCreation5mTokens    int `json:"cache_creation_5m_tokens"`
-	CacheCreation1hTokens    int `json:"cache_creation_1h_tokens"`
-	ImageTokens              int `json:"image_tokens"`
-	AudioTokens              int `json:"audio_tokens"`
-	ActualQuota              int `json:"actual_quota"`
+	TotalTokens              int                     `json:"total_tokens"`
+	InputTokens              int                     `json:"input_tokens"`
+	OutputTokens             int                     `json:"output_tokens"`
+	PromptTokens             int                     `json:"prompt_tokens"`
+	CompletionTokens         int                     `json:"completion_tokens"`
+	CachedTokens             int                     `json:"cached_tokens"`
+	CacheReadTokens          int                     `json:"cache_read_tokens"`
+	PromptCacheHitTokens     int                     `json:"prompt_cache_hit_tokens"`
+	CacheCreationTokens      int                     `json:"cache_creation_tokens"`
+	CacheCreationInputTokens int                     `json:"cache_creation_input_tokens"`
+	CacheCreation5mTokens    int                     `json:"cache_creation_5m_tokens"`
+	CacheCreation1hTokens    int                     `json:"cache_creation_1h_tokens"`
+	ImageTokens              int                     `json:"image_tokens"`
+	AudioTokens              int                     `json:"audio_tokens"`
+	ActualQuota              int                     `json:"actual_quota"`
+	CompletionTokensDetails  *dto.OutputTokenDetails `json:"completion_tokens_details,omitempty"`
 }
 
 type imageCallbackError struct {
@@ -423,6 +424,7 @@ func callbackUsageToDTO(usage *imageCallbackUsage) *dto.Usage {
 			ImageTokens:          usage.ImageTokens,
 			AudioTokens:          usage.AudioTokens,
 		},
+		CompletionTokenDetails:      callbackOutputTokenDetails(usage.CompletionTokensDetails),
 		ClaudeCacheCreation5mTokens: usage.CacheCreation5mTokens,
 		ClaudeCacheCreation1hTokens: usage.CacheCreation1hTokens,
 	}
@@ -499,6 +501,15 @@ func mergeUsageFromRawResponse(usage *dto.Usage, raw json.RawMessage) {
 	if usage.InputTokensDetails == nil {
 		usage.InputTokensDetails = fromRaw.InputTokensDetails
 	}
+	if usage.CompletionTokenDetails.ReasoningTokens == 0 {
+		usage.CompletionTokenDetails.ReasoningTokens = fromRaw.CompletionTokenDetails.ReasoningTokens
+	}
+	if usage.CompletionTokenDetails.TextTokens == 0 {
+		usage.CompletionTokenDetails.TextTokens = fromRaw.CompletionTokenDetails.TextTokens
+	}
+	if usage.CompletionTokenDetails.AudioTokens == 0 {
+		usage.CompletionTokenDetails.AudioTokens = fromRaw.CompletionTokenDetails.AudioTokens
+	}
 	if usage.ClaudeCacheCreation5mTokens == 0 {
 		usage.ClaudeCacheCreation5mTokens = fromRaw.ClaudeCacheCreation5mTokens
 	}
@@ -544,6 +555,11 @@ func usageMapToDTO(usage map[string]interface{}) *dto.Usage {
 		nestedUsageInt(usage, "prompt_tokens_details", "audio_tokens"),
 		nestedUsageInt(usage, "input_tokens_details", "audio_tokens"),
 	)
+	completionDetails := dto.OutputTokenDetails{
+		TextTokens:      nestedUsageInt(usage, "completion_tokens_details", "text_tokens"),
+		AudioTokens:     nestedUsageInt(usage, "completion_tokens_details", "audio_tokens"),
+		ReasoningTokens: nestedUsageInt(usage, "completion_tokens_details", "reasoning_tokens"),
+	}
 	return &dto.Usage{
 		PromptTokens:     inputTokens,
 		CompletionTokens: outputTokens,
@@ -563,6 +579,7 @@ func usageMapToDTO(usage map[string]interface{}) *dto.Usage {
 			ImageTokens:          imageTokens,
 			AudioTokens:          audioTokens,
 		},
+		CompletionTokenDetails: completionDetails,
 		ClaudeCacheCreation5mTokens: firstPositiveInt(
 			intFromAny(usage["cache_creation_5m_tokens"]),
 			intFromAny(usage["cache_creation_tokens_5m"]),
@@ -572,6 +589,13 @@ func usageMapToDTO(usage map[string]interface{}) *dto.Usage {
 			intFromAny(usage["cache_creation_tokens_1h"]),
 		),
 	}
+}
+
+func callbackOutputTokenDetails(details *dto.OutputTokenDetails) dto.OutputTokenDetails {
+	if details == nil {
+		return dto.OutputTokenDetails{}
+	}
+	return *details
 }
 
 func nestedUsageInt(usage map[string]interface{}, objectKey string, valueKey string) int {

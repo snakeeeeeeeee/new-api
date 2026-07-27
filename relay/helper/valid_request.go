@@ -183,6 +183,13 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
 			imageRequest.ResponseFormat = formData.Get("response_format")
+			if providerOptions := strings.TrimSpace(formData.Get("provider_options")); providerOptions != "" {
+				if !strings.HasPrefix(providerOptions, "{") ||
+					common.UnmarshalStrict([]byte(providerOptions), &imageRequest.ProviderOptions) != nil ||
+					imageRequest.ProviderOptions == nil {
+					return nil, errors.New("provider_options must be a JSON object")
+				}
+			}
 			if imageValue := formData.Get("image"); imageValue != "" {
 				imageRequest.Image, _ = common.Marshal(imageValue)
 			}

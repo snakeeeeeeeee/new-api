@@ -464,11 +464,12 @@ func settleAsyncImageBillingOnComplete(ctx context.Context, task *model.Task, ta
 	bc := task.PrivateData.BillingContext
 	if bc != nil && bc.BillingMode == types.ImagePricingBillingMode && bc.ImagePricing != nil {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 图片参数按张计费，成功后保持请求快照额度 %s", task.TaskID, formatQuotaUSD(task.Quota)))
-		recordImagePricingExecutionAudit(task, taskResult)
+		recordImageExecutionAudit(task, taskResult)
 		return true
 	}
 	if bc == nil || bc.PerCallBilling || bc.UsePrice {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，成功后保持预扣费 %s", task.TaskID, formatQuotaUSD(task.Quota)))
+		recordImageExecutionAudit(task, taskResult)
 		return true
 	}
 	usage := taskResult.Usage
@@ -504,8 +505,12 @@ func settleAsyncImageBillingOnComplete(ctx context.Context, task *model.Task, ta
 	return true
 }
 
-func recordImagePricingExecutionAudit(task *model.Task, taskResult *relaycommon.TaskInfo) {
-	if task == nil || task.PrivateData.BillingContext == nil || task.PrivateData.BillingContext.ImagePricing == nil {
+func recordImageExecutionAudit(task *model.Task, taskResult *relaycommon.TaskInfo) {
+	if !isImageHandleTask(task) || task.PrivateData.BillingContext == nil {
+		return
+	}
+	bc := task.PrivateData.BillingContext
+	if bc.ImagePricing == nil && !bc.PerCallBilling && !bc.UsePrice {
 		return
 	}
 	audit := imageExecutionAuditFromJSON(task.Data)
@@ -544,9 +549,9 @@ func recordImagePricingExecutionAudit(task *model.Task, taskResult *relaycommon.
 	}
 }
 
-// MergeCompletedImagePricingExecutionAudit closes the race where image-handle
+// MergeCompletedImageExecutionAudit closes the race where image-handle
 // completes before the submit request has persisted its consume log ID.
-func MergeCompletedImagePricingExecutionAudit(taskId int64) {
+func MergeCompletedImageExecutionAudit(taskId int64) {
 	if taskId <= 0 {
 		return
 	}
@@ -558,7 +563,7 @@ func MergeCompletedImagePricingExecutionAudit(taskId int64) {
 	if task.Status != model.TaskStatusSuccess {
 		return
 	}
-	recordImagePricingExecutionAudit(&task, nil)
+	recordImageExecutionAudit(&task, nil)
 }
 
 func isImageHandleTask(task *model.Task) bool {

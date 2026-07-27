@@ -216,6 +216,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
+	if isAsyncImageTaskPath(c) &&
+		imageHandleSyncChannelType(info) == constant.ChannelTypeGemini &&
+		service.IsGeminiImageModel(info.UpstreamModelName) {
+		if taskErr := validateAndNormalizeGeminiAsyncImageRequest(c); taskErr != nil {
+			return nil, taskErr
+		}
+	}
 	if _, normalized := c.Get(relaycommon.VideoTaskPublicRequestContextKey); normalized {
 		normalizedAdaptor := adaptor.(channel.NormalizedVideoTaskAdaptor)
 		if taskErr := normalizedAdaptor.ValidateNormalizedVideoModel(c, info); taskErr != nil {
@@ -444,7 +451,7 @@ func isNormalizedVideoTask(c *gin.Context) bool {
 }
 
 func applyAsyncImageUsagePrecharge(c *gin.Context, info *relaycommon.RelayInfo) {
-	if info.PriceData.ImagePricing != nil {
+	if info.PriceData.ImagePricing != nil || info.PriceData.UsePrice {
 		return
 	}
 	cfg := service.GetImageHandleExecutorConfig()
@@ -508,6 +515,82 @@ func resolveAsyncImageN(c *gin.Context) int {
 	return 1
 }
 
+func validateAndNormalizeGeminiAsyncImageRequest(c *gin.Context) *dto.TaskError {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	var count *int
+	if req.N != nil {
+		value := *req.N
+		count = &value
+	} else if value, ok := taskNumericMetadataToInt(req.Metadata["n"]); ok {
+		count = &value
+	}
+	providerOptions := map[string]any{}
+	if value, exists := req.Metadata["provider_options"]; exists && value != nil {
+		typed, ok := value.(map[string]any)
+		if !ok {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("provider_options must be an object"),
+				"invalid_provider_options",
+				http.StatusBadRequest,
+			)
+		}
+		providerOptions = typed
+	}
+	normalized, validationErr := service.ValidateAndNormalizeGeminiImageRequest(service.GeminiImageValidationInput{
+		Count:                count,
+		HasMask:              strings.TrimSpace(taskMetadataString(req.Metadata, "mask", "")) != "",
+		Quality:              taskMetadataString(req.Metadata, "quality", stringPointerValue(req.Quality)),
+		Size:                 req.Size,
+		OutputFormat:         taskMetadataString(req.Metadata, "output_format", ""),
+		ResponseFormat:       taskMetadataString(req.Metadata, "response_format", stringPointerValue(req.ResponseFormat)),
+		HasOutputCompression: taskMetadataValuePresent(req.Metadata, "output_compression"),
+		HasBackground:        taskMetadataValuePresent(req.Metadata, "background"),
+		HasInputFidelity:     taskMetadataValuePresent(req.Metadata, "input_fidelity"),
+		HasResolution:        taskMetadataValuePresent(req.Metadata, "resolution"),
+		ProviderOptions:      providerOptions,
+	})
+	if validationErr != nil {
+		return service.TaskErrorWrapperLocal(validationErr, validationErr.Code, http.StatusBadRequest)
+	}
+	if req.Metadata == nil {
+		req.Metadata = map[string]interface{}{}
+	}
+	if len(normalized) > 0 {
+		req.Metadata["provider_options"] = normalized
+	} else {
+		delete(req.Metadata, "provider_options")
+	}
+	c.Set("task_request", req)
+	return nil
+}
+
+func stringPointerValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
+}
+
+func taskMetadataValuePresent(metadata map[string]interface{}, key string) bool {
+	value, exists := metadata[key]
+	return exists && value != nil
+}
+
+func taskMetadataString(metadata map[string]interface{}, key string, fallback string) string {
+	value, exists := metadata[key]
+	if !exists {
+		return fallback
+	}
+	text, ok := value.(string)
+	if !ok || strings.TrimSpace(text) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(text)
+}
+
 func newAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, platform constant.TaskPlatform, quota int) (*model.Task, string, error) {
 	task := model.InitTask(platform, info)
 	task.Quota = quota
@@ -560,7 +643,7 @@ func newAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, platform con
 		task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
 		task.PrivateData.BillingContext.PrechargeStrategy = types.ImagePricingBillingMode
 		task.PrivateData.BillingContext.ImageCount = info.PriceData.ImagePricing.N
-	} else if cfg := service.GetImageHandleExecutorConfig(); cfg.UsagePrechargeEnabled {
+	} else if cfg := service.GetImageHandleExecutorConfig(); cfg.UsagePrechargeEnabled && !info.PriceData.UsePrice {
 		prechargeQuotaPerImage := asyncImagePrechargeQuotaPerImage(cfg)
 		task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
 		task.PrivateData.BillingContext.PrechargeStrategy = "per_image_x_n"

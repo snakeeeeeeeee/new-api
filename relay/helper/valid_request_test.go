@@ -289,6 +289,53 @@ func TestGetAndValidOpenAIImageRequestNBounds(t *testing.T) {
 	})
 }
 
+func TestGetAndValidOpenAIImageRequestParsesProviderOptions(t *testing.T) {
+	t.Run("json", func(t *testing.T) {
+		request, err := GetAndValidOpenAIImageRequest(
+			newJSONValidationContext(
+				"/v1/images/generations",
+				`{"model":"gemini-3.1-flash-image","prompt":"draw","provider_options":{"google":{"generationConfig":{"seed":7}}}}`,
+			),
+			relayconstant.RelayModeImagesGenerations,
+		)
+		require.NoError(t, err)
+		require.EqualValues(t, 7, request.ProviderOptions["google"]["generationConfig"].(map[string]any)["seed"])
+	})
+
+	t.Run("multipart", func(t *testing.T) {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		require.NoError(t, writer.WriteField("model", "gemini-3.1-flash-image"))
+		require.NoError(t, writer.WriteField("prompt", "edit"))
+		require.NoError(t, writer.WriteField("provider_options", `{"google":{"generation_config":{"seed":11}}}`))
+		require.NoError(t, writer.Close())
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+		context.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+		request, err := GetAndValidOpenAIImageRequest(context, relayconstant.RelayModeImagesEdits)
+
+		require.NoError(t, err)
+		require.EqualValues(t, 11, request.ProviderOptions["google"]["generation_config"].(map[string]any)["seed"])
+	})
+
+	t.Run("invalid multipart", func(t *testing.T) {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		require.NoError(t, writer.WriteField("model", "gemini-3.1-flash-image"))
+		require.NoError(t, writer.WriteField("prompt", "edit"))
+		require.NoError(t, writer.WriteField("provider_options", `[]`))
+		require.NoError(t, writer.Close())
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
+		context.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+		_, err := GetAndValidOpenAIImageRequest(context, relayconstant.RelayModeImagesEdits)
+
+		require.ErrorContains(t, err, "provider_options must be a JSON object")
+	})
+}
+
 func TestBoundLegacyImageModelsKeepTemplateDefaultsAuthoritative(t *testing.T) {
 	setupImagePricingResolverTest(t)
 

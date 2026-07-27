@@ -68,6 +68,53 @@ func TestPrepareImageTaskRequestKeepsPublicMetadataOutOfExecutorPayload(t *testi
 	assert.EqualValues(t, 0, internal.Metadata["output_compression"])
 }
 
+func TestPrepareImageTaskRequestKeepsProviderOptionsInPublicAndExecutorPayloads(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	engine := gin.New()
+	var internal relaycommon.TaskSubmitReq
+	var public dto.ImageTaskCreateRequest
+	engine.POST("/v1/image/tasks", PrepareImageTaskRequest, func(c *gin.Context) {
+		require.NoError(t, common.DecodeJson(c.Request.Body, &internal))
+		value, exists := c.Get(relaycommon.ImageTaskPublicRequestContextKey)
+		require.True(t, exists)
+		public = value.(dto.ImageTaskCreateRequest)
+		c.Status(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/image/tasks", bytes.NewReader([]byte(`{
+		"model":"gemini-3.1-flash-image","operation":"generation","input":{"prompt":"draw"},
+		"provider_options":{"google":{"generation_config":{"seed":7}}}
+	}`)))
+	request.Header.Set("Content-Type", "application/json")
+
+	engine.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusNoContent, recorder.Code)
+	require.EqualValues(t, 7, public.ProviderOptions["google"]["generation_config"].(map[string]any)["seed"])
+	internalOptions := internal.Metadata["provider_options"].(map[string]any)
+	require.EqualValues(t, 7, internalOptions["google"].(map[string]any)["generation_config"].(map[string]any)["seed"])
+}
+
+func TestImageTaskFingerprintIncludesProviderOptions(t *testing.T) {
+	base := dto.ImageTaskCreateRequest{
+		Model:     "gemini-3.1-flash-image",
+		Operation: "generation",
+		Input:     dto.ImageTaskInputRequest{Prompt: "draw"},
+		ProviderOptions: map[string]map[string]any{
+			"google": {"generationConfig": map[string]any{"seed": 7}},
+		},
+	}
+	changed := base
+	changed.ProviderOptions = map[string]map[string]any{
+		"google": {"generationConfig": map[string]any{"seed": 8}},
+	}
+	baseJSON, err := common.Marshal(base)
+	require.NoError(t, err)
+	changedJSON, err := common.Marshal(changed)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, imageTaskRequestFingerprint(baseJSON), imageTaskRequestFingerprint(changedJSON))
+}
+
 func TestValidateBase64ImageUploadsAcceptsPNGAndRejectsNonImage(t *testing.T) {
 	png := testUploadPNG(t)
 	body, err := common.Marshal(map[string]any{"images": []any{base64.StdEncoding.EncodeToString(png)}})
@@ -243,7 +290,7 @@ func TestParseMultipartImageTaskRejectsInvalidInputs(t *testing.T) {
 		{name: "zero n", fields: [][2]string{{"model", "gpt-image-2"}, {"prompt", "edit"}, {"n", "0"}}, files: validMultipartTaskImage(t), wantCode: "invalid_request", wantParam: "n"},
 		{name: "invalid compression", fields: [][2]string{{"model", "gpt-image-2"}, {"prompt", "edit"}, {"output_compression", "101"}}, files: validMultipartTaskImage(t), wantCode: "invalid_request", wantParam: "output_compression"},
 		{name: "invalid metadata", fields: [][2]string{{"model", "gpt-image-2"}, {"prompt", "edit"}, {"metadata", `[]`}}, files: validMultipartTaskImage(t), wantCode: "invalid_request", wantParam: "metadata"},
-		{name: "unknown scalar", fields: [][2]string{{"model", "gpt-image-2"}, {"prompt", "edit"}, {"provider_options", `{}`}}, files: validMultipartTaskImage(t), wantCode: "invalid_multipart_field", wantParam: "provider_options"},
+		{name: "invalid provider options", fields: [][2]string{{"model", "gpt-image-2"}, {"prompt", "edit"}, {"provider_options", `[]`}}, files: validMultipartTaskImage(t), wantCode: "invalid_request", wantParam: "provider_options"},
 		{name: "unknown file", fields: [][2]string{{"model", "gpt-image-2"}, {"prompt", "edit"}}, files: []multipartImageTaskTestFile{{field: "photo", filename: "photo.png", data: testUploadPNG(t)}}, wantCode: "invalid_upload_field", wantParam: "photo"},
 		{name: "invalid image", fields: [][2]string{{"model", "gpt-image-2"}, {"prompt", "edit"}}, files: []multipartImageTaskTestFile{{field: "image", filename: "input.txt", data: []byte("not an image")}}, wantCode: "invalid_upload_image", wantParam: "image"},
 	}
@@ -258,6 +305,21 @@ func TestParseMultipartImageTaskRejectsInvalidInputs(t *testing.T) {
 			common.CleanupBodyStorage(ctx)
 		})
 	}
+}
+
+func TestParseMultipartImageTaskKeepsProviderOptions(t *testing.T) {
+	body, contentType := multipartImageTaskBody(t, [][2]string{
+		{"model", "gemini-3.1-flash-image"},
+		{"prompt", "edit"},
+		{"provider_options", `{"google":{"generation_config":{"seed":7}}}`},
+	}, validMultipartTaskImage(t))
+	ctx := multipartImageTaskContext(body, contentType)
+	t.Cleanup(func() { common.CleanupBodyStorage(ctx) })
+
+	preparation, problem := parseMultipartImageTaskRequest(ctx)
+
+	require.Nil(t, problem)
+	require.EqualValues(t, 7, preparation.request.ProviderOptions["google"]["generation_config"].(map[string]any)["seed"])
 }
 
 func TestParseMultipartImageTaskEnforcesUploadSizeLimits(t *testing.T) {

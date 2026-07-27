@@ -96,7 +96,7 @@ func TestShouldUseImageHandleSyncHonorsGlobalAndChannelMode(t *testing.T) {
 	unsupported := baseInfo("force_on")
 	unsupported.ChannelType = constant.ChannelTypeGemini
 	unsupported.ChannelMeta.ChannelType = constant.ChannelTypeGemini
-	require.False(t, shouldUseImageHandleSync(unsupported))
+	require.True(t, shouldUseImageHandleSync(unsupported))
 }
 
 func TestCanUseImageHandleSyncForRequestAllowsEditUploads(t *testing.T) {
@@ -135,6 +135,77 @@ func TestCanUseImageHandleSyncForRequestAllowsEditUploads(t *testing.T) {
 	require.True(t, canUseImageHandleSyncForRequest(info, &multipartWithoutURL))
 }
 
+func TestCanUseImageHandleSyncForRequestForcesOnlyTargetGeminiModels(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	t.Cleanup(func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	})
+	image_handle_setting.GetImageHandleSetting().SyncImageEnabled = false
+
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeGemini,
+			UpstreamModelName: "gemini-3.1-flash-image",
+			ChannelOtherSettings: dto.ChannelOtherSettings{
+				ImageHandleSyncMode: "force_off",
+			},
+		},
+	}
+	request := dto.ImageRequest{Model: "public-gemini-image", Prompt: "draw"}
+	require.True(t, canUseImageHandleSyncForRequest(info, &request))
+
+	info.UpstreamModelName = "imagen-4.0-generate-001"
+	image_handle_setting.GetImageHandleSetting().SyncImageEnabled = true
+	info.ChannelOtherSettings.ImageHandleSyncMode = "force_on"
+	require.False(t, canUseImageHandleSyncForRequest(info, &request))
+}
+
+func TestValidateAndNormalizeGeminiSyncImageRequest(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	request := dto.ImageRequest{
+		Model:  "gemini-3.1-flash-image",
+		Prompt: "draw",
+		ProviderOptions: map[string]map[string]any{
+			"google": {
+				"generation_config": map[string]any{
+					"top_p": float64(0.8),
+					"seed":  float64(9),
+				},
+			},
+		},
+	}
+
+	apiErr := validateAndNormalizeGeminiSyncImageRequest(ctx, &request)
+
+	require.Nil(t, apiErr)
+	generationConfig := request.ProviderOptions["google"]["generationConfig"].(map[string]any)
+	require.Equal(t, 0.8, generationConfig["topP"])
+	require.Equal(t, int64(9), generationConfig["seed"])
+}
+
+func TestValidateAndNormalizeGeminiSyncImageRequestRejectsMask(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", nil)
+	request := dto.ImageRequest{
+		Model:  "gemini-3.1-flash-image",
+		Prompt: "edit",
+		Extra: map[string]json.RawMessage{
+			"mask": json.RawMessage(`"https://cdn.example.com/mask.png"`),
+		},
+	}
+
+	apiErr := validateAndNormalizeGeminiSyncImageRequest(ctx, &request)
+
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCode("unsupported_mask"), apiErr.GetErrorCode())
+	openAIError := apiErr.ToOpenAIError()
+	require.Equal(t, "mask", openAIError.Param)
+}
+
 func TestImageHandleSyncToOpenAIResponseMapsUsageAndImages(t *testing.T) {
 	t.Parallel()
 
@@ -150,6 +221,7 @@ func TestImageHandleSyncToOpenAIResponseMapsUsageAndImages(t *testing.T) {
 			TotalTokens:              800,
 			CacheCreationInputTokens: 5,
 			CacheReadTokens:          7,
+			CompletionTokensDetails:  &dto.OutputTokenDetails{ReasoningTokens: 11},
 		},
 	}
 
@@ -164,6 +236,7 @@ func TestImageHandleSyncToOpenAIResponseMapsUsageAndImages(t *testing.T) {
 	require.Equal(t, 800, imageResp.Usage.TotalTokens)
 	require.Equal(t, 7, imageResp.Usage.PromptTokensDetails.CachedTokens)
 	require.Equal(t, 5, imageResp.Usage.PromptTokensDetails.CachedCreationTokens)
+	require.Equal(t, 11, imageResp.Usage.CompletionTokenDetails.ReasoningTokens)
 	require.Equal(t, "image_handle_sync", imageResp.Usage.UsageSource)
 }
 

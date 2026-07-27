@@ -95,22 +95,23 @@ type imageHandleSyncImage struct {
 }
 
 type imageHandleSyncUsage struct {
-	TotalTokens              int                    `json:"total_tokens,omitempty"`
-	InputTokens              int                    `json:"input_tokens,omitempty"`
-	OutputTokens             int                    `json:"output_tokens,omitempty"`
-	PromptTokens             int                    `json:"prompt_tokens,omitempty"`
-	CompletionTokens         int                    `json:"completion_tokens,omitempty"`
-	CachedTokens             int                    `json:"cached_tokens,omitempty"`
-	CacheReadTokens          int                    `json:"cache_read_tokens,omitempty"`
-	PromptCacheHitTokens     int                    `json:"prompt_cache_hit_tokens,omitempty"`
-	CacheCreationTokens      int                    `json:"cache_creation_tokens,omitempty"`
-	CacheCreationInputTokens int                    `json:"cache_creation_input_tokens,omitempty"`
-	CacheCreation5mTokens    int                    `json:"cache_creation_5m_tokens,omitempty"`
-	CacheCreation1hTokens    int                    `json:"cache_creation_1h_tokens,omitempty"`
-	ImageTokens              int                    `json:"image_tokens,omitempty"`
-	AudioTokens              int                    `json:"audio_tokens,omitempty"`
-	PromptTokensDetails      *dto.InputTokenDetails `json:"prompt_tokens_details,omitempty"`
-	InputTokensDetails       *dto.InputTokenDetails `json:"input_tokens_details,omitempty"`
+	TotalTokens              int                     `json:"total_tokens,omitempty"`
+	InputTokens              int                     `json:"input_tokens,omitempty"`
+	OutputTokens             int                     `json:"output_tokens,omitempty"`
+	PromptTokens             int                     `json:"prompt_tokens,omitempty"`
+	CompletionTokens         int                     `json:"completion_tokens,omitempty"`
+	CachedTokens             int                     `json:"cached_tokens,omitempty"`
+	CacheReadTokens          int                     `json:"cache_read_tokens,omitempty"`
+	PromptCacheHitTokens     int                     `json:"prompt_cache_hit_tokens,omitempty"`
+	CacheCreationTokens      int                     `json:"cache_creation_tokens,omitempty"`
+	CacheCreationInputTokens int                     `json:"cache_creation_input_tokens,omitempty"`
+	CacheCreation5mTokens    int                     `json:"cache_creation_5m_tokens,omitempty"`
+	CacheCreation1hTokens    int                     `json:"cache_creation_1h_tokens,omitempty"`
+	ImageTokens              int                     `json:"image_tokens,omitempty"`
+	AudioTokens              int                     `json:"audio_tokens,omitempty"`
+	PromptTokensDetails      *dto.InputTokenDetails  `json:"prompt_tokens_details,omitempty"`
+	InputTokensDetails       *dto.InputTokenDetails  `json:"input_tokens_details,omitempty"`
+	CompletionTokensDetails  *dto.OutputTokenDetails `json:"completion_tokens_details,omitempty"`
 }
 
 type imageHandleSyncError struct {
@@ -194,14 +195,146 @@ func shouldUseImageHandleSync(info *relaycommon.RelayInfo) bool {
 }
 
 func canUseImageHandleSyncForRequest(info *relaycommon.RelayInfo, request *dto.ImageRequest) bool {
+	if info == nil || request == nil {
+		return false
+	}
+	if imageHandleSyncIsGeminiRequest(info, request) {
+		return true
+	}
+	if imageHandleSyncChannelType(info) == constant.ChannelTypeGemini {
+		return false
+	}
 	if !shouldUseImageHandleSync(info) {
 		return false
 	}
-	return info != nil && request != nil
+	return true
 }
 
 func imageHandleSyncChannelSupported(channelType int) bool {
-	return channelType == constant.ChannelTypeOpenAI || channelType == constant.ChannelTypeXai
+	return channelType == constant.ChannelTypeOpenAI ||
+		channelType == constant.ChannelTypeXai ||
+		channelType == constant.ChannelTypeGemini
+}
+
+func imageHandleSyncIsGeminiImageModel(model string) bool {
+	return service.IsGeminiImageModel(model)
+}
+
+func imageHandleSyncChannelType(info *relaycommon.RelayInfo) int {
+	if info == nil {
+		return 0
+	}
+	if info.ChannelMeta != nil && info.ChannelMeta.ChannelType != 0 {
+		return info.ChannelMeta.ChannelType
+	}
+	return info.ChannelType
+}
+
+func imageHandleSyncIsGeminiRequest(info *relaycommon.RelayInfo, request *dto.ImageRequest) bool {
+	if info == nil || request == nil || imageHandleSyncChannelType(info) != constant.ChannelTypeGemini {
+		return false
+	}
+	return service.IsGeminiImageModel(firstNonEmpty(info.UpstreamModelName, request.Model))
+}
+
+func validateAndNormalizeGeminiSyncImageRequest(c *gin.Context, request *dto.ImageRequest) *types.NewAPIError {
+	if request == nil {
+		return nil
+	}
+	var count *int
+	if request.N != nil {
+		value := int(*request.N)
+		count = &value
+	}
+	providerOptions := make(map[string]any, len(request.ProviderOptions))
+	for namespace, options := range request.ProviderOptions {
+		providerOptions[namespace] = options
+	}
+	unsupportedExtra := make([]string, 0)
+	for key := range request.Extra {
+		switch key {
+		case "mask", "images", "input_fidelity", "resolution":
+		default:
+			unsupportedExtra = append(unsupportedExtra, key)
+		}
+	}
+	normalized, validationErr := service.ValidateAndNormalizeGeminiImageRequest(service.GeminiImageValidationInput{
+		Count:                   count,
+		HasMask:                 imageHandleSyncRequestHasMask(c, request),
+		Quality:                 request.Quality,
+		Size:                    request.Size,
+		OutputFormat:            imageHandleSyncStringFromRaw(request.OutputFormat),
+		ResponseFormat:          request.ResponseFormat,
+		HasOutputCompression:    imageHandleSyncRawValuePresent(request.OutputCompression),
+		HasBackground:           imageHandleSyncRawValuePresent(request.Background),
+		HasInputFidelity:        imageHandleSyncRawValuePresent(request.Extra["input_fidelity"]),
+		HasResolution:           imageHandleSyncRawValuePresent(request.Extra["resolution"]),
+		HasStyle:                imageHandleSyncRawValuePresent(request.Style),
+		HasModeration:           imageHandleSyncRawValuePresent(request.Moderation),
+		HasPartialImages:        imageHandleSyncRawValuePresent(request.PartialImages),
+		HasStream:               request.Stream != nil,
+		HasWatermark:            request.Watermark != nil,
+		HasWatermarkEnabled:     imageHandleSyncRawValuePresent(request.WatermarkEnabled),
+		HasLegacyExtraFields:    imageHandleSyncRawValuePresent(request.ExtraFields),
+		UnsupportedPublicFields: unsupportedExtra,
+		ProviderOptions:         providerOptions,
+	})
+	if validationErr != nil {
+		return types.WithOpenAIError(types.OpenAIError{
+			Message: validationErr.Message,
+			Type:    "invalid_request_error",
+			Param:   validationErr.Param,
+			Code:    validationErr.Code,
+		}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	request.ProviderOptions = geminiTypedProviderOptions(normalized)
+	return nil
+}
+
+func geminiTypedProviderOptions(options map[string]any) map[string]map[string]any {
+	if len(options) == 0 {
+		return nil
+	}
+	typed := make(map[string]map[string]any, len(options))
+	for namespace, value := range options {
+		object, ok := value.(map[string]any)
+		if ok {
+			typed[namespace] = object
+		}
+	}
+	if len(typed) == 0 {
+		return nil
+	}
+	return typed
+}
+
+func imageHandleSyncRequestHasMask(c *gin.Context, request *dto.ImageRequest) bool {
+	if request != nil && imageHandleSyncRawValuePresent(request.Extra["mask"]) {
+		return true
+	}
+	if c == nil || c.Request == nil || c.Request.MultipartForm == nil {
+		return false
+	}
+	if len(c.Request.MultipartForm.File["mask"]) > 0 {
+		return true
+	}
+	for _, value := range c.Request.MultipartForm.Value["mask"] {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func imageHandleSyncRawValuePresent(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var value any
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return true
+	}
+	return value != nil
 }
 
 func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (*dto.Usage, *types.NewAPIError) {
@@ -828,12 +961,16 @@ func imageHandleSyncParameters(request dto.ImageRequest) map[string]any {
 }
 
 func imageHandleSyncProviderOptions(request dto.ImageRequest, upstreamModelName string) map[string]any {
-	if len(request.ExtraFields) == 0 {
-		return nil
+	options := make(map[string]any)
+	for namespace, value := range request.ProviderOptions {
+		options[namespace] = value
 	}
-	var options map[string]any
-	if err := common.Unmarshal(request.ExtraFields, &options); err != nil {
-		return nil
+	if len(options) == 0 &&
+		!imageHandleSyncIsGeminiImageModel(firstNonEmpty(upstreamModelName, request.Model)) &&
+		len(request.ExtraFields) > 0 {
+		if err := common.Unmarshal(request.ExtraFields, &options); err != nil {
+			return nil
+		}
 	}
 	if imageHandleSyncIsGPTImageModel(firstNonEmpty(upstreamModelName, request.Model)) {
 		delete(options, "seed")
@@ -939,13 +1076,14 @@ type imageHandleSyncOpenAIImageResponse struct {
 }
 
 type imageHandleSyncOpenAICompatibleUsage struct {
-	TotalTokens                 int                    `json:"total_tokens,omitempty"`
-	InputTokens                 int                    `json:"input_tokens,omitempty"`
-	OutputTokens                int                    `json:"output_tokens,omitempty"`
-	UsageSource                 string                 `json:"usage_source,omitempty"`
-	InputTokensDetails          *dto.InputTokenDetails `json:"input_tokens_details,omitempty"`
-	ClaudeCacheCreation5mTokens int                    `json:"claude_cache_creation_5_m_tokens,omitempty"`
-	ClaudeCacheCreation1hTokens int                    `json:"claude_cache_creation_1_h_tokens,omitempty"`
+	TotalTokens                 int                     `json:"total_tokens,omitempty"`
+	InputTokens                 int                     `json:"input_tokens,omitempty"`
+	OutputTokens                int                     `json:"output_tokens,omitempty"`
+	UsageSource                 string                  `json:"usage_source,omitempty"`
+	InputTokensDetails          *dto.InputTokenDetails  `json:"input_tokens_details,omitempty"`
+	OutputTokensDetails         *dto.OutputTokenDetails `json:"output_tokens_details,omitempty"`
+	ClaudeCacheCreation5mTokens int                     `json:"claude_cache_creation_5_m_tokens,omitempty"`
+	ClaudeCacheCreation1hTokens int                     `json:"claude_cache_creation_1_h_tokens,omitempty"`
 }
 
 func imageHandleSyncClientImageResponse(resp *dto.ImageResponse) imageHandleSyncOpenAIImageResponse {
@@ -986,6 +1124,7 @@ func imageHandleSyncClientUsage(usage *dto.Usage) *imageHandleSyncOpenAICompatib
 		OutputTokens:                outputTokens,
 		UsageSource:                 usage.UsageSource,
 		InputTokensDetails:          details,
+		OutputTokensDetails:         imageHandleSyncOutputTokenDetailsPtr(usage.CompletionTokenDetails),
 		ClaudeCacheCreation5mTokens: usage.ClaudeCacheCreation5mTokens,
 		ClaudeCacheCreation1hTokens: usage.ClaudeCacheCreation1hTokens,
 	}
@@ -1184,6 +1323,10 @@ func cloneImageHandleSyncUsage(usage *imageHandleSyncUsage) *imageHandleSyncUsag
 		details := *usage.InputTokensDetails
 		cloned.InputTokensDetails = &details
 	}
+	if usage.CompletionTokensDetails != nil {
+		details := *usage.CompletionTokensDetails
+		cloned.CompletionTokensDetails = &details
+	}
 	return &cloned
 }
 
@@ -1217,6 +1360,12 @@ func mergeImageHandleSyncUsage(target *imageHandleSyncUsage, source *imageHandle
 		}
 		mergeInputTokenDetails(target.InputTokensDetails, source.InputTokensDetails)
 	}
+	if source.CompletionTokensDetails != nil {
+		if target.CompletionTokensDetails == nil {
+			target.CompletionTokensDetails = &dto.OutputTokenDetails{}
+		}
+		mergeOutputTokenDetails(target.CompletionTokensDetails, source.CompletionTokensDetails)
+	}
 }
 
 func mergeInputTokenDetails(target *dto.InputTokenDetails, source *dto.InputTokenDetails) {
@@ -1234,6 +1383,15 @@ func fillPositiveSyncInt(target *int, source int) {
 	if target != nil && *target == 0 && source > 0 {
 		*target = source
 	}
+}
+
+func mergeOutputTokenDetails(target *dto.OutputTokenDetails, source *dto.OutputTokenDetails) {
+	if target == nil || source == nil {
+		return
+	}
+	fillPositiveSyncInt(&target.TextTokens, source.TextTokens)
+	fillPositiveSyncInt(&target.AudioTokens, source.AudioTokens)
+	fillPositiveSyncInt(&target.ReasoningTokens, source.ReasoningTokens)
 }
 
 func hasImageHandleSyncUsage(usage *imageHandleSyncUsage) bool {
@@ -1261,7 +1419,10 @@ func hasImageHandleSyncUsage(usage *imageHandleSyncUsage) bool {
 	if usage.PromptTokensDetails != nil && inputTokenDetailsHasUsage(*usage.PromptTokensDetails) {
 		return true
 	}
-	return usage.InputTokensDetails != nil && inputTokenDetailsHasUsage(*usage.InputTokensDetails)
+	if usage.InputTokensDetails != nil && inputTokenDetailsHasUsage(*usage.InputTokensDetails) {
+		return true
+	}
+	return usage.CompletionTokensDetails != nil && outputTokenDetailsHasUsage(*usage.CompletionTokensDetails)
 }
 
 func inputTokenDetailsHasUsage(details dto.InputTokenDetails) bool {
@@ -1272,6 +1433,10 @@ func inputTokenDetailsHasUsage(details dto.InputTokenDetails) bool {
 		details.AudioTokens,
 		details.ImageTokens,
 	) > 0
+}
+
+func outputTokenDetailsHasUsage(details dto.OutputTokenDetails) bool {
+	return firstPositiveSyncInt(details.TextTokens, details.AudioTokens, details.ReasoningTokens) > 0
 }
 
 func imageHandleSyncUsageToDTO(usage *imageHandleSyncUsage) *dto.Usage {
@@ -1304,6 +1469,7 @@ func imageHandleSyncUsageToDTO(usage *imageHandleSyncUsage) *dto.Usage {
 		UsageSource:                 "image_handle_sync",
 		PromptTokensDetails:         normalizedInputDetails,
 		InputTokensDetails:          &normalizedInputDetails,
+		CompletionTokenDetails:      syncUsageOutputDetails(usage.CompletionTokensDetails),
 		ClaudeCacheCreation5mTokens: usage.CacheCreation5mTokens,
 		ClaudeCacheCreation1hTokens: usage.CacheCreation1hTokens,
 	}
@@ -1314,6 +1480,21 @@ func syncUsageInputDetails(details *dto.InputTokenDetails) dto.InputTokenDetails
 		return dto.InputTokenDetails{}
 	}
 	return *details
+}
+
+func syncUsageOutputDetails(details *dto.OutputTokenDetails) dto.OutputTokenDetails {
+	if details == nil {
+		return dto.OutputTokenDetails{}
+	}
+	return *details
+}
+
+func imageHandleSyncOutputTokenDetailsPtr(details dto.OutputTokenDetails) *dto.OutputTokenDetails {
+	if !outputTokenDetailsHasUsage(details) {
+		return nil
+	}
+	cloned := details
+	return &cloned
 }
 
 func initImageHandleSyncTask(info *relaycommon.RelayInfo, request dto.ImageRequest, taskID string, action string) *model.Task {

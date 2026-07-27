@@ -40,7 +40,7 @@ const webhookSucceededExample = {
     object: {
       id: 'task_xxx',
       object: 'image.task',
-      model: 'gpt-image-2',
+      model: 'gemini-3.1-flash-image',
       operation: 'generation',
       status: 'succeeded',
       progress: 100,
@@ -58,7 +58,16 @@ const webhookSucceededExample = {
           },
         ],
       },
-      usage: {},
+      usage: {
+        prompt_tokens: 25,
+        completion_tokens: 1680,
+        total_tokens: 1705,
+        input_tokens: 25,
+        output_tokens: 1680,
+        completion_tokens_details: {
+          reasoning_tokens: 0,
+        },
+      },
       error: null,
       client_reference_id: 'order_123',
       metadata: {},
@@ -281,11 +290,11 @@ const spec = {
   openapi: '3.1.0',
   info: {
     title: 'new-api Resource Center API',
-    version: '2026-07-23',
+    version: '2026-07-28',
     summary:
-      'Assets, asynchronous image and video tasks, uploads, and Webhooks.',
+      'Provider-neutral assets, asynchronous image and video tasks, uploads, and Webhooks.',
     description:
-      'Public Resource Center API. Creating asynchronous image or video tasks uses a standard API Token; task queries, uploads, assets, and proxied video downloads use a Resource Center API Key; outbound Webhook verification uses a dedicated Webhook Key.',
+      'Public Resource Center API shared by GPT-Image, Gemini Images, and video providers. Creating asynchronous image or video tasks uses a standard API Token; task queries, uploads, assets, and proxied video downloads use a Resource Center API Key; outbound Webhook verification uses a dedicated Webhook Key. Provider differences are expressed only through model capabilities and provider_options.',
   },
   jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
   servers: [
@@ -487,10 +496,103 @@ const spec = {
         requestBody: {
           required: true,
           content: {
-            ...jsonContent(ref('ImageTaskCreateRequest')),
+            'application/json': {
+              schema: ref('ImageTaskCreateRequest'),
+              examples: {
+                gptImageGeneration: {
+                  summary: 'GPT-Image generation',
+                  value: {
+                    model: 'gpt-image-2',
+                    operation: 'generation',
+                    input: {
+                      prompt: 'A product photo on a white background',
+                    },
+                    output: {
+                      count: 1,
+                      size: '1024x1024',
+                      quality: 'high',
+                      format: 'png',
+                    },
+                  },
+                },
+                geminiGeneration: {
+                  summary: 'Gemini Images generation',
+                  value: {
+                    model: 'gemini-3.1-flash-image',
+                    operation: 'generation',
+                    input: {
+                      prompt: 'A product photo on a white background',
+                    },
+                    output: {
+                      count: 1,
+                      size: '1024x1024',
+                      quality: 'auto',
+                      format: 'png',
+                    },
+                    provider_options: {
+                      google: {
+                        generationConfig: {
+                          temperature: 0.8,
+                          thinkingConfig: {
+                            thinkingLevel: 'HIGH',
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+                geminiEdit: {
+                  summary: 'Gemini Images maskless edit',
+                  value: {
+                    model: 'gemini-3-pro-image-count',
+                    operation: 'edit',
+                    input: {
+                      prompt: 'Replace the background with a studio wall',
+                      images: [
+                        {
+                          url: 'https://cdn.example.com/input.png',
+                        },
+                      ],
+                    },
+                    output: {
+                      count: 1,
+                      size: '2048x2048',
+                      quality: 'auto',
+                      format: 'png',
+                    },
+                  },
+                },
+              },
+            },
             'multipart/form-data': {
               schema: ref('ImageTaskMultipartCreateRequest'),
               encoding: { image: { style: 'form', explode: true } },
+              examples: {
+                gptImageEdit: {
+                  summary: 'GPT-Image local-file edit',
+                  value: {
+                    model: 'gpt-image-2',
+                    prompt: 'Replace the background',
+                    n: 1,
+                    size: '1024x1024',
+                    quality: 'high',
+                    output_format: 'png',
+                  },
+                },
+                geminiEdit: {
+                  summary: 'Gemini maskless local-file edit',
+                  value: {
+                    model: 'gemini-3.1-flash-image',
+                    prompt: 'Replace the background',
+                    n: 1,
+                    size: '1024x1024',
+                    quality: 'auto',
+                    output_format: 'png',
+                    provider_options:
+                      '{"google":{"generationConfig":{"temperature":0.8}}}',
+                  },
+                },
+              },
             },
           },
         },
@@ -1029,6 +1131,11 @@ const spec = {
           output: ref('ImageTaskOutput'),
           client_reference_id: { type: 'string', maxLength: 191 },
           metadata: { type: 'object', additionalProperties: true },
+          provider_options: {
+            ...ref('ImageProviderOptions'),
+            description:
+              'Provider-specific options. Gemini uses the google namespace.',
+          },
         },
         allOf: [
           {
@@ -1087,6 +1194,11 @@ const spec = {
             description: 'A JSON-encoded object.',
             examples: ['{"order_id":"order_123"}'],
           },
+          provider_options: {
+            type: 'string',
+            description: 'A JSON-encoded ImageProviderOptions object.',
+            examples: ['{"google":{"generationConfig":{"temperature":0.8}}}'],
+          },
         },
       },
       ImageTaskResultImage: {
@@ -1124,6 +1236,179 @@ const spec = {
           retryable: { type: 'boolean' },
         },
       },
+      GeminiImageConfig: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          aspectRatio: {
+            type: 'string',
+            enum: [
+              '1:1',
+              '2:3',
+              '3:2',
+              '3:4',
+              '4:3',
+              '4:5',
+              '5:4',
+              '9:16',
+              '16:9',
+              '21:9',
+            ],
+            description:
+              'Gemini output aspect ratio. snake_case alias: aspect_ratio.',
+            'x-description-zh-CN':
+              'Gemini 输出宽高比；也接受 snake_case 别名 aspect_ratio。',
+          },
+          imageSize: {
+            type: 'string',
+            enum: ['1K', '2K', '4K'],
+            description:
+              'Gemini output resolution tier. snake_case alias: image_size.',
+            'x-description-zh-CN':
+              'Gemini 输出分辨率档位；也接受 snake_case 别名 image_size。',
+          },
+        },
+        description: 'Gemini image output configuration.',
+        'x-description-zh-CN': 'Gemini 图片输出配置。',
+      },
+      GeminiThinkingConfig: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          thinkingBudget: {
+            type: 'integer',
+            minimum: 0,
+            description:
+              'Thinking token budget. snake_case alias: thinking_budget.',
+            'x-description-zh-CN':
+              '思考 Token 预算；也接受 snake_case 别名 thinking_budget。',
+          },
+          thinkingLevel: {
+            type: 'string',
+            description:
+              'Provider-supported thinking level. snake_case alias: thinking_level.',
+            'x-description-zh-CN':
+              '供应商支持的思考等级；也接受 snake_case 别名 thinking_level。',
+          },
+          includeThoughts: {
+            type: 'boolean',
+            description:
+              'Whether thought metadata is requested. snake_case alias: include_thoughts.',
+            'x-description-zh-CN':
+              '是否请求思考元数据；也接受 snake_case 别名 include_thoughts。',
+          },
+        },
+        description: 'Gemini thinking configuration.',
+        'x-description-zh-CN': 'Gemini 思考配置。',
+      },
+      GeminiGenerationConfig: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          temperature: {
+            type: 'number',
+            minimum: 0,
+          },
+          topP: {
+            type: 'number',
+            minimum: 0,
+            maximum: 1,
+            description: 'Nucleus sampling threshold. snake_case alias: top_p.',
+            'x-description-zh-CN': '核采样阈值；也接受 snake_case 别名 top_p。',
+          },
+          topK: {
+            type: 'integer',
+            minimum: 1,
+            description: 'Top-k sampling limit. snake_case alias: top_k.',
+            'x-description-zh-CN':
+              'Top-k 采样上限；也接受 snake_case 别名 top_k。',
+          },
+          seed: {
+            type: 'integer',
+          },
+          imageConfig: ref('GeminiImageConfig'),
+          thinkingConfig: ref('GeminiThinkingConfig'),
+        },
+        description:
+          'Allowlisted Gemini generationConfig. generation_config and nested snake_case aliases are accepted.',
+        'x-description-zh-CN':
+          'Gemini generationConfig 白名单；同时接受 generation_config 及嵌套 snake_case 别名。',
+      },
+      GeminiSafetySetting: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['category', 'threshold'],
+        properties: {
+          category: {
+            type: 'string',
+          },
+          threshold: {
+            type: 'string',
+          },
+        },
+        description: 'One Gemini safety policy entry.',
+        'x-description-zh-CN': '一项 Gemini 安全策略。',
+      },
+      GeminiProviderOptions: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          generationConfig: ref('GeminiGenerationConfig'),
+          safetySettings: {
+            type: 'array',
+            items: ref('GeminiSafetySetting'),
+          },
+        },
+        description:
+          'Gemini-specific options. generation_config and safety_settings aliases are accepted; aliases cannot be supplied together with camelCase forms.',
+        'x-description-zh-CN':
+          'Gemini 专属选项；接受 generation_config 与 safety_settings 别名，但同一字段不能同时提交两种命名。',
+      },
+      ImageProviderOptions: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          google: ref('GeminiProviderOptions'),
+        },
+        description:
+          'Provider-specific image options. Gemini requests use provider_options.google.',
+        'x-description-zh-CN':
+          '按供应商命名空间组织的图片选项；Gemini 使用 provider_options.google。',
+      },
+      ImageUsageTokenDetails: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          cached_tokens: { type: 'integer', minimum: 0 },
+          text_tokens: { type: 'integer', minimum: 0 },
+          audio_tokens: { type: 'integer', minimum: 0 },
+          image_tokens: { type: 'integer', minimum: 0 },
+          reasoning_tokens: { type: 'integer', minimum: 0 },
+        },
+        description: 'Provider-normalized token modality details.',
+        'x-description-zh-CN': '归一化后的 Token 模态明细。',
+      },
+      ImageUsage: {
+        type: 'object',
+        additionalProperties: true,
+        properties: {
+          prompt_tokens: { type: 'integer', minimum: 0 },
+          completion_tokens: { type: 'integer', minimum: 0 },
+          total_tokens: { type: 'integer', minimum: 0 },
+          input_tokens: { type: 'integer', minimum: 0 },
+          output_tokens: { type: 'integer', minimum: 0 },
+          cached_tokens: { type: 'integer', minimum: 0 },
+          image_tokens: { type: 'integer', minimum: 0 },
+          audio_tokens: { type: 'integer', minimum: 0 },
+          prompt_tokens_details: ref('ImageUsageTokenDetails'),
+          input_tokens_details: ref('ImageUsageTokenDetails'),
+          completion_tokens_details: ref('ImageUsageTokenDetails'),
+        },
+        description:
+          'Normalized usage shared by synchronous responses, task queries, consume logs, and Webhooks.',
+        'x-description-zh-CN':
+          '同步响应、任务查询、消费日志和 Webhook 共用的归一化用量。',
+      },
       ImageTask: {
         type: 'object',
         additionalProperties: false,
@@ -1150,7 +1435,10 @@ const spec = {
           status: ref('ImageTaskStatus'),
           progress: { type: 'integer', minimum: 0, maximum: 100 },
           result: { oneOf: [ref('ImageTaskResult'), { type: 'null' }] },
-          usage: { type: 'object', additionalProperties: true },
+          usage: {
+            ...ref('ImageUsage'),
+            description: 'Provider-normalized usage data when available.',
+          },
           error: { oneOf: [ref('ImageTaskError'), { type: 'null' }] },
           client_reference_id: { type: 'string' },
           metadata: { type: 'object', additionalProperties: true },
@@ -2019,6 +2307,12 @@ const extraDescriptionTranslationsZhCN = {
     '请求输出时长；extension 中表示新增片段时长，具体范围由所选适配器校验。',
   'Provider-specific options keyed by provider namespace, for example provider_options.xai.':
     '按供应商命名空间组织的专属选项，例如 provider_options.xai。',
+  'Provider-specific options. Gemini uses the google namespace.':
+    '供应商专属选项；Gemini 使用 google 命名空间。',
+  'A JSON-encoded ImageProviderOptions object.':
+    'JSON 字符串编码的 ImageProviderOptions 对象。',
+  'Provider-normalized usage data when available.':
+    '供应商归一化后的用量数据，没有时为空对象。',
   'CSV with asset_id, task_id, asset_type, url, filename, model, and created_at.':
     'CSV 包含 asset_id、task_id、asset_type、url、filename、model 和 created_at。',
 };

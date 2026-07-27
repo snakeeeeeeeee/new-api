@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -30,6 +31,7 @@ type imageCredentialLeaseResolveResponse struct {
 	Model         string `json:"model"`
 	ChannelID     string `json:"channel_id"`
 	RequestFormat string `json:"request_format"`
+	EndpointURL   string `json:"endpoint_url,omitempty"`
 	ExpiresAt     string `json:"expires_at"`
 }
 
@@ -123,19 +125,6 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		writeImageCredentialLeaseError(c, http.StatusForbidden, "channel_disabled", "channel is disabled", false)
 		return
 	}
-	if !channelSupportsOpenAIImages(channel) {
-		writeImageCredentialLeaseError(c, http.StatusBadRequest, "model_not_supported", "channel does not support openai images resolve format", false)
-		return
-	}
-	key, _, apiErr := channel.GetNextEnabledKey()
-	if apiErr != nil || strings.TrimSpace(key) == "" {
-		message := "channel credential unavailable"
-		if apiErr != nil {
-			message = apiErr.Error()
-		}
-		writeImageCredentialLeaseError(c, http.StatusServiceUnavailable, "credential_unavailable", message, true)
-		return
-	}
 	modelName := lease.Model
 	if modelName == "" && task != nil {
 		modelName = task.Properties.UpstreamModelName
@@ -147,8 +136,32 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		writeImageCredentialLeaseError(c, http.StatusConflict, "model_not_supported", "request model does not match lease", false)
 		return
 	}
+	isGemini := channel.Type == constant.ChannelTypeGemini && service.IsGeminiImageModel(modelName)
+	if !channelSupportsOpenAIImages(channel) && !isGemini {
+		writeImageCredentialLeaseError(c, http.StatusBadRequest, "model_not_supported", "channel does not support the image credential lease format", false)
+		return
+	}
+	key, _, apiErr := channel.GetNextEnabledKey()
+	if apiErr != nil || strings.TrimSpace(key) == "" {
+		message := "channel credential unavailable"
+		if apiErr != nil {
+			message = apiErr.Error()
+		}
+		writeImageCredentialLeaseError(c, http.StatusServiceUnavailable, "credential_unavailable", message, true)
+		return
+	}
 	_ = model.MarkImageCredentialLeaseResolved(lease)
 	baseURL := resolveChannelBaseURL(channel)
+	provider := "openai_compatible"
+	requestFormat := "openai_images"
+	endpointURL := ""
+	if isGemini {
+		baseURL = resolveGeminiChannelBaseURL(channel)
+		version := strings.Trim(model_setting.GetGeminiVersionSetting(modelName), "/")
+		endpointURL = fmt.Sprintf("%s/%s/models/%s:generateContent", baseURL, version, modelName)
+		provider = "google_gemini"
+		requestFormat = "gemini_generate_content"
+	}
 	if service.GetImageHandleExecutorConfig().DebugUpstream {
 		taskID := lease.TaskID
 		imageRequest := ""
@@ -170,12 +183,13 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		))
 	}
 	c.JSON(http.StatusOK, imageCredentialLeaseResolveResponse{
-		Provider:      "openai_compatible",
+		Provider:      provider,
 		BaseURL:       baseURL,
 		APIKey:        key,
 		Model:         modelName,
 		ChannelID:     fmt.Sprintf("channel_%d", channel.Id),
-		RequestFormat: "openai_images",
+		RequestFormat: requestFormat,
+		EndpointURL:   endpointURL,
 		ExpiresAt:     time.Unix(lease.ExpiresAt, 0).UTC().Format(time.RFC3339),
 	})
 }
@@ -245,6 +259,16 @@ func resolveChannelBaseURL(channel *model.Channel) string {
 		return normalizeOpenAIImagesBaseURL(baseURL, channel.Type)
 	}
 	return normalizeOpenAIImagesBaseURL(constant.ChannelBaseURLs[channel.Type], channel.Type)
+}
+
+func resolveGeminiChannelBaseURL(channel *model.Channel) string {
+	if channel == nil {
+		return ""
+	}
+	if baseURL := strings.TrimRight(strings.TrimSpace(channel.GetBaseURL()), "/"); baseURL != "" {
+		return baseURL
+	}
+	return strings.TrimRight(strings.TrimSpace(constant.ChannelBaseURLs[channel.Type]), "/")
 }
 
 func normalizeOpenAIImagesBaseURL(baseURL string, channelType int) string {

@@ -103,21 +103,22 @@ type imageHandleImage struct {
 }
 
 type imageHandleUsage struct {
-	TotalTokens              int `json:"total_tokens,omitempty"`
-	InputTokens              int `json:"input_tokens,omitempty"`
-	OutputTokens             int `json:"output_tokens,omitempty"`
-	PromptTokens             int `json:"prompt_tokens,omitempty"`
-	CompletionTokens         int `json:"completion_tokens,omitempty"`
-	CachedTokens             int `json:"cached_tokens,omitempty"`
-	CacheReadTokens          int `json:"cache_read_tokens,omitempty"`
-	PromptCacheHitTokens     int `json:"prompt_cache_hit_tokens,omitempty"`
-	CacheCreationTokens      int `json:"cache_creation_tokens,omitempty"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-	CacheCreation5mTokens    int `json:"cache_creation_5m_tokens,omitempty"`
-	CacheCreation1hTokens    int `json:"cache_creation_1h_tokens,omitempty"`
-	ImageTokens              int `json:"image_tokens,omitempty"`
-	AudioTokens              int `json:"audio_tokens,omitempty"`
-	ActualQuota              int `json:"actual_quota,omitempty"`
+	TotalTokens              int                     `json:"total_tokens,omitempty"`
+	InputTokens              int                     `json:"input_tokens,omitempty"`
+	OutputTokens             int                     `json:"output_tokens,omitempty"`
+	PromptTokens             int                     `json:"prompt_tokens,omitempty"`
+	CompletionTokens         int                     `json:"completion_tokens,omitempty"`
+	CachedTokens             int                     `json:"cached_tokens,omitempty"`
+	CacheReadTokens          int                     `json:"cache_read_tokens,omitempty"`
+	PromptCacheHitTokens     int                     `json:"prompt_cache_hit_tokens,omitempty"`
+	CacheCreationTokens      int                     `json:"cache_creation_tokens,omitempty"`
+	CacheCreationInputTokens int                     `json:"cache_creation_input_tokens,omitempty"`
+	CacheCreation5mTokens    int                     `json:"cache_creation_5m_tokens,omitempty"`
+	CacheCreation1hTokens    int                     `json:"cache_creation_1h_tokens,omitempty"`
+	ImageTokens              int                     `json:"image_tokens,omitempty"`
+	AudioTokens              int                     `json:"audio_tokens,omitempty"`
+	ActualQuota              int                     `json:"actual_quota,omitempty"`
+	CompletionTokensDetails  *dto.OutputTokenDetails `json:"completion_tokens_details,omitempty"`
 }
 
 type imageHandleError struct {
@@ -502,9 +503,17 @@ func imageHandleUsageToDTO(usage *imageHandleUsage) *dto.Usage {
 			ImageTokens:          usage.ImageTokens,
 			AudioTokens:          usage.AudioTokens,
 		},
+		CompletionTokenDetails:      outputTokenDetailsValue(usage.CompletionTokensDetails),
 		ClaudeCacheCreation5mTokens: usage.CacheCreation5mTokens,
 		ClaudeCacheCreation1hTokens: usage.CacheCreation1hTokens,
 	}
+}
+
+func outputTokenDetailsValue(details *dto.OutputTokenDetails) dto.OutputTokenDetails {
+	if details == nil {
+		return dto.OutputTokenDetails{}
+	}
+	return *details
 }
 
 func firstPositiveInt(values ...int) int {

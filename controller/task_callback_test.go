@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -131,6 +132,22 @@ func TestImageTaskCallbackBatchAccepted(t *testing.T) {
 	assert.Equal(t, "revised prompt", asset.Metadata["revised_prompt"])
 }
 
+func TestCallbackUsageToDTOKeepsGeminiReasoningTokens(t *testing.T) {
+	usage := callbackUsageToDTO(&imageCallbackUsage{
+		InputTokens:             27,
+		OutputTokens:            1125,
+		TotalTokens:             1152,
+		ImageTokens:             5,
+		CompletionTokensDetails: &dto.OutputTokenDetails{ReasoningTokens: 5},
+	})
+
+	require.NotNil(t, usage)
+	assert.Equal(t, 27, usage.PromptTokens)
+	assert.Equal(t, 1125, usage.CompletionTokens)
+	assert.Equal(t, 5, usage.PromptTokensDetails.ImageTokens)
+	assert.Equal(t, 5, usage.CompletionTokenDetails.ReasoningTokens)
+}
+
 func TestResolveImageCredentialLeaseAccepted(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	secret := "internal-secret"
@@ -195,6 +212,105 @@ func TestResolveImageCredentialLeaseAccepted(t *testing.T) {
 	assert.Equal(t, "gpt-image-2", resolveResp.Model)
 	assert.Equal(t, "channel_777", resolveResp.ChannelID)
 	assert.NotEmpty(t, resolveResp.ExpiresAt)
+}
+
+func TestResolveImageCredentialLeaseBuildsGeminiGenerateContentEndpoint(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "internal-secret"
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+	originalVersions := model_setting.GetGeminiSettings().VersionSettings
+	model_setting.GetGeminiSettings().VersionSettings = map[string]string{
+		"default":                "v1beta",
+		"gemini-3.1-flash-image": "v1",
+	}
+	t.Cleanup(func() {
+		model_setting.GetGeminiSettings().VersionSettings = originalVersions
+	})
+
+	baseURL := "https://generativelanguage.googleapis.com"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:          780,
+		Type:        constant.ChannelTypeGemini,
+		Name:        "gemini-image",
+		Key:         "gemini-upstream-key",
+		BaseURL:     &baseURL,
+		Status:      common.ChannelStatusEnabled,
+		Models:      "gemini-3.1-flash-image",
+		Group:       "default",
+		CreatedTime: time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ImageCredentialLease{
+		LeaseID:      "lease_gemini_image",
+		TaskID:       "task_gemini_image",
+		TaskRecordID: 0,
+		UserID:       1,
+		ChannelID:    780,
+		Operation:    "generation",
+		Model:        "gemini-3.1-flash-image",
+		Status:       model.ImageCredentialLeaseStatusActive,
+		ExpiresAt:    time.Now().Add(30 * time.Minute).Unix(),
+		CreatedAt:    time.Now().Unix(),
+		UpdatedAt:    time.Now().Unix(),
+	}).Error)
+
+	body := []byte(`{"client_task_id":"task_gemini_image","operation":"generation","model":"gemini-3.1-flash-image"}`)
+	context, recorder := makeLeaseResolveRequest(t, "lease_gemini_image", body, "image_handle_1", secret)
+
+	ResolveImageCredentialLease(context)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var response imageCredentialLeaseResolveResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "google_gemini", response.Provider)
+	assert.Equal(t, "gemini_generate_content", response.RequestFormat)
+	assert.Equal(t, baseURL, response.BaseURL)
+	assert.Equal(t, baseURL+"/v1/models/gemini-3.1-flash-image:generateContent", response.EndpointURL)
+	assert.Equal(t, "gemini-upstream-key", response.APIKey)
+}
+
+func TestResolveImageCredentialLeaseRejectsUnsupportedGeminiImageModel(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "internal-secret"
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+
+	baseURL := "https://generativelanguage.googleapis.com"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:          781,
+		Type:        constant.ChannelTypeGemini,
+		Name:        "gemini-image-unsupported",
+		Key:         "gemini-upstream-key",
+		BaseURL:     &baseURL,
+		Status:      common.ChannelStatusEnabled,
+		Models:      "gemini-3-pro-image-preview",
+		Group:       "default",
+		CreatedTime: time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ImageCredentialLease{
+		LeaseID:      "lease_gemini_unsupported",
+		TaskID:       "task_gemini_unsupported",
+		TaskRecordID: 0,
+		UserID:       1,
+		ChannelID:    781,
+		Operation:    "generation",
+		Model:        "gemini-3-pro-image-preview",
+		Status:       model.ImageCredentialLeaseStatusActive,
+		ExpiresAt:    time.Now().Add(30 * time.Minute).Unix(),
+		CreatedAt:    time.Now().Unix(),
+		UpdatedAt:    time.Now().Unix(),
+	}).Error)
+
+	body := []byte(`{"client_task_id":"task_gemini_unsupported","operation":"generation","model":"gemini-3-pro-image-preview"}`)
+	context, recorder := makeLeaseResolveRequest(t, "lease_gemini_unsupported", body, "image_handle_1", secret)
+
+	ResolveImageCredentialLease(context)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"code":"model_not_supported"`)
+	assert.NotContains(t, recorder.Body.String(), "gemini-upstream-key")
 }
 
 func TestResolveImageCredentialLeaseSyncLeaseDebugWithoutTaskRecord(t *testing.T) {

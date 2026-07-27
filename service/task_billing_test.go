@@ -1494,7 +1494,7 @@ func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
-func TestSettle_ImageHandlePerCallSuccessKeepsPrecharge(t *testing.T) {
+func TestSettle_GeminiImagePerCallSuccessKeepsPrecharge(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
@@ -1509,17 +1509,42 @@ func TestSettle_ImageHandlePerCallSuccessKeepsPrecharge(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.Platform = constant.TaskPlatform("58")
+	task.Properties.OriginModelName = GeminiImageModelFlash
 	task.PrivateData.BillingContext.PerCallBilling = true
-	task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
+	task.PrivateData.BillingContext.UsePrice = true
+	task.PrivateData.BillingContext.ModelPrice = 0.1
+	task.PrivateData.BillingContext.OriginModelName = GeminiImageModelFlash
+	originalLog := seedAsyncImageConsumeLog(t, task, "req-gemini-fixed-price")
 
 	adaptor := &mockAdaptor{adjustReturn: actualQuota}
-	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
+	taskResult := &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+		Usage: &dto.Usage{
+			PromptTokens:     27,
+			CompletionTokens: 1125,
+			TotalTokens:      1152,
+		},
+	}
 
 	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
 	assert.Equal(t, initQuota, getUserQuota(t, userID))
 	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, preConsumed, task.Quota)
+	assert.Equal(t, int64(1), countLogs(t))
+	consumeLog := getLastLog(t)
+	require.NotNil(t, consumeLog)
+	assert.Equal(t, originalLog.Id, consumeLog.Id)
+	assert.Equal(t, preConsumed, consumeLog.Quota)
+	assert.Equal(t, 27, consumeLog.PromptTokens)
+	assert.Equal(t, 1125, consumeLog.CompletionTokens)
+	other, err := common.StrToMap(consumeLog.Other)
+	require.NoError(t, err)
+	audit, ok := other[imageExecutionAuditContextKey].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, float64(27), audit["input_tokens"])
+	assert.Equal(t, float64(1125), audit["output_tokens"])
+	assert.Equal(t, float64(1152), audit["total_tokens"])
 }
 
 func TestImageExecutionAuditLogTokensRequiresRealBreakdown(t *testing.T) {
@@ -1696,9 +1721,10 @@ func TestSettle_ImageParameterPerCallKeepsFrozenSnapshotAndIgnoresExecutorUsage(
 	assert.Equal(t, 0.99, liveProfile.Tiers[0].UnitPrice)
 }
 
-func TestRecordImagePricingExecutionAuditWithoutLinkedConsumeLogDoesNotCreateLog(t *testing.T) {
+func TestRecordImageExecutionAuditWithoutLinkedConsumeLogDoesNotCreateLog(t *testing.T) {
 	truncate(t)
 	task := makeTask(50, 50, 20000, 50, BillingSourceWallet, 0)
+	task.Platform = imageHandleTaskPlatform()
 	task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
 	task.PrivateData.BillingContext.ImagePricing = &types.ImagePricingSnapshot{
 		PublicModel:   "public-image-count",
@@ -1709,14 +1735,15 @@ func TestRecordImagePricingExecutionAuditWithoutLinkedConsumeLogDoesNotCreateLog
 	}
 	task.Data = json.RawMessage(`{"result":{"images":[{"url":"https://cdn.example.com/one.png"}],"output":{"quality":"low"}}}`)
 
-	recordImagePricingExecutionAudit(task, nil)
+	recordImageExecutionAudit(task, nil)
 
 	assert.Zero(t, countLogs(t))
 }
 
-func TestMergeCompletedImagePricingExecutionAuditHandlesEarlyCallbackRace(t *testing.T) {
+func TestMergeCompletedImageExecutionAuditHandlesEarlyCallbackRace(t *testing.T) {
 	truncate(t)
 	task := makeTask(51, 51, 20000, 51, BillingSourceWallet, 0)
+	task.Platform = imageHandleTaskPlatform()
 	task.Status = model.TaskStatusSuccess
 	task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
 	task.PrivateData.BillingContext.ImagePricing = &types.ImagePricingSnapshot{
@@ -1742,7 +1769,7 @@ func TestMergeCompletedImagePricingExecutionAuditHandlesEarlyCallbackRace(t *tes
 	require.NoError(t, model.LOG_DB.Create(originalLog).Error)
 	require.NoError(t, model.PersistTaskSubmitResult(task.ID, "imgtask_early", nil, originalLog.Id))
 
-	MergeCompletedImagePricingExecutionAudit(task.ID)
+	MergeCompletedImageExecutionAudit(task.ID)
 
 	require.Equal(t, int64(1), countLogs(t))
 	consumeLog := getLastLog(t)
@@ -1756,9 +1783,47 @@ func TestMergeCompletedImagePricingExecutionAuditHandlesEarlyCallbackRace(t *tes
 	require.Equal(t, 29, consumeLog.CompletionTokens)
 }
 
-func TestRecordImagePricingExecutionAuditReloadsConsumeLogIdForStaleCallbackTask(t *testing.T) {
+func TestMergeCompletedFixedPriceImageExecutionAuditHandlesEarlyCallbackRace(t *testing.T) {
+	truncate(t)
+	task := makeTask(54, 54, 250000, 54, BillingSourceWallet, 0)
+	task.Platform = imageHandleTaskPlatform()
+	task.Status = model.TaskStatusSuccess
+	task.Properties.OriginModelName = GeminiImageModelPro
+	task.PrivateData.BillingContext.OriginModelName = GeminiImageModelPro
+	task.PrivateData.BillingContext.ModelPrice = 0.5
+	task.PrivateData.BillingContext.UsePrice = true
+	task.PrivateData.BillingContext.PerCallBilling = true
+	task.Data = json.RawMessage(`{
+		"result":{"images":[{"url":"https://cdn.example.com/gemini.png"}]},
+		"usage":{"input_tokens":11,"output_tokens":1120,"total_tokens":1131}
+	}`)
+	require.NoError(t, model.DB.Create(task).Error)
+	originalLog := &model.Log{
+		UserId:    task.UserId,
+		CreatedAt: task.CreatedAt,
+		Type:      model.LogTypeConsume,
+		ModelName: GeminiImageModelPro,
+		Quota:     task.Quota,
+		Other:     common.MapToJsonStr(map[string]interface{}{"task_id": task.TaskID}),
+	}
+	require.NoError(t, model.LOG_DB.Create(originalLog).Error)
+	require.NoError(t, model.PersistTaskSubmitResult(task.ID, "imgtask_gemini_fixed_race", nil, originalLog.Id))
+
+	MergeCompletedImageExecutionAudit(task.ID)
+
+	require.Equal(t, int64(1), countLogs(t))
+	consumeLog := getLastLog(t)
+	require.NotNil(t, consumeLog)
+	assert.Equal(t, originalLog.Id, consumeLog.Id)
+	assert.Equal(t, task.Quota, consumeLog.Quota)
+	assert.Equal(t, 11, consumeLog.PromptTokens)
+	assert.Equal(t, 1120, consumeLog.CompletionTokens)
+}
+
+func TestRecordImageExecutionAuditReloadsConsumeLogIdForStaleCallbackTask(t *testing.T) {
 	truncate(t)
 	task := makeTask(52, 52, 20000, 52, BillingSourceWallet, 0)
+	task.Platform = imageHandleTaskPlatform()
 	task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
 	task.PrivateData.BillingContext.ImagePricing = &types.ImagePricingSnapshot{
 		PublicModel:   "public-image-count",
@@ -1782,7 +1847,7 @@ func TestRecordImagePricingExecutionAuditReloadsConsumeLogIdForStaleCallbackTask
 	require.NoError(t, model.PersistTaskSubmitResult(task.ID, "imgtask_racing", nil, originalLog.Id))
 
 	// The callback still holds the task object loaded before PersistTaskSubmitResult.
-	recordImagePricingExecutionAudit(task, nil)
+	recordImageExecutionAudit(task, nil)
 
 	require.Equal(t, int64(1), countLogs(t))
 	consumeLog := getLastLog(t)
@@ -1886,7 +1951,7 @@ func TestSettle_ImageHandleLegacyUsageTaskWithoutSnapshotUsesActualQuota(t *test
 	assert.Equal(t, int64(1), countLogs(t))
 }
 
-func TestSettle_ImageHandleUsageBillingUsesCallbackUsageAndCanDriveDebt(t *testing.T) {
+func TestSettle_GeminiImageUsageBillingUsesCallbackUsageAndCanDriveDebt(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
@@ -1901,9 +1966,9 @@ func TestSettle_ImageHandleUsageBillingUsesCallbackUsageAndCanDriveDebt(t *testi
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.Platform = constant.TaskPlatform("58")
 	task.TaskID = "task_async_usage_billing"
-	task.Properties.OriginModelName = "gpt-image-2"
+	task.Properties.OriginModelName = GeminiImageModelPro
 	task.PrivateData.BillingContext = &model.TaskBillingContext{
-		OriginModelName:    "gpt-image-2",
+		OriginModelName:    GeminiImageModelPro,
 		BillingMode:        "async_image_usage_billing",
 		ModelPrice:         -1,
 		ModelRatio:         2.5,
