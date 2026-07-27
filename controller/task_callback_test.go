@@ -248,7 +248,7 @@ func TestResolveImageCredentialLeaseBuildsGeminiGenerateContentEndpoint(t *testi
 		UserID:       1,
 		ChannelID:    780,
 		Operation:    "generation",
-		Model:        "gemini-3.1-flash-image",
+		Model:        "vendor-flash-image-v7",
 		Status:       model.ImageCredentialLeaseStatusActive,
 		ExpiresAt:    time.Now().Add(30 * time.Minute).Unix(),
 		CreatedAt:    time.Now().Unix(),
@@ -266,7 +266,8 @@ func TestResolveImageCredentialLeaseBuildsGeminiGenerateContentEndpoint(t *testi
 	assert.Equal(t, "google_gemini", response.Provider)
 	assert.Equal(t, "gemini_generate_content", response.RequestFormat)
 	assert.Equal(t, baseURL, response.BaseURL)
-	assert.Equal(t, baseURL+"/v1/models/gemini-3.1-flash-image:generateContent", response.EndpointURL)
+	assert.Equal(t, baseURL+"/v1/models/vendor-flash-image-v7:generateContent", response.EndpointURL)
+	assert.Equal(t, "vendor-flash-image-v7", response.Model)
 	assert.Equal(t, "gemini-upstream-key", response.APIKey)
 }
 
@@ -296,7 +297,7 @@ func TestResolveImageCredentialLeaseRejectsUnsupportedGeminiImageModel(t *testin
 		UserID:       1,
 		ChannelID:    781,
 		Operation:    "generation",
-		Model:        "gemini-3-pro-image-preview",
+		Model:        "gemini-3.1-flash-image",
 		Status:       model.ImageCredentialLeaseStatusActive,
 		ExpiresAt:    time.Now().Add(30 * time.Minute).Unix(),
 		CreatedAt:    time.Now().Unix(),
@@ -898,7 +899,7 @@ func TestRelayTaskFastFailureCallbackRefundsExactlyOnceBeforeSubmitSettlement(t 
 	assert.Zero(t, outcome.Token.UsedQuota)
 
 	require.Len(t, outcome.Logs, 1)
-	assert.Equal(t, model.LogTypeConsume, outcome.Logs[0].Type)
+	assert.Equal(t, model.LogTypeError, outcome.Logs[0].Type)
 	assert.Zero(t, outcome.Logs[0].Quota)
 	assert.Equal(t, "req-controller-fast", outcome.Logs[0].RequestId)
 	var other map[string]interface{}
@@ -944,7 +945,7 @@ func TestRelayTaskFastFailureCallbackDoesNotDoubleRefundWhenSubmitResponseIsMalf
 	assert.Zero(t, outcome.Token.UsedQuota)
 
 	require.Len(t, outcome.Logs, 1)
-	assert.Equal(t, model.LogTypeConsume, outcome.Logs[0].Type)
+	assert.Equal(t, model.LogTypeError, outcome.Logs[0].Type)
 	assert.Zero(t, outcome.Logs[0].Quota)
 	assert.Equal(t, "req-controller-fast", outcome.Logs[0].RequestId)
 }

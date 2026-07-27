@@ -162,6 +162,7 @@ type TaskBillingContext struct {
 }
 
 type TaskFinalConsumeLogSnapshot struct {
+	LogType          int                    `json:"log_type,omitempty"`
 	Quota            int                    `json:"quota"`
 	PromptTokens     int                    `json:"prompt_tokens"`
 	CompletionTokens int                    `json:"completion_tokens"`

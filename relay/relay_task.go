@@ -217,8 +217,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
 	if isAsyncImageTaskPath(c) &&
-		imageHandleSyncChannelType(info) == constant.ChannelTypeGemini &&
-		service.IsGeminiImageModel(info.UpstreamModelName) {
+		imageHandleSyncChannelType(info) == constant.ChannelTypeGemini {
+		if !service.IsGeminiImageModel(info.OriginModelName) {
+			return nil, service.TaskErrorWrapperLocal(
+				fmt.Errorf("unsupported Gemini image model: %s", info.OriginModelName),
+				"model_not_supported",
+				http.StatusBadRequest,
+			)
+		}
 		if taskErr := validateAndNormalizeGeminiAsyncImageRequest(c); taskErr != nil {
 			return nil, taskErr
 		}
@@ -1014,12 +1020,12 @@ func buildAsyncImageTaskRequestSnapshot(c *gin.Context, info *relaycommon.RelayI
 		return nil, err
 	}
 	imgReq := dto.ImageRequest{
-		Model:  info.UpstreamModelName,
+		Model:  info.OriginModelName,
 		Prompt: taskReq.Prompt,
 		Size:   taskReq.Size,
 	}
 	if imgReq.Model == "" {
-		imgReq.Model = info.OriginModelName
+		imgReq.Model = info.UpstreamModelName
 	}
 	if taskReq.Image != "" {
 		imgReq.Image, _ = common.Marshal(taskReq.Image)

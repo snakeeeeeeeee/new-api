@@ -315,6 +315,7 @@ func refundAsyncImageTaskQuota(ctx context.Context, task *model.Task, reason str
 	other["terminal_status"] = string(model.TaskStatusFailure)
 	other["reason"] = reason
 	snapshot := &model.TaskFinalConsumeLogSnapshot{
+		LogType:        model.LogTypeError,
 		Quota:          0,
 		UseTimeSeconds: taskTerminalUseTimeSeconds(task),
 		Content:        fmt.Sprintf("异步图片生成失败：已退还预扣费 %s（%s）", formatQuotaUSD(preConsumedQuota), reason),

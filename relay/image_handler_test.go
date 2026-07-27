@@ -143,19 +143,21 @@ func TestCanUseImageHandleSyncForRequestForcesOnlyTargetGeminiModels(t *testing.
 	image_handle_setting.GetImageHandleSetting().SyncImageEnabled = false
 
 	info := &relaycommon.RelayInfo{
-		RelayMode: relayconstant.RelayModeImagesGenerations,
+		OriginModelName: "gemini-3.1-flash-image",
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelType:       constant.ChannelTypeGemini,
-			UpstreamModelName: "gemini-3.1-flash-image",
+			UpstreamModelName: "vendor-flash-image-v7",
 			ChannelOtherSettings: dto.ChannelOtherSettings{
 				ImageHandleSyncMode: "force_off",
 			},
 		},
 	}
-	request := dto.ImageRequest{Model: "public-gemini-image", Prompt: "draw"}
+	request := dto.ImageRequest{Model: "vendor-flash-image-v7", Prompt: "draw"}
 	require.True(t, canUseImageHandleSyncForRequest(info, &request))
 
-	info.UpstreamModelName = "imagen-4.0-generate-001"
+	info.OriginModelName = "gemini-3-pro-image-preview"
+	info.UpstreamModelName = "gemini-3.1-flash-image"
 	image_handle_setting.GetImageHandleSetting().SyncImageEnabled = true
 	info.ChannelOtherSettings.ImageHandleSyncMode = "force_on"
 	require.False(t, canUseImageHandleSyncForRequest(info, &request))
@@ -874,6 +876,42 @@ func TestBuildImageHandleSyncPayloadUsesLeaseAndKeepsImageParams(t *testing.T) {
 	require.NotContains(t, payload, "provider_options")
 }
 
+func TestBuildImageHandleSyncPayloadKeepsPublicModelWhenLeaseUsesMappedModel(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	defer func() {
+		*image_handle_setting.GetImageHandleSetting() = originalSetting
+	}()
+	image_handle_setting.GetImageHandleSetting().InternalBaseURL = "http://new-api.internal"
+	image_handle_setting.GetImageHandleSetting().InternalSecretID = "image_handle_1"
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gemini-3.1-flash-image",
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         780,
+			ChannelType:       constant.ChannelTypeGemini,
+			UpstreamModelName: "vendor-flash-image-v7",
+		},
+	}
+	request := dto.ImageRequest{
+		Model:  "vendor-flash-image-v7",
+		Prompt: "draw",
+		ProviderOptions: map[string]map[string]any{
+			"google": {"generationConfig": map[string]any{"seed": int64(7)}},
+		},
+	}
+
+	body, err := buildImageHandleSyncPayload(ctx, info, request, "task_sync_mapped", "lease_sync_mapped", "generation")
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, "gemini-3.1-flash-image", payload["model"])
+	require.Contains(t, payload, "provider_options")
+}
+
 func TestBuildImageHandleSyncPayloadUsesSelectedChannelParamOverride(t *testing.T) {
 	originalSetting := *image_handle_setting.GetImageHandleSetting()
 	defer func() {
@@ -934,7 +972,7 @@ func TestBuildImageHandleSyncPayloadUsesSelectedChannelParamOverride(t *testing.
 
 			var payload map[string]any
 			require.NoError(t, common.Unmarshal(body, &payload))
-			require.Equal(t, "gpt-image-2", payload["model"])
+			require.Equal(t, "adobe-gpt-image-2-count", payload["model"])
 			require.Equal(t, testCase.operation, payload["operation"])
 			require.Equal(t, "url", payload["result_data_format"])
 			params := imageHandleSyncPayloadParams(payload)

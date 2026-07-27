@@ -101,7 +101,7 @@ func TestFailImageHandleTaskWithRefundUsesCASAndRefundsWalletAndTokenOnce(t *tes
 	assert.Equal(t, int64(1), countLogs(t))
 	logItem := getLastLog(t)
 	require.NotNil(t, logItem)
-	assert.Equal(t, model.LogTypeConsume, logItem.Type)
+	assert.Equal(t, model.LogTypeError, logItem.Type)
 	assert.Zero(t, logItem.Quota)
 	assert.Equal(t, "req-task_public_missing_upstream", logItem.RequestId)
 }
@@ -210,7 +210,7 @@ func TestImageHandleChannelReadFailureUsesCASAndRefundsSubscriptionAndTokenOnce(
 	assert.Equal(t, int64(1), countLogs(t))
 	logItem := getLastLog(t)
 	require.NotNil(t, logItem)
-	assert.Equal(t, model.LogTypeConsume, logItem.Type)
+	assert.Equal(t, model.LogTypeError, logItem.Type)
 	assert.Zero(t, logItem.Quota)
 }
 

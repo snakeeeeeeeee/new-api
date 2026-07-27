@@ -360,7 +360,7 @@ func TestRelayTaskSubmitImageHandlePreservesFixedModelPriceBeforeSubmit(t *testi
 	}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set("platform", "58")
-	c.Set("model_mapping", "{}")
+	c.Set("model_mapping", `{"gpt-image-2":"vendor-gpt-image-v2"}`)
 	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
 	common.SetContextKey(c, constant.ContextKeyChannelId, 123)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "https://real.example/v1")
@@ -393,6 +393,12 @@ func TestRelayTaskSubmitImageHandlePreservesFixedModelPriceBeforeSubmit(t *testi
 	assert.Zero(t, result.CreatedTask.PrivateData.BillingContext.PrechargeAmountPerImage)
 	assert.Zero(t, result.CreatedTask.PrivateData.BillingContext.ImageCount)
 	assert.Equal(t, "req-task-lease-submit", result.CreatedTask.PrivateData.BillingContext.RequestId)
+	assert.Equal(t, "gpt-image-2", upstreamPayload["model"])
+	assert.Equal(t, "gpt-image-2", result.CreatedTask.Properties.OriginModelName)
+	assert.Equal(t, "vendor-gpt-image-v2", result.CreatedTask.Properties.UpstreamModelName)
+	var lease model.ImageCredentialLease
+	require.NoError(t, db.Where("task_id = ?", result.CreatedTask.TaskID).First(&lease).Error)
+	assert.Equal(t, "vendor-gpt-image-v2", lease.Model)
 	executor := upstreamPayload["executor"].(map[string]any)
 	assert.Equal(t, "provider_direct_lease", executor["type"])
 	assert.NotEmpty(t, executor["lease_id"])
@@ -501,7 +507,7 @@ func TestRelayTaskSubmitImagePricingNormalizesBeforeMappingAndPersistsSnapshot(t
 	assert.Equal(t, expectedQuota, result.Quota)
 	assert.Equal(t, expectedQuota, result.CreatedTask.Quota)
 
-	require.Equal(t, "gpt-image-2", upstreamPayload["model"])
+	require.Equal(t, publicModel, upstreamPayload["model"])
 	parameters, ok := upstreamPayload["parameters"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "low", parameters["quality"])
@@ -533,12 +539,15 @@ func TestRelayTaskSubmitImagePricingNormalizesBeforeMappingAndPersistsSnapshot(t
 
 	var imageRequest map[string]any
 	require.NoError(t, common.Unmarshal(persisted.PrivateData.ImageRequest, &imageRequest))
-	assert.Equal(t, "gpt-image-2", imageRequest["model"])
+	assert.Equal(t, publicModel, imageRequest["model"])
 	assert.Equal(t, "low", imageRequest["quality"])
 	assert.Equal(t, "2048x2048", imageRequest["size"])
 	assert.Equal(t, "2k", imageRequest["resolution"])
 	assert.Equal(t, "url", imageRequest["response_format"])
 	assert.Equal(t, float64(1), imageRequest["n"])
+	var lease model.ImageCredentialLease
+	require.NoError(t, db.Where("task_id = ?", persisted.TaskID).First(&lease).Error)
+	assert.Equal(t, "gpt-image-2", lease.Model)
 }
 
 func TestRelayTaskSubmitImageHandleMarksTaskAndLeaseFailedWhenSubmitFails(t *testing.T) {

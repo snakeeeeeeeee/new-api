@@ -234,7 +234,7 @@ func imageHandleSyncIsGeminiRequest(info *relaycommon.RelayInfo, request *dto.Im
 	if info == nil || request == nil || imageHandleSyncChannelType(info) != constant.ChannelTypeGemini {
 		return false
 	}
-	return service.IsGeminiImageModel(firstNonEmpty(info.UpstreamModelName, request.Model))
+	return service.IsGeminiImageModel(firstNonEmpty(info.OriginModelName, request.Model))
 }
 
 func validateAndNormalizeGeminiSyncImageRequest(c *gin.Context, request *dto.ImageRequest) *types.NewAPIError {
@@ -503,12 +503,12 @@ func buildImageHandleSyncPayload(c *gin.Context, info *relaycommon.RelayInfo, re
 	payload := imageHandleSyncRequest{
 		RequestID:        c.GetString(common.RequestIdKey),
 		ClientTaskID:     clientTaskID,
-		Model:            info.UpstreamModelName,
+		Model:            firstNonEmpty(info.OriginModelName, request.Model),
 		Operation:        operation,
 		ResultDataFormat: imageHandleSyncResultDataFormat(request),
 		Input:            imageHandleSyncInput{Text: request.Prompt, Images: images, Mask: mask},
 		Parameters:       parameters,
-		ProviderOptions:  imageHandleSyncProviderOptions(request, info.UpstreamModelName),
+		ProviderOptions:  imageHandleSyncProviderOptions(request, info.OriginModelName, info.UpstreamModelName),
 		Executor: imageHandleSyncExecutor{
 			Type:       "provider_direct_lease",
 			LeaseID:    leaseID,
@@ -960,13 +960,13 @@ func imageHandleSyncParameters(request dto.ImageRequest) map[string]any {
 	return params
 }
 
-func imageHandleSyncProviderOptions(request dto.ImageRequest, upstreamModelName string) map[string]any {
+func imageHandleSyncProviderOptions(request dto.ImageRequest, publicModelName string, upstreamModelName string) map[string]any {
 	options := make(map[string]any)
 	for namespace, value := range request.ProviderOptions {
 		options[namespace] = value
 	}
 	if len(options) == 0 &&
-		!imageHandleSyncIsGeminiImageModel(firstNonEmpty(upstreamModelName, request.Model)) &&
+		!imageHandleSyncIsGeminiImageModel(firstNonEmpty(publicModelName, request.Model)) &&
 		len(request.ExtraFields) > 0 {
 		if err := common.Unmarshal(request.ExtraFields, &options); err != nil {
 			return nil

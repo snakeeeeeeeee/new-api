@@ -125,18 +125,32 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		writeImageCredentialLeaseError(c, http.StatusForbidden, "channel_disabled", "channel is disabled", false)
 		return
 	}
-	modelName := lease.Model
-	if modelName == "" && task != nil {
-		modelName = task.Properties.UpstreamModelName
+	publicModelName := strings.TrimSpace(req.Model)
+	if task != nil {
+		persistedPublicModel := strings.TrimSpace(task.Properties.OriginModelName)
+		if persistedPublicModel == "" {
+			persistedPublicModel = strings.TrimSpace(task.Properties.UpstreamModelName)
+		}
+		if publicModelName != "" && persistedPublicModel != "" && publicModelName != persistedPublicModel {
+			writeImageCredentialLeaseError(c, http.StatusConflict, "model_not_supported", "request public model does not match task", false)
+			return
+		}
+		if publicModelName == "" {
+			publicModelName = persistedPublicModel
+		}
 	}
-	if modelName == "" && task != nil {
-		modelName = task.Properties.OriginModelName
+	upstreamModelName := strings.TrimSpace(lease.Model)
+	if upstreamModelName == "" && task != nil {
+		upstreamModelName = strings.TrimSpace(task.Properties.UpstreamModelName)
 	}
-	if req.Model != "" && modelName != "" && req.Model != modelName {
-		writeImageCredentialLeaseError(c, http.StatusConflict, "model_not_supported", "request model does not match lease", false)
+	if upstreamModelName == "" {
+		upstreamModelName = publicModelName
+	}
+	isGemini := channel.Type == constant.ChannelTypeGemini
+	if isGemini && !service.IsGeminiImageModel(publicModelName) {
+		writeImageCredentialLeaseError(c, http.StatusBadRequest, "model_not_supported", "public model does not support Gemini image credential leases", false)
 		return
 	}
-	isGemini := channel.Type == constant.ChannelTypeGemini && service.IsGeminiImageModel(modelName)
 	if !channelSupportsOpenAIImages(channel) && !isGemini {
 		writeImageCredentialLeaseError(c, http.StatusBadRequest, "model_not_supported", "channel does not support the image credential lease format", false)
 		return
@@ -157,8 +171,8 @@ func ResolveImageCredentialLease(c *gin.Context) {
 	endpointURL := ""
 	if isGemini {
 		baseURL = resolveGeminiChannelBaseURL(channel)
-		version := strings.Trim(model_setting.GetGeminiVersionSetting(modelName), "/")
-		endpointURL = fmt.Sprintf("%s/%s/models/%s:generateContent", baseURL, version, modelName)
+		version := strings.Trim(model_setting.GetGeminiVersionSetting(publicModelName), "/")
+		endpointURL = fmt.Sprintf("%s/%s/models/%s:generateContent", baseURL, version, upstreamModelName)
 		provider = "google_gemini"
 		requestFormat = "gemini_generate_content"
 	}
@@ -170,13 +184,14 @@ func ResolveImageCredentialLease(c *gin.Context) {
 			imageRequest = string(task.PrivateData.ImageRequest)
 		}
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf(
-			"image-handle resolve lease debug: task_id=%s provider_task_id=%s lease_id=%s channel_id=%d channel_type=%d model=%s operation=%s base_url=%s request=%s",
+			"image-handle resolve lease debug: task_id=%s provider_task_id=%s lease_id=%s channel_id=%d channel_type=%d public_model=%s upstream_model=%s operation=%s base_url=%s request=%s",
 			taskID,
 			req.ProviderTaskID,
 			lease.LeaseID,
 			channel.Id,
 			channel.Type,
-			modelName,
+			publicModelName,
+			upstreamModelName,
 			lease.Operation,
 			baseURL,
 			imageRequest,
@@ -186,7 +201,7 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		Provider:      provider,
 		BaseURL:       baseURL,
 		APIKey:        key,
-		Model:         modelName,
+		Model:         upstreamModelName,
 		ChannelID:     fmt.Sprintf("channel_%d", channel.Id),
 		RequestFormat: requestFormat,
 		EndpointURL:   endpointURL,

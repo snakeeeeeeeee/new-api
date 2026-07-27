@@ -113,7 +113,7 @@ func TestSweepTimedOutAsyncImageTaskFinalizesZeroPrechargeLog(t *testing.T) {
 	require.Equal(t, int64(1), countLogs(t))
 	logItem := getLastLog(t)
 	require.NotNil(t, logItem)
-	assert.Equal(t, model.LogTypeConsume, logItem.Type)
+	assert.Equal(t, model.LogTypeError, logItem.Type)
 	assert.Zero(t, logItem.Quota)
 	assert.Equal(t, "req-task_timeout_zero_image", logItem.RequestId)
 	other, err := common.StrToMap(logItem.Other)

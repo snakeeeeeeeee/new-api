@@ -387,7 +387,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 // consume log. The task ID check prevents an incorrect log association even
 // if a stale or corrupted consume_log_id is present in task private data.
 func MergeConsumeLogOther(logId int, userId int, taskId string, updates map[string]interface{}) (bool, error) {
-	return updateConsumeLog(logId, userId, taskId, updates, nil, nil, nil, nil, nil, "")
+	return updateConsumeLog(logId, userId, taskId, updates, nil, nil, nil, nil, nil, "", nil)
 }
 
 // MergeConsumeLogOtherAndTokens updates execution metadata and optional real
@@ -400,7 +400,7 @@ func MergeConsumeLogOtherAndTokens(
 	promptTokens *int,
 	completionTokens *int,
 ) (bool, error) {
-	return updateConsumeLog(logId, userId, taskId, updates, nil, promptTokens, completionTokens, nil, nil, "")
+	return updateConsumeLog(logId, userId, taskId, updates, nil, promptTokens, completionTokens, nil, nil, "", nil)
 }
 
 // FinalizeAsyncImageConsumeLog turns the original precharge row into the
@@ -420,6 +420,13 @@ func FinalizeAsyncImageConsumeLog(
 	completionTokens := snapshot.CompletionTokens
 	useTime := snapshot.UseTimeSeconds
 	content := snapshot.Content
+	logType := snapshot.LogType
+	if logType == LogTypeUnknown {
+		logType = LogTypeConsume
+	}
+	if logType != LogTypeConsume && logType != LogTypeError {
+		return false, fmt.Errorf("invalid async image terminal log type: %d", logType)
+	}
 	return updateConsumeLog(
 		logId,
 		userId,
@@ -431,6 +438,7 @@ func FinalizeAsyncImageConsumeLog(
 		&useTime,
 		&content,
 		requestId,
+		&logType,
 	)
 }
 
@@ -445,6 +453,7 @@ func updateConsumeLog(
 	useTime *int,
 	content *string,
 	requestId string,
+	targetLogType *int,
 ) (bool, error) {
 	if logId <= 0 || userId <= 0 || strings.TrimSpace(taskId) == "" {
 		return false, nil
@@ -461,11 +470,18 @@ func updateConsumeLog(
 	if completionTokens != nil && *completionTokens < 0 {
 		return false, fmt.Errorf("completion tokens cannot be negative")
 	}
+	if targetLogType != nil && *targetLogType != LogTypeConsume && *targetLogType != LogTypeError {
+		return false, fmt.Errorf("invalid consume log target type: %d", *targetLogType)
+	}
 
 	const maxAttempts = 3
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		var logItem Log
-		if err := LOG_DB.Where("id = ? AND user_id = ? AND type = ?", logId, userId, LogTypeConsume).First(&logItem).Error; err != nil {
+		allowedLogTypes := []int{LogTypeConsume}
+		if targetLogType != nil && *targetLogType == LogTypeError {
+			allowedLogTypes = append(allowedLogTypes, LogTypeError)
+		}
+		if err := LOG_DB.Where("id = ? AND user_id = ? AND type IN ?", logId, userId, allowedLogTypes).First(&logItem).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return false, nil
 			}
@@ -505,8 +521,11 @@ func updateConsumeLog(
 		if strings.TrimSpace(logItem.RequestId) == "" && strings.TrimSpace(requestId) != "" {
 			columnUpdates["request_id"] = strings.TrimSpace(requestId)
 		}
+		if targetLogType != nil {
+			columnUpdates["type"] = *targetLogType
+		}
 		result := LOG_DB.Model(&Log{}).
-			Where("id = ? AND other = ?", logItem.Id, logItem.Other).
+			Where("id = ? AND other = ? AND type = ?", logItem.Id, logItem.Other, logItem.Type).
 			Updates(columnUpdates)
 		if result.Error != nil {
 			return false, result.Error

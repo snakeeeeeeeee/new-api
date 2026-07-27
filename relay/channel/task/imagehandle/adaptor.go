@@ -248,6 +248,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err := validateImageHandleChannelSecrets(info); err != nil {
 		return nil, err
 	}
+	publicModelName := strings.TrimSpace(info.OriginModelName)
+	if publicModelName == "" {
+		publicModelName = strings.TrimSpace(info.UpstreamModelName)
+	}
 	leaseID := strings.TrimSpace(c.GetString("image_credential_lease_id"))
 	if leaseID == "" {
 		return nil, fmt.Errorf("image credential lease is required")
@@ -257,7 +261,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	payload := imageHandleSubmitRequest{
 		RequestID:        c.GetString(common.RequestIdKey),
 		ClientTaskID:     info.PublicTaskID,
-		Model:            info.UpstreamModelName,
+		Model:            publicModelName,
 		Operation:        operation,
 		ResultDataFormat: "url",
 		Input:            imageHandleInput{Text: taskReq.Prompt, Images: images, Mask: mask},

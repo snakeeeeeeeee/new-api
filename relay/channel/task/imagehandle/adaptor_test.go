@@ -60,7 +60,7 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 		OriginModelName: "gpt-image-2",
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelId:            123,
-			UpstreamModelName:    "gpt-image-2",
+			UpstreamModelName:    "vendor-gpt-image-v2",
 			ChannelOtherSettings: dto.ChannelOtherSettings{CallbackSecret: "callback-secret"},
 		},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
