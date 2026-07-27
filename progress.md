@@ -16,6 +16,26 @@
 
 ---
 
+# Async Image Public Error 524 Progress (2026-07-28)
+
+- Recovered the existing implementation and design document from the current workspace.
+- Added public quota-error masking for structured provider codes and a narrow legacy Chinese-message fallback.
+- Added unit coverage for structured masking, legacy masking, non-quota regression, polling projection, and failed Webhook payload privacy.
+- Formatted the Go changes and passed the focused service test set.
+- Audited the generated Resource Center OpenAPI plus GPT-Image and Gemini async/Webhook/error pages; identified the stale failure example and incorrect terminal-retry idempotency guidance.
+- Updated the OpenAPI source and both provider document sets with the `"524"` business-code contract, generic public message, privacy boundary, and correct new-key terminal retry behavior.
+- Generated and drift-checked the Resource Center OpenAPI successfully; the full supertokendoc VitePress build also passes.
+- Full `go test ./... -count=1` and the new-api production frontend build pass.
+- Fixed the callback DTO gap so image-handle provider status/code/type/message/param/raw error fields survive task persistence; focused controller/service regressions pass.
+- Rebuilt Docker dev image `sha256:dc7d0136b9b6...`, recreated only `new-api-dev`, and confirmed its live `/api/status` response succeeds.
+- Created a uniquely scoped disposable Docker user, Resource API key, queued image task, and request record; the first callback identified a runtime secret-ID resolution mismatch before changing task state.
+- Submitted the corrected real HMAC callback and verified the live public task endpoint plus durable `image.task.failed` event both return only `"524"` and the generic retryable message, while the stored task retains structured administrator diagnostics.
+- Added a final outbound-delivery privacy boundary so pending legacy quota-failure Webhooks are sanitized at send time without mutating stored diagnostics; focused legacy and non-quota tests pass.
+- Removed every disposable fixture row and verified the exact remaining count is zero.
+- Final full Go tests, OpenAPI drift check, VitePress build, diff whitespace checks, and Docker health all pass.
+- Rebuilt the final Docker source as image `sha256:4ffd3d3f8556...`; `new-api-dev` is running healthy, and a final source scan found no disposable callback secret, Resource key, balance, or Request ID outside tests.
+- Preserved unrelated untracked diagnostics and historical planning records.
+
 # Image-handle Trace Search and Task Table Progress (2026-07-23)
 
 - Loaded the required brainstorming, file-planning, and UI/UX workflows.

@@ -77,6 +77,8 @@ func excludeNonBillingAuditLogs(tx *gorm.DB, column string) *gorm.DB {
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
+		logs[i].ChannelId = 0
+		logs[i].Group = ""
 		var otherMap map[string]interface{}
 		otherMap, _ = common.StrToMap(logs[i].Other)
 		if otherMap != nil {
@@ -106,6 +108,20 @@ func formatUserLogs(logs []*Log, startIdx int) {
 				delete(otherMap, "channel_type")
 				delete(otherMap, "internal_retry")
 				delete(otherMap, "user_safe")
+				delete(otherMap, "reason")
+				delete(otherMap, "execution_mode")
+				delete(otherMap, "error_metadata")
+				delete(otherMap, "client_response_wrapped")
+				delete(otherMap, "client_response_status_code")
+				delete(otherMap, "client_response_message")
+				delete(otherMap, "client_response_error_type")
+				delete(otherMap, "client_response_error_code")
+				for key := range otherMap {
+					if strings.HasPrefix(key, "upstream_") ||
+						strings.HasPrefix(key, "image_handle_") {
+						delete(otherMap, key)
+					}
+				}
 			}
 		}
 		if logs[i].Type == LogTypeError {

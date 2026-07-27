@@ -96,9 +96,10 @@ const webhookFailedExample = {
       result: null,
       usage: {},
       error: {
-        code: 'upstream_error',
-        message: 'Image generation failed',
-        retryable: false,
+        code: '524',
+        message:
+          'Image generation service is temporarily unavailable. Please try again later.',
+        retryable: true,
       },
       client_reference_id: 'order_456',
       metadata: {},
@@ -481,7 +482,7 @@ const spec = {
         operationId: 'createImageTask',
         summary: 'Create an asynchronous image task',
         description:
-          'Accepts the normalized JSON contract for generation or edit tasks, or synchronous-style multipart local files for edit tasks. Returns immediately after the task, billing reservation, credential lease, and durable dispatch are stored. Reusing an Idempotency-Key with the same normalized fields and file contents returns the original task.',
+          'Accepts the normalized JSON contract for generation or edit tasks, or synchronous-style multipart local files for edit tasks. Returns immediately after the task, billing reservation, credential lease, and durable dispatch are stored. Reusing an Idempotency-Key with the same normalized fields and file contents returns the original task. To retry a terminal failed task, submit a new request with a new Idempotency-Key.',
         security: modelTokenSecurity,
         parameters: [
           {
@@ -489,7 +490,7 @@ const spec = {
             in: 'header',
             required: false,
             description:
-              'Optional caller key, unique per user. Maximum 128 characters.',
+              'Optional caller key, unique per user. Maximum 128 characters. Replaying it returns the original task, including a terminal failed task; use a new key for a new attempt after failure.',
             schema: { type: 'string', maxLength: 128 },
           },
         ],
@@ -1231,8 +1232,20 @@ const spec = {
         additionalProperties: false,
         required: ['code', 'message', 'retryable'],
         properties: {
-          code: { type: 'string' },
-          message: { type: 'string' },
+          code: {
+            type: 'string',
+            description:
+              'Stable business error code. "524" means a retryable internal image-service availability failure; it is not an HTTP status code.',
+            'x-description-zh-CN':
+              '稳定的业务错误码；“524”表示图片服务内部暂时不可用且可以重试，它不是 HTTP 状态码。',
+            examples: ['524'],
+          },
+          message: {
+            type: 'string',
+            examples: [
+              'Image generation service is temporarily unavailable. Please try again later.',
+            ],
+          },
           retryable: { type: 'boolean' },
         },
       },
@@ -2259,6 +2272,8 @@ const extraDescriptionTranslationsZhCN = {
   'Page size.': '每页数量。',
   'Optional caller key, unique per user. Maximum 128 characters.':
     '可选的调用方幂等 Key，同一用户内唯一，最长 128 个字符。',
+  'Optional caller key, unique per user. Maximum 128 characters. Replaying it returns the original task, including a terminal failed task; use a new key for a new attempt after failure.':
+    '可选的调用方幂等 Key，同一用户内唯一，最长 128 个字符。重复使用会返回原任务，包括已经终态失败的任务；失败后要发起新的尝试，请使用新的 Key。',
   'Optional caller key, unique per user. Maximum 128 characters. The same key and request replay the original task; a different request returns 409.':
     '可选的调用方幂等 Key，同一用户内唯一，最长 128 个字符。相同 Key 和请求会返回原任务，不同请求返回 409。',
   'Asset ID such as asset_xxx.': '资源 ID，例如 asset_xxx。',

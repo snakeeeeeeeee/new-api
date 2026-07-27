@@ -87,9 +87,15 @@ type imageCallbackUsage struct {
 }
 
 type imageCallbackError struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
+	Code                 string          `json:"code"`
+	Message              string          `json:"message"`
+	Retryable            bool            `json:"retryable"`
+	UpstreamStatus       int             `json:"upstream_status,omitempty"`
+	ProviderErrorCode    string          `json:"provider_error_code,omitempty"`
+	ProviderErrorType    string          `json:"provider_error_type,omitempty"`
+	ProviderErrorMessage string          `json:"provider_error_message,omitempty"`
+	ProviderErrorParam   string          `json:"provider_error_param,omitempty"`
+	UpstreamError        json.RawMessage `json:"upstream_error,omitempty"`
 }
 
 type imageCallbackResultItem struct {

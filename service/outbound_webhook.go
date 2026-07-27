@@ -598,7 +598,12 @@ func processWebhookDeliveryWithTimeout(ctx context.Context, claimed *model.Webho
 		completeWebhookFailure(ctx, delivery, 0, err.Error(), 0)
 		return workerAttemptResult{timedOut: workerErrorTimedOut(err)}
 	}
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint.URL, bytes.NewBufferString(event.Payload))
+	payload, err := outboundWebhookPayload(event)
+	if err != nil {
+		completeWebhookFailure(ctx, delivery, 0, err.Error(), 0)
+		return workerAttemptResult{}
+	}
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint.URL, bytes.NewBufferString(payload))
 	if err != nil {
 		completeWebhookFailure(ctx, delivery, 0, err.Error(), 0)
 		return workerAttemptResult{}
@@ -625,6 +630,60 @@ func processWebhookDeliveryWithTimeout(ctx context.Context, claimed *model.Webho
 		logger.LogError(ctx, "complete webhook delivery failed: "+err.Error())
 	}
 	return workerAttemptResult{succeeded: err == nil}
+}
+
+func outboundWebhookPayload(event *model.WebhookEvent) (string, error) {
+	if event == nil {
+		return "", errors.New("webhook event is nil")
+	}
+	if event.EventType != WebhookEventImageTaskFailed {
+		return event.Payload, nil
+	}
+
+	var envelope map[string]any
+	if err := common.Unmarshal([]byte(event.Payload), &envelope); err != nil {
+		return "", fmt.Errorf("parse image task failure webhook payload: %w", err)
+	}
+	data, _ := envelope["data"].(map[string]any)
+	object, _ := data["object"].(map[string]any)
+	errorObject, _ := object["error"].(map[string]any)
+	if errorObject == nil {
+		return event.Payload, nil
+	}
+
+	callbackError := &imageTaskCallbackError{
+		Code:                 webhookPayloadString(errorObject, "code"),
+		Message:              webhookPayloadString(errorObject, "message"),
+		Retryable:            webhookPayloadBool(errorObject, "retryable"),
+		ProviderErrorCode:    webhookPayloadString(errorObject, "provider_error_code"),
+		ProviderErrorType:    webhookPayloadString(errorObject, "provider_error_type"),
+		ProviderErrorMessage: webhookPayloadString(errorObject, "provider_error_message"),
+	}
+	if !isInternalUpstreamQuotaError(callbackError, "") {
+		return event.Payload, nil
+	}
+
+	publicError := buildPublicImageTaskError(callbackError, "")
+	object["error"] = map[string]any{
+		"code":      publicError.Code,
+		"message":   publicError.Message,
+		"retryable": publicError.Retryable,
+	}
+	sanitized, err := common.Marshal(envelope)
+	if err != nil {
+		return "", fmt.Errorf("encode image task failure webhook payload: %w", err)
+	}
+	return string(sanitized), nil
+}
+
+func webhookPayloadString(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return value
+}
+
+func webhookPayloadBool(values map[string]any, key string) bool {
+	value, _ := values[key].(bool)
+	return value
 }
 
 func completeWebhookFailure(ctx context.Context, delivery *model.WebhookDelivery, httpStatus int, reason string, durationMS int64) {

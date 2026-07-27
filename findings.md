@@ -948,6 +948,25 @@
 - 2026-07-23 video input follow-up: xAI `image` is one primary/start-frame source, while `reference_images` is an array of up to seven sources. Current xAI edit and extension accept a video source but do not document auxiliary images.
 - The public controller currently rejects images for every non-generation operation and globally rejects `image` plus `reference_images`; these are provider capability decisions and prevent future adaptors from supporting video-plus-image workflows.
 - The current Resource Center reference-to-video example incorrectly uses `grok-imagine-video-1.5`; current xAI documentation limits reference-to-video to `grok-imagine-video`.
+
+# Async Image Public Error 524 Findings (2026-07-28)
+
+- Ordinary self-log responses already pass through a separate sanitizer; the remaining leak path is the public async image task projection reused by polling and outbound Webhooks.
+- image-handle already preserves structured provider diagnostics in callback error fields, so no cross-service protocol change is needed.
+- A terminal failed task is immutable under its original idempotency key. Retrying requires a new `Idempotency-Key`; replaying the old key returns the original failed task.
+- The public contract should describe `"524"` as a retryable business code while keeping the existing HTTP status behavior unchanged.
+- The generated Resource Center OpenAPI still used `upstream_error` as its image failure example, and the GPT reference incorrectly advised reusing the original idempotency key after a terminal failure.
+- Gemini already shares the same image-task and Webhook DTOs, so the `"524"` contract must be documented identically for both providers rather than as a Gemini-specific endpoint.
+- The local Docker dev stack is already healthy with `new-api-dev`, PostgreSQL, Redis, image-handle, and the async test mock; acceptance can rebuild only `new-api-dev` and use disposable database fixtures.
+- Resource API keys are stored as `ak_` values in the local `asset_keys` table and scope task reads to one user, allowing a disposable user/key/task fixture to exercise the real HTTP task endpoint without exposing any existing credential.
+- The Docker dev service shares its PostgreSQL volume with the current healthy container, so a targeted rebuild/recreate preserves existing local state; acceptance fixtures must use unique IDs and be deleted afterward.
+- image-handle already emits `upstream_status`, `provider_error_code`, `provider_error_type`, and `provider_error_message`, but new-api's `controller.imageCallbackError` previously declared only `code`, `message`, and `retryable`. JSON unmarshalling therefore dropped the structured fields before task persistence.
+- The callback DTO must retain those fields so public masking can prefer stable machine codes while administrator task data keeps the raw diagnostic. This remains a new-api-only change because the sender contract already exists.
+- Terminal image callback handling always creates the durable Webhook event payload when an image-task request record exists; an enabled account endpoint is needed only for delivery creation. Docker privacy acceptance can therefore avoid external delivery side effects.
+- The callback signing ID is intentionally `image_handle_callback` (or a channel-specific `channel_<id>`), while `image_handle_1` is the credential-lease internal secret ID. The first Docker probe mixed these two independent IDs; the configured callback secret itself was correct.
+- The master process polls all nonterminal image tasks, so a manually inserted queued fixture with channel ID zero can be failed by the background poller. Docker callback acceptance must reset and callback atomically enough to precede the next poll, then inspect the resulting terminal row.
+- Durable Webhook events store their public payload at terminal transition time. Pending retries created before this release could therefore retain legacy sensitive messages even after the task-query code is upgraded.
+- A send-boundary sanitizer now rewrites only quota-related `image.task.failed` payloads in memory before HTTP delivery, fails closed on malformed failed-image JSON, leaves the stored administrator event unchanged, and preserves every unrelated event payload byte-for-byte.
 # Resource Center DTO Documentation Findings (2026-07-24)
 
 - The current Resource Center already has executable request/response examples, but users cannot reliably infer required fields, scalar types, nested shapes, constraints, or enums from examples alone.

@@ -307,6 +307,87 @@ func TestImageTaskTerminalEventCreatesOneAccountDelivery(t *testing.T) {
 	assert.EqualValues(t, 1, deliveryCount)
 }
 
+func TestImageTaskFailedWebhookMasksInternalUpstreamQuotaDetails(t *testing.T) {
+	db := setupOutboundWebhookTestDB(t)
+	putWebhookTestConfig(t, "http://127.0.0.1:18080/hook")
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID: "task_webhook_quota_failure", UserId: 501, ChannelId: 77, Group: "default",
+		Platform: constant.TaskPlatform("58"), Action: constant.TaskActionImageGeneration,
+		Status: model.TaskStatusFailure, Progress: "100%", SubmitTime: now, FinishTime: now,
+		FailReason: "本地用户预扣费额度失败, 本地用户剩余额度: $0.020000, 需要预扣费额度: $0.060000 (request id: req-secret)",
+		Properties: model.Properties{OriginModelName: "gpt-image-2"},
+	}
+	task.SetData(map[string]any{
+		"error": map[string]any{
+			"code":                   "new_api_error",
+			"message":                task.FailReason,
+			"retryable":              false,
+			"upstream_status":        403,
+			"provider_error_code":    "insufficient_user_quota",
+			"provider_error_type":    "new_api_error",
+			"provider_error_message": task.FailReason,
+		},
+	})
+	require.NoError(t, db.Create(task).Error)
+	requestJSON, err := common.Marshal(dto.ImageTaskCreateRequest{
+		Model: "gpt-image-2", Operation: "generation", Input: dto.ImageTaskInputRequest{Prompt: "draw"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(model.NewImageTaskRequest(task, 501, nil, "quota-failure-fingerprint", "", requestJSON)).Error)
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return CreateImageTaskWebhookEventTx(tx, task)
+	}))
+
+	publicTask, err := BuildPublicImageTask(task)
+	require.NoError(t, err)
+	require.NotNil(t, publicTask.Error)
+	assert.Equal(t, "524", publicTask.Error.Code)
+	assert.Equal(t, publicImageTaskUpstreamQuotaMessage, publicTask.Error.Message)
+	assert.True(t, publicTask.Error.Retryable)
+
+	var event model.WebhookEvent
+	require.NoError(t, db.Where("object_id = ?", task.TaskID).First(&event).Error)
+	assert.Equal(t, WebhookEventImageTaskFailed, event.EventType)
+	assert.Contains(t, event.Payload, `"code":"524"`)
+	assert.Contains(t, event.Payload, `"retryable":true`)
+	assert.Contains(t, event.Payload, publicImageTaskUpstreamQuotaMessage)
+	assert.NotContains(t, event.Payload, "$0.020000")
+	assert.NotContains(t, event.Payload, "$0.060000")
+	assert.NotContains(t, event.Payload, "req-secret")
+	assert.NotContains(t, event.Payload, "insufficient_user_quota")
+}
+
+func TestOutboundWebhookPayloadMasksStoredLegacyQuotaFailure(t *testing.T) {
+	const stored = `{"id":"evt_legacy_quota","type":"image.task.failed","data":{"object":{"id":"task_legacy_quota","status":"failed","error":{"code":"new_api_error","message":"本地用户预扣费额度失败, 本地用户剩余额度: $0.020000 (request id: req-secret)","retryable":false,"provider_error_code":"insufficient_user_quota"}}}}`
+	event := &model.WebhookEvent{
+		EventType: WebhookEventImageTaskFailed,
+		Payload:   stored,
+	}
+
+	payload, err := outboundWebhookPayload(event)
+	require.NoError(t, err)
+	assert.Contains(t, payload, `"code":"524"`)
+	assert.Contains(t, payload, `"retryable":true`)
+	assert.Contains(t, payload, publicImageTaskUpstreamQuotaMessage)
+	assert.NotContains(t, payload, "$0.020000")
+	assert.NotContains(t, payload, "req-secret")
+	assert.NotContains(t, payload, "insufficient_user_quota")
+	assert.Equal(t, stored, event.Payload)
+}
+
+func TestOutboundWebhookPayloadPreservesNonQuotaFailure(t *testing.T) {
+	const stored = `{"id":"evt_validation","type":"image.task.failed","data":{"object":{"id":"task_validation","status":"failed","error":{"code":"unsupported_size","message":"size is unsupported","retryable":false}}}}`
+
+	payload, err := outboundWebhookPayload(&model.WebhookEvent{
+		EventType: WebhookEventImageTaskFailed,
+		Payload:   stored,
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, stored, payload)
+}
+
 func TestVideoTaskTerminalEventCreatesAssetsAndOneAccountDelivery(t *testing.T) {
 	db := setupOutboundWebhookTestDB(t)
 	putWebhookTestConfig(t, "http://127.0.0.1:18080/hook")

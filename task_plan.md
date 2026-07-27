@@ -62,6 +62,54 @@ Complete
 
 ---
 
+# Task Plan: Async Image Public Error 524 Masking (2026-07-28)
+
+## Goal
+Map internal upstream balance/quota failures to the public business error code `"524"` without exposing balances, channel/subgroup details, provider codes, or upstream request IDs through task polling or account Webhooks.
+
+## Current Phase
+Complete
+
+### Phase 1: Public error boundary
+- [x] Define the stable `"524"` public error and retryable generic message.
+- [x] Detect structured provider quota codes with a narrow legacy-message fallback.
+- [x] Persist structured image-handle provider error fields through the callback DTO.
+- [x] Preserve existing public behavior for unrelated failures.
+**Status:** complete
+
+### Phase 2: Contract documentation
+- [x] Update the generated Resource Center OpenAPI examples and semantics.
+- [x] Update GPT-Image and Gemini task/Webhook documentation.
+- [x] Correct terminal-failure idempotency retry guidance.
+**Status:** complete
+
+### Phase 3: Verification
+- [x] Run focused Go tests for the public error projection and Webhook.
+- [x] Run full Go tests plus OpenAPI/frontend checks.
+- [x] Build supertokendoc.
+- [x] Rebuild Docker dev and verify polling, Webhook, retained administrator diagnostics, and legacy pending-delivery masking.
+**Status:** complete
+
+## Locked Decisions
+- `"524"` is a string business code, not an HTTP status code.
+- Failed async task polling remains HTTP 200 with `status=failed`.
+- Public polling and Webhooks receive only the wrapped error; administrator diagnostics retain the raw provider failure.
+- This privacy rule cannot be bypassed by relay passthrough settings.
+- No image-handle protocol, database, or environment-variable change is required.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Existing planning files contain extensive completed work | 1 | Append an isolated current-task section and preserve all historical content. |
+| A combined progress patch used a heading from another planning file as task-plan context | 1 | The patch changed nothing; split subsequent planning updates by file and exact section. |
+| A multi-hunk phase update did not match the duplicated planning headings | 1 | Re-read the isolated current section and apply the status update with its exact local context. |
+| Initial Webhook model inspection used nonexistent split filenames | 1 | Read the event-creation service directly; it always persists the event before optionally creating a delivery, so Docker acceptance needs no endpoint fixture. |
+| First Docker callback using `image_handle_1` returned `callback secret not found` | 1 | Keep the disposable queued fixture, inspect the runtime secret-ID resolution and retry with the actually configured identifier rather than repeating the request. |
+| Background task polling terminalized the disposable queued task before the corrected callback | 1 | Remove its generated event, reset the same fixture, and submit the signed callback immediately in one orchestrated acceptance step. |
+| First fixture reset referenced nonexistent `webhook_deliveries.event_id` | 1 | The transaction rolled back; inspect the table and use its actual `event_record_id` foreign key in the corrected cleanup. |
+
+---
+
 # Task Plan: Image-handle Trace Search and Task Table Diagnostics (2026-07-23)
 
 ## Goal

@@ -581,7 +581,7 @@
         ],
         "operationId": "createImageTask",
         "summary": "Create an asynchronous image task",
-        "description": "Accepts the normalized JSON contract for generation or edit tasks, or synchronous-style multipart local files for edit tasks. Returns immediately after the task, billing reservation, credential lease, and durable dispatch are stored. Reusing an Idempotency-Key with the same normalized fields and file contents returns the original task.",
+        "description": "Accepts the normalized JSON contract for generation or edit tasks, or synchronous-style multipart local files for edit tasks. Returns immediately after the task, billing reservation, credential lease, and durable dispatch are stored. Reusing an Idempotency-Key with the same normalized fields and file contents returns the original task. To retry a terminal failed task, submit a new request with a new Idempotency-Key.",
         "security": [
           {
             "ModelTokenAuth": []
@@ -592,12 +592,12 @@
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
-            "description": "Optional caller key, unique per user. Maximum 128 characters.",
+            "description": "Optional caller key, unique per user. Maximum 128 characters. Replaying it returns the original task, including a terminal failed task; use a new key for a new attempt after failure.",
             "schema": {
               "type": "string",
               "maxLength": 128
             },
-            "x-description-zh-CN": "可选的调用方幂等 Key，同一用户内唯一，最长 128 个字符。"
+            "x-description-zh-CN": "可选的调用方幂等 Key，同一用户内唯一，最长 128 个字符。重复使用会返回原任务，包括已经终态失败的任务；失败后要发起新的尝试，请使用新的 Key。"
           }
         ],
         "requestBody": {
@@ -1545,9 +1545,9 @@
                     "result": null,
                     "usage": {},
                     "error": {
-                      "code": "upstream_error",
-                      "message": "Image generation failed",
-                      "retryable": false
+                      "code": "524",
+                      "message": "Image generation service is temporarily unavailable. Please try again later.",
+                      "retryable": true
                     },
                     "client_reference_id": "order_456",
                     "metadata": {},
@@ -2561,11 +2561,17 @@
         "properties": {
           "code": {
             "type": "string",
-            "description": "Stable machine-readable error code.",
-            "x-description-zh-CN": "稳定、可供程序判断的错误码。"
+            "description": "Stable business error code. \"524\" means a retryable internal image-service availability failure; it is not an HTTP status code.",
+            "x-description-zh-CN": "稳定的业务错误码；“524”表示图片服务内部暂时不可用且可以重试，它不是 HTTP 状态码。",
+            "examples": [
+              "524"
+            ]
           },
           "message": {
             "type": "string",
+            "examples": [
+              "Image generation service is temporarily unavailable. Please try again later."
+            ],
             "description": "Human-readable error message.",
             "x-description-zh-CN": "便于阅读的错误说明。"
           },

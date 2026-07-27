@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -876,8 +877,14 @@ func TestRelayTaskFastFailureCallbackRefundsExactlyOnceBeforeSubmitSettlement(t 
 	outcome := runRelayTaskWithFastCallback(t, imageCallbackEvent{
 		Status: "failed",
 		Error: &imageCallbackError{
-			Code:    "render_failed",
-			Message: "render failed before submit response",
+			Code:                 "new_api_error",
+			Message:              "internal upstream quota failure",
+			UpstreamStatus:       http.StatusForbidden,
+			ProviderErrorCode:    "insufficient_user_quota",
+			ProviderErrorType:    "new_api_error",
+			ProviderErrorMessage: "internal upstream quota failure",
+			ProviderErrorParam:   "quota",
+			UpstreamError:        json.RawMessage(`{"error":{"code":"insufficient_user_quota"}}`),
 		},
 		Usage: &imageCallbackUsage{ActualQuota: 999},
 	})
@@ -885,12 +892,22 @@ func TestRelayTaskFastFailureCallbackRefundsExactlyOnceBeforeSubmitSettlement(t 
 	require.Equal(t, http.StatusOK, outcome.ResponseCode)
 	assert.EqualValues(t, model.TaskStatusFailure, outcome.Task.Status)
 	assert.Equal(t, "100%", outcome.Task.Progress)
-	assert.Equal(t, "render failed before submit response", outcome.Task.FailReason)
+	assert.Equal(t, "internal upstream quota failure", outcome.Task.FailReason)
 	assert.Equal(t, "imgtask_controller_fast", outcome.Task.PrivateData.UpstreamTaskID)
-	assert.Contains(t, string(outcome.Task.Data), "render_failed")
+	assert.Contains(t, string(outcome.Task.Data), `"provider_error_code":"insufficient_user_quota"`)
+	assert.Contains(t, string(outcome.Task.Data), `"provider_error_param":"quota"`)
+	assert.Contains(t, string(outcome.Task.Data), `"upstream_error":{"error":{"code":"insufficient_user_quota"}}`)
 	require.NotNil(t, outcome.Task.PrivateData.BillingContext)
 	require.NotNil(t, outcome.Task.PrivateData.BillingContext.ImagePricing)
 	assert.Equal(t, "public-fast-image", outcome.Task.PrivateData.BillingContext.ImagePricing.PublicModel)
+
+	publicTask, err := service.BuildPublicImageTask(&outcome.Task)
+	require.NoError(t, err)
+	require.NotNil(t, publicTask.Error)
+	assert.Equal(t, "524", publicTask.Error.Code)
+	assert.Equal(t, "Image generation service is temporarily unavailable. Please try again later.", publicTask.Error.Message)
+	assert.True(t, publicTask.Error.Retryable)
+	assert.NotContains(t, publicTask.Error.Message, "quota")
 
 	expectedQuota := common.QuotaFromFloat(0.0002 * common.QuotaPerUnit)
 	assert.Zero(t, outcome.Task.Quota)
@@ -902,10 +919,28 @@ func TestRelayTaskFastFailureCallbackRefundsExactlyOnceBeforeSubmitSettlement(t 
 	assert.Equal(t, model.LogTypeError, outcome.Logs[0].Type)
 	assert.Zero(t, outcome.Logs[0].Quota)
 	assert.Equal(t, "req-controller-fast", outcome.Logs[0].RequestId)
+	assert.Equal(t, 123, outcome.Logs[0].ChannelId)
+	assert.Equal(t, "default", outcome.Logs[0].Group)
+	assert.Contains(t, outcome.Logs[0].Content, "internal upstream quota failure")
 	var other map[string]interface{}
 	require.NoError(t, common.Unmarshal([]byte(outcome.Logs[0].Other), &other))
 	assert.Equal(t, "async_image_failed", other["billing_stage"])
 	assert.Equal(t, float64(expectedQuota), other["pre_consumed_quota"])
+	assert.Equal(t, "internal upstream quota failure", other["reason"])
+
+	userLogs, total, err := model.GetUserLogs(1, model.LogTypeError, 0, 0, "", "", 0, 10, "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, userLogs, 1)
+	assert.Equal(t, "status_code=500, 系统异常，请稍后重试", userLogs[0].Content)
+	assert.Zero(t, userLogs[0].ChannelId)
+	assert.Empty(t, userLogs[0].ChannelName)
+	assert.Empty(t, userLogs[0].Group)
+	assert.NotContains(t, userLogs[0].Content, "quota")
+	var userOther map[string]interface{}
+	require.NoError(t, common.Unmarshal([]byte(userLogs[0].Other), &userOther))
+	assert.Equal(t, "task_controller_fast", userOther["task_id"])
+	assert.NotContains(t, userOther, "reason")
 }
 
 func TestRelayTaskFastSuccessCallbackOwnsBillingWhenSubmitReturnsError(t *testing.T) {

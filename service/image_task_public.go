@@ -10,16 +10,27 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	publicImageTaskUpstreamQuotaCode    = "524"
+	publicImageTaskUpstreamQuotaMessage = "Image generation service is temporarily unavailable. Please try again later."
+)
+
+type imageTaskCallbackError struct {
+	Code                 string `json:"code"`
+	Message              string `json:"message"`
+	Retryable            bool   `json:"retryable"`
+	UpstreamStatus       int    `json:"upstream_status,omitempty"`
+	ProviderErrorCode    string `json:"provider_error_code,omitempty"`
+	ProviderErrorType    string `json:"provider_error_type,omitempty"`
+	ProviderErrorMessage string `json:"provider_error_message,omitempty"`
+}
+
 type imageTaskCallbackData struct {
 	Result *struct {
 		Output map[string]any `json:"output"`
 	} `json:"result"`
-	Usage map[string]any `json:"usage"`
-	Error *struct {
-		Code      string `json:"code"`
-		Message   string `json:"message"`
-		Retryable bool   `json:"retryable"`
-	} `json:"error"`
+	Usage map[string]any          `json:"usage"`
+	Error *imageTaskCallbackError `json:"error"`
 }
 
 func BuildPublicImageTasks(tasks []*model.Task) ([]*dto.ImageTaskPublic, error) {
@@ -178,17 +189,77 @@ func buildPublicImageTask(task *model.Task, requestRecord *model.ImageTaskReques
 		}
 	}
 	if public.Status == "failed" {
-		public.Error = &dto.ImageTaskPublicError{Code: "image_task_failed", Message: task.FailReason}
-		if callback.Error != nil {
-			public.Error.Code = firstNonEmptyString(callback.Error.Code, public.Error.Code)
-			public.Error.Message = firstNonEmptyString(callback.Error.Message, public.Error.Message)
-			public.Error.Retryable = callback.Error.Retryable
-		}
-		if strings.TrimSpace(public.Error.Message) == "" {
-			public.Error.Message = "Image task failed"
-		}
+		public.Error = buildPublicImageTaskError(callback.Error, task.FailReason)
 	}
 	return public
+}
+
+func buildPublicImageTaskError(callbackError *imageTaskCallbackError, failReason string) *dto.ImageTaskPublicError {
+	if isInternalUpstreamQuotaError(callbackError, failReason) {
+		return &dto.ImageTaskPublicError{
+			Code:      publicImageTaskUpstreamQuotaCode,
+			Message:   publicImageTaskUpstreamQuotaMessage,
+			Retryable: true,
+		}
+	}
+
+	publicError := &dto.ImageTaskPublicError{Code: "image_task_failed", Message: failReason}
+	if callbackError != nil {
+		publicError.Code = firstNonEmptyString(callbackError.Code, publicError.Code)
+		publicError.Message = firstNonEmptyString(callbackError.Message, publicError.Message)
+		publicError.Retryable = callbackError.Retryable
+	}
+	if strings.TrimSpace(publicError.Message) == "" {
+		publicError.Message = "Image task failed"
+	}
+	return publicError
+}
+
+func isInternalUpstreamQuotaError(callbackError *imageTaskCallbackError, failReason string) bool {
+	if callbackError != nil {
+		for _, code := range []string{
+			callbackError.Code,
+			callbackError.ProviderErrorCode,
+			callbackError.ProviderErrorType,
+		} {
+			switch strings.ToLower(strings.TrimSpace(code)) {
+			case "insufficient_user_quota",
+				"insufficient_quota",
+				"pre_consume_token_quota_failed",
+				"billing_not_active",
+				"arrearage":
+				return true
+			}
+		}
+	}
+
+	messages := []string{failReason}
+	if callbackError != nil {
+		messages = append(messages, callbackError.Message, callbackError.ProviderErrorMessage)
+	}
+	for _, message := range messages {
+		normalized := strings.ToLower(strings.TrimSpace(message))
+		if normalized == "" {
+			continue
+		}
+		if strings.Contains(normalized, "本地用户") &&
+			(strings.Contains(normalized, "额度") || strings.Contains(normalized, "预扣费")) {
+			return true
+		}
+		for _, marker := range []string{
+			"insufficient quota",
+			"quota insufficient",
+			"pre-consume token quota failed",
+			"preconsume token quota failed",
+			"billing not active",
+			"arrearage",
+		} {
+			if strings.Contains(normalized, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func PublicImageTaskStatus(status model.TaskStatus) string {

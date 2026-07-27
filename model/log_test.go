@@ -245,6 +245,8 @@ func TestFormatUserLogsHidesModelMapping(t *testing.T) {
 		{
 			Id:          42,
 			ChannelName: "hidden-channel",
+			ChannelId:   17,
+			Group:       "aggregate-premium",
 			ModelName:   "claude-haiku-4-5",
 			Other: common.MapToJsonStr(map[string]interface{}{
 				"admin_info":          map[string]interface{}{"use_channel": []string{"hidden"}},
@@ -259,6 +261,8 @@ func TestFormatUserLogsHidesModelMapping(t *testing.T) {
 	formatUserLogs(logs, 0)
 
 	require.Empty(t, logs[0].ChannelName)
+	require.Zero(t, logs[0].ChannelId)
+	require.Empty(t, logs[0].Group)
 	require.Equal(t, 1, logs[0].Id)
 	require.Equal(t, "claude-haiku-4-5", logs[0].ModelName)
 
@@ -316,19 +320,41 @@ func TestFormatUserLogsHidesAggregateRouteModelRatioDetails(t *testing.T) {
 func TestFormatUserLogsSanitizesErrorContent(t *testing.T) {
 	logs := []*Log{
 		{
-			Id:      42,
-			Type:    LogTypeError,
-			Content: `status_code=429, upstream capacity {"reason":"INSUFFICIENT_MODEL_CAPACITY"}`,
+			Id:        42,
+			Type:      LogTypeError,
+			Content:   `status_code=429, upstream capacity {"reason":"INSUFFICIENT_MODEL_CAPACITY"}`,
+			ChannelId: 9,
+			Group:     "aggregate-premium",
 			Other: common.MapToJsonStr(map[string]interface{}{
-				"error_type":     "openai_error",
-				"error_code":     "rate_limit_error",
-				"status_code":    429,
-				"channel_id":     9,
-				"channel_name":   "upstream-a",
-				"channel_type":   1,
-				"internal_retry": false,
-				"user_safe":      true,
-				"request_path":   "/v1/chat/completions",
+				"error_type":                               "openai_error",
+				"error_code":                               "rate_limit_error",
+				"status_code":                              429,
+				"channel_id":                               9,
+				"channel_name":                             "upstream-a",
+				"channel_type":                             1,
+				"internal_retry":                           false,
+				"user_safe":                                true,
+				"request_path":                             "/v1/chat/completions",
+				"reason":                                   "internal balance failure",
+				"execution_mode":                           "image_handle_sync",
+				"upstream_status_code":                     429,
+				"upstream_error_message":                   "internal upstream capacity",
+				"image_handle_sync_provider_task_id":       "imgtask-internal",
+				"image_handle_sync_credential_lease_id":    "lease-internal",
+				"image_handle_sync_error":                  map[string]interface{}{"message": "secret"},
+				"error_metadata":                           map[string]interface{}{"channel": "secret"},
+				"client_response_wrapped":                  true,
+				"client_response_status_code":              500,
+				"client_response_message":                  "safe",
+				"client_response_error_type":               "new_api_error",
+				"client_response_error_code":               "service_unavailable",
+				"route_model_ratio_aggregate_group":        "aggregate-premium",
+				"route_model_ratio_real_group":             "private-route",
+				"route_model_ratio_model_name":             "private-model",
+				"route_model_group_ratio_source":           "user",
+				"route_model_group_ratio":                  2,
+				"route_model_group_ratio_applied":          true,
+				"public_error_retryable_unrelated_fixture": true,
 			}),
 		},
 	}
@@ -336,6 +362,8 @@ func TestFormatUserLogsSanitizesErrorContent(t *testing.T) {
 	formatUserLogs(logs, 0)
 
 	require.Equal(t, userFacingRelayErrorLog, logs[0].Content)
+	require.Zero(t, logs[0].ChannelId)
+	require.Empty(t, logs[0].Group)
 	other, err := common.StrToMap(logs[0].Other)
 	require.NoError(t, err)
 	require.NotContains(t, other, "error_type")
@@ -346,6 +374,19 @@ func TestFormatUserLogsSanitizesErrorContent(t *testing.T) {
 	require.NotContains(t, other, "channel_type")
 	require.NotContains(t, other, "internal_retry")
 	require.NotContains(t, other, "user_safe")
+	require.NotContains(t, other, "reason")
+	require.NotContains(t, other, "execution_mode")
+	require.NotContains(t, other, "upstream_status_code")
+	require.NotContains(t, other, "upstream_error_message")
+	require.NotContains(t, other, "image_handle_sync_provider_task_id")
+	require.NotContains(t, other, "image_handle_sync_credential_lease_id")
+	require.NotContains(t, other, "image_handle_sync_error")
+	require.NotContains(t, other, "error_metadata")
+	require.NotContains(t, other, "client_response_wrapped")
+	require.NotContains(t, other, "client_response_status_code")
+	require.NotContains(t, other, "client_response_message")
+	require.NotContains(t, other, "client_response_error_type")
+	require.NotContains(t, other, "client_response_error_code")
 	require.Equal(t, "/v1/chat/completions", other["request_path"])
 }
 
