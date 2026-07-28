@@ -39,7 +39,7 @@ func TestValidateAndNormalizeGeminiImageRequestNormalizesOfficialOptions(t *test
 	})
 
 	require.Nil(t, validationErr)
-	google := normalized["google"].(map[string]any)
+	google := normalized.ProviderOptions["google"].(map[string]any)
 	generationConfig := google["generationConfig"].(map[string]any)
 	assert.Equal(t, 0.9, generationConfig["topP"])
 	assert.Equal(t, int64(32), generationConfig["topK"])
@@ -53,6 +53,65 @@ func TestValidateAndNormalizeGeminiImageRequestNormalizesOfficialOptions(t *test
 	safety := google["safetySettings"].([]any)
 	require.Len(t, safety, 1)
 	assert.Equal(t, "BLOCK_ONLY_HIGH", safety[0].(map[string]any)["threshold"])
+}
+
+func TestValidateAndNormalizeGeminiImageRequestNormalizesPublicOutputControls(t *testing.T) {
+	normalized, validationErr := ValidateAndNormalizeGeminiImageRequest(GeminiImageValidationInput{
+		Model:       GeminiImageModelFlash,
+		AspectRatio: "16:9",
+		Resolution:  "0.5k",
+		ProviderOptions: map[string]any{
+			"google": map[string]any{
+				"generationConfig": map[string]any{
+					"temperature": 0.5,
+				},
+			},
+		},
+	})
+
+	require.Nil(t, validationErr)
+	assert.Equal(t, "16:9", normalized.AspectRatio)
+	assert.Equal(t, "512", normalized.Resolution)
+	assert.Equal(t, 0.5, normalized.ProviderOptions["google"].(map[string]any)["generationConfig"].(map[string]any)["temperature"])
+
+	_, validationErr = ValidateAndNormalizeGeminiImageRequest(GeminiImageValidationInput{
+		Model:      GeminiImageModelPro,
+		Resolution: "512",
+	})
+	require.NotNil(t, validationErr)
+	assert.Equal(t, "unsupported_image_resolution", validationErr.Code)
+	assert.Equal(t, "resolution", validationErr.Param)
+}
+
+func TestValidateAndNormalizeGeminiImageRequestUsesFieldLevelImageConfigConflicts(t *testing.T) {
+	normalized, validationErr := ValidateAndNormalizeGeminiImageRequest(GeminiImageValidationInput{
+		Model:       GeminiImageModelFlash,
+		AspectRatio: "4:5",
+		ProviderOptions: map[string]any{
+			"google": map[string]any{
+				"generationConfig": map[string]any{
+					"imageConfig": map[string]any{"imageSize": "2K"},
+				},
+			},
+		},
+	})
+	require.Nil(t, validationErr)
+	assert.Equal(t, "4:5", normalized.AspectRatio)
+
+	_, validationErr = ValidateAndNormalizeGeminiImageRequest(GeminiImageValidationInput{
+		Model:      GeminiImageModelFlash,
+		Resolution: "2K",
+		ProviderOptions: map[string]any{
+			"google": map[string]any{
+				"generationConfig": map[string]any{
+					"imageConfig": map[string]any{"imageSize": "2K"},
+				},
+			},
+		},
+	})
+	require.NotNil(t, validationErr)
+	assert.Equal(t, "duplicate_parameter", validationErr.Code)
+	assert.Equal(t, "resolution", validationErr.Param)
 }
 
 func TestValidateAndNormalizeGeminiImageRequestRejectsPublicConflicts(t *testing.T) {

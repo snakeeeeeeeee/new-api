@@ -111,7 +111,12 @@ const GEMINI_ASYNC_CREATE_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
     "model": "gemini-3.1-flash-image",
     "operation": "generation",
     "input": {"prompt": "A product photo on a white background"},
-    "output": {"count": 1, "size": "1024x1024", "format": "png"},
+    "output": {
+      "count": 1,
+      "aspect_ratio": "16:9",
+      "resolution": "4K",
+      "format": "png"
+    },
     "provider_options": {
       "google": {
         "generationConfig": {
@@ -148,7 +153,12 @@ const GEMINI_ASYNC_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
       "prompt": "Replace the background with a studio wall",
       "images": [{"url": "https://cdn.example.com/input.png"}]
     },
-    "output": {"count": 1, "size": "2048x2048", "format": "png"}
+    "output": {
+      "count": 1,
+      "aspect_ratio": "1:1",
+      "resolution": "2K",
+      "format": "png"
+    }
   }'`;
 
 const ASYNC_MULTIPART_EDIT_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
@@ -1044,7 +1054,7 @@ function AsyncImageDocs({ t }) {
       <DocumentationSection
         title={`${t('创建生成任务')} · POST /v1/image/tasks`}
         description={t(
-          '成功创建后返回 202；GPT-Image 与 Gemini 仅在模型能力和 provider_options 上存在差异。',
+          '成功创建后返回 202。Gemini 可直接在 output 中使用 aspect_ratio 和 resolution；provider_options.google 只用于高级供应商参数。',
         )}
       >
         <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>

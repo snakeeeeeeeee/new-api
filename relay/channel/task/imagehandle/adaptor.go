@@ -160,6 +160,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			req.Metadata["resolution"] = resolution
 		}
 	}
+	if _, exists := req.Metadata["aspect_ratio"]; !exists && req.AspectRatio != nil {
+		if aspectRatio := strings.TrimSpace(*req.AspectRatio); aspectRatio != "" {
+			req.Metadata["aspect_ratio"] = aspectRatio
+		}
+	}
 	if _, exists := req.Metadata["response_format"]; !exists && req.ResponseFormat != nil {
 		if responseFormat := strings.TrimSpace(*req.ResponseFormat); responseFormat != "" {
 			req.Metadata["response_format"] = responseFormat
@@ -545,7 +550,7 @@ func extractParameters(req relaycommon.TaskSubmitReq, metadata map[string]interf
 	if req.Size != "" {
 		params["size"] = req.Size
 	}
-	for _, key := range []string{"quality", "resolution", "response_format", "n", "output_format", "output_compression"} {
+	for _, key := range []string{"quality", "resolution", "aspect_ratio", "response_format", "n", "output_format", "output_compression"} {
 		if v, ok := metadata[key]; ok {
 			params[key] = v
 		}

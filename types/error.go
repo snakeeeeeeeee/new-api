@@ -96,6 +96,7 @@ type NewAPIError struct {
 	Err            error
 	RelayError     any
 	skipRetry      bool
+	clientSafe     bool
 	recordErrorLog *bool
 	errorType      ErrorType
 	errorCode      ErrorCode
@@ -418,6 +419,19 @@ func ErrOptionWithSkipRetry() NewAPIErrorOptions {
 	return func(e *NewAPIError) {
 		e.skipRetry = true
 	}
+}
+
+// ErrOptionWithClientSafe marks a locally constructed error whose message and
+// structured fields are safe to return without treating it as an upstream
+// provider error.
+func ErrOptionWithClientSafe() NewAPIErrorOptions {
+	return func(e *NewAPIError) {
+		e.clientSafe = true
+	}
+}
+
+func IsClientSafeError(err *NewAPIError) bool {
+	return err != nil && err.clientSafe
 }
 
 func ErrOptionWithNoRecordErrorLog() NewAPIErrorOptions {

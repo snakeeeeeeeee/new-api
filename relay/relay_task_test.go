@@ -200,7 +200,7 @@ func TestValidateAndNormalizeGeminiAsyncImageRequest(t *testing.T) {
 		},
 	})
 
-	taskErr := validateAndNormalizeGeminiAsyncImageRequest(context)
+	taskErr := validateAndNormalizeGeminiAsyncImageRequest(context, service.GeminiImageModelFlash)
 
 	require.Nil(t, taskErr)
 	request, err := relaycommon.GetTaskRequest(context)
@@ -222,11 +222,38 @@ func TestValidateAndNormalizeGeminiAsyncImageRequestRejectsUnsupportedCount(t *t
 		N:      &count,
 	})
 
-	taskErr := validateAndNormalizeGeminiAsyncImageRequest(context)
+	taskErr := validateAndNormalizeGeminiAsyncImageRequest(context, service.GeminiImageModelFlash)
 
 	require.NotNil(t, taskErr)
 	assert.Equal(t, "unsupported_image_count", taskErr.Code)
 	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+}
+
+func TestValidateAndNormalizeGeminiAsyncImageRequestNormalizesOutputControls(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", nil)
+	aspectRatio := "21:9"
+	resolution := "4k"
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:       service.GeminiImageModelPro,
+		Prompt:      "draw",
+		AspectRatio: &aspectRatio,
+		Resolution:  &resolution,
+		Metadata:    map[string]interface{}{},
+	})
+
+	taskErr := validateAndNormalizeGeminiAsyncImageRequest(context, service.GeminiImageModelPro)
+
+	require.Nil(t, taskErr)
+	request, err := relaycommon.GetTaskRequest(context)
+	require.NoError(t, err)
+	require.NotNil(t, request.AspectRatio)
+	require.NotNil(t, request.Resolution)
+	assert.Equal(t, "21:9", *request.AspectRatio)
+	assert.Equal(t, "4K", *request.Resolution)
+	assert.Equal(t, "21:9", request.Metadata["aspect_ratio"])
+	assert.Equal(t, "4K", request.Metadata["resolution"])
 }
 
 func TestNewAsyncImageTaskPreservesEffectiveRouteRatioSnapshot(t *testing.T) {

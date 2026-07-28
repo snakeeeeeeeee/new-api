@@ -35,22 +35,25 @@ var geminiImageAspectRatios = map[string]struct{}{
 }
 
 var geminiImageImageSizes = map[string]struct{}{
-	"1K": {},
-	"2K": {},
-	"4K": {},
+	"512": {},
+	"1K":  {},
+	"2K":  {},
+	"4K":  {},
 }
 
 type GeminiImageValidationInput struct {
+	Model                   string
 	Count                   *int
 	HasMask                 bool
 	Quality                 string
 	Size                    string
+	AspectRatio             string
+	Resolution              string
 	OutputFormat            string
 	ResponseFormat          string
 	HasOutputCompression    bool
 	HasBackground           bool
 	HasInputFidelity        bool
-	HasResolution           bool
 	HasStyle                bool
 	HasModeration           bool
 	HasPartialImages        bool
@@ -60,6 +63,12 @@ type GeminiImageValidationInput struct {
 	HasLegacyExtraFields    bool
 	UnsupportedPublicFields []string
 	ProviderOptions         map[string]any
+}
+
+type GeminiImageValidationResult struct {
+	ProviderOptions map[string]any
+	AspectRatio     string
+	Resolution      string
 }
 
 type GeminiImageValidationError struct {
@@ -84,30 +93,31 @@ func IsGeminiImageModel(modelName string) bool {
 	}
 }
 
-func ValidateAndNormalizeGeminiImageRequest(input GeminiImageValidationInput) (map[string]any, *GeminiImageValidationError) {
+func ValidateAndNormalizeGeminiImageRequest(input GeminiImageValidationInput) (GeminiImageValidationResult, *GeminiImageValidationError) {
+	var result GeminiImageValidationResult
 	if input.Count != nil && *input.Count != 1 {
-		return nil, geminiImageValidationError(
+		return result, geminiImageValidationError(
 			"unsupported_image_count",
 			"n",
 			"Gemini image requests support exactly one output image",
 		)
 	}
 	if input.HasMask {
-		return nil, geminiImageValidationError(
+		return result, geminiImageValidationError(
 			"unsupported_mask",
 			"mask",
 			"Gemini image editing does not support masks",
 		)
 	}
 	if quality := strings.ToLower(strings.TrimSpace(input.Quality)); quality != "" && quality != "auto" {
-		return nil, geminiImageValidationError(
+		return result, geminiImageValidationError(
 			"unsupported_quality",
 			"quality",
 			"Gemini image requests only support quality=auto",
 		)
 	}
 	if format := strings.ToLower(strings.TrimSpace(input.OutputFormat)); format != "" && format != "png" {
-		return nil, geminiImageValidationError(
+		return result, geminiImageValidationError(
 			"unsupported_output_format",
 			"output_format",
 			"Gemini image requests only support PNG output",
@@ -115,7 +125,7 @@ func ValidateAndNormalizeGeminiImageRequest(input GeminiImageValidationInput) (m
 	}
 	if responseFormat := strings.ToLower(strings.TrimSpace(input.ResponseFormat)); responseFormat != "" &&
 		responseFormat != "url" && responseFormat != "b64_json" {
-		return nil, geminiImageValidationError(
+		return result, geminiImageValidationError(
 			"unsupported_response_format",
 			"response_format",
 			"Gemini image requests only support response_format=url or b64_json",
@@ -129,7 +139,6 @@ func ValidateAndNormalizeGeminiImageRequest(input GeminiImageValidationInput) (m
 		{input.HasOutputCompression, "output_compression"},
 		{input.HasBackground, "background"},
 		{input.HasInputFidelity, "input_fidelity"},
-		{input.HasResolution, "resolution"},
 		{input.HasStyle, "style"},
 		{input.HasModeration, "moderation"},
 		{input.HasPartialImages, "partial_images"},
@@ -140,7 +149,7 @@ func ValidateAndNormalizeGeminiImageRequest(input GeminiImageValidationInput) (m
 	}
 	for _, field := range unsupported {
 		if field.present {
-			return nil, geminiImageValidationError(
+			return result, geminiImageValidationError(
 				"unsupported_parameter",
 				field.param,
 				fmt.Sprintf("Gemini image requests do not support %s", field.param),
@@ -149,7 +158,7 @@ func ValidateAndNormalizeGeminiImageRequest(input GeminiImageValidationInput) (m
 	}
 	for _, param := range input.UnsupportedPublicFields {
 		if strings.TrimSpace(param) != "" {
-			return nil, geminiImageValidationError(
+			return result, geminiImageValidationError(
 				"unsupported_parameter",
 				param,
 				fmt.Sprintf("Gemini image requests do not support %s", param),
@@ -160,7 +169,7 @@ func ValidateAndNormalizeGeminiImageRequest(input GeminiImageValidationInput) (m
 	size := strings.TrimSpace(input.Size)
 	if size != "" {
 		if _, ok := geminiImageSizes[size]; !ok {
-			return nil, geminiImageValidationError(
+			return result, geminiImageValidationError(
 				"unsupported_image_size",
 				"size",
 				"Gemini image size is unsupported",
@@ -168,25 +177,56 @@ func ValidateAndNormalizeGeminiImageRequest(input GeminiImageValidationInput) (m
 		}
 	}
 
-	normalized, validationErr := normalizeGeminiProviderOptions(input.ProviderOptions)
+	aspectRatio, validationErr := normalizeGeminiPublicAspectRatio(input.AspectRatio)
 	if validationErr != nil {
-		return nil, validationErr
+		return result, validationErr
 	}
-	if size != "" && geminiProviderOptionsHasImageConfig(normalized) {
-		return nil, geminiImageValidationError(
+	resolution, validationErr := normalizeGeminiPublicResolution(input.Model, input.Resolution)
+	if validationErr != nil {
+		return result, validationErr
+	}
+
+	normalized, validationErr := normalizeGeminiProviderOptions(input.ProviderOptions, input.Model)
+	if validationErr != nil {
+		return result, validationErr
+	}
+	imageConfig, hasImageConfig := geminiProviderOptionsImageConfig(normalized)
+	if size != "" && (aspectRatio != "" || resolution != "" || hasImageConfig) {
+		return result, geminiImageValidationError(
 			"duplicate_parameter",
 			"size",
-			"size duplicates provider_options.google.generationConfig.imageConfig",
+			"size duplicates Gemini aspect ratio or resolution controls",
 		)
 	}
-	return normalized, nil
+	if aspectRatio != "" {
+		if _, exists := imageConfig["aspectRatio"]; exists {
+			return result, geminiImageValidationError(
+				"duplicate_parameter",
+				"aspect_ratio",
+				"aspect_ratio duplicates provider_options.google.generationConfig.imageConfig.aspectRatio",
+			)
+		}
+	}
+	if resolution != "" {
+		if _, exists := imageConfig["imageSize"]; exists {
+			return result, geminiImageValidationError(
+				"duplicate_parameter",
+				"resolution",
+				"resolution duplicates provider_options.google.generationConfig.imageConfig.imageSize",
+			)
+		}
+	}
+	result.ProviderOptions = normalized
+	result.AspectRatio = aspectRatio
+	result.Resolution = resolution
+	return result, nil
 }
 
 func geminiImageValidationError(code string, param string, message string) *GeminiImageValidationError {
 	return &GeminiImageValidationError{Code: code, Param: param, Message: message}
 }
 
-func normalizeGeminiProviderOptions(value map[string]any) (map[string]any, *GeminiImageValidationError) {
+func normalizeGeminiProviderOptions(value map[string]any, publicModel string) (map[string]any, *GeminiImageValidationError) {
 	if len(value) == 0 {
 		return nil, nil
 	}
@@ -222,7 +262,7 @@ func normalizeGeminiProviderOptions(value map[string]any) (map[string]any, *Gemi
 		return nil, validationErr
 	}
 
-	generationConfig, validationErr := normalizeGeminiGenerationConfig(google["generationConfig"])
+	generationConfig, validationErr := normalizeGeminiGenerationConfig(google["generationConfig"], publicModel)
 	if validationErr != nil {
 		return nil, validationErr
 	}
@@ -241,7 +281,7 @@ func normalizeGeminiProviderOptions(value map[string]any) (map[string]any, *Gemi
 	return map[string]any{"google": normalizedGoogle}, nil
 }
 
-func normalizeGeminiGenerationConfig(value any) (map[string]any, *GeminiImageValidationError) {
+func normalizeGeminiGenerationConfig(value any, publicModel string) (map[string]any, *GeminiImageValidationError) {
 	source, validationErr := geminiOptionalObject(value, "provider_options.google.generationConfig")
 	if validationErr != nil {
 		return nil, validationErr
@@ -297,7 +337,7 @@ func normalizeGeminiGenerationConfig(value any) (map[string]any, *GeminiImageVal
 		}
 	}
 
-	imageConfig, validationErr := normalizeGeminiImageConfig(normalized["imageConfig"])
+	imageConfig, validationErr := normalizeGeminiImageConfig(normalized["imageConfig"], publicModel)
 	if validationErr != nil {
 		return nil, validationErr
 	}
@@ -318,7 +358,7 @@ func normalizeGeminiGenerationConfig(value any) (map[string]any, *GeminiImageVal
 	return normalized, nil
 }
 
-func normalizeGeminiImageConfig(value any) (map[string]any, *GeminiImageValidationError) {
+func normalizeGeminiImageConfig(value any, publicModel string) (map[string]any, *GeminiImageValidationError) {
 	const path = "provider_options.google.generationConfig.imageConfig"
 	source, validationErr := geminiOptionalObject(value, path)
 	if validationErr != nil || source == nil {
@@ -351,11 +391,12 @@ func normalizeGeminiImageConfig(value any) (map[string]any, *GeminiImageValidati
 	}
 	if item, exists := normalized["imageSize"]; exists {
 		imageSize, ok := geminiNonEmptyString(item)
-		imageSize = strings.ToUpper(imageSize)
 		if !ok {
 			return nil, geminiImageValidationError("invalid_provider_options", path+".imageSize", path+".imageSize must be a string")
 		}
-		if _, ok := geminiImageImageSizes[imageSize]; !ok {
+		imageSize = normalizeGeminiImageResolutionValue(imageSize)
+		if _, ok := geminiImageImageSizes[imageSize]; !ok ||
+			strings.EqualFold(strings.TrimSpace(publicModel), GeminiImageModelPro) && imageSize == "512" {
 			return nil, geminiImageValidationError("invalid_provider_options", path+".imageSize", path+".imageSize is unsupported")
 		}
 		normalized["imageSize"] = imageSize
@@ -497,17 +538,56 @@ func geminiOptionalObject(value any, param string) (map[string]any, *GeminiImage
 	return object, nil
 }
 
-func geminiProviderOptionsHasImageConfig(options map[string]any) bool {
+func geminiProviderOptionsImageConfig(options map[string]any) (map[string]any, bool) {
 	google, ok := options["google"].(map[string]any)
 	if !ok {
-		return false
+		return nil, false
 	}
 	generationConfig, ok := google["generationConfig"].(map[string]any)
 	if !ok {
-		return false
+		return nil, false
 	}
 	imageConfig, ok := generationConfig["imageConfig"].(map[string]any)
-	return ok && len(imageConfig) > 0
+	return imageConfig, ok
+}
+
+func normalizeGeminiPublicAspectRatio(value string) (string, *GeminiImageValidationError) {
+	aspectRatio := strings.TrimSpace(value)
+	if aspectRatio == "" {
+		return "", nil
+	}
+	if _, ok := geminiImageAspectRatios[aspectRatio]; !ok {
+		return "", geminiImageValidationError(
+			"unsupported_aspect_ratio",
+			"aspect_ratio",
+			"Gemini image aspect_ratio is unsupported",
+		)
+	}
+	return aspectRatio, nil
+}
+
+func normalizeGeminiPublicResolution(model string, value string) (string, *GeminiImageValidationError) {
+	resolution := normalizeGeminiImageResolutionValue(value)
+	if resolution == "" {
+		return "", nil
+	}
+	if _, ok := geminiImageImageSizes[resolution]; !ok ||
+		strings.EqualFold(strings.TrimSpace(model), GeminiImageModelPro) && resolution == "512" {
+		return "", geminiImageValidationError(
+			"unsupported_image_resolution",
+			"resolution",
+			"Gemini image resolution is unsupported for this model",
+		)
+	}
+	return resolution, nil
+}
+
+func normalizeGeminiImageResolutionValue(value string) string {
+	resolution := strings.ToUpper(strings.TrimSpace(value))
+	if resolution == "0.5K" {
+		return "512"
+	}
+	return resolution
 }
 
 func geminiFiniteNumber(value any) (float64, bool) {

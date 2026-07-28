@@ -81,9 +81,10 @@ func TestPrepareImageTaskRequestKeepsProviderOptionsInPublicAndExecutorPayloads(
 		c.Status(http.StatusNoContent)
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/image/tasks", bytes.NewReader([]byte(`{
-		"model":"gemini-3.1-flash-image","operation":"generation","input":{"prompt":"draw"},
-		"provider_options":{"google":{"generation_config":{"seed":7}}}
-	}`)))
+			"model":"gemini-3.1-flash-image","operation":"generation","input":{"prompt":"draw"},
+			"output":{"aspect_ratio":"16:9","resolution":"0.5K"},
+			"provider_options":{"google":{"generation_config":{"seed":7}}}
+		}`)))
 	request.Header.Set("Content-Type", "application/json")
 
 	engine.ServeHTTP(recorder, request)
@@ -92,6 +93,12 @@ func TestPrepareImageTaskRequestKeepsProviderOptionsInPublicAndExecutorPayloads(
 	require.EqualValues(t, 7, public.ProviderOptions["google"]["generation_config"].(map[string]any)["seed"])
 	internalOptions := internal.Metadata["provider_options"].(map[string]any)
 	require.EqualValues(t, 7, internalOptions["google"].(map[string]any)["generation_config"].(map[string]any)["seed"])
+	require.NotNil(t, internal.AspectRatio)
+	require.NotNil(t, internal.Resolution)
+	assert.Equal(t, "16:9", *internal.AspectRatio)
+	assert.Equal(t, "0.5K", *internal.Resolution)
+	assert.Equal(t, "16:9", internal.Metadata["aspect_ratio"])
+	assert.Equal(t, "0.5K", internal.Metadata["resolution"])
 }
 
 func TestImageTaskFingerprintIncludesProviderOptions(t *testing.T) {
@@ -153,6 +160,8 @@ func TestParseMultipartImageTaskMapsSyncEditFields(t *testing.T) {
 		{"operation", "EDIT"},
 		{"n", "2"},
 		{"size", "1024x1024"},
+		{"aspect_ratio", "16:9"},
+		{"resolution", "2K"},
 		{"quality", "high"},
 		{"output_format", "png"},
 		{"output_compression", "0"},
@@ -179,6 +188,10 @@ func TestParseMultipartImageTaskMapsSyncEditFields(t *testing.T) {
 	assert.Equal(t, 2, *preparation.request.Output.Count)
 	require.NotNil(t, preparation.request.Output.Compression)
 	assert.Equal(t, 0, *preparation.request.Output.Compression)
+	require.NotNil(t, preparation.request.Output.AspectRatio)
+	assert.Equal(t, "16:9", *preparation.request.Output.AspectRatio)
+	require.NotNil(t, preparation.request.Output.Resolution)
+	assert.Equal(t, "2K", *preparation.request.Output.Resolution)
 	assert.Equal(t, "acme", preparation.request.Metadata["tenant"])
 
 	mediaType, params, err := mime.ParseMediaType(preparation.uploadContentType)
@@ -215,6 +228,25 @@ func TestMultipartImageTaskFingerprintUsesFileContentsNotFilenames(t *testing.T)
 	require.Nil(t, problemC)
 	assert.Equal(t, preparationA.fingerprint, preparationB.fingerprint)
 	assert.NotEqual(t, preparationA.fingerprint, preparationC.fingerprint)
+}
+
+func TestImageTaskFingerprintIncludesOutputAspectRatioAndResolution(t *testing.T) {
+	aspectRatio := "16:9"
+	resolution := "2K"
+	base := dto.ImageTaskCreateRequest{
+		Model:     "gemini-3.1-flash-image",
+		Operation: "generation",
+		Input:     dto.ImageTaskInputRequest{Prompt: "draw"},
+	}
+	changed := base
+	changed.Output.AspectRatio = &aspectRatio
+	changed.Output.Resolution = &resolution
+
+	baseJSON, err := common.Marshal(base)
+	require.NoError(t, err)
+	changedJSON, err := common.Marshal(changed)
+	require.NoError(t, err)
+	assert.NotEqual(t, imageTaskRequestFingerprint(baseJSON), imageTaskRequestFingerprint(changedJSON))
 }
 
 func TestPrepareMultipartImageTaskUploadsThenUsesNormalizedTaskFlow(t *testing.T) {

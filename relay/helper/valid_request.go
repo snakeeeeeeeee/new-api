@@ -208,7 +208,7 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			setImageRawFormValue(&imageRequest.OutputCompression, "output_compression")
 			setImageRawFormValue(&imageRequest.Background, "background")
 			setImageRawFormValue(&imageRequest.Moderation, "moderation")
-			for _, key := range []string{"input_fidelity", "resolution"} {
+			for _, key := range []string{"input_fidelity", "resolution", "aspect_ratio"} {
 				value := strings.TrimSpace(formData.Get(key))
 				if value == "" {
 					continue

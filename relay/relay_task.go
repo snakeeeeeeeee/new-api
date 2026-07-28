@@ -225,7 +225,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 				http.StatusBadRequest,
 			)
 		}
-		if taskErr := validateAndNormalizeGeminiAsyncImageRequest(c); taskErr != nil {
+		if taskErr := validateAndNormalizeGeminiAsyncImageRequest(c, info.OriginModelName); taskErr != nil {
 			return nil, taskErr
 		}
 	}
@@ -521,7 +521,7 @@ func resolveAsyncImageN(c *gin.Context) int {
 	return 1
 }
 
-func validateAndNormalizeGeminiAsyncImageRequest(c *gin.Context) *dto.TaskError {
+func validateAndNormalizeGeminiAsyncImageRequest(c *gin.Context, publicModel string) *dto.TaskError {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
@@ -546,16 +546,18 @@ func validateAndNormalizeGeminiAsyncImageRequest(c *gin.Context) *dto.TaskError 
 		providerOptions = typed
 	}
 	normalized, validationErr := service.ValidateAndNormalizeGeminiImageRequest(service.GeminiImageValidationInput{
+		Model:                publicModel,
 		Count:                count,
 		HasMask:              strings.TrimSpace(taskMetadataString(req.Metadata, "mask", "")) != "",
 		Quality:              taskMetadataString(req.Metadata, "quality", stringPointerValue(req.Quality)),
 		Size:                 req.Size,
+		AspectRatio:          taskMetadataString(req.Metadata, "aspect_ratio", stringPointerValue(req.AspectRatio)),
+		Resolution:           taskMetadataString(req.Metadata, "resolution", stringPointerValue(req.Resolution)),
 		OutputFormat:         taskMetadataString(req.Metadata, "output_format", ""),
 		ResponseFormat:       taskMetadataString(req.Metadata, "response_format", stringPointerValue(req.ResponseFormat)),
 		HasOutputCompression: taskMetadataValuePresent(req.Metadata, "output_compression"),
 		HasBackground:        taskMetadataValuePresent(req.Metadata, "background"),
 		HasInputFidelity:     taskMetadataValuePresent(req.Metadata, "input_fidelity"),
-		HasResolution:        taskMetadataValuePresent(req.Metadata, "resolution"),
 		ProviderOptions:      providerOptions,
 	})
 	if validationErr != nil {
@@ -564,10 +566,18 @@ func validateAndNormalizeGeminiAsyncImageRequest(c *gin.Context) *dto.TaskError 
 	if req.Metadata == nil {
 		req.Metadata = map[string]interface{}{}
 	}
-	if len(normalized) > 0 {
-		req.Metadata["provider_options"] = normalized
+	if len(normalized.ProviderOptions) > 0 {
+		req.Metadata["provider_options"] = normalized.ProviderOptions
 	} else {
 		delete(req.Metadata, "provider_options")
+	}
+	if normalized.AspectRatio != "" {
+		req.AspectRatio = &normalized.AspectRatio
+		req.Metadata["aspect_ratio"] = normalized.AspectRatio
+	}
+	if normalized.Resolution != "" {
+		req.Resolution = &normalized.Resolution
+		req.Metadata["resolution"] = normalized.Resolution
 	}
 	c.Set("task_request", req)
 	return nil
@@ -1039,11 +1049,15 @@ func buildAsyncImageTaskRequestSnapshot(c *gin.Context, info *relaycommon.RelayI
 		if v, ok := taskReq.Metadata["quality"].(string); ok {
 			imgReq.Quality = v
 		}
-		if raw, ok := taskRawMetadataValue(taskReq.Metadata["resolution"]); ok {
+		for _, key := range []string{"resolution", "aspect_ratio"} {
+			raw, ok := taskRawMetadataValue(taskReq.Metadata[key])
+			if !ok {
+				continue
+			}
 			if imgReq.Extra == nil {
 				imgReq.Extra = map[string]json.RawMessage{}
 			}
-			imgReq.Extra["resolution"] = raw
+			imgReq.Extra[key] = raw
 		}
 		if v, ok := taskReq.Metadata["response_format"].(string); ok {
 			imgReq.ResponseFormat = v
@@ -1072,12 +1086,16 @@ func buildAsyncImageTaskRequestSnapshot(c *gin.Context, info *relaycommon.RelayI
 		return nil, err
 	}
 	if taskReq.Metadata != nil {
-		if raw, ok := taskRawMetadataValue(taskReq.Metadata["resolution"]); ok {
+		for _, key := range []string{"resolution", "aspect_ratio"} {
+			raw, ok := taskRawMetadataValue(taskReq.Metadata[key])
+			if !ok {
+				continue
+			}
 			var auditRequest map[string]json.RawMessage
 			if err := common.Unmarshal(data, &auditRequest); err != nil {
 				return nil, err
 			}
-			auditRequest["resolution"] = raw
+			auditRequest[key] = raw
 			data, err = common.Marshal(auditRequest)
 			if err != nil {
 				return nil, err

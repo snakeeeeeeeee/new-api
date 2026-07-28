@@ -17,6 +17,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -170,6 +171,10 @@ func TestValidateAndNormalizeGeminiSyncImageRequest(t *testing.T) {
 	request := dto.ImageRequest{
 		Model:  "gemini-3.1-flash-image",
 		Prompt: "draw",
+		Extra: map[string]json.RawMessage{
+			"aspect_ratio": json.RawMessage(`"16:9"`),
+			"resolution":   json.RawMessage(`"0.5k"`),
+		},
 		ProviderOptions: map[string]map[string]any{
 			"google": {
 				"generation_config": map[string]any{
@@ -180,12 +185,14 @@ func TestValidateAndNormalizeGeminiSyncImageRequest(t *testing.T) {
 		},
 	}
 
-	apiErr := validateAndNormalizeGeminiSyncImageRequest(ctx, &request)
+	apiErr := validateAndNormalizeGeminiSyncImageRequest(ctx, &request, service.GeminiImageModelFlash)
 
 	require.Nil(t, apiErr)
 	generationConfig := request.ProviderOptions["google"]["generationConfig"].(map[string]any)
 	require.Equal(t, 0.8, generationConfig["topP"])
 	require.Equal(t, int64(9), generationConfig["seed"])
+	require.JSONEq(t, `"16:9"`, string(request.Extra["aspect_ratio"]))
+	require.JSONEq(t, `"512"`, string(request.Extra["resolution"]))
 }
 
 func TestValidateAndNormalizeGeminiSyncImageRequestRejectsMask(t *testing.T) {
@@ -200,7 +207,7 @@ func TestValidateAndNormalizeGeminiSyncImageRequestRejectsMask(t *testing.T) {
 		},
 	}
 
-	apiErr := validateAndNormalizeGeminiSyncImageRequest(ctx, &request)
+	apiErr := validateAndNormalizeGeminiSyncImageRequest(ctx, &request, service.GeminiImageModelFlash)
 
 	require.NotNil(t, apiErr)
 	require.Equal(t, types.ErrorCode("unsupported_mask"), apiErr.GetErrorCode())

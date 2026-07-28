@@ -205,6 +205,7 @@ func parseMultipartImageTaskRequest(c *gin.Context) (multipartImageTaskPreparati
 	fields := make(map[string]string)
 	allowedFields := map[string]bool{
 		"model": true, "operation": true, "prompt": true, "n": true, "size": true,
+		"aspect_ratio": true, "resolution": true,
 		"quality": true, "output_format": true, "output_compression": true,
 		"background": true, "client_reference_id": true, "metadata": true,
 		"provider_options": true,
@@ -346,6 +347,14 @@ func multipartImageTaskRequestFromFields(fields map[string]string, imageHashes [
 	if value, exists := fields["size"]; exists {
 		value = strings.TrimSpace(value)
 		request.Output.Size = &value
+	}
+	if value, exists := fields["aspect_ratio"]; exists {
+		value = strings.TrimSpace(value)
+		request.Output.AspectRatio = &value
+	}
+	if value, exists := fields["resolution"]; exists {
+		value = strings.TrimSpace(value)
+		request.Output.Resolution = &value
 	}
 	if value, exists := fields["quality"]; exists {
 		value = strings.TrimSpace(value)
@@ -556,6 +565,14 @@ func normalizedImageTaskToLegacy(request dto.ImageTaskCreateRequest) relaycommon
 	}
 	if request.Output.Size != nil {
 		legacy.Size = *request.Output.Size
+	}
+	if request.Output.AspectRatio != nil {
+		legacy.AspectRatio = request.Output.AspectRatio
+		metadata["aspect_ratio"] = *request.Output.AspectRatio
+	}
+	if request.Output.Resolution != nil {
+		legacy.Resolution = request.Output.Resolution
+		metadata["resolution"] = *request.Output.Resolution
 	}
 	legacy.Quality = request.Output.Quality
 	if request.Output.Quality != nil {

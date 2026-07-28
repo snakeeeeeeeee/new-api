@@ -237,7 +237,7 @@ func imageHandleSyncIsGeminiRequest(info *relaycommon.RelayInfo, request *dto.Im
 	return service.IsGeminiImageModel(firstNonEmpty(info.OriginModelName, request.Model))
 }
 
-func validateAndNormalizeGeminiSyncImageRequest(c *gin.Context, request *dto.ImageRequest) *types.NewAPIError {
+func validateAndNormalizeGeminiSyncImageRequest(c *gin.Context, request *dto.ImageRequest, publicModel string) *types.NewAPIError {
 	if request == nil {
 		return nil
 	}
@@ -253,22 +253,24 @@ func validateAndNormalizeGeminiSyncImageRequest(c *gin.Context, request *dto.Ima
 	unsupportedExtra := make([]string, 0)
 	for key := range request.Extra {
 		switch key {
-		case "mask", "images", "input_fidelity", "resolution":
+		case "mask", "images", "input_fidelity", "resolution", "aspect_ratio":
 		default:
 			unsupportedExtra = append(unsupportedExtra, key)
 		}
 	}
 	normalized, validationErr := service.ValidateAndNormalizeGeminiImageRequest(service.GeminiImageValidationInput{
+		Model:                   publicModel,
 		Count:                   count,
 		HasMask:                 imageHandleSyncRequestHasMask(c, request),
 		Quality:                 request.Quality,
 		Size:                    request.Size,
+		AspectRatio:             imageHandleSyncStringFromRaw(request.Extra["aspect_ratio"]),
+		Resolution:              imageHandleSyncStringFromRaw(request.Extra["resolution"]),
 		OutputFormat:            imageHandleSyncStringFromRaw(request.OutputFormat),
 		ResponseFormat:          request.ResponseFormat,
 		HasOutputCompression:    imageHandleSyncRawValuePresent(request.OutputCompression),
 		HasBackground:           imageHandleSyncRawValuePresent(request.Background),
 		HasInputFidelity:        imageHandleSyncRawValuePresent(request.Extra["input_fidelity"]),
-		HasResolution:           imageHandleSyncRawValuePresent(request.Extra["resolution"]),
 		HasStyle:                imageHandleSyncRawValuePresent(request.Style),
 		HasModeration:           imageHandleSyncRawValuePresent(request.Moderation),
 		HasPartialImages:        imageHandleSyncRawValuePresent(request.PartialImages),
@@ -285,9 +287,18 @@ func validateAndNormalizeGeminiSyncImageRequest(c *gin.Context, request *dto.Ima
 			Type:    "invalid_request_error",
 			Param:   validationErr.Param,
 			Code:    validationErr.Code,
-		}, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}, http.StatusBadRequest, types.ErrOptionWithSkipRetry(), types.ErrOptionWithClientSafe())
 	}
-	request.ProviderOptions = geminiTypedProviderOptions(normalized)
+	request.ProviderOptions = geminiTypedProviderOptions(normalized.ProviderOptions)
+	if request.Extra == nil {
+		request.Extra = map[string]json.RawMessage{}
+	}
+	if normalized.AspectRatio != "" {
+		request.Extra["aspect_ratio"], _ = common.Marshal(normalized.AspectRatio)
+	}
+	if normalized.Resolution != "" {
+		request.Extra["resolution"], _ = common.Marshal(normalized.Resolution)
+	}
 	return nil
 }
 
@@ -946,6 +957,7 @@ func imageHandleSyncParameters(request dto.ImageRequest) map[string]any {
 	}
 	if len(request.Extra) > 0 {
 		addRawImageParam(params, "resolution", request.Extra["resolution"])
+		addRawImageParam(params, "aspect_ratio", request.Extra["aspect_ratio"])
 	}
 	addRawImageParam(params, "output_format", request.OutputFormat)
 	addRawImageParam(params, "output_compression", request.OutputCompression)

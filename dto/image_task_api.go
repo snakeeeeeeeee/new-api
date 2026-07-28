@@ -13,6 +13,8 @@ type ImageTaskInputRequest struct {
 type ImageTaskOutputRequest struct {
 	Count       *int    `json:"count,omitempty"`
 	Size        *string `json:"size,omitempty"`
+	AspectRatio *string `json:"aspect_ratio,omitempty"`
+	Resolution  *string `json:"resolution,omitempty"`
 	Quality     *string `json:"quality,omitempty"`
 	Format      *string `json:"format,omitempty"`
 	Compression *int    `json:"compression,omitempty"`

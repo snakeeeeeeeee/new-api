@@ -93,6 +93,64 @@ func TestShouldWrapClientFacingRelayError_FalseForLocalClaudeCompatErrors(t *tes
 	require.Equal(t, http.StatusBadRequest, got.Status)
 }
 
+func TestShouldWrapClientFacingRelayError_FalseForClientSafeGeminiValidationErrors(t *testing.T) {
+	withRelayErrorSetting(t, false, "400,422", "", true)
+
+	for _, test := range []struct {
+		code    string
+		param   string
+		message string
+	}{
+		{
+			code:    "unsupported_image_resolution",
+			param:   "resolution",
+			message: "Gemini image resolution is unsupported for this model",
+		},
+		{
+			code:    "duplicate_parameter",
+			param:   "size",
+			message: "size duplicates Gemini aspect ratio or resolution controls",
+		},
+	} {
+		t.Run(test.code+"_"+test.param, func(t *testing.T) {
+			apiErr := types.WithOpenAIError(types.OpenAIError{
+				Message: test.message,
+				Type:    "invalid_request_error",
+				Param:   test.param,
+				Code:    test.code,
+			}, http.StatusBadRequest, types.ErrOptionWithSkipRetry(), types.ErrOptionWithClientSafe())
+
+			require.False(t, shouldWrapClientFacingRelayError(apiErr))
+			require.False(t, isUpstreamClientFacingRelayError(apiErr))
+
+			got := buildClientFacingRelayOpenAIError(apiErr)
+			require.Equal(t, test.message, got.Message)
+			require.Equal(t, "invalid_request_error", got.Type)
+			require.Equal(t, test.param, got.Param)
+			require.Equal(t, test.code, got.Code)
+
+			fields := relayClientResponseLogFields(apiErr)
+			require.Equal(t, false, fields["client_response_wrapped"])
+			require.Equal(t, http.StatusBadRequest, fields["client_response_status_code"])
+			require.Equal(t, test.code, fields["client_response_error_code"])
+		})
+	}
+}
+
+func TestShouldWrapClientFacingRelayError_DoesNotTrustUpstreamGeminiValidationCode(t *testing.T) {
+	withRelayErrorSetting(t, false, "400,422", "", true)
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "upstream supplied this message",
+		Type:    "invalid_request_error",
+		Param:   "resolution",
+		Code:    "unsupported_image_resolution",
+	}, http.StatusBadRequest)
+
+	require.True(t, shouldWrapClientFacingRelayError(apiErr))
+	require.True(t, isUpstreamClientFacingRelayError(apiErr))
+	require.Equal(t, clientFacingRelayErrorMessage, buildClientFacingOpenAIError(apiErr).Message)
+}
+
 func TestBuildClientFacingRelayClaudeErrorPreservesWrappedClaudeCompatFields(t *testing.T) {
 	withRelayErrorSetting(t, false, "400,422", "", true)
 	apiErr := types.WithClaudeError(types.ClaudeError{

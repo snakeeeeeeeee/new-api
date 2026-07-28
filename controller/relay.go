@@ -355,7 +355,7 @@ func shouldWrapClientFacingRelayError(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
-	if isLocalClaudeCompatError(err) {
+	if isLocalClientFacingRelayError(err) {
 		return false
 	}
 	switch err.GetErrorType() {
@@ -407,10 +407,14 @@ func relayErrorMessageForClient(err *types.NewAPIError) string {
 	if err == nil {
 		return ""
 	}
-	if operation_setting.GetRelayErrorSetting().MaskSensitive && !isLocalClaudeCompatError(err) {
+	if operation_setting.GetRelayErrorSetting().MaskSensitive && !isLocalClientFacingRelayError(err) {
 		return err.MaskSensitiveError()
 	}
 	return err.Error()
+}
+
+func isLocalClientFacingRelayError(err *types.NewAPIError) bool {
+	return types.IsClientSafeError(err) || isLocalClaudeCompatError(err)
 }
 
 func isLocalClaudeCompatError(err *types.NewAPIError) bool {
@@ -432,7 +436,7 @@ func isUpstreamClientFacingRelayError(err *types.NewAPIError) bool {
 	if err == nil {
 		return false
 	}
-	if isLocalClaudeCompatError(err) {
+	if isLocalClientFacingRelayError(err) {
 		return false
 	}
 	switch err.GetErrorType() {

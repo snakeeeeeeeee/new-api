@@ -46,9 +46,10 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 		"model":"gpt-image-2",
 		"prompt":"a clean product photo",
 		"size":"1024x1024",
-		"quality":" high ",
-		"resolution":" 2k ",
-		"response_format":"url",
+			"quality":" high ",
+			"resolution":" 2k ",
+			"aspect_ratio":" 16:9 ",
+			"response_format":"url",
 		"metadata":{"n":1,"output_format":"webp","provider":"openai"}
 	}`))
 	c.Request.Header.Set("Content-Type", "application/json")
@@ -93,6 +94,7 @@ func TestBuildRequestBodyMatchesImageHandleContract(t *testing.T) {
 	assert.Equal(t, "1024x1024", parameters["size"])
 	assert.Equal(t, "high", parameters["quality"])
 	assert.Equal(t, "2k", parameters["resolution"])
+	assert.Equal(t, "16:9", parameters["aspect_ratio"])
 	assert.Equal(t, "url", parameters["response_format"])
 	callback := payload["callback"].(map[string]any)
 	assert.Equal(t, "https://new-api.example/api/task/callback/external-image/task_external_id", callback["url"])

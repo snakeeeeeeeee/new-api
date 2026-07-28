@@ -526,7 +526,8 @@ const spec = {
                     },
                     output: {
                       count: 1,
-                      size: '1024x1024',
+                      aspect_ratio: '16:9',
+                      resolution: '4K',
                       quality: 'auto',
                       format: 'png',
                     },
@@ -557,7 +558,8 @@ const spec = {
                     },
                     output: {
                       count: 1,
-                      size: '2048x2048',
+                      aspect_ratio: '1:1',
+                      resolution: '2K',
                       quality: 'auto',
                       format: 'png',
                     },
@@ -586,7 +588,8 @@ const spec = {
                     model: 'gemini-3.1-flash-image',
                     prompt: 'Replace the background',
                     n: 1,
-                    size: '1024x1024',
+                    aspect_ratio: '4:3',
+                    resolution: '2K',
                     quality: 'auto',
                     output_format: 'png',
                     provider_options:
@@ -1114,7 +1117,41 @@ const spec = {
         additionalProperties: false,
         properties: {
           count: { type: 'integer', minimum: 1, maximum: 10 },
-          size: { type: 'string', examples: ['1024x1024'] },
+          size: {
+            type: 'string',
+            examples: ['1024x1024'],
+            description:
+              'Output size. For Gemini this is a compatibility mapping to aspect ratio and resolution tier, not an exact pixel guarantee.',
+            'x-description-zh-CN':
+              '输出尺寸；Gemini 中它是宽高比与分辨率档位的兼容映射，不保证精确像素。',
+          },
+          aspect_ratio: {
+            type: 'string',
+            enum: [
+              '1:1',
+              '2:3',
+              '3:2',
+              '3:4',
+              '4:3',
+              '4:5',
+              '5:4',
+              '9:16',
+              '16:9',
+              '21:9',
+            ],
+            description:
+              'Requested output aspect ratio. For Gemini, omit size when using this field.',
+            'x-description-zh-CN':
+              '请求的输出宽高比；Gemini 使用此字段时不要同时提交 size。',
+          },
+          resolution: {
+            type: 'string',
+            enum: ['512', '0.5K', '1K', '2K', '4K'],
+            description:
+              'Requested output resolution tier. Gemini Flash supports 512/0.5K/1K/2K/4K; Gemini Pro supports 1K/2K/4K. 0.5K is normalized to 512.',
+            'x-description-zh-CN':
+              '请求的输出分辨率档位；Gemini Flash 支持 512/0.5K/1K/2K/4K，Gemini Pro 支持 1K/2K/4K；0.5K 会规范化为 512。',
+          },
           quality: { type: 'string', examples: ['high'] },
           format: { type: 'string', examples: ['png'] },
           compression: { type: 'integer', minimum: 0, maximum: 100 },
@@ -1184,7 +1221,33 @@ const spec = {
           },
           mask: { type: 'string', format: 'binary' },
           n: { type: 'integer', minimum: 1, maximum: 10 },
-          size: { type: 'string', examples: ['1024x1024'] },
+          size: {
+            type: 'string',
+            examples: ['1024x1024'],
+            description:
+              'Output size. For Gemini this is a compatibility mapping and cannot be combined with aspect_ratio or resolution.',
+            'x-description-zh-CN':
+              '输出尺寸；Gemini 中它是兼容映射，不能与 aspect_ratio 或 resolution 同时提交。',
+          },
+          aspect_ratio: {
+            type: 'string',
+            enum: [
+              '1:1',
+              '2:3',
+              '3:2',
+              '3:4',
+              '4:3',
+              '4:5',
+              '5:4',
+              '9:16',
+              '16:9',
+              '21:9',
+            ],
+          },
+          resolution: {
+            type: 'string',
+            enum: ['512', '0.5K', '1K', '2K', '4K'],
+          },
           quality: { type: 'string', examples: ['high'] },
           output_format: { type: 'string', examples: ['png'] },
           output_compression: { type: 'integer', minimum: 0, maximum: 100 },
@@ -1274,11 +1337,11 @@ const spec = {
           },
           imageSize: {
             type: 'string',
-            enum: ['1K', '2K', '4K'],
+            enum: ['512', '0.5K', '1K', '2K', '4K'],
             description:
-              'Gemini output resolution tier. snake_case alias: image_size.',
+              'Backward-compatible Gemini output resolution tier. 0.5K normalizes to 512; snake_case alias: image_size. Prefer the public resolution field.',
             'x-description-zh-CN':
-              'Gemini 输出分辨率档位；也接受 snake_case 别名 image_size。',
+              '向后兼容的 Gemini 输出分辨率档位；0.5K 会规范化为 512，也接受 snake_case 别名 image_size。新接入优先使用公开 resolution 字段。',
           },
         },
         description: 'Gemini image output configuration.',
