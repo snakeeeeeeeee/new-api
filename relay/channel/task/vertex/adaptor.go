@@ -21,6 +21,7 @@ import (
 	vertexcore "github.com/QuantumNous/new-api/relay/channel/vertex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 )
 
 // ============================
@@ -150,6 +151,30 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		"seconds":    float64(seconds),
 		"resolution": resRatio,
 	}
+}
+
+func (a *TaskAdaptor) ResolveVideoBilling(c *gin.Context, _ *relaycommon.RelayInfo) (channel.VideoBillingEstimate, *dto.TaskError) {
+	v, ok := c.Get("task_request")
+	if !ok {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("request not found in context"), "invalid_request", http.StatusBadRequest)
+	}
+	req, ok := v.(relaycommon.TaskSubmitReq)
+	if !ok {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("unexpected task_request type"), "invalid_request", http.StatusBadRequest)
+	}
+	seconds, exists, err := geminitask.ExplicitVeoDuration(req.Metadata, req.Duration, req.Seconds)
+	if err != nil {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(err, "invalid_video_duration", http.StatusBadRequest)
+	}
+	if !exists || seconds <= 0 {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("durationSeconds is required for per-second video billing"), "video_duration_required", http.StatusBadRequest)
+	}
+	if seconds > relaycommon.MaxTaskDurationSeconds {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("durationSeconds must be between 1 and %d", relaycommon.MaxTaskDurationSeconds), "invalid_video_duration", http.StatusBadRequest)
+	}
+	req.Duration = seconds
+	c.Set("task_request", req)
+	return channel.VideoBillingEstimate{Seconds: seconds, Basis: types.VideoPricingBasisGeneration}, nil
 }
 
 // BuildRequestBody converts request into Vertex specific format.

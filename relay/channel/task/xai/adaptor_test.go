@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -150,6 +151,41 @@ func TestBuildRequestBodyPreservesUpstreamModelName(t *testing.T) {
 			assert.Equal(t, tt.want, payload["model"])
 			assert.Equal(t, "9:16", payload["aspect_ratio"])
 			assert.Equal(t, "720p", payload["resolution"])
+		})
+	}
+}
+
+func TestResolveVideoBillingUsesExplicitXAIRequestDuration(t *testing.T) {
+	tests := []struct {
+		name      string
+		path      string
+		body      string
+		want      int
+		wantBasis string
+		wantCode  string
+	}{
+		{name: "generation", path: "/v1/videos/generations", body: `{"model":"grok-imagine-video","prompt":"cat","duration":8}`, want: 8, wantBasis: types.VideoPricingBasisGeneration},
+		{name: "extension delta", path: "/v1/videos/extensions", body: `{"model":"grok-imagine-video","prompt":"continue","duration":4}`, want: 4, wantBasis: types.VideoPricingBasisExtensionDelta},
+		{name: "missing duration", path: "/v1/videos/generations", body: `{"model":"grok-imagine-video","prompt":"cat"}`, wantCode: "video_duration_required"},
+		{name: "fractional duration", path: "/v1/videos/generations", body: `{"model":"grok-imagine-video","prompt":"cat","duration":4.5}`, wantCode: "invalid_video_duration"},
+		{name: "extension too short", path: "/v1/videos/extensions", body: `{"model":"grok-imagine-video","prompt":"continue","duration":1}`, wantCode: "invalid_video_duration"},
+		{name: "edit unsupported", path: "/v1/videos/edits", body: `{"model":"grok-imagine-video","prompt":"edit","video":{"url":"https://example.com/video.mp4"}}`, wantCode: "video_per_second_billing_unsupported"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := buildTestContext(t, test.path, test.body)
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+			adaptor := &TaskAdaptor{}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			estimate, taskErr := adaptor.ResolveVideoBilling(c, info)
+			if test.wantCode != "" {
+				require.NotNil(t, taskErr)
+				require.Equal(t, test.wantCode, taskErr.Code)
+				return
+			}
+			require.Nil(t, taskErr)
+			require.Equal(t, test.want, estimate.Seconds)
+			require.Equal(t, test.wantBasis, estimate.Basis)
 		})
 	}
 }

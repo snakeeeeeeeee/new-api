@@ -156,6 +156,7 @@ type TaskBillingContext struct {
 	PrechargeAmountPerImage  float64                      `json:"precharge_amount_per_image,omitempty"`  // 每张图预扣美元金额
 	ImageCount               int                          `json:"image_count,omitempty"`                 // 本次提交按 n 估算的图片数量
 	ImagePricing             *types.ImagePricingSnapshot  `json:"image_pricing,omitempty"`               // 图片参数按张计价的不可变快照
+	VideoPricing             *types.VideoPricingSnapshot  `json:"video_pricing,omitempty"`               // 视频按秒计价的不可变快照
 	ConsumeLogId             int                          `json:"consume_log_id,omitempty"`              // 提交成功时的消费日志 ID，用于异步终态合并审计信息
 	RequestId                string                       `json:"request_id,omitempty"`                  // 提交请求 ID，用于异步终态日志关联
 	FinalConsumeLog          *TaskFinalConsumeLogSnapshot `json:"final_consume_log,omitempty"`           // 异步图片终态消费日志快照

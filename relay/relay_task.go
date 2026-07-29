@@ -21,6 +21,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -45,6 +46,14 @@ type TaskSubmitResult struct {
 }
 
 func cloneImagePricingSnapshot(snapshot *types.ImagePricingSnapshot) *types.ImagePricingSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+	cloned := *snapshot
+	return &cloned
+}
+
+func cloneVideoPricingSnapshot(snapshot *types.VideoPricingSnapshot) *types.VideoPricingSnapshot {
 	if snapshot == nil {
 		return nil
 	}
@@ -197,6 +206,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		modelName = service.CoverTaskActionToModelName(platform, info.Action)
 	}
 	info.OriginModelName = modelName
+	isVideoTask := !isAsyncImageTaskPath(c) && constant.TaskActionAssetType(info.Action) == constant.TaskAssetTypeVideo
+	if isVideoTask && !ratio_setting.IsVideoSubscriptionEnabled(modelName) {
+		info.BillingPreferenceOverride = "wallet_only"
+	} else {
+		info.BillingPreferenceOverride = ""
+	}
 
 	var imagePricingSnapshot *types.ImagePricingSnapshot
 	var imagePricingGroupRatioInfo types.GroupRatioInfo
@@ -272,9 +287,28 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
-	// 4. 价格计算：基础模型价格
+	// 4. 价格计算：按秒视频、图片参数或旧按次模型价格
 	info.OriginModelName = modelName
-	if imagePricingSnapshot != nil {
+	if _, _, _, videoPricingBound := ratio_setting.GetVideoPricingForModel(modelName); videoPricingBound {
+		videoEstimator, ok := adaptor.(channel.VideoBillingEstimator)
+		if !ok {
+			return nil, service.TaskErrorWrapperLocal(
+				fmt.Errorf("provider %s does not support per-second video billing", adaptor.GetChannelName()),
+				"video_per_second_billing_unsupported",
+				http.StatusBadRequest,
+			)
+		}
+		estimate, taskErr := videoEstimator.ResolveVideoBilling(c, info)
+		if taskErr != nil {
+			return nil, taskErr
+		}
+		groupRatioInfo := helper.HandleGroupRatio(c, info)
+		snapshot, _, resolveErr := helper.ResolveVideoPricing(modelName, estimate.Seconds, estimate.Basis, groupRatioInfo.GroupRatio)
+		if resolveErr != nil {
+			return nil, service.TaskErrorWrapperLocal(resolveErr, "invalid_video_duration", http.StatusBadRequest)
+		}
+		info.PriceData = helper.VideoPricingPriceData(snapshot, groupRatioInfo)
+	} else if imagePricingSnapshot != nil {
 		info.PriceData = helper.ImagePricingPriceData(imagePricingSnapshot, imagePricingGroupRatioInfo, true)
 	} else {
 		priceData, err := helper.ModelPriceHelperPerCall(c, info)
@@ -290,14 +324,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
 	//    ResolveOriginTask 可能已在 remix 路径中预设了 OtherRatios，此处合并。
-	if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
-		for k, v := range estimatedRatios {
-			info.PriceData.AddOtherRatio(k, v)
+	if info.PriceData.VideoPricing == nil {
+		if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
+			for k, v := range estimatedRatios {
+				info.PriceData.AddOtherRatio(k, v)
+			}
 		}
 	}
 
 	// 6. 将 OtherRatios 应用到基础额度
-	if info.PriceData.ImagePricing == nil && !common.StringsContains(constant.TaskPricePatches, modelName) {
+	if info.PriceData.ImagePricing == nil && info.PriceData.VideoPricing == nil && !common.StringsContains(constant.TaskPricePatches, modelName) {
 		quotaWithRatios := float64(info.PriceData.Quota)
 		for _, ra := range info.PriceData.OtherRatios {
 			if ra != 1.0 {
@@ -420,7 +456,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
-	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); info.PriceData.ImagePricing == nil && len(adjustedRatios) > 0 {
+	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); info.PriceData.ImagePricing == nil && info.PriceData.VideoPricing == nil && len(adjustedRatios) > 0 {
 		// 基于调整后的 ratios 重新计算 quota
 		finalQuota = recalcQuotaFromRatios(info, adjustedRatios)
 		info.PriceData.OtherRatios = adjustedRatios
@@ -649,6 +685,7 @@ func newAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, platform con
 		OtherRatios:              info.PriceData.OtherRatios,
 		OriginModelName:          info.OriginModelName,
 		ImagePricing:             cloneImagePricingSnapshot(info.PriceData.ImagePricing),
+		VideoPricing:             cloneVideoPricingSnapshot(info.PriceData.VideoPricing),
 		RequestId:                c.GetString(common.RequestIdKey),
 		PerCallBilling: common.StringsContains(constant.TaskPricePatches, info.OriginModelName) ||
 			info.ChannelType == constant.ChannelTypeXai ||
@@ -818,8 +855,12 @@ func createDurableVideoTask(c *gin.Context, info *relaycommon.RelayInfo, platfor
 		UsePrice:                 info.PriceData.UsePrice,
 		OtherRatios:              info.PriceData.OtherRatios,
 		OriginModelName:          info.OriginModelName,
+		VideoPricing:             cloneVideoPricingSnapshot(info.PriceData.VideoPricing),
 		RequestId:                c.GetString(common.RequestIdKey),
 		PerCallBilling:           common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.ChannelType == constant.ChannelTypeXai || info.PriceData.UsePrice,
+	}
+	if info.PriceData.VideoPricing != nil {
+		task.PrivateData.BillingContext.BillingMode = types.VideoPricingBillingMode
 	}
 
 	err = model.DB.Transaction(func(tx *gorm.DB) error {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -102,5 +103,130 @@ func TestControlRejectsInvalidDelay(t *testing.T) {
 	delay := int((5*time.Minute)/time.Millisecond) + 1
 	if _, err := state.updateConfig(controlUpdate{WebhookDelayMS: &delay}); err == nil {
 		t.Fatal("expected invalid delay error")
+	}
+}
+
+func TestVideoLifecycleAndRangeContent(t *testing.T) {
+	state := newServerState()
+	server := httptest.NewServer(state.handler())
+	defer server.Close()
+
+	audio := false
+	body, err := json.Marshal(videoTaskRequest{
+		Model: "seedance_2.0_fast_480p", Prompt: "ocean sunrise",
+		Duration: 4, AspectRatio: "16:9", GenerateAudio: &audio,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitRequest, err := http.NewRequest(http.MethodPost, server.URL+"/v1/videos", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitRequest.Header.Set("Authorization", "Bearer mock-key")
+	submitResponse, err := http.DefaultClient.Do(submitRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer submitResponse.Body.Close()
+	if submitResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("submit status = %d", submitResponse.StatusCode)
+	}
+	var submitted map[string]any
+	if err := json.NewDecoder(submitResponse.Body).Decode(&submitted); err != nil {
+		t.Fatal(err)
+	}
+	taskID, _ := submitted["task_id"].(string)
+	if taskID == "" {
+		t.Fatal("submit response omitted task_id")
+	}
+
+	for index, expected := range []string{"queued", "in_progress", "completed"} {
+		request, err := http.NewRequest(http.MethodGet, server.URL+"/v1/videos/"+taskID, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer mock-key")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var task map[string]any
+		if err := json.NewDecoder(response.Body).Decode(&task); err != nil {
+			response.Body.Close()
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if task["status"] != expected {
+			t.Fatalf("poll %d status = %v, want %s", index+1, task["status"], expected)
+		}
+	}
+
+	contentRequest, err := http.NewRequest(http.MethodGet, server.URL+"/v1/videos/"+taskID+"/content", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentRequest.Header.Set("Authorization", "Bearer mock-key")
+	contentRequest.Header.Set("Range", "bytes=0-3")
+	contentResponse, err := http.DefaultClient.Do(contentRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer contentResponse.Body.Close()
+	content, err := io.ReadAll(contentResponse.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentResponse.StatusCode != http.StatusPartialContent || string(content) != "mock" {
+		t.Fatalf("unexpected ranged content: status=%d body=%q", contentResponse.StatusCode, content)
+	}
+
+	metrics := state.snapshot()
+	if metrics.VideoRequests.Submit != 1 || metrics.VideoRequests.Poll != 3 || metrics.VideoRequests.Content != 1 {
+		t.Fatalf("unexpected video request metrics: %+v", metrics.VideoRequests)
+	}
+	if metrics.LastVideoSubmit == nil || metrics.LastVideoSubmit.Model != "seedance_2.0_fast_480p" ||
+		metrics.LastVideoSubmit.Duration != 4 || metrics.LastVideoSubmit.GenerateAudio == nil ||
+		*metrics.LastVideoSubmit.GenerateAudio {
+		t.Fatalf("unexpected last video submit: %+v", metrics.LastVideoSubmit)
+	}
+}
+
+func TestVideoFailureControl(t *testing.T) {
+	state := newServerState()
+	terminal := "failed"
+	after := 1
+	if _, err := state.updateConfig(controlUpdate{
+		VideoTerminalStatus:    &terminal,
+		VideoTerminalAfterPoll: &after,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(state.handler())
+	defer server.Close()
+
+	body := bytes.NewBufferString(`{"model":"seedance_2.0_fast_480p","prompt":"fail","duration":4,"aspect_ratio":"16:9"}`)
+	response, err := http.Post(server.URL+"/v1/videos", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var submitted map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&submitted); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	taskID, _ := submitted["task_id"].(string)
+	response, err = http.Get(server.URL + "/v1/videos/" + taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var task map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task["status"] != "failed" {
+		t.Fatalf("status = %v, want failed", task["status"])
 	}
 }

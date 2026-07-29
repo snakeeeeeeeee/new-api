@@ -16,6 +16,68 @@
 
 ---
 
+# Adobe2API Seedance 2.0 Fast Integration Planning Progress (2026-07-29)
+
+- Loaded the required brainstorming and file-planning workflows; this turn remains an investigation and design pass only.
+- Located the Adobe2API repository and confirmed two advertised Seedance 2.0 variants, including Fast.
+- Confirmed from documentation that a 4-second Fast request is valid and that exact aliases encode duration, aspect ratio, and resolution.
+- Started tracing the actual payload builder, upstream model version, task lifecycle, local Docker configuration, and new-api adaptor fit.
+- Logged the missing planning recovery script and continued through direct planning-file recovery without changing business code.
+- Confirmed Adobe2API's client-facing video call is blocking even though Adobe submit/poll is asynchronous; a direct proxy cannot provide correct new-api task semantics.
+- Compared three integration choices and selected an Adobe2API async video contract plus a dedicated new-api AdobeVideo adaptor.
+- Verified the local Docker network, live model catalog, active positive-credit account summary, historical successful Seedance calls, and a 4.042-second Fast MP4 without exposing secrets or making a paid request.
+- Ran the current Seedance suite in a network-disabled ephemeral container with writable tmpfs data: all 13 tests pass, including 451 policy-error preservation.
+- Completed the mock-first and one-paid-call acceptance design. No business code, channel rows, pricing Options, credentials, or upstream tasks were changed in this planning turn.
+- The user approved the recommended implementation and one real 4-second paid call. Phase 4 Adobe2API implementation is now in progress; the paid call remains gated behind focused tests and Docker mock acceptance.
+
+
+# Per-second Video Billing and Subscription Eligibility Progress (2026-07-29)
+
+- Loaded the required brainstorming and planning-with-files workflows.
+- Preserved existing workspace changes and historical planning records.
+- Started read-only discovery of pricing, async-task settlement, duration, and subscription deduction paths.
+- Located relay-level subscription billing metadata and confirmed async tasks persist their selected subscription identity.
+- Found the centralized BillingSession/funding-source abstraction and existing duration-aware video billing estimation in Gemini/Vertex task adaptors.
+- Confirmed task billing has estimate/submit/complete hooks and identified xAI's current hard-coded per-call branch as a direct conflict.
+- Traced the exact task quota formula and confirmed `ModelPrice` lacks billing-unit metadata despite supporting multiplicative `seconds` ratios.
+- Audited subscription-plan selection and both target adaptors; confirmed no plan-level model restriction and no current per-second settlement for xAI/Seedance.
+- Confirmed both target adaptors can be extended through existing billing hooks and that no current setting represents per-second units or per-model subscription eligibility.
+- Verified submit/terminal settlement ordering and identified the successful-task undercharge risk when completion requires a video quota supplement.
+- Incorporated the user's exact-model resolution convention; removed resolution multipliers from the recommended formula.
+- Completed the read-only design with exact file-level ownership, compatibility behavior, and focused verification scope.
+- Received explicit implementation authorization and loaded the required implementation workflows.
+- Recovered the existing planning state, confirmed the dirty worktree contains unrelated user files, and started the isolated implementation phase without reverting them.
+- Confirmed the configuration/public-price/task-snapshot structure can mirror ImagePricing while keeping video duration and funding policy independent from provider fields.
+- Chose a request-scoped billing-preference override as the enforcement mechanism for wallet-only video requests, including unbound legacy models.
+- Added the strong estimator contract, dedicated pricing calculator, funding override, and initial relay integration; the first compile exposed and fixed one missing import and one snapshot placement mismatch.
+- Completed the backend VideoPricing config, immutable snapshots, exact-model takeover, wallet-only default, provider duration adaptors, and terminal audit-only duration handling with focused tests.
+- Resumed from the implementation handoff, reloaded the planning and UI workflows, and synchronized the active plan to Phase 4 frontend work.
+- Selected the existing dense Semi Design ImagePricing layout as the admin UI pattern, with explicit profile/binding controls and responsive 375/768/1440 verification.
+- Added VideoPricing frontend helpers for normalization, validation, profile lifecycle, exact/policy-only bindings, preview calculations, and immutable log/audit summaries.
+- Extended shared billing-type resolution for `per_video_second`; all 17 focused image/video pricing helper tests pass.
+- Added the responsive VideoPricing administrator editor with template create/copy/delete, USD-per-second preview, exact model bindings, policy-only bindings, subscription toggles, funding-policy labels, and the ratio-settings tab.
+- Targeted Prettier/ESLint and `git diff --check` pass for the new editor and tab integration.
+- Added `per_video_second` filters and consistent USD/second rendering across pricing table, card, model detail, legacy price editor, and upstream ratio-sync protection; policy-only bindings retain their legacy billing label.
+- Added video snapshot and returned-duration audit rendering to usage logs, including funding policy and an explicit no-repricing mismatch note.
+- Added 46 feature-scoped translations to zh-CN, zh-TW, en, fr, ru, ja, and vi without importing the repository's historical missing-key backlog.
+- Locale JSON formatting, 17 focused pricing helper tests, i18n status, and whitespace checks pass.
+- Fixed the two handoff test fixtures: relay preconsume now uses an isolated zero-balance SQLite user/token, and video audit logging uses the same public task ID ownership key as production.
+- Focused backend verification now passes for `setting/ratio_setting`, `relay/helper`, `relay`, `controller`, and `service`.
+- All 46 feature locale keys are present and non-empty in zh-CN, zh-TW, en, fr, ru, ja, and vi; `i18n:status` passes and full lint is back to the repository's existing 441 findings with no new VideoPricing finding.
+- Final changed-file Prettier/ESLint, all 17 pricing helper tests, `git diff --check`, `go test ./... -count=1`, and `bun run build` pass.
+- Confirmed the group-ratio input in the VideoPricing editor is preview-only and never persisted; real billing resolves the request's effective user/aggregate/model group ratio through `HandleGroupRatio`.
+- Renamed the field to `预览分组倍率` in all seven frontend locales. Targeted formatting, ESLint, locale validation, 17 helper tests, focused Go packages, the production frontend build, and whitespace checks pass after the clarification.
+- Rebuilt image `sha256:722d776575c6...`, recreated only `new-api-dev`, and confirmed the container is healthy while PostgreSQL and Redis remained running.
+- Docker browser QA confirms the new label and all configured profile/binding/funding-policy states. Layout geometry at 1440, 768, and 375 pixels has no page-level horizontal overflow.
+- Docker funding-source matrix passed with the live `default` ratio of 999: wallet-only charged 74,925,000 quota and never fell back to subscription; enabling the exact model binding charged the same amount from subscription while leaving wallet quota unchanged.
+- Docker xAI mock verification passed for both compatibility `duration` and normalized `output.duration`; missing, zero, fractional, and provider-options override requests failed before upstream dispatch.
+- Public pricing metadata passed for `per_video_second`, seconds, unit price, and subscription policy. Removed the contradictory legacy xAI `按次计费` log suffix for explicit video/image pricing and added a focused regression assertion.
+- Removed all Docker QA fixtures by exact user/channel/plan IDs, deleted the temporary `VideoPricing` Option that was absent before testing, removed the matching Redis plan cache, and stopped the xAI mock server.
+- Final `go test ./... -count=1`, frontend production build, targeted Prettier/ESLint, 17 pricing helper tests, and whitespace checks pass. Full i18n lint remains at the repository's pre-existing 441-item baseline with no VideoPricing finding.
+- Rebuilt final Docker image `sha256:096ade9a4ce9...`, recreated only `new-api-dev`, and confirmed PostgreSQL/Redis stayed running, all QA residue counts are zero, the mock port is closed, and the application is healthy at port 3001.
+
+---
+
 # Async Image Public Error 524 Progress (2026-07-28)
 
 - Recovered the existing implementation and design document from the current workspace.
@@ -873,3 +935,23 @@
 - Final desktop/mobile console error counts are zero. The field-table visibility follow-up is complete, and the rebuilt Async Images page is left open for user inspection.
 
 ---
+# Adobe2API Seedance 2.0 Fast Integration Progress (2026-07-29, resumed)
+
+- Recovered the active task from the planning files and preserved all unrelated dirty-worktree changes.
+- Adobe2API now exposes asynchronous `POST /v1/videos`, `GET /v1/videos/{id}`, and `GET /v1/videos/{id}/content` routes backed by its scheduler, retry, account, generated-file, and in-memory job services.
+- Added stable resolution-bound Fast and standard Seedance 2.0 provider SKUs; the isolated Seedance suite passes 15/15, image regression passes 31/31, compile validation passes, and the Adobe2API diff is whitespace-clean.
+- Advanced the active work to the dedicated new-api AdobeVideo channel/adaptor integration.
+- Added channel type 59, task-adaptor registration, channel-management label, async-task labels, and the dedicated AdobeVideo adaptor.
+- The adaptor accepts only normalized text generation, requires 4-15 integer seconds, rejects public resolution and protected-field overrides, forwards exact mapped provider SKUs, and resolves completed content through the authenticated Adobe2API content endpoint.
+- Focused adaptor lifecycle/content tests pass. A relay-level pricing test confirms the approved 4-second request at `$0.03/second` and group ratio `1.5` produces quota `90000`, has no legacy other ratios, and forces wallet-only billing.
+- Full affected backend packages (`relay/...`, `controller`, and `service`) pass. Changed frontend files pass Prettier and the new-api diff passes whitespace validation.
+- Phase 5 is complete; Docker-dev mock acceptance is now in progress.
+- Extended the opt-in async-test mock with AdobeVideo submit/poll/content routes, configurable success/failure terminal states, Range content, request counters, and normalized-payload capture; its focused tests pass.
+- Rebuilt new-api, async-test-mock, and Adobe2API images and recreated only those containers. All three are healthy; PostgreSQL and Redis retained their existing 27-hour uptime.
+- Docker mock acceptance passed 202 submission, queued/in-progress/succeeded polling, normalized upstream payload, Asset proxying, 206 Range, idempotent replay, terminal and submit failure refunds, and wallet-only billing despite an active subscription-only preference.
+- The one authorized real request completed through channel 114 as `task_lAWYIj6zvti1beLvqsuZKwd1sWMMJvrP`: Fast 480p, 4 seconds, 16:9, text-only, and audio disabled.
+- The real MP4 is H.264, 864x496, 4.042 seconds, and 549065 bytes. It is retained under `outputs/` with SHA-256 `e94e7b8481221e7506766b7d7b5ff9f4a20380ab83c8d84952977d598457ca2b`.
+- Real billing matched the immutable snapshot: `$0.03/second * 4 * 1.5 = 90000` quota, wallet `910000 -> 820000`, subscription usage unchanged at zero, and `subscription_enabled=false`.
+- Real content testing exposed that the installed Starlette `FileResponse` ignored Range. Adobe2API now implements authenticated single-byte ranges, suffix ranges, `If-Range`, and 416 responses; all 72 Adobe2API tests pass and its Docker image was rebuilt.
+- Removed the disposable user, token, Resource Key, subscriptions, plan, tasks, Assets, logs, Webhook events, mock/real channels, abilities, pricing Option, and backup Options. Restored the exact original GroupRatio and reset the async mock to zero counters/default behavior.
+- Final verification passes `go test ./... -count=1`, 17 frontend helper tests, the production frontend build, i18n status, both repository whitespace checks, and Docker health. Repository i18n lint remains at its 441-item pre-existing baseline with no newly introduced finding.

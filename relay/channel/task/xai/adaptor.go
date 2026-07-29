@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -344,6 +346,80 @@ func getString(payload requestPayload, key string) string {
 		return ""
 	}
 	return value
+}
+
+func payloadInteger(payload requestPayload, key string) (int, bool) {
+	if payload == nil {
+		return 0, false
+	}
+	value, exists := payload[key]
+	if !exists || value == nil {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int64:
+		return int(typed), true
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) || typed != math.Trunc(typed) {
+			return 0, true
+		}
+		return int(typed), true
+	default:
+		return 0, true
+	}
+}
+
+func (a *TaskAdaptor) ResolveVideoBilling(c *gin.Context, info *relaycommon.RelayInfo) (channel.VideoBillingEstimate, *dto.TaskError) {
+	action := ""
+	if info != nil && info.TaskRelayInfo != nil {
+		action = info.Action
+	}
+	if action == constant.TaskActionVideoEdit {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(
+			fmt.Errorf("xAI edit inherits the source duration and cannot use per-second billing"),
+			"video_per_second_billing_unsupported",
+			http.StatusBadRequest,
+		)
+	}
+	if action != constant.TaskActionVideoGeneration && action != constant.TaskActionVideoExtension {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(
+			fmt.Errorf("unsupported xAI video billing action: %s", action),
+			"video_per_second_billing_unsupported",
+			http.StatusBadRequest,
+		)
+	}
+	payload, err := getPayloadFromContext(c)
+	if err != nil {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	seconds, exists := payloadInteger(payload, "duration")
+	if !exists {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(
+			fmt.Errorf("duration is required for per-second video billing"),
+			"video_duration_required",
+			http.StatusBadRequest,
+		)
+	}
+	minSeconds, maxSeconds := 1, 15
+	basis := types.VideoPricingBasisGeneration
+	if action == constant.TaskActionVideoExtension {
+		minSeconds, maxSeconds = 2, 10
+		basis = types.VideoPricingBasisExtensionDelta
+	} else if _, hasReferences := payload["reference_images"]; hasReferences {
+		maxSeconds = 10
+	}
+	if seconds < minSeconds || seconds > maxSeconds {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(
+			fmt.Errorf("duration must be between %d and %d seconds", minSeconds, maxSeconds),
+			"invalid_video_duration",
+			http.StatusBadRequest,
+		)
+	}
+	payload["duration"] = seconds
+	c.Set("xai_video_request", payload)
+	return channel.VideoBillingEstimate{Seconds: seconds, Basis: basis}, nil
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {

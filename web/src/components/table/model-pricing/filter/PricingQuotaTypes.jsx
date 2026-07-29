@@ -48,6 +48,11 @@ const PricingQuotaTypes = ({
       label: t('图片参数计价'),
       tagCount: qtyCount('per_image_parameter'),
     },
+    {
+      value: 'per_video_second',
+      label: t('视频按秒计价'),
+      tagCount: qtyCount('per_video_second'),
+    },
   ];
 
   return (

@@ -15,9 +15,11 @@ import (
 func clonePricingItems(pricing []model.Pricing) []model.Pricing {
 	cloned := make([]model.Pricing, 0, len(pricing))
 	imagePricingSnapshot := ratio_setting.GetPublicImagePricingSnapshot()
+	videoPricingSnapshot := ratio_setting.GetPublicVideoPricingSnapshot()
 	for _, item := range pricing {
 		copied := item
 		cachedImagePricing := item.BillingType == types.ImagePricingBillingType || item.ImagePricing != nil
+		cachedVideoPricing := item.BillingType == types.VideoPricingBillingType || item.VideoPricing != nil
 		if len(item.EnableGroup) > 0 {
 			copied.EnableGroup = append([]string{}, item.EnableGroup...)
 		}
@@ -26,15 +28,23 @@ func clonePricingItems(pricing []model.Pricing) []model.Pricing {
 		}
 		copied.TokenTierPricing = nil
 		copied.ImagePricing = nil
+		copied.VideoPricing = nil
 
-		if imagePricing, ok := imagePricingSnapshot[item.ModelName]; ok {
+		if videoPricing, ok := videoPricingSnapshot[item.ModelName]; ok && videoPricing.ProfileID != "" {
+			copied.ModelPrice = videoPricing.UnitPrice
+			copied.ModelRatio = 0
+			copied.CompletionRatio = 0
+			copied.BillingType = types.VideoPricingBillingType
+			copied.VideoPricing = videoPricing
+			copied.QuotaType = 1
+		} else if imagePricing, ok := imagePricingSnapshot[item.ModelName]; ok {
 			copied.ModelPrice, _ = imagePricing.DefaultUnitPrice()
 			copied.ModelRatio = 0
 			copied.CompletionRatio = 0
 			copied.BillingType = types.ImagePricingBillingType
 			copied.ImagePricing = imagePricing
 			copied.QuotaType = 1
-		} else if cachedImagePricing {
+		} else if cachedImagePricing || cachedVideoPricing {
 			copied.BillingType = ""
 			if modelPrice, ok := ratio_setting.GetModelPrice(item.ModelName, false); ok {
 				copied.ModelPrice = modelPrice
@@ -47,6 +57,9 @@ func clonePricingItems(pricing []model.Pricing) []model.Pricing {
 				copied.CompletionRatio = ratio_setting.GetCompletionRatio(item.ModelName)
 				copied.QuotaType = 0
 			}
+		}
+		if copied.VideoPricing == nil {
+			copied.VideoPricing = videoPricingSnapshot[item.ModelName]
 		}
 
 		if copied.QuotaType == 0 {

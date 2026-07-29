@@ -35,7 +35,15 @@ import {
 import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
 
 function renderQuotaType(record, t) {
-  if (resolvePricingBillingType(record) === 'per_image_parameter') {
+  const billingType = resolvePricingBillingType(record);
+  if (billingType === 'per_video_second') {
+    return (
+      <Tag color='blue' shape='circle'>
+        {t('视频按秒计价')}
+      </Tag>
+    );
+  }
+  if (billingType === 'per_image_parameter') {
     return (
       <Tag color='orange' shape='circle'>
         {t('图片参数计价')}
@@ -242,20 +250,30 @@ export const getPricingTableColumns = ({
     ...(isMobile ? {} : { fixed: 'right' }),
     render: (text, record, index) => {
       const priceData = getPriceData(record);
-      const isImagePricing =
-        resolvePricingBillingType(record) === 'per_image_parameter';
-      const priceItems = isImagePricing
+      const billingType = resolvePricingBillingType(record);
+      const isImagePricing = billingType === 'per_image_parameter';
+      const isVideoPricing = billingType === 'per_video_second';
+      const priceItems = isVideoPricing
         ? [
             {
-              key: 'image-default',
-              label: t('默认档位 {{tier}}', {
-                tier: record.image_pricing?.default_tier || '-',
-              }),
+              key: 'video-second',
+              label: t('每秒价格'),
               value: priceData.price,
-              suffix: ` / ${t('张')}`,
+              suffix: ` / ${t('秒')}`,
             },
           ]
-        : getModelPriceItems(priceData, t, siteDisplayType);
+        : isImagePricing
+          ? [
+              {
+                key: 'image-default',
+                label: t('默认档位 {{tier}}', {
+                  tier: record.image_pricing?.default_tier || '-',
+                }),
+                value: priceData.price,
+                suffix: ` / ${t('张')}`,
+              },
+            ]
+          : getModelPriceItems(priceData, t, siteDisplayType);
 
       return (
         <div className='space-y-1'>
@@ -288,6 +306,25 @@ export const getPricingTableColumns = ({
                   max: record.image_pricing?.max_n || 1,
                 })}
               </span>
+            </div>
+          ) : null}
+          {record.video_pricing ? (
+            <div className='flex items-center gap-2 flex-wrap pt-1'>
+              {isVideoPricing ? (
+                <Tag color='blue' size='small'>
+                  {record.video_pricing.name || t('按秒计费')}
+                </Tag>
+              ) : null}
+              <Tag
+                color={
+                  record.video_pricing.subscription_enabled ? 'green' : 'grey'
+                }
+                size='small'
+              >
+                {record.video_pricing.subscription_enabled
+                  ? t('可用订阅额度')
+                  : t('仅钱包余额')}
+              </Tag>
             </div>
           ) : null}
         </div>

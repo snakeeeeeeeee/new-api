@@ -55,6 +55,8 @@ func TestMain(m *testing.M) {
 		&model.Log{},
 		&model.Channel{},
 		&model.UserSubscription{},
+		&model.SubscriptionPlan{},
+		&model.SubscriptionPreConsumeRecord{},
 		&model.Option{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
@@ -76,6 +78,8 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM logs")
 		model.DB.Exec("DELETE FROM channels")
 		model.DB.Exec("DELETE FROM user_subscriptions")
+		model.DB.Exec("DELETE FROM subscription_plans")
+		model.DB.Exec("DELETE FROM subscription_pre_consume_records")
 		model.DB.Exec("DELETE FROM options")
 	})
 }
@@ -483,6 +487,76 @@ func TestResourceKeyBillingConsumesOnlyAccountQuota(t *testing.T) {
 	assert.Equal(t, 940, getUserQuota(t, userID))
 	assert.Zero(t, relayInfo.TokenId)
 	assert.Empty(t, relayInfo.TokenKey)
+}
+
+func TestBillingPreferenceOverrideForcesVideoWalletOnly(t *testing.T) {
+	truncate(t)
+	const userID, subscriptionID = 114, 114
+	seedUser(t, userID, 1000)
+	seedSubscription(t, subscriptionID, userID, 5000, 0)
+
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:                    userID,
+		OriginModelName:           "wallet-only-video",
+		UsingGroup:                "default",
+		UserSetting:               dto.UserSetting{BillingPreference: "subscription_only"},
+		BillingPreferenceOverride: "wallet_only",
+	}
+	session, apiErr := NewBillingSession(testGinContext(), relayInfo, 100)
+	require.Nil(t, apiErr)
+	require.Equal(t, BillingSourceWallet, session.funding.Source())
+	require.Equal(t, 900, getUserQuota(t, userID))
+	require.Equal(t, int64(0), getSubscriptionUsed(t, subscriptionID))
+}
+
+func TestSubscriptionEnabledVideoRetainsUserBillingPreference(t *testing.T) {
+	truncate(t)
+	const userID, subscriptionID = 115, 115
+	seedUser(t, userID, 1000)
+	seedSubscription(t, subscriptionID, userID, 5000, 0)
+	plan := &model.SubscriptionPlan{Id: subscriptionID, Title: "Video", Enabled: true, TotalAmount: 5000, QuotaResetPeriod: "never"}
+	require.NoError(t, model.DB.Create(plan).Error)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subscriptionID).Update("plan_id", subscriptionID).Error)
+
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          userID,
+		OriginModelName: "subscription-video",
+		UsingGroup:      "default",
+		RequestId:       "video-subscription-preconsume",
+		UserSetting:     dto.UserSetting{BillingPreference: "subscription_only"},
+	}
+	session, apiErr := NewBillingSession(testGinContext(), relayInfo, 100)
+	require.Nil(t, apiErr)
+	require.Equal(t, BillingSourceSubscription, session.funding.Source())
+	require.Equal(t, 1000, getUserQuota(t, userID))
+	require.Equal(t, int64(100), getSubscriptionUsed(t, subscriptionID))
+}
+
+type videoPricingPollingAdaptor struct {
+	adjustedQuota int
+}
+
+func (a *videoPricingPollingAdaptor) Init(_ *relaycommon.RelayInfo) {}
+func (a *videoPricingPollingAdaptor) FetchTask(_ string, _ string, _ map[string]any, _ string) (*http.Response, error) {
+	return nil, nil
+}
+func (a *videoPricingPollingAdaptor) ParseTaskResult(_ []byte) (*relaycommon.TaskInfo, error) {
+	return nil, nil
+}
+func (a *videoPricingPollingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
+	return a.adjustedQuota
+}
+
+func TestVideoPricingTerminalSettlementIgnoresAdaptorAndTokenRepricing(t *testing.T) {
+	task := makeTask(1, 1, 120000, 0, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.BillingMode = types.VideoPricingBillingMode
+	task.PrivateData.BillingContext.VideoPricing = &types.VideoPricingSnapshot{
+		PublicModel: "video-model", UnitPrice: 0.03, Seconds: 8,
+		Basis: types.VideoPricingBasisGeneration, FinalQuota: 120000,
+	}
+
+	settleTaskBillingOnComplete(context.Background(), &videoPricingPollingAdaptor{adjustedQuota: 999999}, task, &relaycommon.TaskInfo{TotalTokens: 999999})
+	require.Equal(t, 120000, task.Quota)
 }
 
 func TestSettleBillingRejectsNegativeActualQuota(t *testing.T) {

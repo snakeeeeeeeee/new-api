@@ -36,6 +36,7 @@ type Pricing struct {
 	TokenTierPricing       *types.TokenTierPricingRuleMeta `json:"token_tier_pricing,omitempty"`
 	BillingType            string                          `json:"billing_type,omitempty"`
 	ImagePricing           *types.PublicImagePricing       `json:"image_pricing,omitempty"`
+	VideoPricing           *types.PublicVideoPricing       `json:"video_pricing,omitempty"`
 }
 
 type PricingVendor struct {
@@ -278,6 +279,7 @@ func updatePricing() {
 
 	pricingMap = make([]Pricing, 0)
 	imagePricingSnapshot := ratio_setting.GetPublicImagePricingSnapshot()
+	videoPricingSnapshot := ratio_setting.GetPublicVideoPricingSnapshot()
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			ModelName:              model,
@@ -297,7 +299,12 @@ func updatePricing() {
 			pricing.VendorID = meta.VendorID
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
-		if imagePricing, bound := imagePricingSnapshot[model]; bound {
+		if videoPricing, bound := videoPricingSnapshot[model]; bound && videoPricing.ProfileID != "" {
+			pricing.ModelPrice = videoPricing.UnitPrice
+			pricing.QuotaType = 1
+			pricing.BillingType = types.VideoPricingBillingType
+			pricing.VideoPricing = videoPricing
+		} else if imagePricing, bound := imagePricingSnapshot[model]; bound {
 			pricing.ModelPrice, _ = imagePricing.DefaultUnitPrice()
 			pricing.QuotaType = 1
 			pricing.BillingType = types.ImagePricingBillingType
@@ -310,6 +317,9 @@ func updatePricing() {
 			pricing.ModelRatio = modelRatio
 			pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
 			pricing.QuotaType = 0
+		}
+		if pricing.VideoPricing == nil {
+			pricing.VideoPricing = videoPricingSnapshot[model]
 		}
 		if cacheRatio, ok := ratio_setting.GetCacheRatio(model); ok {
 			pricing.CacheRatio = &cacheRatio

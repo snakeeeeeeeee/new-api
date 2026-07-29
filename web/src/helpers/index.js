@@ -33,4 +33,5 @@ export * from './statusCodeRules';
 export * from './subscriptionQuota';
 export * from './promptCacheUsage';
 export * from './imagePricing';
+export * from './videoPricing';
 export * from './groupOptions';

@@ -87,6 +87,17 @@ type NormalizedVideoTaskAdaptor interface {
 	ValidateNormalizedVideoModel(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 }
 
+type VideoBillingEstimate struct {
+	Seconds int
+	Basis   string
+}
+
+// VideoBillingEstimator resolves provider-specific duration fields into the
+// provider-neutral billing quantity used by VideoPricing.
+type VideoBillingEstimator interface {
+	ResolveVideoBilling(c *gin.Context, info *relaycommon.RelayInfo) (VideoBillingEstimate, *dto.TaskError)
+}
+
 // VideoContentResolver is optional. Providers implement it when a completed
 // output is an opaque reference or requires a provider-specific content API
 // instead of a directly fetchable URL.

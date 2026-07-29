@@ -162,7 +162,14 @@ const PricingCardView = ({
         -
       </Tag>
     );
-    if (resolvePricingBillingType(record) === 'per_image_parameter') {
+    const billingType = resolvePricingBillingType(record);
+    if (billingType === 'per_video_second') {
+      billingTag = (
+        <Tag key='billing' shape='circle' color='blue' size='small'>
+          {t('视频按秒计价')}
+        </Tag>
+      );
+    } else if (billingType === 'per_image_parameter') {
       billingTag = (
         <Tag key='billing' shape='circle' color='orange' size='small'>
           {t('图片参数计价')}
@@ -218,6 +225,19 @@ const PricingCardView = ({
                 parameter: record.image_pricing.parameter,
                 count: imageTierCount,
               })}
+            </Tag>
+          ) : null}
+          {record.video_pricing ? (
+            <Tag
+              color={
+                record.video_pricing.subscription_enabled ? 'green' : 'grey'
+              }
+              shape='circle'
+              size='small'
+            >
+              {record.video_pricing.subscription_enabled
+                ? t('可用订阅额度')
+                : t('仅钱包余额')}
             </Tag>
           ) : null}
         </div>
@@ -276,6 +296,7 @@ const PricingCardView = ({
             currency,
             quotaDisplayType: siteDisplayType,
           });
+          const billingType = resolvePricingBillingType(model);
 
           return (
             <Card
@@ -294,7 +315,11 @@ const PricingCardView = ({
                         {model.model_name}
                       </h3>
                       <div className='flex flex-col gap-1 text-xs mt-1'>
-                        {model.image_pricing ? (
+                        {billingType === 'per_video_second' ? (
+                          <span style={{ color: 'var(--semi-color-text-1)' }}>
+                            {priceData.price} / {t('秒')}
+                          </span>
+                        ) : model.image_pricing ? (
                           <span style={{ color: 'var(--semi-color-text-1)' }}>
                             {t('默认档位 {{tier}}', {
                               tier: model.image_pricing.default_tier,

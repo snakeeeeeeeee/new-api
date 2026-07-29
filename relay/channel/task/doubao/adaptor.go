@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -16,6 +17,7 @@ import (
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -95,6 +97,8 @@ type TaskAdaptor struct {
 	baseURL     string
 }
 
+const normalizedRequestContextKey = "doubao_video_request"
+
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
@@ -105,6 +109,133 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
 	// Accept only POST /v1/video/generations as "generate" action.
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+}
+
+func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.VideoTaskCreateRequest) *dto.TaskError {
+	if info == nil {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("relay info is nil"), "invalid_request", http.StatusBadRequest)
+	}
+	if request.Operation != "generation" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("Seedance only supports normalized generation"), "unsupported_video_operation", http.StatusBadRequest)
+	}
+	if request.Input.Video != nil {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("Seedance generation does not accept input.video"), "unsupported_video_input", http.StatusBadRequest)
+	}
+
+	payload := &requestPayload{Model: request.Model, Content: []ContentItem{}}
+	if request.Input.Prompt != "" {
+		payload.Content = append(payload.Content, ContentItem{Type: "text", Text: request.Input.Prompt})
+	}
+	if request.Input.Image != nil {
+		item, taskErr := normalizedDoubaoImage(*request.Input.Image, "first_frame")
+		if taskErr != nil {
+			return taskErr
+		}
+		payload.Content = append(payload.Content, item)
+	}
+	for _, source := range request.Input.ReferenceImages {
+		item, taskErr := normalizedDoubaoImage(source, "reference_image")
+		if taskErr != nil {
+			return taskErr
+		}
+		payload.Content = append(payload.Content, item)
+	}
+	if request.Output.Duration != nil {
+		if *request.Output.Duration <= 0 || *request.Output.Duration > relaycommon.MaxTaskDurationSeconds {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be between 1 and %d", relaycommon.MaxTaskDurationSeconds), "invalid_video_duration", http.StatusBadRequest)
+		}
+		payload.Duration = dto.IntValue(*request.Output.Duration)
+	}
+	if request.Output.Resolution != nil {
+		payload.Resolution = *request.Output.Resolution
+	}
+	if request.Output.AspectRatio != nil {
+		payload.Ratio = *request.Output.AspectRatio
+	}
+
+	var providerOptions map[string]any
+	for namespace, options := range request.ProviderOptions {
+		if namespace != "doubao" && namespace != ChannelName {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.%s is not supported by Seedance", namespace), "invalid_provider_options", http.StatusBadRequest)
+		}
+		if providerOptions != nil {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("use only one Seedance provider_options namespace"), "invalid_provider_options", http.StatusBadRequest)
+		}
+		providerOptions = options
+	}
+	for key := range providerOptions {
+		switch key {
+		case "model", "content", "duration", "resolution", "ratio":
+			return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.%s duplicates a public field", key), "invalid_provider_options", http.StatusBadRequest)
+		}
+	}
+	if len(providerOptions) > 0 {
+		data, err := common.Marshal(providerOptions)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_provider_options", http.StatusBadRequest)
+		}
+		if err := common.Unmarshal(data, payload); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_provider_options", http.StatusBadRequest)
+		}
+	}
+
+	if info.TaskRelayInfo == nil {
+		info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+	}
+	info.Action = constant.TaskActionVideoGeneration
+	info.OriginModelName = request.Model
+	c.Set(normalizedRequestContextKey, payload)
+	return nil
+}
+
+func (a *TaskAdaptor) ValidateNormalizedVideoModel(_ *gin.Context, _ *relaycommon.RelayInfo) *dto.TaskError {
+	return nil
+}
+
+func normalizedDoubaoImage(source dto.VideoTaskSource, role string) (ContentItem, *dto.TaskError) {
+	if strings.TrimSpace(source.URL) == "" {
+		return ContentItem{}, service.TaskErrorWrapperLocal(fmt.Errorf("Seedance normalized inputs require url sources"), "unsupported_file_provider", http.StatusBadRequest)
+	}
+	return ContentItem{Type: "image_url", ImageURL: &ImageURL{URL: source.URL}, Role: role}, nil
+}
+
+func (a *TaskAdaptor) ResolveVideoBilling(c *gin.Context, _ *relaycommon.RelayInfo) (channel.VideoBillingEstimate, *dto.TaskError) {
+	var seconds int
+	if value, ok := c.Get(normalizedRequestContextKey); ok {
+		payload, valid := value.(*requestPayload)
+		if !valid || payload == nil {
+			return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("invalid normalized Seedance request"), "invalid_request", http.StatusBadRequest)
+		}
+		seconds = int(payload.Duration)
+	} else {
+		req, err := relaycommon.GetTaskRequest(c)
+		if err != nil {
+			return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		payload, err := a.convertToRequestPayload(&req)
+		if err != nil {
+			return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		seconds = int(payload.Duration)
+		if seconds == 0 {
+			seconds = req.Duration
+		}
+		if seconds > 0 {
+			req.Duration = seconds
+			if req.Metadata == nil {
+				req.Metadata = map[string]interface{}{}
+			}
+			req.Metadata["duration"] = seconds
+			c.Set("task_request", req)
+		}
+	}
+	if seconds <= 0 {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("duration is required for per-second video billing"), "video_duration_required", http.StatusBadRequest)
+	}
+	if seconds > relaycommon.MaxTaskDurationSeconds {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("duration must be between 1 and %d", relaycommon.MaxTaskDurationSeconds), "invalid_video_duration", http.StatusBadRequest)
+	}
+	return channel.VideoBillingEstimate{Seconds: seconds, Basis: types.VideoPricingBasisGeneration}, nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -122,14 +253,19 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 
 // BuildRequestBody converts request into Doubao specific format.
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
-	req, err := relaycommon.GetTaskRequest(c)
-	if err != nil {
-		return nil, err
+	var body *requestPayload
+	if value, ok := c.Get(normalizedRequestContextKey); ok {
+		body, _ = value.(*requestPayload)
 	}
-
-	body, err := a.convertToRequestPayload(&req)
-	if err != nil {
-		return nil, errors.Wrap(err, "convert request payload failed")
+	if body == nil {
+		req, err := relaycommon.GetTaskRequest(c)
+		if err != nil {
+			return nil, err
+		}
+		body, err = a.convertToRequestPayload(&req)
+		if err != nil {
+			return nil, errors.Wrap(err, "convert request payload failed")
+		}
 	}
 	if info.IsModelMapped {
 		body.Model = info.UpstreamModelName
@@ -175,7 +311,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
 
-	c.JSON(http.StatusOK, ov)
+	if _, normalized := c.Get(relaycommon.VideoTaskPublicRequestContextKey); !normalized {
+		c.JSON(http.StatusOK, ov)
+	}
 	return dResp.ID, responseBody, nil
 }
 
@@ -242,6 +380,9 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if err := taskcommon.UnmarshalMetadata(metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
+	if r.Duration == 0 && req.Duration > 0 {
+		r.Duration = dto.IntValue(req.Duration)
+	}
 
 	return &r, nil
 }
@@ -268,6 +409,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusSuccess
 		taskResult.Progress = "100%"
 		taskResult.Url = resTask.Content.VideoURL
+		taskResult.VideoOutputs = []relaycommon.VideoOutput{{
+			Index: 0, URL: resTask.Content.VideoURL, MimeType: "video/mp4",
+			DurationMS: int64(resTask.Duration) * 1000,
+		}}
 		// 解析 usage 信息用于按倍率计费
 		taskResult.CompletionTokens = resTask.Usage.CompletionTokens
 		taskResult.TotalTokens = resTask.Usage.TotalTokens

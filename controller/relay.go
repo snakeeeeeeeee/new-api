@@ -1002,7 +1002,8 @@ func RelayTask(c *gin.Context) {
 		task := model.InitTask(result.Platform, relayInfo)
 		perCallBilling := common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) ||
 			relayInfo.ChannelType == constant.ChannelTypeXai ||
-			relayInfo.PriceData.ImagePricing != nil
+			relayInfo.PriceData.ImagePricing != nil ||
+			relayInfo.PriceData.VideoPricing != nil
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		if imageSnapshot, err := buildAsyncImageRequestSnapshot(c, relayInfo); err == nil && imageSnapshot != nil && len(imageSnapshot.request) > 0 {
 			task.PrivateData.ImageRequest = imageSnapshot.request
@@ -1035,11 +1036,14 @@ func RelayTask(c *gin.Context) {
 			PerCallBilling:           perCallBilling,
 			UsePrice:                 relayInfo.PriceData.UsePrice,
 			ImagePricing:             cloneControllerImagePricingSnapshot(relayInfo.PriceData.ImagePricing),
+			VideoPricing:             cloneControllerVideoPricingSnapshot(relayInfo.PriceData.VideoPricing),
 			ConsumeLogId:             consumeLogId,
 			RequestId:                c.GetString(common.RequestIdKey),
 		}
 		if relayInfo.PriceData.ImagePricing != nil {
 			task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
+		} else if relayInfo.PriceData.VideoPricing != nil {
+			task.PrivateData.BillingContext.BillingMode = types.VideoPricingBillingMode
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData
@@ -1157,6 +1161,14 @@ func buildAsyncImageRequestSnapshot(c *gin.Context, relayInfo *relaycommon.Relay
 }
 
 func cloneControllerImagePricingSnapshot(snapshot *types.ImagePricingSnapshot) *types.ImagePricingSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+	cloned := *snapshot
+	return &cloned
+}
+
+func cloneControllerVideoPricingSnapshot(snapshot *types.VideoPricingSnapshot) *types.VideoPricingSnapshot {
 	if snapshot == nil {
 		return nil
 	}

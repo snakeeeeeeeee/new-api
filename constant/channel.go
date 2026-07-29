@@ -56,6 +56,7 @@ const (
 	ChannelTypeReplicate      = 56
 	ChannelTypeCodex          = 57
 	ChannelTypeImageHandle    = 58
+	ChannelTypeAdobeVideo     = 59
 	ChannelTypeDummy          // this one is only for count, do not add any channel after this
 
 )
@@ -120,6 +121,7 @@ var ChannelBaseURLs = []string{
 	"https://api.replicate.com",                 //56
 	"https://chatgpt.com",                       //57
 	"http://127.0.0.1:8787",                     //58
+	"",                                          //59
 }
 
 var ChannelTypeNames = map[int]string{
@@ -178,6 +180,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeReplicate:      "Replicate",
 	ChannelTypeCodex:          "Codex",
 	ChannelTypeImageHandle:    "ImageHandle",
+	ChannelTypeAdobeVideo:     "AdobeVideo",
 }
 
 func GetChannelTypeName(channelType int) string {

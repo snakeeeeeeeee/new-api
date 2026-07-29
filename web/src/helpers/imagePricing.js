@@ -17,6 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { VIDEO_PRICING_BILLING_TYPE } from './videoPricing';
+
 export const IMAGE_PRICING_BILLING_TYPE = 'per_image_parameter';
 export const IMAGE_PRICING_PARAMETERS = ['quality', 'size', 'resolution'];
 export const MAX_IMAGE_N = 128;
@@ -354,6 +356,12 @@ export const validateImagePricing = (raw, t = fallbackTranslate) => {
 };
 
 export const resolvePricingBillingType = (record) => {
+  if (
+    record?.billing_type === VIDEO_PRICING_BILLING_TYPE ||
+    record?.video_pricing?.billing_mode === 'per_second'
+  ) {
+    return VIDEO_PRICING_BILLING_TYPE;
+  }
   if (
     record?.billing_type === IMAGE_PRICING_BILLING_TYPE ||
     record?.image_pricing

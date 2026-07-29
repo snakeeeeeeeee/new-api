@@ -27,6 +27,7 @@ import ModelSettingsVisualEditor from '../../pages/Setting/Ratio/ModelSettingsVi
 import ModelRatioNotSetEditor from '../../pages/Setting/Ratio/ModelRationNotSetEditor';
 import UpstreamRatioSync from '../../pages/Setting/Ratio/UpstreamRatioSync';
 import ImagePricingSettings from '../../pages/Setting/Ratio/ImagePricingSettings';
+import VideoPricingSettings from '../../pages/Setting/Ratio/VideoPricingSettings';
 
 import { API, showError, toBoolean } from '../../helpers';
 
@@ -36,6 +37,7 @@ const RatioSetting = () => {
   let [inputs, setInputs] = useState({
     ModelPrice: '',
     ImagePricing: '',
+    VideoPricing: '',
     ModelRatio: '',
     CacheRatio: '',
     CreateCacheRatio: '',
@@ -111,6 +113,9 @@ const RatioSetting = () => {
           </Tabs.TabPane>
           <Tabs.TabPane tab={t('图片参数计价')} itemKey='image_pricing'>
             <ImagePricingSettings options={inputs} refresh={onRefresh} />
+          </Tabs.TabPane>
+          <Tabs.TabPane tab={t('视频按秒计价')} itemKey='video_pricing'>
+            <VideoPricingSettings options={inputs} refresh={onRefresh} />
           </Tabs.TabPane>
           <Tabs.TabPane tab={t('未设置价格模型')} itemKey='unset_models'>
             <ModelRatioNotSetEditor options={inputs} refresh={onRefresh} />

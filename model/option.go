@@ -149,6 +149,7 @@ func InitOptionMap() {
 	common.OptionMap["ModelRatio"] = ratio_setting.ModelRatio2JSONString()
 	common.OptionMap["ModelPrice"] = ratio_setting.ModelPrice2JSONString()
 	common.OptionMap["ImagePricing"] = ratio_setting.ImagePricing2JSONString()
+	common.OptionMap["VideoPricing"] = ratio_setting.VideoPricing2JSONString()
 	common.OptionMap["CacheRatio"] = ratio_setting.CacheRatio2JSONString()
 	common.OptionMap["CreateCacheRatio"] = ratio_setting.CreateCacheRatio2JSONString()
 	common.OptionMap["TokenTierPricingRules"] = ratio_setting.TokenTierPricingRules2JSONString()
@@ -239,6 +240,11 @@ func UpdateOption(key string, value string) error {
 	}
 	if key == "ImagePricing" {
 		if err := ratio_setting.ValidateImagePricingJSON(value); err != nil {
+			return err
+		}
+	}
+	if key == "VideoPricing" {
+		if err := ratio_setting.ValidateVideoPricingJSON(value); err != nil {
 			return err
 		}
 	}
@@ -618,6 +624,11 @@ func updateOptionMap(key string, value string) (err error) {
 		err = ratio_setting.UpdateModelPriceByJSONString(value)
 	case "ImagePricing":
 		err = ratio_setting.UpdateImagePricingByJSONString(value)
+		if err == nil {
+			InvalidatePricing()
+		}
+	case "VideoPricing":
+		err = ratio_setting.UpdateVideoPricingByJSONString(value)
 		if err == nil {
 			InvalidatePricing()
 		}

@@ -50,6 +50,11 @@ Complete
 ## Errors Encountered
 | Error | Attempt | Resolution |
 | --- | --- | --- |
+| The first multi-locale patch assumed the English translation of the final `格式` key was `Format` | 1 | The atomic patch changed no locale files; inspect each exact file tail and apply locale patches with their real existing values. |
+| `relay_task.go` referenced `ratio_setting` without importing it, and the first snapshot patch matched the image task constructor | 1 | Add the missing import and explicitly add `VideoPricing` to the normalized video task billing context. |
+| Seedance completion exposes token usage before the legacy per-call guard | 1 | Add an earlier immutable VideoPricing terminal branch so token usage cannot overwrite request-duration billing; merge returned duration as audit-only metadata. |
+| The new terminal billing branch referenced the pricing-mode constant without importing `types` | 1 | Add the missing package import and rerun the scoped compile. |
+| The subscription-eligible test used the old minimal subscription fixture, which lacks a plan and preconsume-record table | 1 | Migrate the two required test models, create a valid plan association, and provide the idempotent request ID required by subscription preconsume. |
 | Combined Asset DTO/controller patch referenced a controller symbol while applying to the DTO file | 1 | Split the patch by real file context and applied the DTO and controller changes with exact anchors. |
 | xAI normalized-model test initialized a promoted RelayInfo field directly | 1 | Put `UpstreamModelName` in the embedded `ChannelMeta`, matching production construction. |
 | Scoped Prettier found one mechanical formatting difference in `WebhookTab.jsx` | 1 | Run Prettier on that file and repeat the complete scoped check successfully. |
@@ -59,6 +64,193 @@ Complete
 | Desktop acceptance initially showed the previous 1.5 reference-image example | 1 | Source and local build were correct; rebuild and recreate only `new-api-dev`, then repeat the desktop check against the embedded frontend. |
 | PostgreSQL cleanup probe used the nonexistent default `postgres` role | 1 | Read the dev Compose configuration and use its configured `root` role for the exact disposable-user cleanup. |
 | First Docker capability probes used the token display name as the Bearer value | 1 | Resolve the active Key for the named local token without printing it, add the required `sk-` prefix, and rerun both probes successfully. |
+
+---
+
+# Task Plan: Adobe2API Seedance 2.0 Fast Integration (2026-07-29)
+
+## Goal
+Implement a real Adobe2API asynchronous Seedance video contract, connect it to new-api through a dedicated AdobeVideo task adaptor, and verify one Docker-dev 4-second Fast generation plus per-second wallet billing.
+
+## Current Phase
+Complete
+
+### Phase 1: Adobe2API contract discovery
+- [x] Confirm the advertised Seedance 2.0 model families and the legality of a 4-second Fast request.
+- [x] Verify exact public and upstream model identifiers, payload conversion, duration/resolution bounds, response format, and task-state behavior in code and tests.
+- [x] Inspect local Docker topology and credential readiness without printing or mutating secrets.
+**Status:** complete
+
+### Phase 2: New-api integration design
+- [x] Compare Adobe2API's protocol with the existing Seedance/Doubao and normalized video-task adaptors.
+- [x] Evaluate direct Chat Completions proxying, Sora-protocol reuse, and a dedicated AdobeVideo adaptor.
+- [x] Select the smallest approach that preserves asynchronous lifecycle semantics, provider-specific fields, and exact-model per-second billing.
+**Status:** complete
+
+### Phase 3: Acceptance and cleanup plan
+- [x] Define mock-first protocol tests and one separately approved real 4-second paid generation.
+- [x] Define task submission, polling, terminal result, asset access, quota, funding-source, idempotency, and refund assertions.
+- [x] Define exact Docker rebuild scope, disposable fixtures, secret handling, and cleanup verification.
+**Status:** complete
+
+### Phase 4: Adobe2API asynchronous video implementation
+- [x] Confirm Seedance 451 policy-error mapping passes with a writable isolated test data directory.
+- [x] Add stable resolution-bound Seedance provider SKUs and explicit duration validation.
+- [x] Add asynchronous submit/query/content endpoints backed by the existing scheduler, retry, progress, and generated-file services.
+- [x] Add route, lifecycle, validation, error, and content tests.
+**Status:** complete
+
+### Phase 5: New-api AdobeVideo integration
+- [x] Add the AdobeVideo channel type, frontend option, async-task label, and adaptor registration.
+- [x] Implement normalized request preparation, exact mapped-model forwarding, per-second estimation, status parsing, and content resolution.
+- [x] Add focused adaptor, relay billing, wallet-only, idempotency, and failure-refund tests.
+**Status:** complete
+
+### Phase 6: Docker-dev mock acceptance
+- [x] Rebuild Adobe2API and new-api Docker dev without restarting PostgreSQL or Redis unnecessarily.
+- [x] Configure disposable channel, model mapping, pricing profile, test user/token, and mock lifecycle.
+- [x] Verify 202 submission, polling states, content proxy, quota formula, wallet-only behavior, idempotency, and failure refund.
+**Status:** complete
+
+### Phase 7: One approved real 4-second call and cleanup
+- [x] Submit one text-only 4-second 16:9 480p Fast generation through new-api.
+- [x] Verify terminal task, MP4 access/duration, immutable billing snapshot, quota delta, and no subscription consumption.
+- [x] Remove disposable database/config fixtures, retain the generated acceptance MP4 for inspection, and confirm both containers remain healthy.
+**Status:** complete
+
+## Decisions
+- This investigation is read-only for business code and upstream state.
+- Do not submit a real generation until the user approves the final plan and identifies an account/credential that may incur cost.
+- Treat `seedance_2.0_fast` and `seedance_2.0` as distinct upstream variants; expose resolution through exact public aliases rather than a billing multiplier.
+- Use requested duration as the immutable billing quantity; provider-returned duration is audit-only.
+- Add a real asynchronous video submit/query/content contract to Adobe2API; do not expose its current blocking `/v1/chat/completions` call as an asynchronous new-api task.
+- Add a dedicated AdobeVideo task adaptor in new-api. Reusing Sora would save one adaptor but would either lose Seedance aspect-ratio/audio/reference semantics or add Adobe-only fields to the shared Sora contract.
+- Use a public alias such as `seedance-2.0-fast-480p` and exact channel mapping to a stable Adobe2API provider SKU. The provider SKU owns the resolution; `output.duration` remains the explicit integer billing input.
+- Scope the first real call to text-to-video, 4 seconds, 16:9, 480p, Fast, and no reference media. Add reference-media support only after the basic async/billing path passes.
+- Reuse Adobe2API's existing account scheduler, retry policy, generated-file storage, and internal Adobe submit/poll client. For local acceptance the job store may remain in-memory; production rollout must define restart recovery for nonterminal jobs.
+- The user approved one real 4-second paid acceptance call on the currently active local Adobe account.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| The planning skill documents `scripts/session-catchup.py`, but the installed skill package contains no scripts directory | 1 | Read the existing planning files directly, inspect Git state, and append a separate task section without repeating the missing command. |
+| Host Python cannot import FastAPI for the Seedance test module | 1 | Do not mutate the host environment; run the test source read-only in an ephemeral container built from Adobe2API's existing image. |
+| The running Adobe2API image intentionally excludes `tests/` | 1 | Start an ephemeral network-disabled container with the repository mounted read-only so the image dependencies execute the current test source. |
+| A read-only source mount made the 451 route test return 500 while writing `data/request_errors.jsonl` | 1 | Mount a separate writable tmpfs at `/src/data`; all 13 Seedance tests pass and no production error-mapping fix is needed. |
+| The execution policy rejected removal of the temporary `/tmp/adobe-models.json` model-list cache | 1 | Leave the non-secret temporary file untouched and complete repository consistency checks without retrying a rejected destructive command. |
+| New async route tests initially used a test-only catalog containing only the old short alias | 1 | Add the new stable 480p provider SKU to the isolated router catalog and rerun the lifecycle tests. |
+| `compileall` attempted to create `__pycache__` inside the read-only source mount | 1 | Set `PYTHONPYCACHEPREFIX=/tmp/pycache` for the isolated compile check rather than making the source mount writable. |
+| The first AdobeVideo HTTP integration test panicked because the package-level default service HTTP client is nil before application initialization | 1 | Add a local `http.DefaultClient` fallback only when `GetHttpClientWithProxy` returns nil; configured proxy clients remain unchanged. |
+| The first async mock compile left `snapshot()` with its old direct return before the new last-video-request copy | 1 | Construct a local response value, attach the optional copied request, and return it once. |
+| The first Docker success-task query reused the submission `sk-` token and received 401 | 1 | Preserve the established credential boundary and add a disposable `ak_` Resource API Key for task queries and asset downloads. |
+| The real-call preflight initially used Adobe's upstream Seedance key as the local service credential and received 401 | 1 | Inspect Adobe2API's `require_service_api_key` path: no `config/config.json` is mounted, so the service uses `config_mgr`'s default `projectx_webapp`; verify that credential against `/v1/models` before creating the disposable real channel. |
+| The real Adobe2API content endpoint ignored a valid byte range and returned the full MP4 with HTTP 200 | 1 | Add explicit single-range, suffix-range, `If-Range`, and 416 handling to the authenticated content route; all 72 Adobe2API tests pass, including the new 206/416 contract. |
+| The host has no `ffprobe` binary | 1 | Validate the retained MP4 with macOS metadata: H.264, 864x496, 4.042 seconds, 549065 bytes. |
+
+
+# Task Plan: Per-second Video Billing and Subscription Eligibility (2026-07-29)
+
+## Goal
+Determine the minimal cross-layer design needed to bill Seedance/xAI video models by generated seconds and make subscription-quota charging opt-in per video model, defaulting to wallet-only.
+
+## Current Phase
+Complete
+
+### Phase 1: Existing billing-chain discovery
+- [x] Trace model pricing, task precharge/final settlement, video duration, and subscription quota selection.
+- [x] Identify existing reusable settings and database contracts.
+**Status:** complete
+
+### Phase 2: Design options and recommendation
+- [x] Compare configuration-level, model-metadata, and billing-policy approaches.
+- [x] Specify defaults, migration compatibility, API/UI changes, and failure behavior.
+**Status:** complete
+
+### Phase 3: Verification and handoff
+- [x] Cross-check the recommendation against Seedance and xAI relay flows.
+- [x] Deliver concrete file-level change points, test scope, and unresolved product choice.
+**Status:** complete
+
+## Key Questions
+1. Is authoritative generated duration available before submission, only after task completion, or both?
+2. Where does the current code choose subscription quota versus wallet balance?
+3. Should subscription eligibility belong to exact models or broader channel/model billing rules?
+
+## Decisions Made
+| Decision | Rationale |
+| --- | --- |
+| Keep this turn read-only for business code | The user requested architecture analysis, not implementation. |
+| Use exact model-name per-second pricing | Resolution is encoded in distinct model aliases such as `xxx-720p`; no resolution multiplier is required. |
+| Treat validated request duration as the generation billing quantity | It enables full precharge before upstream work and avoids successful-task undercharge from a failing completion supplement. |
+| Add model billing metadata beside `ModelPrice` | Preserves the existing numeric price map while adding the missing unit and subscription policy. |
+| Default video subscription eligibility to false | Disallowed models bypass all subscription preferences and use wallet only, as requested. |
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Existing planning files contain extensive completed tasks | 1 | Append an isolated task section and preserve all historical records. |
+
+---
+
+# Task Plan: Per-second Video Billing Implementation (2026-07-29)
+
+## Goal
+Implement the approved VideoPricing configuration, normalized duration contract, wallet-only-by-default policy, provider adaptors, admin UI, public pricing metadata, and regression coverage.
+
+## Current Phase
+Complete
+
+### Phase 1: Configuration and immutable pricing data
+- [x] Add validated, atomically updated VideoPricing settings and Option registration.
+- [x] Add public pricing DTOs and durable video pricing snapshots.
+**Status:** complete
+
+### Phase 2: Relay billing and funding policy
+- [x] Resolve exact-model pricing before upstream mapping and precharge the full duration cost.
+- [x] Force all video requests to wallet unless the exact model explicitly enables subscription billing.
+- [x] Persist and audit immutable billing inputs without completion-time repricing.
+**Status:** complete
+
+### Phase 3: Provider duration adaptors
+- [x] Add the strong VideoBillingEstimator contract.
+- [x] Implement xAI, Seedance/Doubao, Sora, Gemini, and Vertex duration resolution.
+- [x] Reject missing duration and unsupported edit operations for bound per-second models before upstream dispatch.
+**Status:** complete
+
+### Phase 4: Admin and public pricing UI
+- [x] Add the VideoPricing settings editor and ratio-settings tab.
+- [x] Render per-second billing in public/admin pricing views and add all locale strings.
+**Status:** complete
+
+### Phase 5: Verification
+- [x] Run focused backend configuration, adaptor, billing, lifecycle, and funding-source tests.
+- [x] Run full backend, frontend build, i18n, mock-provider, and responsive UI checks.
+**Status:** complete
+
+## Locked Decisions
+- Public normalized video requests use `output.duration`; compatibility endpoints retain provider-specific fields.
+- Per-second bound models require an explicit positive integer duration and never use provider defaults.
+- Resolution is represented only by exact public model aliases; video pricing ignores resolution ratios.
+- A pricing binding replaces legacy ModelPrice billing; removing it restores legacy behavior.
+- All video requests, including unbound legacy video models, are wallet-only unless an exact binding enables subscriptions.
+- xAI edit is unsupported for per-second pricing; extension charges the explicitly requested added seconds.
+- No SQL schema migration is introduced; task billing snapshots remain in private JSON data.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| New consumption-log test placed `Action` directly on `RelayInfo`, but it belongs to embedded `TaskRelayInfo` | 1 | Move the field into an explicit `TaskRelayInfo` fixture. |
+| New relay pricing test reached wallet preconsume with user ID 0 and panicked in the user lookup path | 1 | Use the existing isolated SQLite relay fixture and a real zero-balance user/token so the test stops deterministically before upstream dispatch. |
+| Video duration audit test supplied a log ID but omitted the public task ID used by the log ownership guard | 1 | Populate the same `PublicTaskID` before logging and on the task fixture, matching the real submission lifecycle. |
+| Repository i18n lint reported 442 findings, including one new internal `per_second` literal in the VideoPricing editor | 1 | Reuse the exported `VIDEO_PRICING_MODE` constant so this change adds no lint finding; retain the unrelated repository baseline. |
+| First ad hoc locale-coverage command over-escaped its JavaScript regular expression | 1 | Replace it with deterministic string splitting and rerun against all seven locale objects. |
+| A locale-coverage one-liner used a JavaScript template literal inside a double-quoted shell argument | 1 | Use ordinary string concatenation in a single-quoted script; all seven `Preview group ratio` translations then validated. |
+| The first Docker health loop assigned to zsh's read-only `status` parameter | 1 | Rename it to the task-specific `app_health`; the rebuilt application container then reported healthy without restarting PostgreSQL or Redis. |
+| A database-test discovery command used an unmatched root-level `*_test.go` glob under zsh | 1 | Use ripgrep's `-g '*_test.go'` filter; confirmed SQLite coverage and the existing optional cross-database test entry points without modifying files. |
+| Second locale-coverage check treated locale JSON as flat although keys live under `translation` | 1 | Compare the baseline/current `translation` objects; all 46 new keys are non-empty in all seven locales. |
+| Docker UI labeled the non-persisted price calculator input as `分组倍率`, which looked like a VideoPricing setting | 1 | Rename it to `预览分组倍率`; runtime billing continues to resolve the effective user/aggregate group ratio automatically. |
+| First disposable Docker QA username exceeded the existing username max validation | 1 | No row was created; register the shorter unique username `cvpqa0729` instead. |
+| Browser direct navigation to the logout API was blocked after clearing the stale local session | 1 | Use the resulting unauthenticated login page and a disposable root account through the normal login form. |
 
 ---
 

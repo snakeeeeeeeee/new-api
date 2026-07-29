@@ -11,9 +11,49 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestVideoPricingOptionValidationIsAtomic(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+	model.InitOptionMap()
+	original := ratio_setting.VideoPricing2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(original))
+	})
+
+	update := func(value string) tokenAPIResponse {
+		t.Helper()
+		payload, err := common.Marshal(map[string]any{"key": "VideoPricing", "value": value})
+		require.NoError(t, err)
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(payload))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		UpdateOption(ctx)
+		var response tokenAPIResponse
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		return response
+	}
+
+	valid := `{"version":1,"profiles":{"video":{"name":"Video","billing_mode":"per_second","unit_price":0.03}},"model_bindings":{"video-model":{"profile":"video","subscription_enabled":false}}}`
+	validResponse := update(valid)
+	require.True(t, validResponse.Success, validResponse.Message)
+	before := ratio_setting.VideoPricing2JSONString()
+	var persisted model.Option
+	require.NoError(t, model.DB.Where("key = ?", "VideoPricing").First(&persisted).Error)
+	require.JSONEq(t, valid, persisted.Value)
+
+	invalid := `{"version":1,"profiles":{},"model_bindings":{"video-model":{"profile":"missing"}}}`
+	invalidResponse := update(invalid)
+	require.False(t, invalidResponse.Success)
+	require.Contains(t, invalidResponse.Message, "不存在")
+	require.JSONEq(t, before, ratio_setting.VideoPricing2JSONString())
+	require.NoError(t, model.DB.Where("key = ?", "VideoPricing").First(&persisted).Error)
+	require.JSONEq(t, valid, persisted.Value)
+}
 
 func TestOpenAIReservedFunctionNameOptionsCanBeUpdated(t *testing.T) {
 	setupAggregateGroupControllerTestDB(t)

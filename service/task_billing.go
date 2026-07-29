@@ -36,6 +36,8 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) int {
 	logContent := fmt.Sprintf("操作 %s", info.Action)
 	if info.PriceData.ImagePricing != nil {
 		logContent = imagePricingLogContent(info.PriceData.ImagePricing)
+	} else if info.PriceData.VideoPricing != nil {
+		logContent = videoPricingLogContent(info.PriceData.VideoPricing)
 	} else if c != nil && c.Request != nil && c.Request.URL != nil && c.Request.URL.Path == "/v1/image/tasks" {
 		if amount, ok := info.PriceData.OtherRatios["async_image_precharge_amount_per_image_usd"]; ok && amount > 0 {
 			n := info.PriceData.OtherRatios["async_image_n"]
@@ -48,8 +50,8 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) int {
 		}
 	}
 	// 支持任务仅按次计费
-	if strings.HasPrefix(logContent, "异步图片预扣费") {
-		// 已经写明预扣费和估算参数，避免再追加通用按次计费文案。
+	if info.PriceData.ImagePricing != nil || info.PriceData.VideoPricing != nil || strings.HasPrefix(logContent, "异步图片预扣费") {
+		// 参数化图片和按秒视频日志已经写明计费依据，避免追加旧的按次计费文案。
 	} else if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) || info.ChannelType == constant.ChannelTypeXai {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else {
@@ -75,6 +77,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) int {
 	appendGroupRatioOverrideInfo(info, other)
 	appendBillingInfo(info, other)
 	appendImagePricingLogOther(other, info.PriceData.ImagePricing)
+	appendVideoPricingLogOther(other, info.PriceData.VideoPricing)
 	if info.IsModelMapped {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
@@ -190,6 +193,7 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			other["image_count"] = bc.ImageCount
 		}
 		appendImagePricingLogOther(other, bc.ImagePricing)
+		appendVideoPricingLogOther(other, bc.VideoPricing)
 		if bc.HasRatioOverride {
 			other["ratio_override"] = bc.RatioOverride
 			other["has_ratio_override"] = true
@@ -592,6 +596,10 @@ func taskRelayInfoForBilling(task *model.Task) *relaycommon.RelayInfo {
 		priceData.CacheCreation1hRatio = defaultFloat(bc.CacheCreation1hRatio, priceData.CacheCreationRatio)
 		priceData.ImageRatio = defaultFloat(bc.ImageRatio, 1)
 		priceData.UsePrice = bc.UsePrice
+		if bc.VideoPricing != nil {
+			cloned := *bc.VideoPricing
+			priceData.VideoPricing = &cloned
+		}
 		priceData.OtherRatios = taskUsageBillingOtherRatios(bc.OtherRatios)
 		priceData.GroupRatioInfo = types.GroupRatioInfo{
 			GroupRatio:                    defaultFloat(bc.GroupRatio, 1),

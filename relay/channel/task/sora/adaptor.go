@@ -18,6 +18,7 @@ import (
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -138,6 +139,31 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return ratios
 }
 
+func (a *TaskAdaptor) ResolveVideoBilling(c *gin.Context, _ *relaycommon.RelayInfo) (channel.VideoBillingEstimate, *dto.TaskError) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	seconds := req.Duration
+	if raw := strings.TrimSpace(req.Seconds); raw != "" {
+		parsed, parseErr := strconv.Atoi(raw)
+		if parseErr != nil {
+			return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("seconds must be an integer"), "invalid_video_duration", http.StatusBadRequest)
+		}
+		seconds = parsed
+	}
+	if seconds <= 0 {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("seconds is required for per-second video billing"), "video_duration_required", http.StatusBadRequest)
+	}
+	if seconds > relaycommon.MaxTaskDurationSeconds {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("seconds must be between 1 and %d", relaycommon.MaxTaskDurationSeconds), "invalid_video_duration", http.StatusBadRequest)
+	}
+	req.Duration = seconds
+	req.Seconds = strconv.Itoa(seconds)
+	c.Set("task_request", req)
+	return channel.VideoBillingEstimate{Seconds: seconds, Basis: types.VideoPricingBasisGeneration}, nil
+}
+
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info.Action == constant.TaskActionRemix {
 		return fmt.Sprintf("%s/v1/videos/%s/remix", a.baseURL, info.OriginTaskID), nil
@@ -167,6 +193,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
+			if info.PriceData.VideoPricing != nil {
+				bodyMap["seconds"] = strconv.Itoa(info.PriceData.VideoPricing.Seconds)
+				delete(bodyMap, "duration")
+			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
 			}
@@ -182,8 +212,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 		writer.WriteField("model", info.UpstreamModelName)
+		if info.PriceData.VideoPricing != nil {
+			writer.WriteField("seconds", strconv.Itoa(info.PriceData.VideoPricing.Seconds))
+		}
 		for key, values := range formData.Value {
-			if key == "model" {
+			if key == "model" || (info.PriceData.VideoPricing != nil && (key == "seconds" || key == "duration")) {
 				continue
 			}
 			for _, v := range values {

@@ -178,6 +178,25 @@ describe('image pricing helpers', () => {
         'per_image_parameter',
       ),
     ).toBe(true);
+    expect(
+      resolvePricingBillingType({
+        quota_type: 1,
+        billing_type: 'per_video_second',
+        video_pricing: { billing_mode: 'per_second' },
+      }),
+    ).toBe('per_video_second');
+    expect(
+      matchesPricingBillingType(
+        { quota_type: 1, video_pricing: { billing_mode: 'per_second' } },
+        'per_video_second',
+      ),
+    ).toBe(true);
+    expect(
+      resolvePricingBillingType({
+        quota_type: 1,
+        video_pricing: { subscription_enabled: true },
+      }),
+    ).toBe('per_request');
   });
 
   test('reads compatible image pricing log snapshot fields', () => {

@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/async_task_setting"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -716,6 +717,11 @@ func truncateBase64(s string) string {
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	allowDebt := task.Platform == constant.TaskPlatform(fmt.Sprintf("%d", constant.ChannelTypeImageHandle))
 	if settleAsyncImageBillingOnComplete(ctx, task, taskResult) {
+		return
+	}
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.BillingMode == types.VideoPricingBillingMode && bc.VideoPricing != nil {
+		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 视频按秒计费，成功后保持请求快照额度 %s", task.TaskID, formatQuotaUSD(task.Quota)))
+		recordVideoExecutionAudit(task, taskResult)
 		return
 	}
 	// 1. 优先让 adaptor 决定最终额度

@@ -13,6 +13,113 @@
 
 ---
 
+# Adobe2API Seedance 2.0 Fast Integration Findings (2026-07-29)
+
+- The Adobe2API repository is `/Users/zhangyu/code/myProject/supertoken-projects/adobe2api`; its latest relevant commits are `bb1b37d` (Adobe model compatibility/runtime hardening) and `537b825` (Seedance 2.0 API design).
+- The documented variants are `seedance_2.0_fast` and `seedance_2.0`, with expanded aliases `firefly-seedance2-fast-{duration}s-{ratio}-{resolution}` and `firefly-seedance2-{duration}s-{ratio}-{resolution}`.
+- Both short aliases default to 4 seconds, 16:9, and 480p. Documented durations are every integer second from 4 through 15.
+- Fast documents 480p and 720p support; Standard additionally documents 1080p. These are provider capabilities, not billing multipliers.
+- Adobe2API exposes video generation through `/v1/chat/completions`; Seedance uses Adobe Firefly's internal web protocol and Cookie-imported accounts, so a real acceptance call may incur account cost and depends on current entitlement/protocol compatibility.
+- The actual upstream payload uses `modelId=seedance`, `modelVersion=seedance_2.0_fast` or `seedance_2.0`, an integer `duration`, a resolution-derived `size`, `generationSettings.aspectRatio`, `generateAudio`, and reference blobs.
+- Adobe2API submits to Adobe's async endpoint, polls every three seconds, downloads the completed video, and only then returns the Chat Completions response. Its upstream is asynchronous, but its public video contract is currently blocking.
+- The only existing Adobe2API public async submit/query pair is `/api/v1/generate` for images. It uses an in-memory JobStore and background thread; there is no public asynchronous video query or content endpoint yet.
+- A direct new-api adaptor over `/v1/chat/completions` would block task creation until completion and leave no valid polling endpoint, so it cannot satisfy the asynchronous acceptance requirement.
+- Reusing new-api's Sora adaptor would require Adobe2API to implement `/v1/videos`, status, and content endpoints, but the shared Sora normalized contract currently cannot cleanly carry all Seedance-specific aspect-ratio, audio, and reference semantics. A dedicated AdobeVideo adaptor keeps those provider decisions isolated.
+- The local Adobe2API container is healthy on port 6001 and shares the `ai-gateway` Docker network with `new-api-dev`.
+- The local account inventory contains one active auto-refresh account with known positive credits, no credit error, and no temporary block. No credential values were read into planning output.
+- The live `/v1/models` endpoint returns 362 Seedance entries: 144 Fast combinations, 216 Standard combinations, and two short aliases.
+- Local request logs contain multiple successful `seedance_2.0_fast` tasks and a successful Standard 1080p task, each with an upstream job ID and completed video preview. Existing Seedance MP4 artifacts are valid ISO MP4 files; the inspected Fast artifact reports 4.042 seconds.
+- A network-disabled container run with read-only source and writable tmpfs data passes all 13 Seedance tests. The earlier 451-to-500 result was a test-harness artifact caused by denying writes to `data/request_errors.jsonl`, not a business-code regression.
+- With a temporary test price of `$0.03/second`, four seconds and group ratio `1.0` should charge `60,000` quota at the configured `QuotaPerUnit=500,000`. A mock test at group ratio `1.5` should charge `90,000`, proving the runtime group ratio is inherited rather than configured in VideoPricing.
+- Adobe2API's generation router already receives every dependency needed by an asynchronous video worker: account scheduler, retry wrapper, progress callbacks, generated-file URL builder, storage accounting, provider error classes, and the shared Adobe client.
+- The existing `JobRecord` and `/api/v1/generate` contract are image-specific. A separate `VideoJobRecord`/`VideoJobStore` avoids changing the legacy image response shape while keeping thread-safe bounded in-memory storage for the first local integration.
+
+
+# Per-second Video Billing and Subscription Eligibility Findings (2026-07-29)
+
+## Requirements
+- Support per-generated-second charging for Seedance and xAI video models.
+- Add per-video-model subscription-quota eligibility, default false.
+- When eligibility is false, charge wallet balance only rather than consuming subscription quota.
+- Determine whether the existing model-pricing subsystem is the right ownership boundary and identify all affected layers.
+
+## Initial Constraints
+- Preserve SQLite, MySQL, and PostgreSQL compatibility.
+- Preserve explicit zero values in upstream video request DTOs.
+- Keep existing provider/channel compatibility routes working.
+- No business-code edits are authorized in this investigation turn.
+
+## Confirmed Findings
+- Subscription selection is part of the relay billing state, not merely frontend presentation. `relay/common/relay_info.go` records billing source, selected subscription ID, preconsumed amount, and post-settlement delta.
+- Async task relay copies the selected subscription ID into task private data, so video task completion already participates in subscription-aware settlement.
+- The requested subscription restriction therefore has to be evaluated before billing preconsume selects a source; a model-pricing UI-only flag would not enforce wallet-only charging.
+- Current `main` HEAD is `08e1e9732` (`feat: expand Gemini image output controls`); the recent async public-quota sanitization work is adjacent but does not establish video pricing behavior.
+- A centralized `service.BillingSession` already owns funding-source preconsume, final delta settlement, and refunds. It delegates to either wallet or subscription funding, making this the likely enforcement boundary for wallet-only models.
+- Async task settlement is already source-aware through `service/task_billing.go`; subscription tasks apply their final delta to the persisted `user_subscriptions` row.
+- The task adaptor contract already has billing estimation hooks: Gemini/Vertex video adaptors derive `OtherRatios` from video duration and resolution. Per-second billing should reuse this generic task-pricing path rather than add provider-specific deductions.
+- xAI normalized requests preserve requested duration, and completed xAI task parsing exposes provider-reported duration as `DurationMS`. This gives both a precharge estimate and a completion-time authoritative value for generation; edit inheritance needs separate handling because request duration may be absent by design.
+- `NewBillingSession` currently follows the user's global preference (`subscription_only`, `wallet_only`, `wallet_first`, `subscription_first`) and has no per-model eligibility input. Wallet-only enforcement can be implemented by overriding the allowed source set before this switch, while retaining normal preference behavior for eligible models.
+- `TaskAdaptor` explicitly supports three billing phases: estimate from the request, adjust from submit response, and adjust from completed task result. The existing API already documents `{"seconds": N}` as a valid multiplier.
+- Durable video tasks snapshot base price, group ratio, `OtherRatios`, billing source, subscription ID, and a `PerCallBilling` boolean. This is sufficient for deterministic completion settlement if the duration multiplier is included in the snapshot.
+- xAI is currently hard-coded into per-call classification (`ChannelTypeXai`) both when storing task billing context and when rendering task logs. This does not block an adaptor's completion adjustment (that hook runs first), but it would mislabel per-second pricing and should be replaced by explicit billing-mode metadata.
+- Task submission currently computes `base ModelPrice x group ratio`, merges adaptor `OtherRatios`, multiplies all ratios (including seconds), and preconsumes that result before calling upstream. Submit-time adjustments can recalculate the quota, while completion-time adjustments run in the polling service.
+- The existing `ModelPrice` setting is only a flat `map[model]float64`; it has no unit or billing-mode metadata. Reusing its numeric value as “USD per second” works arithmetically, but the admin/pricing UI would still mislabel it as a fixed per-call price unless a billing-mode/unit setting is added.
+- Video task billing snapshots are already durable and cross-database because they live in task JSON private data; no new SQL column is required merely to preserve requested seconds and base price.
+- Completion settlement can adjust wallet or the originally selected subscription consistently through `RecalculateTaskQuota`; the funding source is frozen at submit time, which is desirable for deterministic async settlement.
+- Subscription plans currently have only total quota/reset/group fields and no model allowlist. `PreConsumeUserSubscription` accepts `modelName` and `quotaType` but does not use either when selecting a subscription; it chooses by active status, expiry, and remaining total quota.
+- Therefore, “subscription disabled for this model” is best enforced before `NewBillingSession` selects a funding source. Implementing it only inside a specific video adaptor would leave other routes/aliases able to consume subscriptions.
+- Both providers expose duration data: Seedance/Doubao task results include `duration`; xAI completed video results include `video.duration`. Neither adaptor currently uses that result to return a completion-time actual quota.
+- Seedance/Doubao embeds the no-op `BaseBilling`, so it currently has no duration estimate or completion adjustment. Its success parser records total tokens but does not persist a video `DurationMS` output, even though the upstream result provides duration.
+- xAI also embeds `BaseBilling`; request validation already normalizes duration into `xai_video_request`, so estimate extraction can be added without reparsing the body. Generation/extension may supply duration, while edit intentionally omits it and must rely on an estimate plus completed result correction.
+- No existing generic per-second billing-mode setting was found. Existing `BillingMode` fields are scoped to token-tier or image-pricing snapshots, not async video models.
+- A backward-compatible configuration should distinguish legacy models from explicitly configured video models. A nullable/tri-state policy (`unset` = legacy behavior, configured video default `subscription_enabled=false`) avoids accidentally disabling subscriptions for every existing non-video model.
+- For configured per-second video models, the numeric `ModelPrice` can remain the one-second base USD price, but a separate task/video billing metadata map is needed to identify the unit and subscription policy and to render it correctly in admin/public pricing surfaces.
+- The controller settles submit-time quota and persists the task before polling. On terminal success, the task status/Assets/Webhook transaction commits before completion billing adjustment.
+- Video completion settlement currently does not allow debt. If actual duration costs more than the precharge and wallet/subscription remaining quota is insufficient, the funding adjustment fails and the already-successful task remains undercharged, with only an internal error log.
+- Therefore, normal generation should precharge the full request-duration cost. For operations with unknown duration (notably xAI edit), a conservative maximum-duration reservation followed by refund-only reconciliation is safer than a low estimate followed by a potentially failing supplement.
+
+## Validated Design Direction
+- Resolution is deliberately represented by exact model aliases (for example, `xxx-720p`); there is no resolution multiplier and billing code must not parse resolution from the model name.
+- For successful generation, validated request duration is the billable quantity. Provider-reported media duration is retained for audit/anomaly detection rather than automatically changing the charge.
+- The formula is `ModelPrice (USD/second) x requested seconds x effective group ratio x QuotaPerUnit`.
+- Keep `ModelPrice` as the numeric source and add a parallel exact-model metadata setting such as `ModelBilling`, with `billing_mode=per_second` and `subscription_enabled=false` by default for video.
+- When a video model does not explicitly enable subscription billing, set a relay billing policy to wallet-only before `PreConsumeBilling`; do not let `subscription_only` or fallback preferences bypass the model policy.
+- Seedance and xAI adaptors should implement `EstimateBilling` by returning only `{"seconds": duration}`. No new provider-specific deduction path is needed.
+- Require a valid duration for per-second generation. Operations whose billable seconds are not present in the request should remain fixed-price or unsupported for per-second mode until a safe reservation rule is defined.
+- Store `video_per_second` in the existing task `BillingMode`, preserve `seconds` in `OtherRatios`, and expose the unit plus subscription support through the existing pricing DTO `BillingType` surface.
+
+## Final Approved Implementation Corrections
+- Use a standalone versioned `VideoPricing` profile/binding setting, parallel to `ImagePricing`, rather than overloading the flat `ModelPrice` map or introducing a generic ModelBilling setting.
+- A profile owns the USD-per-second unit price; an exact model binding optionally references a profile and always owns `subscription_enabled` (default false).
+- Policy-only bindings are allowed so a legacy fixed-price video model can opt into subscriptions without changing its price.
+- Bound per-second requests require an explicit duration. Provider defaults are deliberately not used because routing the same public model to providers with different defaults would make billing channel-dependent.
+- Billing uses a strong adaptor result (`Seconds`, `Basis`) and a dedicated immutable `VideoPricingSnapshot`; legacy `EstimateBilling` remains available for unbound compatibility behavior.
+- The upstream-reported duration is audit-only and cannot reprice a successful request.
+- Existing ImagePricing establishes the reusable implementation pattern: typed config in `types`, atomically replaced state in `setting/ratio_setting`, Option validation/update hooks, a `PriceData` snapshot, durable task private JSON, and a redacted `/api/pricing` projection.
+- `PriceData` needs a dedicated `VideoPricing` pointer so bound pricing bypasses the legacy unordered `OtherRatios` multiplier path and cannot accidentally apply resolution or size multipliers.
+- Durable normalized video tasks and legacy task rows already serialize `TaskBillingContext` as JSON, so adding a `VideoPricing` pointer remains cross-database and migration-free.
+- Funding-source selection is centralized in `NewBillingSession`; a request-scoped billing-preference override on `RelayInfo` can enforce wallet-only before any subscription preconsume while leaving eligible models on the user's existing preference/fallback behavior.
+- Terminal task billing checks adaptor/token adjustments before its generic per-call guard. VideoPricing therefore needs an explicit first-priority terminal branch; otherwise Seedance completion tokens would overwrite the approved request-duration price.
+- The VideoPricing editor's group-ratio input is a non-persisted preview operand only. Runtime billing obtains the effective ratio from `HandleGroupRatio`, including aggregate-group and exact route/model overrides, then freezes it in `VideoPricingSnapshot`.
+- The rebuilt Docker UI now labels the input `预览分组倍率`, while the existing profile, exact binding, policy-only binding, wallet-only policy, and user-preference policy all render correctly from the saved test configuration.
+- Responsive Docker QA at 1440, 768, and 375 CSS pixels reports identical document/client widths and no horizontal overflow. The preview label is unique in the DOM and remains within the viewport bounds at each measured breakpoint.
+- The live Docker `default` group ratio is `999` while the editor preview remains `1`. For the QA profile (`$0.03/second`) and a 5-second request, runtime precharge must therefore be `0.03 x 5 x 999 x 500000 = 74,925,000 quota`; this provides a strong separation check between the preview operand and effective billing ratio.
+- Live wallet-only QA charged exactly `74,925,000` quota from the wallet despite the user's `subscription_only` preference, left subscription usage at zero, and persisted `billing_source=wallet`, `group_ratio=999`, and the immutable per-second snapshot.
+- With the exact binding changed to `subscription_enabled=true`, the same user and request left the wallet unchanged, consumed exactly `74,925,000` subscription quota, and persisted `billing_source=subscription` with the policy flag frozen true.
+- xAI mock requests received mapped model `grok-imagine-video` and integer durations unchanged. Compatibility missing/zero/fractional durations and normalized missing/fractional/provider-option override attempts all failed with HTTP 400 before any upstream POST.
+- `/api/pricing` exposes the test model as `per_video_second` with unit `second`, unit price `0.03`, and the current subscription-enabled state.
+- Live log inspection exposed a residual xAI `，按次计费` suffix after the explicit per-second detail. The explicit image/video pricing branches now bypass that legacy xAI suffix and a regression assertion covers the conflict.
+
+## Approaches Considered
+| Approach | Assessment |
+| --- | --- |
+| Parallel model billing metadata plus existing `ModelPrice` | Recommended: backward-compatible, exact-model scoped, no database migration, and UI can label `$/second` correctly. |
+| Provider-specific hard-coded Seedance/xAI deductions | Rejected: duplicates the generic task billing path and breaks aliases/model mapping. |
+| Parse resolution/price semantics from model names | Rejected: model names should remain opaque configuration keys. |
+| Add SQL columns to channels or subscription plans | Rejected for this requirement: policy is model-level and existing option storage/cache is the established ownership boundary. |
+
+---
+
 # Image-handle Trace Search and Task Table Findings (2026-07-23)
 
 - new-api generates a synchronous image `client_task_id` and credential `lease_id` before submitting to image-handle, but currently writes the provider task ID and lease ID into Gin context only after success.
@@ -995,3 +1102,15 @@
 - The rebuilt 375x812 view renders the same information as labeled stacked rows (`类型`, `描述`, `备注`), including `model`, requiredness, Chinese description, request-body location, and constraints. Document, body, and main widths remain exactly 375 CSS pixels.
 
 ---
+# Adobe2API Seedance 2.0 Fast Integration Findings (2026-07-29, implementation)
+
+- The new-api task adaptor contract already exposes all three capabilities needed by AdobeVideo: normalized request preparation, standardized video billing estimation, and provider-specific content resolution. No billing-core interface change is required.
+- Adobe2API's pending worktree is limited to the six expected implementation/test files and contains the completed asynchronous route, catalog, store, and test changes.
+- The frontend channel constants path differs from the earlier planning note and must be discovered from the current source tree before editing.
+- Existing xAI/Sora task adaptors do not implement `VideoContentResolver`; AdobeVideo must provide the first provider-specific resolver that authenticates and proxies Adobe2API's private content endpoint.
+- Adobe2API submit and poll responses share the task shape (`id`, `task_id`, `status`, `progress`, `duration`, `aspect_ratio`, `resolution`, optional `video_url`, optional structured `error`). Its content endpoint is authenticated `GET /v1/videos/{task_id}/content` and returns `FileResponse`, so the stable provider reference is the upstream task ID rather than the returned deployment-specific URL.
+- A completed AdobeVideo result should emit a `VideoOutput` with `ProviderReference=<upstream task id>` and a non-empty resolver marker. The existing asset pipeline will persist both fields and force content through the adaptor resolver with Range/If-Range forwarding.
+- `ChannelType2APIType` must remain unchanged for AdobeVideo. Existing task-only Sora and DoubaoVideo channel types are intentionally absent from that synchronous adaptor mapping; mapping AdobeVideo to OpenAI would pollute its advertised model list and permit accidental protocol misuse.
+- Docker dev already connects new-api and Adobe2API through the external `ai-gateway` network, while the opt-in async mock shares new-api's private dev network. Mock acceptance can target `http://async-test-mock:8080` without exposing or changing the real Adobe2API channel.
+- The local `VideoPricing` Option is currently absent and `GroupRatio` exists. Acceptance cleanup must therefore delete the temporary VideoPricing Option rather than restoring an invented empty value, while restoring the exact prior GroupRatio text.
+- A meaningful wallet-only check requires an active subscription and `subscription_only` user preference. The disposable fixture will include both; wallet movement and unchanged subscription usage will be asserted independently.

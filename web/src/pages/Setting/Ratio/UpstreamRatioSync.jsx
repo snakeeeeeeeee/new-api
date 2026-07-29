@@ -44,6 +44,7 @@ import {
   showWarning,
   stringToColor,
   normalizeImagePricing,
+  normalizeVideoPricing,
 } from '../../../helpers';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import { DEFAULT_ENDPOINT } from '../../../constants';
@@ -143,6 +144,21 @@ export default function UpstreamRatioSync(props) {
         ),
       ),
     [props.options.ImagePricing],
+  );
+  const videoPricedModels = useMemo(() => {
+    const config = normalizeVideoPricing(props.options.VideoPricing);
+    return new Set(
+      Object.entries(config.model_bindings)
+        .filter(
+          ([, binding]) =>
+            binding.profile && Boolean(config.profiles[binding.profile]),
+        )
+        .map(([model]) => model),
+    );
+  }, [props.options.VideoPricing]);
+  const managedPricedModels = useMemo(
+    () => new Set([...imagePricedModels, ...videoPricedModels]),
+    [imagePricedModels, videoPricedModels],
   );
 
   useEffect(() => {
@@ -249,7 +265,7 @@ export default function UpstreamRatioSync(props) {
       const { differences = {}, test_results = [] } = res.data.data;
       const filteredDifferences = Object.fromEntries(
         Object.entries(differences).filter(
-          ([model]) => !imagePricedModels.has(model),
+          ([model]) => !managedPricedModels.has(model),
         ),
       );
       const skippedCount =
@@ -270,7 +286,7 @@ export default function UpstreamRatioSync(props) {
 
       if (skippedCount > 0) {
         showWarning(
-          t('已跳过 {{count}} 个由图片参数计价接管的模型', {
+          t('已跳过 {{count}} 个由图片或视频计价接管的模型', {
             count: skippedCount,
           }),
         );
@@ -292,7 +308,7 @@ export default function UpstreamRatioSync(props) {
 
   const selectValue = useCallback(
     (model, ratioType, value) => {
-      if (imagePricedModels.has(model)) return;
+      if (managedPricedModels.has(model)) return;
       const category = getBillingCategory(ratioType);
 
       setResolutions((prev) => {
@@ -312,7 +328,7 @@ export default function UpstreamRatioSync(props) {
         };
       });
     },
-    [imagePricedModels],
+    [managedPricedModels],
   );
 
   const applySync = async () => {
@@ -397,7 +413,7 @@ export default function UpstreamRatioSync(props) {
       };
 
       Object.entries(resolutions).forEach(([model, ratios]) => {
-        if (imagePricedModels.has(model)) return;
+        if (managedPricedModels.has(model)) return;
         const selectedTypes = Object.keys(ratios);
         const hasPrice = selectedTypes.includes('model_price');
         const hasRatio = selectedTypes.some((rt) => rt !== 'model_price');
@@ -463,7 +479,7 @@ export default function UpstreamRatioSync(props) {
         setLoading(false);
       }
     },
-    [imagePricedModels, resolutions, props.options, props.refresh, t],
+    [managedPricedModels, resolutions, props.options, props.refresh, t],
   );
 
   const getCurrentPageData = (dataSource) => {

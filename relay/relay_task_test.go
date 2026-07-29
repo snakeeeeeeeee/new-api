@@ -89,6 +89,182 @@ func TestAsyncImagePrechargeQuotaPerImageSaturatesHugeAmount(t *testing.T) {
 	require.Equal(t, common.MaxQuota, quota)
 }
 
+func TestRelayTaskSubmitRejectsBoundVideoProviderWithoutBillingEstimator(t *testing.T) {
+	original := ratio_setting.VideoPricing2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(original))
+	})
+	require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(`{
+		"version":1,
+		"profiles":{"video":{"name":"Video","billing_mode":"per_second","unit_price":0.03}},
+		"model_bindings":{"unsupported-video-model":{"profile":"video","subscription_enabled":false}}
+	}`))
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/generations", strings.NewReader(`{"model":"unsupported-video-model","prompt":"test","duration":5}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("platform", strconv.Itoa(constant.ChannelTypeKling))
+	c.Set("model_mapping", `{}`)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeKling)
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "unsupported-video-model")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "unsupported-video-model",
+		UsingGroup:      "default",
+		UserGroup:       "default",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	result, taskErr := RelayTaskSubmit(c, info)
+
+	require.Nil(t, result)
+	require.NotNil(t, taskErr)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	require.Equal(t, "video_per_second_billing_unsupported", taskErr.Code)
+	require.Equal(t, "wallet_only", info.BillingPreferenceOverride)
+}
+
+func TestRelayTaskSubmitBoundVideoIgnoresLegacyDurationAndResolutionRatios(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	original := ratio_setting.VideoPricing2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(original))
+	})
+	require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(`{
+		"version":1,
+		"profiles":{"video":{"name":"Video","billing_mode":"per_second","unit_price":0.03}},
+		"model_bindings":{"veo-public-1080p":{"profile":"video","subscription_enabled":false}}
+	}`))
+	require.NoError(t, db.Create(&model.User{
+		Id:       27,
+		Username: "u27",
+		Quota:    0,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          277,
+		UserId:      27,
+		Key:         "relay-task-video-pricing-token",
+		Status:      common.TokenStatusEnabled,
+		Name:        "relay-task-video-pricing-token",
+		RemainQuota: 0,
+		Group:       "default",
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(`{
+		"model":"veo-public-1080p",
+		"prompt":"test",
+		"duration":7,
+		"size":"1080p",
+		"metadata":{"durationSeconds":7,"resolution":"1080p"}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("platform", strconv.Itoa(constant.ChannelTypeGemini))
+	c.Set("model_mapping", `{}`)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeGemini)
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, "veo-public-1080p")
+
+	info := &relaycommon.RelayInfo{
+		UserId:          27,
+		TokenId:         277,
+		OriginModelName: "veo-public-1080p",
+		UsingGroup:      "default",
+		UserGroup:       "default",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	_, taskErr := RelayTaskSubmit(c, info)
+	require.NotNil(t, taskErr, "the fixture has no billable user and should stop at preconsume")
+	require.NotNil(t, info.PriceData.VideoPricing)
+	require.Equal(t, 7, info.PriceData.VideoPricing.Seconds)
+	require.Equal(t, 0.03, info.PriceData.VideoPricing.UnitPrice)
+	require.Empty(t, info.PriceData.OtherRatios)
+	require.Equal(t, info.PriceData.VideoPricing.FinalQuota, info.PriceData.Quota)
+}
+
+func TestRelayTaskSubmitAdobeVideoUsesExactMappedModelAndPerSecondWalletQuota(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	originalVideoPricing := ratio_setting.VideoPricing2JSONString()
+	originalGroupRatio := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(originalVideoPricing))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatio))
+	})
+	require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(`{
+		"version":1,
+		"profiles":{"seedance-fast-480p":{"name":"Seedance Fast 480p","billing_mode":"per_second","unit_price":0.03}},
+		"model_bindings":{"seedance-2.0-fast-480p":{"profile":"seedance-fast-480p","subscription_enabled":false}}
+	}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1.5}`))
+	require.NoError(t, db.Create(&model.User{
+		Id:       29,
+		Username: "adobe-video-user",
+		Quota:    0,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          299,
+		UserId:      29,
+		Key:         "adobe-video-token",
+		Status:      common.TokenStatusEnabled,
+		Name:        "adobe-video-token",
+		RemainQuota: 0,
+		Group:       "default",
+	}).Error)
+
+	duration := 4
+	aspectRatio := "16:9"
+	normalizedRequest := dto.VideoTaskCreateRequest{
+		Model:     "seedance-2.0-fast-480p",
+		Operation: "generation",
+		Input:     dto.VideoTaskInputRequest{Prompt: "ocean sunrise"},
+		Output: dto.VideoTaskOutputRequest{
+			Duration:    &duration,
+			AspectRatio: &aspectRatio,
+		},
+		ProviderOptions: map[string]map[string]any{
+			"adobe_video": {"generate_audio": false},
+		},
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/tasks", strings.NewReader(`{}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(relaycommon.VideoTaskPublicRequestContextKey, normalizedRequest)
+	c.Set("platform", strconv.Itoa(constant.ChannelTypeAdobeVideo))
+	c.Set("model_mapping", `{"seedance-2.0-fast-480p":"seedance_2.0_fast_480p"}`)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAdobeVideo)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 590)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "http://adobe-video.invalid")
+	common.SetContextKey(c, constant.ContextKeyChannelKey, "provider-key")
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, normalizedRequest.Model)
+
+	info := &relaycommon.RelayInfo{
+		UserId:          29,
+		TokenId:         299,
+		OriginModelName: normalizedRequest.Model,
+		UsingGroup:      "default",
+		UserGroup:       "default",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	result, taskErr := RelayTaskSubmit(c, info)
+
+	require.Nil(t, result)
+	require.NotNil(t, taskErr, "the zero-balance fixture must stop before upstream dispatch")
+	require.NotNil(t, info.PriceData.VideoPricing)
+	assert.Equal(t, "seedance_2.0_fast_480p", info.UpstreamModelName)
+	assert.Equal(t, 4, info.PriceData.VideoPricing.Seconds)
+	assert.Equal(t, 0.03, info.PriceData.VideoPricing.UnitPrice)
+	assert.Equal(t, 1.5, info.PriceData.VideoPricing.GroupRatio)
+	assert.Equal(t, 90000, info.PriceData.Quota)
+	assert.Equal(t, info.PriceData.VideoPricing.FinalQuota, info.PriceData.Quota)
+	assert.Empty(t, info.PriceData.OtherRatios)
+	assert.Equal(t, "wallet_only", info.BillingPreferenceOverride)
+}
+
 func TestGeminiProFixedPriceSkipsGlobalAsyncImageUsagePrecharge(t *testing.T) {
 	originalSetting := *image_handle_setting.GetImageHandleSetting()
 	t.Cleanup(func() {

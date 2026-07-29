@@ -50,7 +50,10 @@ import {
   useModelPricingEditorState,
 } from '../hooks/useModelPricingEditorState';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
-import { normalizeImagePricing } from '../../../../helpers';
+import {
+  normalizeImagePricing,
+  normalizeVideoPricing,
+} from '../../../../helpers';
 
 const { Text } = Typography;
 const EMPTY_CANDIDATE_MODEL_NAMES = [];
@@ -289,6 +292,23 @@ export default function ModelPricingEditor({
     () => new Set(Object.keys(imagePricingConfig.model_bindings)),
     [imagePricingConfig.model_bindings],
   );
+  const videoPricingConfig = useMemo(
+    () => normalizeVideoPricing(options.VideoPricing),
+    [options.VideoPricing],
+  );
+  const videoPricedModels = useMemo(
+    () =>
+      new Set(
+        Object.entries(videoPricingConfig.model_bindings)
+          .filter(
+            ([, binding]) =>
+              binding.profile &&
+              Boolean(videoPricingConfig.profiles[binding.profile]),
+          )
+          .map(([model]) => model),
+      ),
+    [videoPricingConfig.model_bindings, videoPricingConfig.profiles],
+  );
 
   const {
     selectedModel,
@@ -365,6 +385,11 @@ export default function ModelPricingEditor({
                 {t('图片参数计价接管')}
               </Tag>
             ) : null}
+            {videoPricedModels.has(record.name) ? (
+              <Tag color='blue' shape='circle'>
+                {t('视频按秒计价接管')}
+              </Tag>
+            ) : null}
           </Space>
         ),
       },
@@ -373,7 +398,9 @@ export default function ModelPricingEditor({
         dataIndex: 'billingMode',
         key: 'billingMode',
         render: (_, record) =>
-          imagePricedModels.has(record.name) ? (
+          videoPricedModels.has(record.name) ? (
+            <Tag color='blue'>{t('按秒（视频）')}</Tag>
+          ) : imagePricedModels.has(record.name) ? (
             <Tag color='orange'>{t('按张（图片）')}</Tag>
           ) : (
             <Tag
@@ -389,7 +416,13 @@ export default function ModelPricingEditor({
         title: t('价格摘要'),
         dataIndex: 'summary',
         key: 'summary',
-        render: (_, record) => buildSummaryText(record, t),
+        render: (_, record) => {
+          const binding = videoPricingConfig.model_bindings[record.name];
+          const profile = videoPricingConfig.profiles[binding?.profile];
+          return profile
+            ? `$${profile.unit_price} / ${t('秒')}`
+            : buildSummaryText(record, t);
+        },
       },
       {
         title: t('操作'),
@@ -412,6 +445,9 @@ export default function ModelPricingEditor({
       allowDeleteModel,
       deleteModel,
       imagePricedModels,
+      videoPricedModels,
+      videoPricingConfig.model_bindings,
+      videoPricingConfig.profiles,
       selectedModelName,
       selectedModelNames,
       setSelectedModelName,
@@ -561,16 +597,20 @@ export default function ModelPricingEditor({
               selectedModel ? (
                 <Tag
                   color={
-                    imagePricedModels.has(selectedModel.name)
-                      ? 'orange'
-                      : 'blue'
+                    videoPricedModels.has(selectedModel.name)
+                      ? 'blue'
+                      : imagePricedModels.has(selectedModel.name)
+                        ? 'orange'
+                        : 'blue'
                   }
                 >
-                  {imagePricedModels.has(selectedModel.name)
-                    ? t('按张（图片）')
-                    : selectedModel.billingMode === 'per-request'
-                      ? t('按次计费')
-                      : t('按量计费')}
+                  {videoPricedModels.has(selectedModel.name)
+                    ? t('按秒（视频）')
+                    : imagePricedModels.has(selectedModel.name)
+                      ? t('按张（图片）')
+                      : selectedModel.billingMode === 'per-request'
+                        ? t('按次计费')
+                        : t('按量计费')}
                 </Tag>
               ) : null
             }
@@ -594,6 +634,19 @@ export default function ModelPricingEditor({
                     title={t('图片参数计价已接管当前模型')}
                     description={t(
                       '当前实际费用由图片参数计价模板计算。这里的固定价格和倍率仍会保存，解除图片计价绑定后自动恢复使用。',
+                    )}
+                  />
+                ) : null}
+                {videoPricedModels.has(selectedModel.name) ? (
+                  <Banner
+                    type='warning'
+                    bordered
+                    fullMode={false}
+                    closeIcon={null}
+                    style={{ marginBottom: 16 }}
+                    title={t('视频按秒计价已接管当前模型')}
+                    description={t(
+                      '当前实际费用由视频按秒计价模板计算。这里的固定价格和倍率仍会保存，解除视频计价绑定后自动恢复使用。',
                     )}
                   />
                 ) : null}

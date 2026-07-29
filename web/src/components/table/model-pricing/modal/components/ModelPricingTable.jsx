@@ -138,6 +138,8 @@ const ModelPricingTable = ({
       );
       const isImagePricing =
         resolvePricingBillingType(modelData) === 'per_image_parameter';
+      const isVideoPricing =
+        resolvePricingBillingType(modelData) === 'per_video_second';
 
       return {
         key: group,
@@ -145,18 +147,23 @@ const ModelPricingTable = ({
         ratio: priceData.usedGroupRatio ?? groupRatioValue,
         ratioDetail: groupRatioDetail,
         isDynamicRouteMaximum: priceData.isDynamicRouteMaximum,
-        billingType: isImagePricing
-          ? t('图片参数计价')
-          : modelData?.quota_type === 0
-            ? t('按量计费')
-            : modelData?.quota_type === 1
-              ? t('按次计费')
-              : '-',
-        priceItems: isImagePricing
-          ? []
-          : getModelPriceItems(priceData, t, siteDisplayType),
+        billingType: isVideoPricing
+          ? t('视频按秒计价')
+          : isImagePricing
+            ? t('图片参数计价')
+            : modelData?.quota_type === 0
+              ? t('按量计费')
+              : modelData?.quota_type === 1
+                ? t('按次计费')
+                : '-',
+        priceItems:
+          isImagePricing || isVideoPricing
+            ? []
+            : getModelPriceItems(priceData, t, siteDisplayType),
         tierPrices,
         imageTierPrices,
+        videoPrice: isVideoPricing ? priceData.price : null,
+        videoPricing: modelData?.video_pricing || null,
       };
     });
 
@@ -196,6 +203,7 @@ const ModelPricingTable = ({
         if (text === t('按量计费')) color = 'violet';
         else if (text === t('按次计费')) color = 'teal';
         else if (text === t('图片参数计价')) color = 'orange';
+        else if (text === t('视频按秒计价')) color = 'blue';
         return (
           <Tag color={color} size='small' shape='circle'>
             {text || '-'}
@@ -217,6 +225,32 @@ const ModelPricingTable = ({
               <div className='text-xs text-gray-500'>{item.suffix}</div>
             </div>
           ))}
+          {record.videoPrice !== null ? (
+            <div className='space-y-2'>
+              <div className='font-semibold text-orange-600'>
+                {record.videoPrice} / {t('秒')}
+              </div>
+              <div className='flex items-center gap-2 flex-wrap'>
+                <Tag color='blue' size='small'>
+                  {record.videoPricing?.name || t('按秒计费')}
+                </Tag>
+                <Tag
+                  color={
+                    record.videoPricing?.subscription_enabled ? 'green' : 'grey'
+                  }
+                  size='small'
+                >
+                  {record.videoPricing?.subscription_enabled
+                    ? t('可用订阅额度')
+                    : t('仅钱包余额')}
+                </Tag>
+              </div>
+            </div>
+          ) : record.videoPricing ? (
+            <Tag color='green' size='small'>
+              {t('可用订阅额度 · 保留原计价')}
+            </Tag>
+          ) : null}
           {record.tierPrices.length > 0 ? (
             <div
               className='mt-3 pt-3 space-y-3'

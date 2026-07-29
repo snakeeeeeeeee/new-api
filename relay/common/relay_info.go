@@ -119,25 +119,28 @@ type RelayInfo struct {
 	FirstResponseTime time.Time
 	isFirstResponse   bool
 	//SendLastReasoningResponse bool
-	IsStream                                 bool
-	IsGeminiBatchEmbedding                   bool
-	IsPlayground                             bool
-	UsePrice                                 bool
-	RelayMode                                int
-	OriginModelName                          string
-	RequestURLPath                           string
-	RequestHeaders                           map[string]string
-	ShouldIncludeUsage                       bool
-	DisablePing                              bool // 是否禁止向下游发送自定义 Ping
-	ClientWs                                 *websocket.Conn
-	TargetWs                                 *websocket.Conn
-	InputAudioFormat                         string
-	OutputAudioFormat                        string
-	RealtimeTools                            []dto.RealTimeTool
-	IsFirstRequest                           bool
-	AudioUsage                               bool
-	ReasoningEffort                          string
-	UserSetting                              dto.UserSetting
+	IsStream               bool
+	IsGeminiBatchEmbedding bool
+	IsPlayground           bool
+	UsePrice               bool
+	RelayMode              int
+	OriginModelName        string
+	RequestURLPath         string
+	RequestHeaders         map[string]string
+	ShouldIncludeUsage     bool
+	DisablePing            bool // 是否禁止向下游发送自定义 Ping
+	ClientWs               *websocket.Conn
+	TargetWs               *websocket.Conn
+	InputAudioFormat       string
+	OutputAudioFormat      string
+	RealtimeTools          []dto.RealTimeTool
+	IsFirstRequest         bool
+	AudioUsage             bool
+	ReasoningEffort        string
+	UserSetting            dto.UserSetting
+	// BillingPreferenceOverride constrains funding selection for this request.
+	// Video requests use wallet_only unless the exact public model opts in.
+	BillingPreferenceOverride                string
 	UserEmail                                string
 	UserQuota                                int
 	RelayFormat                              types.RelayFormat

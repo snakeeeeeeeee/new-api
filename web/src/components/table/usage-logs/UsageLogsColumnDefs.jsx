@@ -34,6 +34,7 @@ import {
   normalizePromptCacheUsage,
   getImageExecutionAuditSummary,
   getImagePricingLogSummary,
+  getVideoPricingLogSummary,
   renderModelTag,
   renderModelPriceSimple,
 } from '../../../helpers';
@@ -492,6 +493,50 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   }
 
   const imagePricing = getImagePricingLogSummary(other);
+  const videoPricing = getVideoPricingLogSummary(other);
+  if (videoPricing) {
+    const unitPrice = Number(videoPricing.unit_price);
+    const total = Number(videoPricing.total);
+    const reportedDurationMs = Number(videoPricing.reported_duration_ms);
+    const groupText = getUsageLogGroupSummary(
+      videoPricing.group_ratio,
+      other?.user_group_ratio,
+      t,
+    );
+    const basis =
+      videoPricing.basis === 'extension_delta' ? t('扩展增量') : t('生成输出');
+    return {
+      segments: [
+        { text: t('按秒（视频）'), tone: 'primary' },
+        {
+          text: t('{{seconds}} 秒 · {{basis}}', {
+            seconds: videoPricing.seconds ?? '-',
+            basis,
+          }),
+          tone: 'primary',
+        },
+        {
+          text: `${Number.isFinite(unitPrice) ? `$${unitPrice.toFixed(6)}` : '-'} / ${t('秒')} × ${videoPricing.seconds ?? '-'} × ${videoPricing.group_ratio} = ${Number.isFinite(total) ? `$${total.toFixed(6)}` : '-'}`,
+          tone: 'secondary',
+        },
+        {
+          text: `${t('资金策略')}：${videoPricing.subscription_enabled ? t('允许订阅扣费') : t('仅钱包余额')}`,
+          tone: 'secondary',
+        },
+        Number.isFinite(reportedDurationMs)
+          ? {
+              text: `${t('返回时长审计')}：${(reportedDurationMs / 1000).toFixed(3)} ${t('秒')}${videoPricing.matches_request === false ? ` · ${t('与请求时长不一致（不参与重计费）')}` : ''}`,
+              tone:
+                videoPricing.matches_request === false
+                  ? 'warning'
+                  : 'secondary',
+            }
+          : null,
+        groupText ? { text: groupText, tone: 'secondary' } : null,
+      ].filter(Boolean),
+    };
+  }
+
   if (imagePricing) {
     const executionAudit = getImageExecutionAuditSummary(other);
     const executionAuditParts = getImageExecutionAuditParts(executionAudit);

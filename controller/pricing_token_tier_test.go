@@ -27,6 +27,23 @@ const imagePricingCloneTestConfig = `{
 
 const emptyImagePricingCloneTestConfig = `{"version":1,"profiles":{},"model_bindings":{}}`
 
+const videoPricingCloneTestConfig = `{
+  "version": 1,
+  "profiles": {
+    "clone-video": {
+      "name": "clone video",
+      "billing_mode": "per_second",
+      "unit_price": 0.03
+    }
+  },
+  "model_bindings": {
+    "stale-video-pricing-model": {"profile":"clone-video","subscription_enabled":false},
+    "legacy-video-policy-model": {"subscription_enabled":true}
+  }
+}`
+
+const emptyVideoPricingCloneTestConfig = `{"version":1,"profiles":{},"model_bindings":{}}`
+
 func TestClonePricingItemsUsesCurrentEffectiveTokenTierRule(t *testing.T) {
 	original := ratio_setting.TokenTierPricingRules2JSONString()
 	t.Cleanup(func() {
@@ -87,6 +104,47 @@ func TestClonePricingItemsRestoresLegacyPriceAfterImagePricingUnbind(t *testing.
 	require.Equal(t, 1, cloned[0].QuotaType)
 	require.Equal(t, 0.42, cloned[0].ModelPrice)
 	require.NotNil(t, cached[0].ImagePricing, "source cache must remain unchanged")
+}
+
+func TestClonePricingItemsAppliesVideoPricingPolicyAndRestoresLegacyPriceAfterUnbind(t *testing.T) {
+	originalVideoPricing := ratio_setting.VideoPricing2JSONString()
+	originalModelPrice := ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(originalVideoPricing))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(originalModelPrice))
+	})
+
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"stale-video-pricing-model":0.42,"legacy-video-policy-model":0.25}`))
+	require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(videoPricingCloneTestConfig))
+
+	base := []model.Pricing{
+		{ModelName: "stale-video-pricing-model", QuotaType: 1, ModelPrice: 0.42},
+		{ModelName: "legacy-video-policy-model", QuotaType: 1, ModelPrice: 0.25},
+	}
+	bound := clonePricingItems(base)
+	require.Len(t, bound, 2)
+	assertVideo := bound[0]
+	require.Equal(t, types.VideoPricingBillingType, assertVideo.BillingType)
+	require.NotNil(t, assertVideo.VideoPricing)
+	require.Equal(t, 0.03, assertVideo.ModelPrice)
+	require.False(t, assertVideo.VideoPricing.SubscriptionEnabled)
+
+	policyOnly := bound[1]
+	require.Empty(t, policyOnly.BillingType)
+	require.NotNil(t, policyOnly.VideoPricing)
+	require.Empty(t, policyOnly.VideoPricing.ProfileID)
+	require.True(t, policyOnly.VideoPricing.SubscriptionEnabled)
+	require.Equal(t, 0.25, policyOnly.ModelPrice)
+
+	require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(emptyVideoPricingCloneTestConfig))
+	restored := clonePricingItems(bound)
+	require.Len(t, restored, 2)
+	require.Empty(t, restored[0].BillingType)
+	require.Nil(t, restored[0].VideoPricing)
+	require.Equal(t, 0.42, restored[0].ModelPrice)
+	require.Nil(t, restored[1].VideoPricing)
+	require.Equal(t, 0.25, restored[1].ModelPrice)
+	require.NotNil(t, bound[0].VideoPricing, "source cache must remain unchanged")
 }
 
 func TestClonePricingItemsNeverMixesImageBillingFieldsDuringConcurrentUnbind(t *testing.T) {

@@ -26,17 +26,23 @@ const (
 )
 
 type mockConfig struct {
-	ImageStatus    int `json:"image_status"`
-	ImageDelayMS   int `json:"image_delay_ms"`
-	WebhookStatus  int `json:"webhook_status"`
-	WebhookDelayMS int `json:"webhook_delay_ms"`
+	ImageStatus            int    `json:"image_status"`
+	ImageDelayMS           int    `json:"image_delay_ms"`
+	WebhookStatus          int    `json:"webhook_status"`
+	WebhookDelayMS         int    `json:"webhook_delay_ms"`
+	VideoSubmitStatus      int    `json:"video_submit_status"`
+	VideoTerminalStatus    string `json:"video_terminal_status"`
+	VideoTerminalAfterPoll int    `json:"video_terminal_after_poll"`
 }
 
 type controlUpdate struct {
-	ImageStatus    *int `json:"image_status"`
-	ImageDelayMS   *int `json:"image_delay_ms"`
-	WebhookStatus  *int `json:"webhook_status"`
-	WebhookDelayMS *int `json:"webhook_delay_ms"`
+	ImageStatus            *int    `json:"image_status"`
+	ImageDelayMS           *int    `json:"image_delay_ms"`
+	WebhookStatus          *int    `json:"webhook_status"`
+	WebhookDelayMS         *int    `json:"webhook_delay_ms"`
+	VideoSubmitStatus      *int    `json:"video_submit_status"`
+	VideoTerminalStatus    *string `json:"video_terminal_status"`
+	VideoTerminalAfterPoll *int    `json:"video_terminal_after_poll"`
 }
 
 type requestCounts struct {
@@ -49,26 +55,51 @@ type requestCounts struct {
 type concurrencyCounts struct {
 	Total      int            `json:"total"`
 	Image      int            `json:"image"`
+	Video      int            `json:"video"`
 	Webhook    int            `json:"webhook"`
 	ByEndpoint map[string]int `json:"by_endpoint"`
 }
 
+type videoTaskRequest struct {
+	Model         string `json:"model"`
+	Prompt        string `json:"prompt"`
+	Duration      int    `json:"duration"`
+	AspectRatio   string `json:"aspect_ratio"`
+	GenerateAudio *bool  `json:"generate_audio,omitempty"`
+}
+
+type videoRequestCounts struct {
+	Submit  int64 `json:"submit"`
+	Poll    int64 `json:"poll"`
+	Content int64 `json:"content"`
+}
+
 type metricsResponse struct {
-	StartedAt int64             `json:"started_at"`
-	Current   concurrencyCounts `json:"current_in_flight"`
-	Peak      concurrencyCounts `json:"peak_in_flight"`
-	Requests  requestCounts     `json:"requests"`
-	Config    mockConfig        `json:"config"`
+	StartedAt       int64              `json:"started_at"`
+	Current         concurrencyCounts  `json:"current_in_flight"`
+	Peak            concurrencyCounts  `json:"peak_in_flight"`
+	Requests        requestCounts      `json:"requests"`
+	VideoRequests   videoRequestCounts `json:"video_requests"`
+	LastVideoSubmit *videoTaskRequest  `json:"last_video_submit,omitempty"`
+	Config          mockConfig         `json:"config"`
+}
+
+type videoJob struct {
+	Request videoTaskRequest
+	Polls   int
 }
 
 type serverState struct {
-	mu        sync.Mutex
-	startedAt int64
-	current   concurrencyCounts
-	peak      concurrencyCounts
-	requests  requestCounts
-	config    mockConfig
-	sequence  atomic.Uint64
+	mu              sync.Mutex
+	startedAt       int64
+	current         concurrencyCounts
+	peak            concurrencyCounts
+	requests        requestCounts
+	videoRequests   videoRequestCounts
+	lastVideoSubmit *videoTaskRequest
+	videoJobs       map[string]*videoJob
+	config          mockConfig
+	sequence        atomic.Uint64
 }
 
 func newServerState() *serverState {
@@ -76,7 +107,14 @@ func newServerState() *serverState {
 		startedAt: time.Now().Unix(),
 		current:   concurrencyCounts{ByEndpoint: make(map[string]int)},
 		peak:      concurrencyCounts{ByEndpoint: make(map[string]int)},
-		config:    mockConfig{ImageStatus: http.StatusAccepted, WebhookStatus: http.StatusNoContent},
+		videoJobs: make(map[string]*videoJob),
+		config: mockConfig{
+			ImageStatus:            http.StatusAccepted,
+			WebhookStatus:          http.StatusNoContent,
+			VideoSubmitStatus:      http.StatusAccepted,
+			VideoTerminalStatus:    "completed",
+			VideoTerminalAfterPoll: 3,
+		},
 	}
 }
 
@@ -87,6 +125,8 @@ func (s *serverState) handler() http.Handler {
 	mux.HandleFunc("/reset", s.handleReset)
 	mux.HandleFunc("/control", s.handleControl)
 	mux.HandleFunc("/v1/image/tasks", s.handleImageTask)
+	mux.HandleFunc("/v1/videos", s.handleVideoSubmit)
+	mux.HandleFunc("/v1/videos/", s.handleVideoTask)
 	mux.HandleFunc("/webhook/", s.handleWebhook)
 	return mux
 }
@@ -95,13 +135,17 @@ func (s *serverState) begin(kind, endpoint string, hasAuthorization bool) func(b
 	s.mu.Lock()
 	s.current.Total++
 	s.current.ByEndpoint[endpoint]++
-	if kind == "image" {
+	switch kind {
+	case "image":
 		s.current.Image++
-	} else {
+	case "video":
+		s.current.Video++
+	default:
 		s.current.Webhook++
 	}
 	s.peak.Total = max(s.peak.Total, s.current.Total)
 	s.peak.Image = max(s.peak.Image, s.current.Image)
+	s.peak.Video = max(s.peak.Video, s.current.Video)
 	s.peak.Webhook = max(s.peak.Webhook, s.current.Webhook)
 	s.peak.ByEndpoint[endpoint] = max(s.peak.ByEndpoint[endpoint], s.current.ByEndpoint[endpoint])
 	s.requests.Total++
@@ -117,9 +161,12 @@ func (s *serverState) begin(kind, endpoint string, hasAuthorization bool) func(b
 		if s.current.ByEndpoint[endpoint] == 0 {
 			delete(s.current.ByEndpoint, endpoint)
 		}
-		if kind == "image" {
+		switch kind {
+		case "image":
 			s.current.Image--
-		} else {
+		case "video":
+			s.current.Video--
+		default:
 			s.current.Webhook--
 		}
 		if succeeded {
@@ -134,13 +181,19 @@ func (s *serverState) begin(kind, endpoint string, hasAuthorization bool) func(b
 func (s *serverState) snapshot() metricsResponse {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return metricsResponse{
-		StartedAt: s.startedAt,
-		Current:   cloneConcurrency(s.current),
-		Peak:      cloneConcurrency(s.peak),
-		Requests:  s.requests,
-		Config:    s.config,
+	result := metricsResponse{
+		StartedAt:     s.startedAt,
+		Current:       cloneConcurrency(s.current),
+		Peak:          cloneConcurrency(s.peak),
+		Requests:      s.requests,
+		VideoRequests: s.videoRequests,
+		Config:        s.config,
 	}
+	if s.lastVideoSubmit != nil {
+		last := *s.lastVideoSubmit
+		result.LastVideoSubmit = &last
+	}
+	return result
 }
 
 func cloneConcurrency(value concurrencyCounts) concurrencyCounts {
@@ -157,6 +210,8 @@ func (s *serverState) resetMetrics() metricsResponse {
 	s.startedAt = time.Now().Unix()
 	s.peak = cloneConcurrency(s.current)
 	s.requests = requestCounts{}
+	s.videoRequests = videoRequestCounts{}
+	s.lastVideoSubmit = nil
 	s.mu.Unlock()
 	return s.snapshot()
 }
@@ -183,6 +238,15 @@ func (s *serverState) updateConfig(update controlUpdate) (mockConfig, error) {
 	if update.WebhookDelayMS != nil {
 		next.WebhookDelayMS = *update.WebhookDelayMS
 	}
+	if update.VideoSubmitStatus != nil {
+		next.VideoSubmitStatus = *update.VideoSubmitStatus
+	}
+	if update.VideoTerminalStatus != nil {
+		next.VideoTerminalStatus = strings.ToLower(strings.TrimSpace(*update.VideoTerminalStatus))
+	}
+	if update.VideoTerminalAfterPoll != nil {
+		next.VideoTerminalAfterPoll = *update.VideoTerminalAfterPoll
+	}
 	if err := validateConfig(next); err != nil {
 		return s.config, err
 	}
@@ -196,6 +260,15 @@ func validateConfig(config mockConfig) error {
 	}
 	if config.WebhookStatus < 100 || config.WebhookStatus > 599 {
 		return errors.New("webhook_status must be between 100 and 599")
+	}
+	if config.VideoSubmitStatus < 100 || config.VideoSubmitStatus > 599 {
+		return errors.New("video_submit_status must be between 100 and 599")
+	}
+	if config.VideoTerminalStatus != "completed" && config.VideoTerminalStatus != "failed" {
+		return errors.New("video_terminal_status must be completed or failed")
+	}
+	if config.VideoTerminalAfterPoll < 1 || config.VideoTerminalAfterPoll > 100 {
+		return errors.New("video_terminal_after_poll must be between 1 and 100")
 	}
 	if config.ImageDelayMS < 0 || config.ImageDelayMS > maxDelayMS {
 		return fmt.Errorf("image_delay_ms must be between 0 and %d", maxDelayMS)
@@ -307,6 +380,163 @@ func metadataInt(metadata map[string]any, key string, fallback int) int {
 		}
 	}
 	return -1
+}
+
+func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		writeMethodNotAllowed(writer)
+		return
+	}
+	var payload videoTaskRequest
+	decoder := json.NewDecoder(io.LimitReader(request.Body, maxBodySize))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid video JSON"}})
+		return
+	}
+	if strings.TrimSpace(payload.Model) == "" || strings.TrimSpace(payload.Prompt) == "" ||
+		payload.Duration < 4 || payload.Duration > 15 || !validVideoAspectRatio(payload.AspectRatio) {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid video request"}})
+		return
+	}
+
+	config := s.getConfig()
+	finish := s.begin("video", "video:/v1/videos", request.Header.Get("Authorization") != "")
+	succeeded := config.VideoSubmitStatus >= 200 && config.VideoSubmitStatus < 300
+	defer finish(succeeded)
+	if !succeeded {
+		writeJSON(writer, config.VideoSubmitStatus, map[string]any{"error": map[string]any{"message": "async-test mock forced video submit failure"}})
+		return
+	}
+
+	taskID := fmt.Sprintf("mock_video_%d", s.sequence.Add(1))
+	s.mu.Lock()
+	s.videoJobs[taskID] = &videoJob{Request: payload}
+	s.videoRequests.Submit++
+	last := payload
+	s.lastVideoSubmit = &last
+	s.mu.Unlock()
+	writeJSON(writer, config.VideoSubmitStatus, videoTaskResponse(taskID, payload, "queued", 0, nil))
+}
+
+func (s *serverState) handleVideoTask(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeMethodNotAllowed(writer)
+		return
+	}
+	path := strings.TrimPrefix(request.URL.Path, "/v1/videos/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.NotFound(writer, request)
+		return
+	}
+	taskID := parts[0]
+	if len(parts) == 2 && parts[1] == "content" {
+		s.handleVideoContent(writer, request, taskID)
+		return
+	}
+	if len(parts) != 1 {
+		http.NotFound(writer, request)
+		return
+	}
+
+	finish := s.begin("video", "video:/v1/videos/{id}", request.Header.Get("Authorization") != "")
+	defer finish(true)
+	config := s.getConfig()
+	s.mu.Lock()
+	job := s.videoJobs[taskID]
+	if job != nil {
+		job.Polls++
+		s.videoRequests.Poll++
+	}
+	var payload videoTaskRequest
+	polls := 0
+	if job != nil {
+		payload = job.Request
+		polls = job.Polls
+	}
+	s.mu.Unlock()
+	if job == nil {
+		writeJSON(writer, http.StatusNotFound, map[string]any{"detail": "video task not found"})
+		return
+	}
+
+	status := "in_progress"
+	progress := 50
+	if polls == 1 && config.VideoTerminalAfterPoll > 1 {
+		status = "queued"
+		progress = 0
+	}
+	var responseErr map[string]any
+	if polls >= config.VideoTerminalAfterPoll {
+		status = config.VideoTerminalStatus
+		progress = 100
+		if status == "failed" {
+			responseErr = map[string]any{"code": "mock_video_failed", "message": "async-test mock forced video failure"}
+		}
+	}
+	writeJSON(writer, http.StatusOK, videoTaskResponse(taskID, payload, status, progress, responseErr))
+}
+
+func (s *serverState) handleVideoContent(writer http.ResponseWriter, request *http.Request, taskID string) {
+	finish := s.begin("video", "video:/v1/videos/{id}/content", request.Header.Get("Authorization") != "")
+	defer finish(true)
+	s.mu.Lock()
+	job := s.videoJobs[taskID]
+	if job != nil {
+		s.videoRequests.Content++
+	}
+	s.mu.Unlock()
+	if job == nil {
+		http.NotFound(writer, request)
+		return
+	}
+	content := []byte("mock-video-content")
+	writer.Header().Set("Content-Type", "video/mp4")
+	if request.Header.Get("Range") == "bytes=0-3" {
+		writer.Header().Set("Content-Range", fmt.Sprintf("bytes 0-3/%d", len(content)))
+		writer.WriteHeader(http.StatusPartialContent)
+		_, _ = writer.Write(content[:4])
+		return
+	}
+	writer.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	writer.WriteHeader(http.StatusOK)
+	_, _ = writer.Write(content)
+}
+
+func videoTaskResponse(taskID string, payload videoTaskRequest, status string, progress int, responseErr map[string]any) map[string]any {
+	response := map[string]any{
+		"id":             taskID,
+		"task_id":        taskID,
+		"object":         "video",
+		"model":          payload.Model,
+		"status":         status,
+		"progress":       progress,
+		"duration":       payload.Duration,
+		"aspect_ratio":   payload.AspectRatio,
+		"resolution":     "480p",
+		"generate_audio": payload.GenerateAudio == nil || *payload.GenerateAudio,
+		"created_at":     time.Now().Unix(),
+		"updated_at":     time.Now().Unix(),
+	}
+	if status == "completed" {
+		response["completed_at"] = time.Now().Unix()
+		response["video_url"] = "http://async-test-mock:8080/v1/videos/" + taskID + "/content"
+	}
+	if responseErr != nil {
+		response["error"] = responseErr
+		response["completed_at"] = time.Now().Unix()
+	}
+	return response
+}
+
+func validVideoAspectRatio(value string) bool {
+	switch value {
+	case "21:9", "16:9", "4:3", "1:1", "3:4", "9:16":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *serverState) handleWebhook(writer http.ResponseWriter, request *http.Request) {

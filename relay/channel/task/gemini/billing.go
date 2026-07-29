@@ -1,11 +1,44 @@
 package gemini
 
 import (
+	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
+
+func ExplicitVeoDuration(metadata map[string]any, stdDuration int, stdSeconds string) (int, bool, error) {
+	if metadata != nil {
+		if value, exists := metadata["durationSeconds"]; exists {
+			switch typed := value.(type) {
+			case int:
+				return typed, true, nil
+			case int64:
+				return int(typed), true, nil
+			case float64:
+				if math.IsNaN(typed) || math.IsInf(typed, 0) || typed != math.Trunc(typed) {
+					return 0, true, fmt.Errorf("durationSeconds must be an integer")
+				}
+				return int(typed), true, nil
+			case string:
+				parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+				return parsed, true, err
+			default:
+				return 0, true, fmt.Errorf("durationSeconds must be an integer")
+			}
+		}
+	}
+	if stdDuration != 0 {
+		return stdDuration, true, nil
+	}
+	if strings.TrimSpace(stdSeconds) != "" {
+		parsed, err := strconv.Atoi(strings.TrimSpace(stdSeconds))
+		return parsed, true, err
+	}
+	return 0, false, nil
+}
 
 // ParseVeoDurationSeconds extracts durationSeconds from metadata.
 // Returns 8 (Veo default) when not specified or invalid.

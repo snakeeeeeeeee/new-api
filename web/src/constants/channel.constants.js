@@ -194,6 +194,11 @@ export const CHANNEL_OPTIONS = [
     color: 'cyan',
     label: 'ImageHandle',
   },
+  {
+    value: 59,
+    color: 'orange',
+    label: 'Adobe2API 视频 / Seedance',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.

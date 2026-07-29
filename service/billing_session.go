@@ -242,6 +242,9 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 	}
 
 	pref := common.NormalizeBillingPreference(relayInfo.UserSetting.BillingPreference)
+	if relayInfo.BillingPreferenceOverride != "" {
+		pref = common.NormalizeBillingPreference(relayInfo.BillingPreferenceOverride)
+	}
 
 	// 钱包路径需要先检查用户额度
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {

@@ -18,6 +18,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 )
@@ -176,6 +177,26 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		"seconds":    float64(seconds),
 		"resolution": resRatio,
 	}
+}
+
+func (a *TaskAdaptor) ResolveVideoBilling(c *gin.Context, _ *relaycommon.RelayInfo) (channel.VideoBillingEstimate, *dto.TaskError) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	seconds, exists, err := ExplicitVeoDuration(req.Metadata, req.Duration, req.Seconds)
+	if err != nil {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(err, "invalid_video_duration", http.StatusBadRequest)
+	}
+	if !exists || seconds <= 0 {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("durationSeconds is required for per-second video billing"), "video_duration_required", http.StatusBadRequest)
+	}
+	if seconds > relaycommon.MaxTaskDurationSeconds {
+		return channel.VideoBillingEstimate{}, service.TaskErrorWrapperLocal(fmt.Errorf("durationSeconds must be between 1 and %d", relaycommon.MaxTaskDurationSeconds), "invalid_video_duration", http.StatusBadRequest)
+	}
+	req.Duration = seconds
+	c.Set("task_request", req)
+	return channel.VideoBillingEstimate{Seconds: seconds, Basis: types.VideoPricingBasisGeneration}, nil
 }
 
 // FetchTask polls task status via the Gemini operations GET endpoint.
