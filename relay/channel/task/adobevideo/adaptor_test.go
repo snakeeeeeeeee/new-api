@@ -72,6 +72,53 @@ func TestPrepareNormalizedVideoRequestSharesValidatedPayloadWithBillingAndUpstre
 	assert.EqualValues(t, 4, payload["duration"])
 	assert.Equal(t, "16:9", payload["aspect_ratio"])
 	assert.Equal(t, false, payload["generate_audio"])
+	assert.Equal(t, "frame", payload["reference_mode"])
+	assert.NotContains(t, payload, "reference_images")
+}
+
+func TestPrepareNormalizedVideoRequestMapsReferenceImagesInPublicOrder(t *testing.T) {
+	duration := 4
+	request := dto.VideoTaskCreateRequest{
+		Model:     "seedance-2.0-fast-480p",
+		Operation: "generation",
+		Input: dto.VideoTaskInputRequest{
+			Prompt: "keep the subject",
+			Image:  &dto.VideoTaskSource{URL: "data:image/png;base64,aW1hZ2U="},
+			ReferenceImages: []dto.VideoTaskSource{
+				{URL: "https://example.com/style.webp"},
+				{URL: "https://example.com/background.png"},
+			},
+		},
+		Output: dto.VideoTaskOutputRequest{Duration: &duration},
+		ProviderOptions: map[string]map[string]any{
+			ProviderOptionsNamespace: {"reference_mode": "media"},
+		},
+	}
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "seedance_2.0_fast_480p",
+		},
+	}
+	c := adobeVideoTestContext()
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, request))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload requestPayload
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "media", payload.ReferenceMode)
+	require.Len(t, payload.ReferenceImages, 3)
+	assert.Equal(t, "data:image/png;base64,aW1hZ2U=", payload.ReferenceImages[0].URL)
+	assert.Equal(t, "https://example.com/style.webp", payload.ReferenceImages[1].URL)
+	assert.Equal(t, "https://example.com/background.png", payload.ReferenceImages[2].URL)
+
+	estimate, taskErr := adaptor.ResolveVideoBilling(c, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, 4, estimate.Seconds)
 }
 
 func TestPrepareNormalizedVideoRequestUsesAdobeDefaultsWithoutInventingResolution(t *testing.T) {
@@ -132,9 +179,30 @@ func TestPrepareNormalizedVideoRequestRejectsInvalidInputBeforeDispatch(t *testi
 			code:    "invalid_video_parameter",
 		},
 		{
-			name:    "image input unsupported",
-			request: dto.VideoTaskCreateRequest{Model: "alias", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "cat", Image: &dto.VideoTaskSource{URL: "https://example.com/cat.png"}}, Output: dto.VideoTaskOutputRequest{Duration: &validDuration}},
+			name:    "video input unsupported",
+			request: dto.VideoTaskCreateRequest{Model: "alias", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "cat", Video: &dto.VideoTaskSource{URL: "https://example.com/cat.mp4"}}, Output: dto.VideoTaskOutputRequest{Duration: &validDuration}},
 			code:    "unsupported_video_input",
+		},
+		{
+			name:    "file reference unsupported",
+			request: dto.VideoTaskCreateRequest{Model: "alias", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "cat", Image: &dto.VideoTaskSource{Provider: "adobe_video", FileID: "file-1"}}, Output: dto.VideoTaskOutputRequest{Duration: &validDuration}},
+			code:    "unsupported_file_provider",
+		},
+		{
+			name: "frame mode reference limit",
+			request: dto.VideoTaskCreateRequest{
+				Model: "alias", Operation: "generation",
+				Input: dto.VideoTaskInputRequest{
+					Prompt: "cat",
+					ReferenceImages: []dto.VideoTaskSource{
+						{URL: "https://example.com/1.png"},
+						{URL: "https://example.com/2.png"},
+						{URL: "https://example.com/3.png"},
+					},
+				},
+				Output: dto.VideoTaskOutputRequest{Duration: &validDuration},
+			},
+			code: "invalid_video_parameter",
 		},
 		{
 			name:    "operation unsupported",
@@ -148,6 +216,28 @@ func TestPrepareNormalizedVideoRequestRejectsInvalidInputBeforeDispatch(t *testi
 				Output: dto.VideoTaskOutputRequest{Duration: &validDuration},
 				ProviderOptions: map[string]map[string]any{
 					ProviderOptionsNamespace: {"duration": 8},
+				},
+			},
+			code: "invalid_provider_options",
+		},
+		{
+			name: "invalid reference mode",
+			request: dto.VideoTaskCreateRequest{
+				Model: "alias", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "cat"},
+				Output: dto.VideoTaskOutputRequest{Duration: &validDuration},
+				ProviderOptions: map[string]map[string]any{
+					ProviderOptionsNamespace: {"reference_mode": "style"},
+				},
+			},
+			code: "invalid_provider_options",
+		},
+		{
+			name: "reference override rejected",
+			request: dto.VideoTaskCreateRequest{
+				Model: "alias", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "cat"},
+				Output: dto.VideoTaskOutputRequest{Duration: &validDuration},
+				ProviderOptions: map[string]map[string]any{
+					ProviderOptionsNamespace: {"reference_images": []any{}},
 				},
 			},
 			code: "invalid_provider_options",

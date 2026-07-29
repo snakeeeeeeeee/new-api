@@ -24,11 +24,17 @@ import (
 )
 
 type requestPayload struct {
-	Model         string `json:"model"`
-	Prompt        string `json:"prompt"`
-	Duration      int    `json:"duration"`
-	AspectRatio   string `json:"aspect_ratio"`
-	GenerateAudio *bool  `json:"generate_audio,omitempty"`
+	Model           string                  `json:"model"`
+	Prompt          string                  `json:"prompt"`
+	Duration        int                     `json:"duration"`
+	AspectRatio     string                  `json:"aspect_ratio"`
+	GenerateAudio   *bool                   `json:"generate_audio,omitempty"`
+	ReferenceMode   string                  `json:"reference_mode"`
+	ReferenceImages []referenceImagePayload `json:"reference_images,omitempty"`
+}
+
+type referenceImagePayload struct {
+	URL string `json:"url"`
 }
 
 type responseError struct {
@@ -86,8 +92,8 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	if request.Operation != "generation" {
 		return adobeVideoRequestError("AdobeVideo only supports generation", "unsupported_video_operation")
 	}
-	if request.Input.Image != nil || len(request.Input.ReferenceImages) > 0 || request.Input.Video != nil {
-		return adobeVideoRequestError("AdobeVideo generation currently supports text input only", "unsupported_video_input")
+	if request.Input.Video != nil {
+		return adobeVideoRequestError("AdobeVideo generation does not support video input", "unsupported_video_input")
 	}
 
 	prompt := strings.TrimSpace(request.Input.Prompt)
@@ -120,10 +126,11 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	}
 
 	payload := &requestPayload{
-		Model:       request.Model,
-		Prompt:      prompt,
-		Duration:    duration,
-		AspectRatio: aspectRatio,
+		Model:         request.Model,
+		Prompt:        prompt,
+		Duration:      duration,
+		AspectRatio:   aspectRatio,
+		ReferenceMode: "frame",
 	}
 	for namespace, options := range request.ProviderOptions {
 		if strings.TrimSpace(namespace) != ProviderOptionsNamespace {
@@ -143,7 +150,23 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 					)
 				}
 				payload.GenerateAudio = &enabled
-			case "model", "prompt", "duration", "aspect_ratio", "resolution":
+			case "reference_mode":
+				mode, ok := value.(string)
+				if !ok {
+					return adobeVideoRequestError(
+						"provider_options.adobe_video.reference_mode must be a string",
+						"invalid_provider_options",
+					)
+				}
+				mode = strings.ToLower(strings.TrimSpace(mode))
+				if mode != "frame" && mode != "media" {
+					return adobeVideoRequestError(
+						"provider_options.adobe_video.reference_mode must be frame or media",
+						"invalid_provider_options",
+					)
+				}
+				payload.ReferenceMode = mode
+			case "model", "prompt", "duration", "aspect_ratio", "resolution", "image", "reference_images", "video":
 				return adobeVideoRequestError(
 					fmt.Sprintf("provider_options.adobe_video.%s duplicates a public or model-bound field", key),
 					"invalid_provider_options",
@@ -155,6 +178,29 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 				)
 			}
 		}
+	}
+
+	referenceSources := make([]dto.VideoTaskSource, 0, 1+len(request.Input.ReferenceImages))
+	if request.Input.Image != nil {
+		referenceSources = append(referenceSources, *request.Input.Image)
+	}
+	referenceSources = append(referenceSources, request.Input.ReferenceImages...)
+	referenceLimit := 2
+	if payload.ReferenceMode == "media" {
+		referenceLimit = 9
+	}
+	if len(referenceSources) > referenceLimit {
+		return adobeVideoRequestError(
+			fmt.Sprintf("AdobeVideo %s mode supports at most %d reference images", payload.ReferenceMode, referenceLimit),
+			"invalid_video_parameter",
+		)
+	}
+	for _, source := range referenceSources {
+		image, taskErr := normalizedAdobeVideoReference(source)
+		if taskErr != nil {
+			return taskErr
+		}
+		payload.ReferenceImages = append(payload.ReferenceImages, image)
 	}
 
 	if info.TaskRelayInfo == nil {
@@ -411,6 +457,34 @@ func validAspectRatio(value string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizedAdobeVideoReference(source dto.VideoTaskSource) (referenceImagePayload, *dto.TaskError) {
+	if strings.TrimSpace(source.Provider) != "" || strings.TrimSpace(source.FileID) != "" {
+		return referenceImagePayload{}, adobeVideoRequestError(
+			"AdobeVideo reference images require URL or Data URL sources; file references are not supported",
+			"unsupported_file_provider",
+		)
+	}
+	sourceURL := strings.TrimSpace(source.URL)
+	lowerURL := strings.ToLower(sourceURL)
+	if strings.HasPrefix(lowerURL, "data:") {
+		return referenceImagePayload{URL: sourceURL}, nil
+	}
+	if !strings.HasPrefix(lowerURL, "http://") && !strings.HasPrefix(lowerURL, "https://") {
+		return referenceImagePayload{}, adobeVideoRequestError(
+			"AdobeVideo reference images must use http, https, or data URLs",
+			"invalid_video_parameter",
+		)
+	}
+	parsed, err := url.Parse(sourceURL)
+	if err != nil || parsed.Host == "" {
+		return referenceImagePayload{}, adobeVideoRequestError(
+			"AdobeVideo reference image URL is invalid",
+			"invalid_video_parameter",
+		)
+	}
+	return referenceImagePayload{URL: sourceURL}, nil
 }
 
 func adobeVideoRequestError(message, code string) *dto.TaskError {

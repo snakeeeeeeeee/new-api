@@ -115,6 +115,11 @@ func TestVideoLifecycleAndRangeContent(t *testing.T) {
 	body, err := json.Marshal(videoTaskRequest{
 		Model: "seedance_2.0_fast_480p", Prompt: "ocean sunrise",
 		Duration: 4, AspectRatio: "16:9", GenerateAudio: &audio,
+		ReferenceMode: "media",
+		ReferenceImages: []videoReferenceImage{
+			{URL: "data:image/png;base64,aW1hZ2U="},
+			{URL: "https://example.com/style.webp"},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -187,8 +192,40 @@ func TestVideoLifecycleAndRangeContent(t *testing.T) {
 	}
 	if metrics.LastVideoSubmit == nil || metrics.LastVideoSubmit.Model != "seedance_2.0_fast_480p" ||
 		metrics.LastVideoSubmit.Duration != 4 || metrics.LastVideoSubmit.GenerateAudio == nil ||
-		*metrics.LastVideoSubmit.GenerateAudio {
+		*metrics.LastVideoSubmit.GenerateAudio || metrics.LastVideoSubmit.ReferenceMode != "media" ||
+		len(metrics.LastVideoSubmit.ReferenceImages) != 2 ||
+		metrics.LastVideoSubmit.ReferenceImages[0].URL != "data:image/png;base64,aW1hZ2U=" {
 		t.Fatalf("unexpected last video submit: %+v", metrics.LastVideoSubmit)
+	}
+}
+
+func TestVideoSubmitRejectsInvalidReferenceContract(t *testing.T) {
+	state := newServerState()
+	server := httptest.NewServer(state.handler())
+	defer server.Close()
+
+	response, err := http.Post(
+		server.URL+"/v1/videos",
+		"application/json",
+		bytes.NewBufferString(`{
+			"model":"seedance_2.0_fast_480p",
+			"prompt":"too many frames",
+			"duration":4,
+			"aspect_ratio":"16:9",
+			"reference_mode":"frame",
+			"reference_images":[
+				{"url":"https://example.com/1.png"},
+				{"url":"https://example.com/2.png"},
+				{"url":"https://example.com/3.png"}
+			]
+		}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusBadRequest)
 	}
 }
 

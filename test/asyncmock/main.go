@@ -61,11 +61,17 @@ type concurrencyCounts struct {
 }
 
 type videoTaskRequest struct {
-	Model         string `json:"model"`
-	Prompt        string `json:"prompt"`
-	Duration      int    `json:"duration"`
-	AspectRatio   string `json:"aspect_ratio"`
-	GenerateAudio *bool  `json:"generate_audio,omitempty"`
+	Model           string                `json:"model"`
+	Prompt          string                `json:"prompt"`
+	Duration        int                   `json:"duration"`
+	AspectRatio     string                `json:"aspect_ratio"`
+	GenerateAudio   *bool                 `json:"generate_audio,omitempty"`
+	ReferenceMode   string                `json:"reference_mode,omitempty"`
+	ReferenceImages []videoReferenceImage `json:"reference_images,omitempty"`
+}
+
+type videoReferenceImage struct {
+	URL string `json:"url"`
 }
 
 type videoRequestCounts struct {
@@ -394,8 +400,13 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid video JSON"}})
 		return
 	}
+	payload.ReferenceMode = strings.ToLower(strings.TrimSpace(payload.ReferenceMode))
+	if payload.ReferenceMode == "" {
+		payload.ReferenceMode = "frame"
+	}
 	if strings.TrimSpace(payload.Model) == "" || strings.TrimSpace(payload.Prompt) == "" ||
-		payload.Duration < 4 || payload.Duration > 15 || !validVideoAspectRatio(payload.AspectRatio) {
+		payload.Duration < 4 || payload.Duration > 15 || !validVideoAspectRatio(payload.AspectRatio) ||
+		!validVideoReferences(payload.ReferenceMode, payload.ReferenceImages) {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid video request"}})
 		return
 	}
@@ -528,6 +539,27 @@ func videoTaskResponse(taskID string, payload videoTaskRequest, status string, p
 		response["completed_at"] = time.Now().Unix()
 	}
 	return response
+}
+
+func validVideoReferences(mode string, images []videoReferenceImage) bool {
+	limit := 2
+	if mode == "media" {
+		limit = 9
+	} else if mode != "frame" {
+		return false
+	}
+	if len(images) > limit {
+		return false
+	}
+	for _, image := range images {
+		sourceURL := strings.ToLower(strings.TrimSpace(image.URL))
+		if !strings.HasPrefix(sourceURL, "http://") &&
+			!strings.HasPrefix(sourceURL, "https://") &&
+			!strings.HasPrefix(sourceURL, "data:") {
+			return false
+		}
+	}
+	return true
 }
 
 func validVideoAspectRatio(value string) bool {
