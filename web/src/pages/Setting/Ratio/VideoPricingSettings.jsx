@@ -31,6 +31,7 @@ import {
   Switch,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from '@douyinfe/semi-ui';
 import {
@@ -52,19 +53,20 @@ import {
   calculateVideoPricingPreview,
   copyVideoPricingProfile,
   deleteVideoPricingProfile,
+  getVideoPricingProfileModels,
   normalizeVideoPricing,
+  removeVideoPricingBinding,
   selectFilter,
   showError,
   showSuccess,
   showWarning,
+  updateVideoPricingBinding,
   validateVideoPricing,
 } from '../../../helpers';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 
 const { Text, Title } = Typography;
 const POLICY_ONLY = '__policy_only__';
-
-const cloneConfig = (config) => structuredClone(config);
 
 const createProfileId = (profiles, base = 'video-per-second') => {
   let candidate = base;
@@ -108,6 +110,7 @@ export default function VideoPricingSettings({ options, refresh }) {
   const [bindingProfile, setBindingProfile] = useState(POLICY_ONLY);
   const [bindingSubscriptionEnabled, setBindingSubscriptionEnabled] =
     useState(false);
+  const [savingAction, setSavingAction] = useState('');
   const [previewSeconds, setPreviewSeconds] = useState(5);
   const [previewGroupRatio, setPreviewGroupRatio] = useState(1);
 
@@ -194,6 +197,41 @@ export default function VideoPricingSettings({ options, refresh }) {
     [previewGroupRatio, previewSeconds, selectedProfile],
   );
 
+  const persistConfig = async (
+    nextConfig,
+    successMessage = t('保存成功'),
+    action = 'config',
+  ) => {
+    const normalized = normalizeVideoPricing(nextConfig);
+    const errors = validateVideoPricing(normalized, t);
+    if (errors.length > 0) {
+      showError(errors[0]);
+      return false;
+    }
+    setLoading(true);
+    setSavingAction(action);
+    try {
+      const response = await API.put('/api/option/', {
+        key: 'VideoPricing',
+        value: JSON.stringify(normalized),
+      });
+      if (!response.data?.success) {
+        showError(response.data?.message || t('保存失败'));
+        return false;
+      }
+      setConfig(normalized);
+      showSuccess(successMessage);
+      await refresh();
+      return true;
+    } catch (error) {
+      showError(error.message || t('保存失败'));
+      return false;
+    } finally {
+      setSavingAction('');
+      setLoading(false);
+    }
+  };
+
   const updateProfile = (patch) => {
     if (!selectedProfileId) return;
     setConfig((current) => ({
@@ -213,7 +251,7 @@ export default function VideoPricingSettings({ options, refresh }) {
     setCreateVisible(true);
   };
 
-  const createProfile = () => {
+  const createProfile = async () => {
     const id = createDraft.id.trim();
     const name = createDraft.name.trim();
     if (!id || !name) {
@@ -224,89 +262,104 @@ export default function VideoPricingSettings({ options, refresh }) {
       showWarning(t('模板 ID 已存在'));
       return;
     }
-    setConfig((current) => ({
-      ...current,
+    const next = {
+      ...config,
       profiles: {
-        ...current.profiles,
+        ...config.profiles,
         [id]: {
           name,
           billing_mode: VIDEO_PRICING_MODE,
           unit_price: 0,
         },
       },
-    }));
+    };
+    const saved = await persistConfig(
+      next,
+      t('价格模板已创建'),
+      `profile:create:${id}`,
+    );
+    if (!saved) return;
     setSelectedProfileId(id);
     setBindingProfile(id);
     setCreateVisible(false);
   };
 
-  const copyProfile = () => {
+  const copyProfile = async () => {
     if (!selectedProfile) return;
     const id = createProfileId(config.profiles, `${selectedProfileId}-copy`);
-    setConfig((current) =>
-      copyVideoPricingProfile(
-        current,
-        selectedProfileId,
-        id,
-        t('{{name}} 副本', { name: selectedProfile.name }),
-      ),
+    const next = copyVideoPricingProfile(
+      config,
+      selectedProfileId,
+      id,
+      t('{{name}} 副本', { name: selectedProfile.name }),
     );
+    const saved = await persistConfig(
+      next,
+      t('价格模板已复制'),
+      `profile:copy:${id}`,
+    );
+    if (!saved) return;
     setSelectedProfileId(id);
     setBindingProfile(id);
   };
 
-  const deleteProfile = () => {
-    if (!selectedProfileId) return;
-    const nextId = profileIds.find((id) => id !== selectedProfileId) || '';
-    setConfig((current) =>
-      deleteVideoPricingProfile(current, selectedProfileId),
+  const deleteProfile = async (profileId) => {
+    const targetProfileId = profileId || selectedProfileId;
+    if (!targetProfileId) return;
+    const boundModels = getVideoPricingProfileModels(config, targetProfileId);
+    if (boundModels.length > 0) {
+      showWarning(
+        t('该模板仍被 {{count}} 个模型使用，请先改绑或解绑', {
+          count: boundModels.length,
+        }),
+      );
+      return;
+    }
+    const next = deleteVideoPricingProfile(config, targetProfileId);
+    const saved = await persistConfig(
+      next,
+      t('价格模板已删除'),
+      `profile:delete:${targetProfileId}`,
     );
-    setSelectedProfileId(nextId);
-    setBindingProfile(nextId || POLICY_ONLY);
+    if (!saved) return;
+    if (targetProfileId === selectedProfileId) {
+      const nextId = profileIds.find((id) => id !== targetProfileId) || '';
+      setSelectedProfileId(nextId);
+      setBindingProfile(nextId || POLICY_ONLY);
+    }
   };
 
-  const applyBindings = () => {
+  const applyBindings = async () => {
     if (bindingModels.length === 0) {
       showWarning(t('请至少选择或输入一个公开模型名称'));
       return;
     }
-    if (bindingProfile === POLICY_ONLY) {
-      setConfig((current) =>
-        bindVideoPricingPolicyModels(current, bindingModels),
-      );
-    } else {
-      setConfig((current) =>
-        bindVideoPricingModels(
-          current,
-          bindingModels,
-          bindingProfile,
-          bindingSubscriptionEnabled,
-        ),
-      );
-    }
-    setBindingModels([]);
-    showSuccess(
-      t('已配置 {{count}} 个模型，保存后生效', {
-        count: bindingModels.length,
-      }),
+    const next =
+      bindingProfile === POLICY_ONLY
+        ? bindVideoPricingPolicyModels(config, bindingModels)
+        : bindVideoPricingModels(
+            config,
+            bindingModels,
+            bindingProfile,
+            bindingSubscriptionEnabled,
+          );
+    const count = bindingModels.length;
+    const saved = await persistConfig(
+      next,
+      t('已配置 {{count}} 个模型', { count }),
+      'binding:batch',
     );
+    if (!saved) return;
+    setBindingModels([]);
   };
 
-  const updateBinding = (model, patch) => {
-    setConfig((current) => {
-      const next = cloneConfig(current);
-      const binding = { ...next.model_bindings[model], ...patch };
-      if (!binding.profile) {
-        delete binding.profile;
-        binding.subscription_enabled = true;
-      }
-      next.model_bindings[model] = binding;
-      return next;
-    });
+  const updateBinding = async (model, patch) => {
+    const next = updateVideoPricingBinding(config, model, patch);
+    await persistConfig(next, t('模型绑定已更新'), `binding:update:${model}`);
   };
 
   const updateBindingProfile = (model, profileId) => {
-    updateBinding(
+    return updateBinding(
       model,
       profileId === POLICY_ONLY
         ? { profile: '', subscription_enabled: true }
@@ -314,37 +367,19 @@ export default function VideoPricingSettings({ options, refresh }) {
     );
   };
 
-  const removeBinding = (model) => {
-    setConfig((current) => {
-      const next = cloneConfig(current);
-      delete next.model_bindings[model];
-      return next;
-    });
+  const removeBinding = async (model) => {
+    const next = removeVideoPricingBinding(config, model);
+    await persistConfig(next, t('模型绑定已解除'), `binding:delete:${model}`);
   };
 
-  const save = async () => {
-    if (validationErrors.length > 0) {
-      showError(validationErrors[0]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const response = await API.put('/api/option/', {
-        key: 'VideoPricing',
-        value: JSON.stringify(config),
-      });
-      if (!response.data?.success) {
-        showError(response.data?.message || t('保存失败'));
-        return;
-      }
-      showSuccess(t('保存成功'));
-      await refresh();
-    } catch (error) {
-      showError(error.message || t('保存失败'));
-    } finally {
-      setLoading(false);
-    }
-  };
+  const save = () => persistConfig(config);
+
+  const saveProfile = () =>
+    persistConfig(
+      config,
+      t('价格模板修改已保存'),
+      `profile:update:${selectedProfileId}`,
+    );
 
   const bindingRows = Object.entries(config.model_bindings)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -365,6 +400,7 @@ export default function VideoPricingSettings({ options, refresh }) {
         <Select
           value={profileId || POLICY_ONLY}
           optionList={profileOptions}
+          disabled={loading}
           onChange={(value) => updateBindingProfile(record.model, value)}
           style={{ width: '100%' }}
         />
@@ -378,7 +414,7 @@ export default function VideoPricingSettings({ options, refresh }) {
         <Switch
           aria-label={t('允许订阅扣费')}
           checked={Boolean(enabled)}
-          disabled={!record.profile}
+          disabled={loading || !record.profile}
           onChange={(checked) =>
             updateBinding(record.model, { subscription_enabled: checked })
           }
@@ -398,15 +434,25 @@ export default function VideoPricingSettings({ options, refresh }) {
     },
     {
       title: t('操作'),
-      width: 64,
+      width: 80,
       render: (_, record) => (
-        <Button
-          aria-label={t('解除绑定')}
-          theme='borderless'
-          type='danger'
-          icon={<Unlink size={15} />}
-          onClick={() => removeBinding(record.model)}
-        />
+        <Popconfirm
+          title={t('确定解除模型 {{model}} 的视频计价绑定吗？', {
+            model: record.model,
+          })}
+          onConfirm={() => removeBinding(record.model)}
+        >
+          <Button
+            aria-label={t('解除绑定')}
+            theme='borderless'
+            type='danger'
+            icon={<Unlink size={15} />}
+            loading={savingAction === `binding:delete:${record.model}`}
+            disabled={
+              loading && savingAction !== `binding:delete:${record.model}`
+            }
+          />
+        </Popconfirm>
       ),
     },
   ];
@@ -419,13 +465,23 @@ export default function VideoPricingSettings({ options, refresh }) {
     >
       <div className='flex items-start justify-between gap-2'>
         <Text copyable={{ content: record.model }}>{record.model}</Text>
-        <Button
-          aria-label={t('解除绑定')}
-          theme='borderless'
-          type='danger'
-          icon={<Unlink size={15} />}
-          onClick={() => removeBinding(record.model)}
-        />
+        <Popconfirm
+          title={t('确定解除模型 {{model}} 的视频计价绑定吗？', {
+            model: record.model,
+          })}
+          onConfirm={() => removeBinding(record.model)}
+        >
+          <Button
+            aria-label={t('解除绑定')}
+            theme='borderless'
+            type='danger'
+            icon={<Unlink size={15} />}
+            loading={savingAction === `binding:delete:${record.model}`}
+            disabled={
+              loading && savingAction !== `binding:delete:${record.model}`
+            }
+          />
+        </Popconfirm>
       </div>
       <div>
         <Text type='tertiary'>{t('价格模板')}</Text>
@@ -433,6 +489,7 @@ export default function VideoPricingSettings({ options, refresh }) {
           className='mt-1 w-full'
           value={record.profile || POLICY_ONLY}
           optionList={profileOptions}
+          disabled={loading}
           onChange={(value) => updateBindingProfile(record.model, value)}
         />
       </div>
@@ -448,7 +505,7 @@ export default function VideoPricingSettings({ options, refresh }) {
         <Switch
           aria-label={t('允许订阅扣费')}
           checked={Boolean(record.subscription_enabled)}
-          disabled={!record.profile}
+          disabled={loading || !record.profile}
           onChange={(checked) =>
             updateBinding(record.model, { subscription_enabled: checked })
           }
@@ -509,29 +566,17 @@ export default function VideoPricingSettings({ options, refresh }) {
                 aria-label={t('新增模板')}
                 theme='borderless'
                 icon={<Plus size={16} />}
+                disabled={loading}
                 onClick={openCreateModal}
               />
               <Button
                 aria-label={t('复制模板')}
                 theme='borderless'
                 icon={<Copy size={16} />}
-                disabled={!selectedProfile}
+                loading={savingAction.startsWith('profile:copy:')}
+                disabled={!selectedProfile || loading}
                 onClick={copyProfile}
               />
-              <Popconfirm
-                title={t(
-                  '删除模板后，允许订阅的模型保留为仅策略绑定，其余模型解除绑定。确定继续吗？',
-                )}
-                onConfirm={deleteProfile}
-              >
-                <Button
-                  aria-label={t('删除模板')}
-                  theme='borderless'
-                  type='danger'
-                  icon={<Trash2 size={16} />}
-                  disabled={!selectedProfile}
-                />
-              </Popconfirm>
             </Space>
           </div>
           {profileIds.length === 0 ? (
@@ -547,11 +592,21 @@ export default function VideoPricingSettings({ options, refresh }) {
                   (binding) => binding.profile === id,
                 ).length;
                 const selected = id === selectedProfileId;
+                const deleteDisabled = count > 0 || loading;
+                const deleteButton = (
+                  <Button
+                    aria-label={t('删除模板')}
+                    theme='borderless'
+                    type='danger'
+                    icon={<Trash2 size={15} />}
+                    loading={savingAction === `profile:delete:${id}`}
+                    disabled={deleteDisabled}
+                  />
+                );
                 return (
-                  <button
+                  <div
                     key={id}
-                    type='button'
-                    className='w-full text-left px-3 py-2 border rounded-md cursor-pointer'
+                    className='flex items-center gap-1 border rounded-md pr-1'
                     style={{
                       borderColor: selected
                         ? 'var(--semi-color-primary)'
@@ -560,20 +615,44 @@ export default function VideoPricingSettings({ options, refresh }) {
                         ? 'var(--semi-color-primary-light-default)'
                         : 'transparent',
                     }}
-                    onClick={() => {
-                      setSelectedProfileId(id);
-                      setBindingProfile(id);
-                    }}
                   >
-                    <div className='font-medium truncate'>{profile.name}</div>
-                    <div className='flex flex-wrap items-center gap-2 mt-1 text-xs text-gray-500'>
-                      <span>
-                        {formatUSD(profile.unit_price)}/{t('秒')}
-                      </span>
-                      <span>·</span>
-                      <span>{t('{{count}} 个模型', { count })}</span>
-                    </div>
-                  </button>
+                    <button
+                      type='button'
+                      className='min-w-0 flex-1 text-left px-3 py-2 cursor-pointer'
+                      onClick={() => {
+                        setSelectedProfileId(id);
+                        setBindingProfile(id);
+                      }}
+                    >
+                      <div className='font-medium truncate'>{profile.name}</div>
+                      <div className='flex flex-wrap items-center gap-2 mt-1 text-xs text-gray-500'>
+                        <span>
+                          {formatUSD(profile.unit_price)}/{t('秒')}
+                        </span>
+                        <span>·</span>
+                        <span>{t('{{count}} 个模型', { count })}</span>
+                      </div>
+                    </button>
+                    {count > 0 ? (
+                      <Tooltip
+                        content={t(
+                          '该模板仍被 {{count}} 个模型使用，请先改绑或解绑',
+                          { count },
+                        )}
+                      >
+                        <span>{deleteButton}</span>
+                      </Tooltip>
+                    ) : (
+                      <Popconfirm
+                        title={t('确定删除价格模板 {{name}} 吗？', {
+                          name: profile.name || id,
+                        })}
+                        onConfirm={() => deleteProfile(id)}
+                      >
+                        {deleteButton}
+                      </Popconfirm>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -592,6 +671,23 @@ export default function VideoPricingSettings({ options, refresh }) {
                 className='border rounded-md p-4'
                 style={{ borderColor: 'var(--semi-color-border)' }}
               >
+                <div className='flex items-center justify-between gap-3 mb-3'>
+                  <Text strong>{t('模板配置')}</Text>
+                  <Button
+                    type='primary'
+                    icon={<Save size={15} />}
+                    loading={
+                      savingAction === `profile:update:${selectedProfileId}`
+                    }
+                    disabled={
+                      loading &&
+                      savingAction !== `profile:update:${selectedProfileId}`
+                    }
+                    onClick={saveProfile}
+                  >
+                    {t('保存修改')}
+                  </Button>
+                </div>
                 <div className='grid grid-cols-1 md:grid-cols-3 gap-3'>
                   <div>
                     <Text strong>{t('模板名称')}</Text>
@@ -697,11 +793,13 @@ export default function VideoPricingSettings({ options, refresh }) {
             value={bindingModels}
             optionList={modelOptions}
             placeholder={t('选择或输入多个公开模型名称')}
+            disabled={loading}
             onChange={setBindingModels}
           />
           <Select
             value={bindingProfile}
             optionList={profileOptions}
+            disabled={loading}
             onChange={(value) => {
               setBindingProfile(value);
               if (value === POLICY_ONLY) setBindingSubscriptionEnabled(true);
@@ -717,13 +815,15 @@ export default function VideoPricingSettings({ options, refresh }) {
               checked={
                 bindingProfile === POLICY_ONLY || bindingSubscriptionEnabled
               }
-              disabled={bindingProfile === POLICY_ONLY}
+              disabled={loading || bindingProfile === POLICY_ONLY}
               onChange={setBindingSubscriptionEnabled}
             />
           </div>
           <Button
             type='primary'
             icon={<Link2 size={15} />}
+            loading={savingAction === 'binding:batch'}
+            disabled={loading && savingAction !== 'binding:batch'}
             onClick={applyBindings}
           >
             {t('批量配置')}

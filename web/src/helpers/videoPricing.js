@@ -136,17 +136,26 @@ export const copyVideoPricingProfile = (
   return config;
 };
 
+export const getVideoPricingProfileModels = (raw, profileId) => {
+  const config = cloneVideoPricing(raw);
+  const targetProfileId = asTrimmedString(profileId);
+  if (!targetProfileId) return [];
+  return Object.entries(config.model_bindings)
+    .filter(([, binding]) => binding.profile === targetProfileId)
+    .map(([model]) => model)
+    .sort((a, b) => a.localeCompare(b));
+};
+
 export const deleteVideoPricingProfile = (raw, profileId) => {
   const config = cloneVideoPricing(raw);
-  delete config.profiles[profileId];
-  Object.entries(config.model_bindings).forEach(([model, binding]) => {
-    if (binding.profile !== profileId) return;
-    if (binding.subscription_enabled === true) {
-      config.model_bindings[model] = { subscription_enabled: true };
-    } else {
-      delete config.model_bindings[model];
-    }
-  });
+  const targetProfileId = asTrimmedString(profileId);
+  if (
+    !targetProfileId ||
+    getVideoPricingProfileModels(config, targetProfileId).length > 0
+  ) {
+    return config;
+  }
+  delete config.profiles[targetProfileId];
   return config;
 };
 
@@ -178,6 +187,36 @@ export const bindVideoPricingPolicyModels = (raw, models) => {
       config.model_bindings[name] = { subscription_enabled: true };
     }
   });
+  return config;
+};
+
+export const updateVideoPricingBinding = (raw, model, patch) => {
+  const config = cloneVideoPricing(raw);
+  const modelName = asTrimmedString(model);
+  if (!modelName || !config.model_bindings[modelName]) return config;
+
+  const binding = {
+    ...config.model_bindings[modelName],
+    ...asObject(patch),
+  };
+  const profileId = asTrimmedString(binding.profile);
+  if (profileId && !config.profiles[profileId]) return config;
+
+  if (profileId) {
+    binding.profile = profileId;
+    binding.subscription_enabled = binding.subscription_enabled === true;
+  } else {
+    delete binding.profile;
+    binding.subscription_enabled = true;
+  }
+  config.model_bindings[modelName] = binding;
+  return config;
+};
+
+export const removeVideoPricingBinding = (raw, model) => {
+  const config = cloneVideoPricing(raw);
+  const modelName = asTrimmedString(model);
+  if (modelName) delete config.model_bindings[modelName];
   return config;
 };
 

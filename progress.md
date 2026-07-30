@@ -1211,3 +1211,23 @@
 - Billing and direct-resource acceptance passed: exactly 1,500,000 quota was retained, no success refund was added, task and Asset URLs are identical Adobe CDN links, and no local media file was created.
 - Full regression passed: `go test ./... -count=1` and Adobe2API's 101-test suite are green.
 - Phase 6 complete. Both Docker services are healthy, both worktrees pass `git diff --check`, and the successful Kling 3.0 frame and Kling Omni images tasks each retain the expected three-second charge.
+
+## 2026-07-30 — VideoPricing 编辑与删除修复
+
+- 已开始检查 VideoPricing 页面、helper 和 Option 保存链路。
+- 已确认 helper 存在删除模板能力，下一步定位 UI 操作和持久化失败点。
+- 已定位根因：单项操作只更新本地草稿，必须依赖顶部全局保存；没有行级/模板级提交与失败回滚。
+- 已锁定修复语义：被引用模板禁止删除，未引用模板原子删除；绑定改绑、订阅开关和解绑均原子保存。
+- 已确认现有 `/api/option/` 全量 PUT 足以实现单项原子保存，不需要更改后端接口或数据库。
+- 首次多文件补丁因页面上下文不匹配而整体未应用，已切换为分文件精确补丁。
+- 新增同轮范围：修复 Self-Adobe 的 `adobe-veo-*` 模型馆藏分类，保持渠道类型不变。
+- 已定位分类根因：默认供应商规则缺少 Veo 与 Seedance；Kling 正常是因为已有 `kling -> 快手`。
+- VideoPricing helper 定向测试通过（7/7）。
+- 用户明确本次无需多语言和移动端兼容，已从验收范围移除。
+- 前端目标文件已格式化；首次 Go 格式化因工作目录错误未执行，将从仓库根目录重跑。
+- Go model 全包、VideoPricing 相关 controller 测试、前端 helper 测试、Prettier 检查和生产构建均通过。
+- VideoPricing 单项原子保存和 Veo/Seedance 默认供应商分类实现完成，进入 Docker dev 验收。
+- Docker dev `new-api-dev` 重建后健康；`/api/pricing` 实际返回 Veo `vendor_id=3`（Google）、Seedance `vendor_id=6`（即梦）。
+- 桌面管理页完成临时模板创建、改名改价、刷新持久化和删除测试；完成临时模型绑定、订阅策略修改、模板改绑、刷新持久化和解除绑定测试，测试配置已全部清理。
+- 桌面模型广场确认 Veo 使用 Google/Gemini 分类，Seedance 使用即梦/Jimeng 分类，Kling 保持快手分类。
+- 最终定向回归通过：VideoPricing helper 7/7、`go test ./model -count=1`、VideoPricing/Pricing controller 测试和 `git diff --check`。

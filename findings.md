@@ -1436,6 +1436,25 @@
 - media Asset Range 返回 206、`Content-Range: bytes 0-3/894202`；完整文件 894202 字节，ffprobe 为 H.264 864x496、AAC 44.1kHz 双声道、4.087 秒。
 - media 快照精确记录 3 图、2 视频、1 音频，仍只按请求 4 秒、group ratio 1、wallet 结算 2000000；不含原始 URL 或 inline data。
 - 两个成功任务共有 2 条消费日志、总额度 4000000、没有退款日志；管理员钱包从 73802740 降到 69802740，净变化完全一致。
+
+## 2026-07-30 — VideoPricing 编辑与删除缺陷
+
+- 页面已经引用 `deleteVideoPricingProfile`，helper 也能修改 profile 和 binding，初步判断不是后端 Option 缺少删除协议，而是管理页交互或保存状态处理不完整。
+- 截图中的绑定表提供价格模板下拉、订阅开关和仅图标解绑操作，但缺少明确的编辑/删除反馈；需要检查事件是否调用统一持久化函数。
+- 采用保守删除语义：仍被模型绑定的模板禁止删除；先改绑或解绑后才能删除，避免静默改变线上计费。
+- `VideoPricingSettings` 的 `updateProfile`、`updateBindingProfile`、订阅开关和 `removeBinding` 都只调用 `setConfig`，没有独立请求 `/api/option/`；只有页面顶部全局保存会持久化整个配置。
+- 当前删除模板 helper 会级联把允许订阅的绑定转为 policy-only，并删除 wallet-only 绑定；这与保守删除语义冲突，需要改成由页面阻止仍被引用模板的删除。
+- 应用内浏览器的新会话未登录本地 new-api，无法在不获取管理员凭据的情况下复现受保护设置页；先通过组件/helper 测试实现，Docker 重建后再使用已有认证浏览器或 API 验收。
+- 图片计价页使用相同的“本地草稿 + 顶部全局保存”模式，不能直接作为本次单项 CRUD 的正确范例。
+- `RatioSetting` 的 `refresh()` 会重新加载整个 Option 列表，因此单项操作成功后可以通过统一 PUT + refresh 保持父子状态一致，无需新增后端接口。
+- 前端没有现成的 VideoPricing 组件测试环境；应把绑定改绑、订阅策略、解绑和被引用模板删除保护沉到纯 helper，并用 Bun 定向测试覆盖，UI 只负责调用统一持久化函数。
+- 用户补充 `adobe-veo-3.1-480p` 在模型广场落入未分类，而 Kling 已正常分类；需要检查模型系列规则是否只覆盖 `veo-*` 或只覆盖现有 720p/1080p SKU。
+- 已确认模型广场不使用前端 `getModelCategories` 决定供应商，而使用 `/api/pricing` 中的 `vendor_id`；该值来自 `model/pricing_default.go` 的默认供应商规则。
+- `defaultVendorRules` 已包含 `kling -> 快手`，但缺少 `veo -> Google` 和 `seedance -> 即梦`，因此没有显式模型元数据的 Self-Adobe Veo/Seedance 会得到 `vendor_id=0` 并落入未分类。
+- 本地 `models` 表没有这些 Adobe 包装模型的显式行，证明当前显示确实依赖默认规则；Google vendor 已存在，Veo 修复不会创建重复供应商。
+- 修复后的 `/api/pricing` 和桌面模型广场均确认：`adobe-veo-*` 归 Google，`adobe-seedance-*` 归即梦；渠道显示名 Self-Adobe 不参与供应商分类。
+- 默认供应商规则必须有稳定顺序。旧 map 遍历无序，类似 `adobe-kling-o3-*` 的模型可能被通用 `o3 -> OpenAI` 抢先匹配；改为有序规则后先匹配视频系列。
+- VideoPricing 单项操作应在服务端保存成功后再更新本地配置。Docker 桌面实测证明模板和绑定的修改、删除、解绑均能跨刷新持久化，且临时验收数据已清理。
 # Adobe Multi-model and Console Upgrade Findings (2026-07-30)
 
 - new-api already has an AdobeVideo adaptor, normalized video tasks, VideoPricing, public assets, and uncommitted model visibility/Self provider fixes that must be extended rather than replaced.

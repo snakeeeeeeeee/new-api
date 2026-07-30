@@ -25,7 +25,10 @@ import {
   copyVideoPricingProfile,
   deleteVideoPricingProfile,
   getVideoPricingLogSummary,
+  getVideoPricingProfileModels,
   normalizeVideoPricing,
+  removeVideoPricingBinding,
+  updateVideoPricingBinding,
   validateVideoPricing,
 } from './videoPricing';
 
@@ -86,7 +89,7 @@ describe('video pricing helpers', () => {
     ).toBe(true);
   });
 
-  test('copies profiles and preserves eligible policies when deleting a profile', () => {
+  test('copies profiles and only deletes profiles without model bindings', () => {
     const copied = copyVideoPricingProfile(
       config,
       'seedance-720p',
@@ -102,11 +105,49 @@ describe('video pricing helpers', () => {
       profile: 'seedance-copy',
       subscription_enabled: false,
     };
-    const removed = deleteVideoPricingProfile(copied, 'seedance-copy');
-    expect(removed.model_bindings.eligible).toEqual({
+    expect(getVideoPricingProfileModels(copied, 'seedance-copy')).toEqual([
+      'eligible',
+      'wallet',
+    ]);
+    const protectedConfig = deleteVideoPricingProfile(copied, 'seedance-copy');
+    expect(protectedConfig.profiles['seedance-copy']).toBeDefined();
+    const unbound = removeVideoPricingBinding(
+      removeVideoPricingBinding(copied, 'eligible'),
+      'wallet',
+    );
+    const removed = deleteVideoPricingProfile(unbound, 'seedance-copy');
+    expect(removed.profiles['seedance-copy']).toBeUndefined();
+  });
+
+  test('updates priced and policy-only bindings and supports unbinding', () => {
+    const withCopy = copyVideoPricingProfile(
+      config,
+      'seedance-720p',
+      'seedance-copy',
+      'Seedance copy',
+    );
+    const repriced = updateVideoPricingBinding(
+      withCopy,
+      'seedance-1.5-pro-720p',
+      { profile: 'seedance-copy', subscription_enabled: true },
+    );
+    expect(repriced.model_bindings['seedance-1.5-pro-720p']).toEqual({
+      profile: 'seedance-copy',
       subscription_enabled: true,
     });
-    expect(removed.model_bindings.wallet).toBeUndefined();
+    const policyOnly = updateVideoPricingBinding(
+      repriced,
+      'seedance-1.5-pro-720p',
+      { profile: '' },
+    );
+    expect(policyOnly.model_bindings['seedance-1.5-pro-720p']).toEqual({
+      subscription_enabled: true,
+    });
+    const removed = removeVideoPricingBinding(
+      policyOnly,
+      'seedance-1.5-pro-720p',
+    );
+    expect(removed.model_bindings['seedance-1.5-pro-720p']).toBeUndefined();
   });
 
   test('rejects missing prices, unsupported modes, and missing profiles', () => {

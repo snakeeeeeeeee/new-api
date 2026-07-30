@@ -1985,6 +1985,44 @@ Complete
 | Error | Attempt | Resolution |
 |---|---:|---|
 | 素材预检尝试在 Adobe2API 容器内调用 `curl`，镜像没有该命令 | 1 | 没有发出素材请求；改用镜像现有 Python `requests` 执行只读 HEAD/GET 检查 |
+
+# Task Plan: VideoPricing 编辑与删除修复 (2026-07-30)
+
+## Goal
+补齐视频按秒计价页面中模型绑定和价格模板的修改、解绑与删除能力，并确保保存失败不会让页面显示出未持久化的假状态。
+
+## Current Phase
+Complete
+
+### Phase 1: 现状与根因
+- [x] 检查页面事件、保存流程和 helper 删除语义
+- [x] 复现绑定修改、解绑、模板修改和删除问题
+**Status:** complete
+
+### Phase 2: 实现
+- [x] 补齐模板编辑/删除和绑定修改/解绑交互
+- [x] 增加确认、引用保护、保存中状态和错误回滚
+- [x] 修复 `adobe-veo-*` 与 `adobe-seedance-*` 在模型广场的系列分类
+**Status:** complete
+
+### Phase 3: 验证
+- [x] 增加 helper 定向测试
+- [x] 增加 Self-Adobe Veo/Seedance 分类回归测试
+- [x] 运行前端测试、桌面构建和 Docker dev 浏览器验收
+**Status:** complete
+
+## Locked Decisions
+- 删除仍被模型引用的价格模板时阻止操作，并提示先解绑或改绑。
+- 不修改 VideoPricing JSON 协议或后端计费计算。
+- 模型分类按模型系列判断；Self-Adobe 只表示渠道接入方式，不改变 Veo 的 Google 分类。
+- 用户明确排除多语言补齐与移动端兼容。
+- 不触碰工作区中无关的未跟踪诊断文件。
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | ---: | --- |
+| VideoPricing 多文件补丁因页面上下文不完全匹配而校验失败 | 1 | 未产生部分修改；拆成 helper、测试、页面小补丁并按精确行段应用 |
+| 从 `web/` 工作目录执行 `gofmt model/...` 找不到 Go 文件 | 1 | 前端 Prettier 已完成；改为从仓库根目录单独执行 Go 格式化 |
 # Task Plan: Adobe Multi-model Direct URLs and Console Upgrade (2026-07-30)
 
 ## Goal
