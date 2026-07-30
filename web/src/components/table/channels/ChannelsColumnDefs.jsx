@@ -39,10 +39,7 @@ import {
   showError,
   showInfo,
 } from '../../../helpers';
-import {
-  CHANNEL_OPTIONS,
-  MODEL_FETCHABLE_CHANNEL_TYPES,
-} from '../../../constants';
+import { CHANNEL_OPTIONS } from '../../../constants';
 import { parseUpstreamUpdateMeta } from '../../../hooks/channels/upstreamUpdateUtils';
 import {
   IconTreeTriangleDown,
@@ -279,7 +276,7 @@ const getUpstreamUpdateMeta = (record) => {
   const supported =
     !!record &&
     record.children === undefined &&
-    MODEL_FETCHABLE_CHANNEL_TYPES.has(record.type);
+    record.model_discovery_supported === true;
   if (!record || record.children !== undefined) {
     return {
       supported: false,
@@ -294,6 +291,7 @@ const getUpstreamUpdateMeta = (record) => {
       : parseUpstreamUpdateMeta(record?.settings);
   return {
     supported,
+    reason: record.model_discovery_reason || '',
     enabled: parsed?.enabled === true,
     pendingAddModels: Array.isArray(parsed?.pendingAddModels)
       ? parsed.pendingAddModels

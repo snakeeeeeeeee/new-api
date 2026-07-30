@@ -73,8 +73,8 @@ export const PLATFORM_LABELS = {
   52: 'Vidu',
   54: '豆包视频 / Seedance',
   55: 'Sora',
-  59: 'Adobe2API 视频 / Seedance',
-  60: 'Higgsfield2API 视频 / Seedance',
+  59: 'Self-Adobe',
+  60: 'Self-Higgsfield',
   mj: 'Midjourney',
   suno: 'Suno',
 };

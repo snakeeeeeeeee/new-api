@@ -5141,6 +5141,9 @@
     "先申请预签名会话，再把文件直接 PUT 到对象存储；new-api 不接收文件字节。确认后使用返回的 URL 创建视频任务。": "Créez d’abord une session présignée, puis envoyez directement le fichier vers le stockage d’objets avec PUT ; new-api ne reçoit jamais les octets du fichier. Après confirmation, utilisez l’URL renvoyée pour créer une tâche vidéo.",
     "1. 创建上传会话": "1. Créer une session de téléversement",
     "2. 直接上传文件": "2. Téléverser directement le fichier",
-    "3. 确认上传": "3. Confirmer le téléversement"
+    "3. 确认上传": "3. Confirmer le téléversement",
+    "该渠道不支持获取模型列表": "Ce canal ne prend pas en charge la découverte des modèles",
+    "无法确认该渠道的模型发现能力": "Impossible de déterminer la capacité de découverte des modèles de ce canal",
+    "从上游获取模型列表": "Récupérer la liste des modèles en amont"
   }
 }

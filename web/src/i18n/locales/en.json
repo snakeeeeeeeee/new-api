@@ -5158,6 +5158,9 @@
     "先申请预签名会话，再把文件直接 PUT 到对象存储；new-api 不接收文件字节。确认后使用返回的 URL 创建视频任务。": "First create a presigned session, then PUT the file directly to object storage; new-api never receives file bytes. After confirmation, use the returned URL to create a video task.",
     "1. 创建上传会话": "1. Create upload session",
     "2. 直接上传文件": "2. Upload file directly",
-    "3. 确认上传": "3. Confirm upload"
+    "3. 确认上传": "3. Confirm upload",
+    "该渠道不支持获取模型列表": "This channel does not support model discovery",
+    "无法确认该渠道的模型发现能力": "Unable to determine this channel's model discovery capability",
+    "从上游获取模型列表": "Fetch the model list from upstream"
   }
 }

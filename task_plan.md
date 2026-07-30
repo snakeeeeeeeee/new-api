@@ -50,6 +50,9 @@ Complete
 ## Errors Encountered
 | Error | Attempt | Resolution |
 | --- | --- | --- |
+| Combined Adobe route patch matched the model-list block after later route context and failed atomically | 1 | Split catalog, imports/model list, validation, and worker edits into exact smaller patches. |
+| Host Python cannot import FastAPI for Adobe2API tests | 1 | Keep the host environment unchanged and run the repository tests in the existing Adobe2API image with the source mounted read-only and a writable data tmpfs. |
+| `VideoJobStore.list` shadowed the built-in `list` in a later runtime annotation | 1 | Quote the later `interrupted` return annotation so Python 3.11 does not resolve the method object as a generic. |
 | The first multi-locale patch assumed the English translation of the final `格式` key was `Format` | 1 | The atomic patch changed no locale files; inspect each exact file tail and apply locale patches with their real existing values. |
 | `relay_task.go` referenced `ratio_setting` without importing it, and the first snapshot patch matched the image task constructor | 1 | Add the missing import and explicitly add `VideoPricing` to the normalized video task billing context. |
 | Seedance completion exposes token usage before the legacy per-call guard | 1 | Add an earlier immutable VideoPricing terminal branch so token usage cannot overwrite request-duration billing; merge returned duration as audit-only metadata. |
@@ -225,6 +228,12 @@ Complete
 ### Phase 5: Verification
 - [x] Run focused backend configuration, adaptor, billing, lifecycle, and funding-source tests.
 - [x] Run full backend, frontend build, i18n, mock-provider, and responsive UI checks.
+**Status:** complete
+
+### Phase 6: Kling frame minimum reference correction
+- [x] Add an explicit one-image minimum for Kling 3.0 frame mode in Adobe2API and new-api capability validation.
+- [x] Prove invalid zero-image requests fail before wallet precharge and upstream submission.
+- [x] Rebuild Docker dev and retest Kling 3.0 frame plus Kling Omni images through new-api.
 **Status:** complete
 
 ## Locked Decisions
@@ -1920,3 +1929,122 @@ Complete
 | Adobe2API 清理重启脚本探测不存在的 `/health` 路径 | 1 | 数据库和 Mock 清理已完成；中止无效循环，改用已验证的鉴权 `/v1/models` 与容器 healthcheck 检查，再删除本地媒体 fixture |
 | 仓库级 i18n lint 从既有 420 项增至 441 项 | 1 | 新增 21 项全部是 Resource Center 的 OpenAPI `operationId`/`schemaName` 属性；将这两个非展示协议属性加入 ignoredAttributes 后恢复 420 基线，本次文件为 0 项 |
 | 最终并行健康检查脚本引用了未在新 isolate 声明的 `repos` | 1 | 无测试动作被执行；在同一脚本内声明 `repoPaths` 后运行，所有健康、清理和 diff 检查通过 |
+
+## 2026-07-30 — Adobe Fast 480p 真实多媒体联调
+
+### Goal
+
+按照 supertokendoc 的媒体上传与异步视频任务契约，通过本地 Docker dev 的 new-api 和 Adobe2API，真实验证 `adobe-seedance-2.0-fast-480p` 的 frame、media、轮询、Asset 下载和按秒计费。
+
+### Phases
+
+- [completed] 核对文档、容器、模型可见性、测试凭据和六个已上传素材
+- [completed] 提交并轮询 4 秒 frame 双图任务
+- [completed] 提交并轮询 4 秒 media 三图、双视频、单音频任务
+- [completed] 验证任务终态、计费快照、钱包退款和请求脱敏；生成结果、Range 下载因上游授权失败不可执行
+- [completed] 汇总真实问题与本地配置修复建议
+
+### Locked decisions
+
+- 任务请求只传 image-handle 完成接口返回的 HTTP URL，不传 Base64、Data URL 或 multipart 文件。
+- 本地 image-handle 错误返回 `localhost:9000`；仅在本次容器联调请求中改写为 `minio:9000`，不改变公开契约或业务代码。
+- 测试凭据只从本地 PostgreSQL 读入 shell 变量，不输出、不持久化。
+- frame 使用首图加尾图；media 使用 3 图、2 个约 4 秒视频、1 个约 4 秒 WAV，均低于 15 秒限制。
+- 两个任务都请求 4 秒；参考素材数量和时长不得改变有效计费秒数。
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| image-handle Docker dev 完成接口返回 `http://localhost:9000/...`，Adobe2API 容器无法访问 | 1 | 已验证同一对象经 `http://minio:9000/...` 返回 200 和正确 MIME；本次仅改写测试 URL 并保留为待修配置问题 |
+| 只读 preflight 按旧字段名查询 abilities，PostgreSQL 报 `model_name does not exist` | 1 | 使用 `\d abilities` 核对当前字段为 `model`、`group`、`channel_id`、`enabled`；不涉及任何数据修改 |
+| 将 psql 元命令 `\d` 与 SQL 写在同一个 `-c` 参数中导致语法错误 | 1 | 元命令必须独立执行；拆成四个只读 psql 调用，不重试错误命令 |
+| 首次 frame 创建由 Adobe2API 返回 401 `Invalid API key` | 1 | 渠道 124 的 Key、容器环境 Key 均与 Adobe2API `config/config.json` 的实际服务 Key 不一致；任务未创建且未扣费，准备对齐本地渠道 Key并刷新缓存 |
+| `psql -v` 变量在单条 `-c` SQL 中未展开，Key 更新语句语法错误 | 1 | 数据未修改、容器未重启；改用 PostgreSQL 自定义 session setting 传入值，SQL 只读取 `current_setting` |
+| 渠道 Key 更新语句假设 channels 有 `updated_at` 字段 | 1 | PostgreSQL 在执行前拒绝整条语句，Key 仍未修改；去掉不存在的审计列，仅更新已确认存在的 `key` |
+| frame 任务进入真实 Adobe Seedance 后失败：`Unauthorized to perform request.` | 1 | 任务已正确异步终止；new-api 预扣 2000000 后钱包全额退款且只有一条退款日志。当前 Adobe 账号可 mint Firefly token，但无权完成 Seedance submit |
+| 账号刷新脚本用 `trap rm -rf` 清理临时 cookie 目录，被执行策略拒绝 | 1 | 未执行登录或刷新；改为只在进程内存中解析 Session cookie，不创建含凭据的临时文件 |
+| 内存刷新脚本的 awk HTTP 正则多写了一层反斜杠 | 1 | 登录请求已发出但未继续调用刷新接口；修正为 awk 字面量 `/^HTTP\//` 后重新登录 |
+| media 任务与账号刷新后的 frame 重试均返回 `Unauthorized to perform request.` | 3 | Adobe 账号刷新接口返回 200，但错误不变；按三次失败协议停止继续提交，判定为当前 Adobe 账号/Firefly Seedance 权限阻塞，不再消耗调用 |
+
+## 2026-07-30 — Adobe 新账号 10000 积分复测
+
+### Goal
+
+使用新导入的 10000 积分 Adobe 账号重新执行 4 秒 Fast 480p 的 frame 与 media 真实生成，完成异步、Asset、时长和计费闭环。
+
+### Phases
+
+- [completed] 核对新账号、渠道、模型和六个参考素材
+- [completed] 运行 frame 双图任务并验证结果
+- [completed] 运行 media 三图、双视频、单音频任务并验证结果
+- [completed] 核对两次按秒钱包扣费、快照与任务脱敏
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| 素材预检尝试在 Adobe2API 容器内调用 `curl`，镜像没有该命令 | 1 | 没有发出素材请求；改用镜像现有 Python `requests` 执行只读 HEAD/GET 检查 |
+# Task Plan: Adobe Multi-model Direct URLs and Console Upgrade (2026-07-30)
+
+## Goal
+Add the approved Kling/Veo Adobe video SKUs and capability validation, pass Adobe CDN result URLs through without downloading media, make new-api assets expose those URLs safely, add general channel model discovery, and replace the Adobe2API static admin page with a persisted React operations console.
+
+## Current Phase
+Complete
+
+### Phase 1: Baseline and contracts
+- [x] Audit both worktrees, existing Adobe video flow, asset projection, channel discovery, and Higgsfield console reference.
+- [x] Lock capability, direct-URL, persistence, and backward-compatibility contracts in focused tests.
+**Status:** complete
+
+### Phase 2: Adobe2API backend
+- [x] Add table-driven Kling/Veo capabilities, payload conversion, strict pre-submit validation, and direct Adobe result URLs.
+- [x] Add SQLite task/API-key/request-log persistence, restart recovery, and compatible legacy task/content behavior.
+**Status:** complete
+
+### Phase 3: Adobe2API console
+- [x] Build the React/Vite overview, account pool, generation test, tasks, API keys, request logs, and settings pages.
+- [x] Integrate the existing account/config/admin operations with responsive and accessible interaction states.
+**Status:** complete
+
+### Phase 4: new-api integration
+- [x] Add `images` mode and the eight public Adobe model capabilities before billing/upstream submission.
+- [x] Pass direct Adobe URLs into tasks/assets, fix historical internal-reference projection, and generalize channel model discovery.
+**Status:** complete
+
+### Phase 5: Verification
+- [x] Run focused/full backend and frontend checks in both repositories.
+- [x] Rebuild Docker dev, verify lifecycle/billing/direct URLs, and run the four approved real 720p tasks against the available Adobe account.
+- [x] Verify desktop console task preview/open/download behavior without routing media bytes through either service.
+**Status:** complete
+
+## Locked Decisions
+- Existing uncommitted VideoPricing, model-visibility, and Self-Adobe/Self-Higgsfield work must be preserved.
+- New Adobe results remain temporary provider URLs; neither service downloads, refreshes, archives, or guarantees their lifetime.
+- Historical local Adobe results retain the authenticated `/content` path and existing stored files.
+- Resolution is fixed by exact SKU; production VideoPricing values remain administrator configuration.
+- Mobile compatibility and mobile browser acceptance are explicitly out of scope per the user's final instruction.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| PostgreSQL baseline query used the nonexistent `tokens.quota` column | 1 | Read the live schema and use `tokens.remain_quota` plus `users.quota`; no data was changed. |
+| Adobe request-log verification queried nonexistent `request_body`/`response_body` columns | 1 | Read the SQLite schema and inspect the single redacted `payload` column instead. |
+| Real Kling 3.0 1-second acceptance request was rejected because Adobe requires at least 3 seconds | 1 | Correct both capability catalogs and tests to the verified `3-15s` range; use 3 seconds for real acceptance. |
+| Real Kling 3.0 frame task reached Adobe but failed with downstream `fal-ai-video` 408 timeout | 1 | Confirm the immutable 3-second charge was fully refunded and no local result file was created; do not silently treat it as a contract failure. |
+| Real Kling Omni images submit rejected `usage=asset`; Adobe reported allowed roles `frame` and `style` | 1 | Map Omni `images` references to `usage=style`, add a payload regression assertion, rebuild, and retry once. |
+| First desktop task-row click inherited the previous mobile viewport override and targeted a point outside the visible width | 1 | Reset the existing browser tab to a desktop viewport before continuing desktop-only QA; no request or task state was changed. |
+| Adobe2API full suite on the host could not import FastAPI/Pydantic; the next command accidentally omitted `docker exec` and repeated the host failure | 2 | Use an explicit `docker exec adobe2api ...` invocation for the authoritative suite; do not mutate the host Python environment or repeat the host command. |
+| The running Adobe production image does not contain the repository `tests/` directory | 1 | Launch a disposable container from the same runtime image with the source mounted read-only and an isolated writable test-data tmpfs. |
+| Browser evaluate sandbox does not expose `fetch` for a direct capability API probe | 1 | Validate the same catalog through the live Generate Test UI that consumes it, avoiding unsupported page-sandbox networking. |
+| The planning completion helper reports two pending phases from an unrelated historical image-pricing plan in the shared planning file | 1 | Confirm this Adobe plan has no unchecked phase and leave unrelated historical work unchanged instead of falsely marking it complete. |
+| Corrected Kling 3.0 `3s frame` request without an image reached Adobe before failing with `at least 1 item(s) with usage='frame' required` | 1 | Add a minimum-reference capability contract in both services so zero-image Kling frame requests fail before precharge; resubmit with one valid image. |
+| Combined validation-test search ran from new-api and therefore could not resolve Adobe2API's `tests/` paths | 1 | Inspect each repository's tests from its own workdir and avoid cross-repository relative paths. |
+| Existing `stable media rejected` test omitted the newly required Kling frame image, so validation correctly stopped at `reference_image_required` before its intended video-limit assertion | 1 | Add one valid image to that fixture so it reaches and continues covering `reference_video_limit_exceeded`. |
+| Live PostgreSQL baseline query lost SQL string quotes through nested `sh -lc` parsing | 1 | No query ran and no data changed; invoke `psql` directly with one quoted `-c` argument for the retry. |
+| Revised baseline query referenced obsolete `tokens.models_enabled` | 1 | The first read-only user row returned and later statements stopped; inspect the live schema and query only existing token columns. |
+| Baseline task count assumed a `tasks.model` column | 1 | Current task model data is stored under a different schema; inspect `tasks` and `logs` columns before the final read-only baseline query. |
+| PostgreSQL rejected `LIKE` directly on JSON `tasks.properties` | 1 | Cast the JSON value to text for the diagnostic count; this affects only the read-only test query, not application code. |
+
+---

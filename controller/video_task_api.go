@@ -187,8 +187,8 @@ func validateVideoTaskCreateRequest(request *dto.VideoTaskCreateRequest) (string
 	if referenceMode == "" {
 		referenceMode = "frame"
 	}
-	if referenceMode != "frame" && referenceMode != "media" {
-		return "input.reference_mode", "input.reference_mode must be frame or media"
+	if referenceMode != "frame" && referenceMode != "images" && referenceMode != "media" {
+		return "input.reference_mode", "input.reference_mode must be frame, images, or media"
 	}
 	if request.Input.Image != nil {
 		if message := validateVideoReferenceSource(request.Input.Image); message != "" {
@@ -223,14 +223,22 @@ func validateVideoTaskCreateRequest(request *dto.VideoTaskCreateRequest) (string
 	if request.Input.Image != nil {
 		imageCount++
 	}
-	if referenceMode == "frame" {
+	switch referenceMode {
+	case "frame":
 		if imageCount > 2 {
 			return "input.reference_images", "frame mode supports at most 2 reference images"
 		}
 		if len(request.Input.ReferenceVideos) > 0 || len(request.Input.ReferenceAudios) > 0 {
 			return "input.reference_mode", "frame mode accepts image references only"
 		}
-	} else {
+	case "images":
+		if imageCount > 3 {
+			return "input.reference_images", "images mode supports at most 3 reference images"
+		}
+		if len(request.Input.ReferenceVideos) > 0 || len(request.Input.ReferenceAudios) > 0 {
+			return "input.reference_mode", "images mode accepts image references only"
+		}
+	case "media":
 		if imageCount > 9 {
 			return "input.reference_images", "media mode supports at most 9 reference images"
 		}

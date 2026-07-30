@@ -334,6 +334,7 @@ func assetToDto(asset *model.Asset) *dto.AssetDto {
 	if asset == nil {
 		return nil
 	}
+	publicURL, urlAuth, temporary := assetPublicURL(asset)
 	return &dto.AssetDto{
 		ID:           asset.ID,
 		AssetID:      asset.AssetID,
@@ -347,7 +348,9 @@ func assetToDto(asset *model.Asset) *dto.AssetDto {
 		Action:       asset.Action,
 		Model:        asset.Model,
 		AssetType:    string(asset.AssetType),
-		URL:          asset.URL,
+		URL:          publicURL,
+		Temporary:    temporary,
+		URLAuth:      urlAuth,
 		ThumbnailURL: asset.ThumbnailURL,
 		MimeType:     asset.MimeType,
 		Filename:     asset.Filename,
@@ -356,7 +359,7 @@ func assetToDto(asset *model.Asset) *dto.AssetDto {
 		Height:       asset.Height,
 		DurationMS:   asset.DurationMS,
 		Status:       string(asset.Status),
-		Metadata:     asset.Metadata,
+		Metadata:     publicAssetMetadata(asset.Metadata),
 		CreatedAt:    asset.CreatedAt,
 		UpdatedAt:    asset.UpdatedAt,
 		DeletedAt:    asset.DeletedAt,
@@ -368,13 +371,7 @@ func assetToAPIItem(asset *model.Asset) *dto.AssetAPIItem {
 	if asset == nil {
 		return nil
 	}
-	publicURL := asset.URL
-	urlAuth := ""
-	temporary := false
-	if asset.AssetType == model.AssetTypeVideo {
-		publicURL, urlAuth = service.PublicVideoAssetURL(asset)
-		temporary = true
-	}
+	publicURL, urlAuth, temporary := assetPublicURL(asset)
 	return &dto.AssetAPIItem{
 		Object:       "asset",
 		ID:           asset.AssetID,
@@ -548,13 +545,7 @@ func normalizeAssetIDs(assetIDs []string, limit int) []string {
 func assetsToURLItems(assets []*model.Asset) []dto.AssetURLItem {
 	items := make([]dto.AssetURLItem, 0, len(assets))
 	for _, asset := range assets {
-		publicURL := asset.URL
-		urlAuth := ""
-		temporary := false
-		if asset.AssetType == model.AssetTypeVideo {
-			publicURL, urlAuth = service.PublicVideoAssetURL(asset)
-			temporary = true
-		}
+		publicURL, urlAuth, temporary := assetPublicURL(asset)
 		items = append(items, dto.AssetURLItem{
 			AssetID:   asset.AssetID,
 			TaskID:    asset.TaskID,
@@ -571,11 +562,12 @@ func writeAssetCSV(c *gin.Context, assets []*model.Asset) {
 	var buffer bytes.Buffer
 	buffer.WriteString("asset_id,task_id,asset_type,url,filename,model,platform,action,created_at\n")
 	for _, asset := range assets {
+		publicURL, _, _ := assetPublicURL(asset)
 		row := []string{
 			asset.AssetID,
 			asset.TaskID,
 			string(asset.AssetType),
-			asset.URL,
+			publicURL,
 			asset.Filename,
 			asset.Model,
 			string(asset.Platform),
@@ -593,10 +585,7 @@ func writePublicAssetCSV(c *gin.Context, assets []*model.Asset) {
 	var buffer bytes.Buffer
 	buffer.WriteString("asset_id,task_id,asset_type,url,filename,model,created_at\n")
 	for _, asset := range assets {
-		publicURL := asset.URL
-		if asset.AssetType == model.AssetTypeVideo {
-			publicURL, _ = service.PublicVideoAssetURL(asset)
-		}
+		publicURL, _, _ := assetPublicURL(asset)
 		row := []string{
 			asset.AssetID,
 			asset.TaskID,
@@ -611,6 +600,17 @@ func writePublicAssetCSV(c *gin.Context, assets []*model.Asset) {
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", "attachment; filename=assets.csv")
 	c.String(http.StatusOK, buffer.String())
+}
+
+func assetPublicURL(asset *model.Asset) (string, string, bool) {
+	if asset == nil {
+		return "", "", false
+	}
+	if asset.AssetType != model.AssetTypeVideo {
+		return asset.URL, "", false
+	}
+	publicURL, urlAuth := service.PublicVideoAssetURL(asset)
+	return publicURL, urlAuth, true
 }
 
 func csvLine(fields []string) string {

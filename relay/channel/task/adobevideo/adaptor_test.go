@@ -2,6 +2,7 @@ package adobevideo
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -155,8 +156,6 @@ func TestPrepareNormalizedVideoRequestUsesAdobeDefaultsWithoutInventingResolutio
 
 func TestPrepareNormalizedVideoRequestRejectsInvalidInputBeforeDispatch(t *testing.T) {
 	validDuration := 4
-	tooShort := 3
-	tooLong := 16
 	resolution := "480p"
 	tests := []struct {
 		name    string
@@ -167,16 +166,6 @@ func TestPrepareNormalizedVideoRequestRejectsInvalidInputBeforeDispatch(t *testi
 			name:    "missing duration",
 			request: dto.VideoTaskCreateRequest{Model: "alias", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "cat"}},
 			code:    "video_duration_required",
-		},
-		{
-			name:    "duration below provider minimum",
-			request: dto.VideoTaskCreateRequest{Model: "alias", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "cat"}, Output: dto.VideoTaskOutputRequest{Duration: &tooShort}},
-			code:    "invalid_video_duration",
-		},
-		{
-			name:    "duration above provider maximum",
-			request: dto.VideoTaskCreateRequest{Model: "alias", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "cat"}, Output: dto.VideoTaskOutputRequest{Duration: &tooLong}},
-			code:    "invalid_video_duration",
 		},
 		{
 			name:    "resolution must come from exact model",
@@ -192,22 +181,6 @@ func TestPrepareNormalizedVideoRequestRejectsInvalidInputBeforeDispatch(t *testi
 			name:    "file reference unsupported",
 			request: dto.VideoTaskCreateRequest{Model: "alias", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "cat", Image: &dto.VideoTaskSource{Provider: "adobe_video", FileID: "file-1"}}, Output: dto.VideoTaskOutputRequest{Duration: &validDuration}},
 			code:    "unsupported_file_provider",
-		},
-		{
-			name: "frame mode reference limit",
-			request: dto.VideoTaskCreateRequest{
-				Model: "alias", Operation: "generation",
-				Input: dto.VideoTaskInputRequest{
-					Prompt: "cat",
-					ReferenceImages: []dto.VideoTaskSource{
-						{URL: "https://example.com/1.png"},
-						{URL: "https://example.com/2.png"},
-						{URL: "https://example.com/3.png"},
-					},
-				},
-				Output: dto.VideoTaskOutputRequest{Duration: &validDuration},
-			},
-			code: "invalid_video_parameter",
 		},
 		{
 			name:    "operation unsupported",
@@ -285,10 +258,87 @@ func TestPrepareNormalizedVideoRequestRejectsInvalidInputBeforeDispatch(t *testi
 	}
 }
 
+func TestValidateNormalizedVideoModelAppliesProviderCapabilityBeforeBilling(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       string
+		duration    int
+		aspectRatio string
+		mode        string
+		images      int
+		videos      int
+		audios      int
+		wantCode    string
+	}{
+		{name: "kling 3 three second frame", model: "kling_3.0_720p", duration: 3, aspectRatio: "16:9", mode: "frame", images: 2},
+		{name: "kling 3 frame requires an image", model: "kling_3.0_720p", duration: 3, aspectRatio: "16:9", mode: "frame", wantCode: "reference_image_required"},
+		{name: "kling 3 below minimum", model: "kling_3.0_1080p", duration: 2, aspectRatio: "9:16", mode: "frame", wantCode: "invalid_video_duration"},
+		{name: "kling 3 images rejected", model: "kling_3.0_1080p", duration: 3, aspectRatio: "9:16", mode: "images", wantCode: "unsupported_reference_mode"},
+		{name: "kling omni images", model: "kling_3.0_omni_720p", duration: 15, aspectRatio: "9:16", mode: "images", images: 3},
+		{name: "kling omni duration above maximum", model: "kling_3.0_omni_1080p", duration: 16, aspectRatio: "16:9", mode: "frame", wantCode: "invalid_video_duration"},
+		{name: "kling omni image limit", model: "kling_3.0_omni_1080p", duration: 4, aspectRatio: "16:9", mode: "images", images: 4, wantCode: "reference_image_limit_exceeded"},
+		{name: "veo standard images", model: "veo_3.1_standard_720p", duration: 8, aspectRatio: "16:9", mode: "images", images: 3},
+		{name: "veo standard images duration constraint", model: "veo_3.1_standard_1080p", duration: 6, aspectRatio: "16:9", mode: "images", wantCode: "invalid_video_parameter"},
+		{name: "veo standard duration set", model: "veo_3.1_standard_1080p", duration: 5, aspectRatio: "16:9", mode: "frame", wantCode: "invalid_video_duration"},
+		{name: "veo fast frame", model: "veo_3.1_fast_720p", duration: 4, aspectRatio: "9:16", mode: "frame", images: 2},
+		{name: "veo fast images rejected", model: "veo_3.1_fast_1080p", duration: 8, aspectRatio: "16:9", mode: "images", wantCode: "unsupported_reference_mode"},
+		{name: "stable ratio rejected", model: "kling_3.0_720p", duration: 4, aspectRatio: "1:1", mode: "frame", wantCode: "invalid_video_aspect_ratio"},
+		{name: "stable media rejected", model: "kling_3.0_720p", duration: 4, aspectRatio: "16:9", mode: "frame", images: 1, videos: 1, wantCode: "reference_video_limit_exceeded"},
+		{name: "seedance mixed media", model: "seedance_2.0_fast_480p", duration: 4, aspectRatio: "1:1", mode: "media", images: 6, videos: 3, audios: 3},
+		{name: "seedance below minimum", model: "seedance_2.0_720p", duration: 3, aspectRatio: "16:9", mode: "frame", wantCode: "invalid_video_duration"},
+		{name: "seedance frame media rejected", model: "seedance_2.0_1080p", duration: 4, aspectRatio: "16:9", mode: "frame", audios: 1, wantCode: "unsupported_reference_mode"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			imageSources := make([]dto.VideoTaskSource, test.images)
+			for i := range imageSources {
+				imageSources[i].URL = fmt.Sprintf("https://example.com/image-%d.png", i)
+			}
+			videoSources := make([]dto.VideoTaskSource, test.videos)
+			for i := range videoSources {
+				videoSources[i].URL = fmt.Sprintf("https://example.com/video-%d.mp4", i)
+			}
+			audioSources := make([]dto.VideoTaskSource, test.audios)
+			for i := range audioSources {
+				audioSources[i].URL = fmt.Sprintf("https://example.com/audio-%d.m4a", i)
+			}
+			request := dto.VideoTaskCreateRequest{
+				Model: "public-model", Operation: "generation",
+				Input: dto.VideoTaskInputRequest{
+					Prompt: "test", ReferenceMode: test.mode,
+					ReferenceImages: imageSources, ReferenceVideos: videoSources, ReferenceAudios: audioSources,
+				},
+				Output: dto.VideoTaskOutputRequest{Duration: &test.duration, AspectRatio: &test.aspectRatio},
+			}
+			info := &relaycommon.RelayInfo{
+				TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+				ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: test.model},
+			}
+			c := adobeVideoTestContext()
+			require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(c, info, request))
+			taskErr := (&TaskAdaptor{}).ValidateNormalizedVideoModel(c, info)
+			if test.wantCode != "" {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, test.wantCode, taskErr.Code)
+				return
+			}
+			require.Nil(t, taskErr)
+			estimate, billingErr := (&TaskAdaptor{}).ResolveVideoBilling(c, info)
+			require.Nil(t, billingErr)
+			assert.Equal(t, test.duration, estimate.Seconds)
+		})
+	}
+}
+
 func TestValidateNormalizedVideoModelRequiresExactProviderSKU(t *testing.T) {
 	adaptor := &TaskAdaptor{}
+	validContext := adobeVideoTestContext()
+	validContext.Set(videoRequestContextKey, &requestPayload{
+		Duration: 4, AspectRatio: "16:9", ReferenceMode: "frame",
+	})
 	require.Nil(t, adaptor.ValidateNormalizedVideoModel(
-		adobeVideoTestContext(),
+		validContext,
 		&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "seedance_2.0_fast_480p"}},
 	))
 
@@ -321,14 +371,22 @@ func TestDoResponseAndParseTaskLifecycle(t *testing.T) {
 	assert.Equal(t, model.TaskStatusInProgress, inProgress.Status)
 	assert.Equal(t, "47%", inProgress.Progress)
 
-	completed, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-1","status":"completed","progress":100,"duration":4,"video_url":"http://private.example/generated/provider-task-1.mp4"}`))
+	directURL := "https://pre-signed-firefly-prod.s3.amazonaws.com/generated/provider-task-1.mp4?X-Amz-Signature=secret&X-Amz-Expires=3600"
+	completed, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-1","status":"completed","progress":100,"duration":4,"video_url":"` + directURL + `"}`))
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusSuccess, completed.Status)
 	require.Len(t, completed.VideoOutputs, 1)
-	assert.Empty(t, completed.VideoOutputs[0].URL)
-	assert.Equal(t, "provider-task-1", completed.VideoOutputs[0].ProviderReference)
-	assert.Equal(t, videoContentResolver, completed.VideoOutputs[0].Resolver)
+	assert.Equal(t, directURL, completed.VideoOutputs[0].URL)
+	assert.Empty(t, completed.VideoOutputs[0].ProviderReference)
+	assert.Empty(t, completed.VideoOutputs[0].Resolver)
 	assert.EqualValues(t, 4000, completed.VideoOutputs[0].DurationMS)
+
+	legacy, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-legacy","status":"completed","progress":100,"duration":4}`))
+	require.NoError(t, err)
+	require.Len(t, legacy.VideoOutputs, 1)
+	assert.Empty(t, legacy.VideoOutputs[0].URL)
+	assert.Equal(t, "provider-task-legacy", legacy.VideoOutputs[0].ProviderReference)
+	assert.Equal(t, videoContentResolver, legacy.VideoOutputs[0].Resolver)
 
 	failed, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-1","status":"failed","error":{"code":"provider_rejected","message":"request rejected"}}`))
 	require.NoError(t, err)

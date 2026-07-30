@@ -759,3 +759,17 @@ func GetModelRatioOrPrice(model string) (float64, bool, bool) { // price or rati
 	}
 	return 37.5, false, false
 }
+
+// HasModelPricing reports whether a model has an effective pricing source.
+// Structured pricing bindings are checked separately because their unit prices
+// do not share the legacy per-call/per-token semantics above.
+func HasModelPricing(model string) bool {
+	if _, _, _, ok := GetVideoPricingForModel(model); ok {
+		return true
+	}
+	if _, _, _, ok := GetImagePricingForModel(model); ok {
+		return true
+	}
+	_, _, ok := GetModelRatioOrPrice(model)
+	return ok
+}

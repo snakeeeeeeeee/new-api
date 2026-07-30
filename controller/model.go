@@ -134,8 +134,7 @@ func ListModels(c *gin.Context, modelType int) {
 		}
 		for allowModel, _ := range tokenModelLimit {
 			if !acceptUnsetRatioModel {
-				_, _, exist := ratio_setting.GetModelRatioOrPrice(allowModel)
-				if !exist {
+				if !ratio_setting.HasModelPricing(allowModel) {
 					continue
 				}
 			}
@@ -183,8 +182,7 @@ func ListModels(c *gin.Context, modelType int) {
 		}
 		for _, modelName := range models {
 			if !acceptUnsetRatioModel {
-				_, _, exist := ratio_setting.GetModelRatioOrPrice(modelName)
-				if !exist {
+				if !ratio_setting.HasModelPricing(modelName) {
 					continue
 				}
 			}

@@ -210,6 +210,14 @@ export const getModelCategories = (() => {
         icon: <Claude.Color />,
         filter: (model) => model.model_name.toLowerCase().includes('claude'),
       },
+      googleVeo: {
+        label: 'Google Veo',
+        icon: <Gemini.Color />,
+        filter: (model) => {
+          const name = model.model_name.toLowerCase();
+          return name.includes('veo-') || name.includes('veo_');
+        },
+      },
       gemini: {
         label: 'Gemini',
         icon: <Gemini.Color />,
@@ -220,7 +228,6 @@ export const getModelCategories = (() => {
           model.model_name.toLowerCase().startsWith('embedding-') ||
           model.model_name.toLowerCase().includes('text-embedding-004') ||
           model.model_name.toLowerCase().includes('imagen-4') ||
-          model.model_name.toLowerCase().includes('veo-') ||
           model.model_name.toLowerCase().includes('aqa'),
       },
       moonshot: {
@@ -323,6 +330,16 @@ export const getModelCategories = (() => {
         label: t('豆包'),
         icon: <Doubao.Color />,
         filter: (model) => model.model_name.toLowerCase().includes('doubao'),
+      },
+      kling: {
+        label: 'Kling',
+        icon: <Kling.Color />,
+        filter: (model) => model.model_name.toLowerCase().includes('kling'),
+      },
+      seedance: {
+        label: 'Seedance / 即梦',
+        icon: <Jimeng.Color />,
+        filter: (model) => model.model_name.toLowerCase().includes('seedance'),
       },
       yi: {
         label: t('零一万物'),

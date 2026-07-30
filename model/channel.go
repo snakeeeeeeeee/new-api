@@ -55,6 +55,11 @@ type Channel struct {
 
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
+
+	// Runtime-only capability metadata populated by the controller.
+	ModelDiscoverySupported bool   `json:"model_discovery_supported" gorm:"-"`
+	ModelDiscoveryStrategy  string `json:"model_discovery_strategy,omitempty" gorm:"-"`
+	ModelDiscoveryReason    string `json:"model_discovery_reason,omitempty" gorm:"-"`
 }
 
 type ChannelInfo struct {

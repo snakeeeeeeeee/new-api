@@ -1407,3 +1407,78 @@
 - 四个仓库本地 main 与 fetch 后的 origin/main 完全一致。
 - new-api 的业务候选文件与多媒体实现一致；Claude 响应诊断、RequestDump、临时文件和规划日志必须留在工作树。
 - locale 的完整 JSON diff 会额外带入 6 个 Claude 诊断键及既有重复键规范化；必须仅暂存 13 个媒体文档键。
+
+## 2026-07-30 — Adobe Fast 480p 真实多媒体联调
+
+- supertokendoc 要求先通过 `/v1/media/uploads` 创建上传会话、直接 PUT 对象存储、再调用 `/v1/media/uploads/complete`，视频任务本身只引用完成响应中的 URL。
+- 六个测试素材已上传：3 张 PNG、2 个约 4.04 秒 MP4、1 个约 4.09 秒 WAV。
+- Docker dev 的完成响应把对象 URL 主机写成 `localhost:9000`；Adobe2API 容器无法通过该主机访问 MinIO。同一路径改为 `minio:9000` 后六个对象均返回 200 和正确 MIME。
+- `/v1/models` 已公开五个 Adobe Seedance SKU，其中包括 `adobe-seedance-2.0-fast-480p`。
+- 渠道 124 当前 Key 和 Adobe2API 实际服务 Key 不匹配；前者访问 `/v1/models` 为 401，配置文件中的 Key 为 200。Adobe2API 的 `config/config.json` 会覆盖容器 `ADOBE_API_KEY` 环境变量。
+- frame 任务 `task_nor0WTAJF4qZGz39chA1POO27z46FO6R` 返回 202，经历 queued/in_progress 后 failed；Adobe 上游错误为 `Unauthorized to perform request.`。
+- frame 的不可变计费快照为 `unit_price=1`、`seconds=4`、`group_ratio=1`、`final_quota=2000000`。代码常量 `QuotaPerUnit=500000`，因此额度换算正确。
+- frame 失败后钱包恢复到提交前余额；消费日志和退款日志各一条、额度均为 2000000。`used_quota` 仍增加是现有累计审计口径。
+- media 任务 `task_3LYiSCIXOFX9khx8QNQJDK3GAYrKoNmR` 返回 202，经历 queued/in_progress 后同样因 Adobe `Unauthorized to perform request.` 失败；钱包净变化为 0。
+- media 请求快照记录 `reference_mode=media`、3 图、2 视频、1 音频；不含 HTTP URL、Base64 或 Data URL。frame 快照记录主图存在并有 1 个追加参考图。
+- Adobe 管理端账号刷新返回 200，刷新结果包含新的有效期和 credit 状态；刷新后 frame 任务 `task_vwznBeIVW6z5O0RK7CMZXV0CSrIG70XG` 仍得到相同错误。
+- 三个真实任务各有一条 2000000 消费日志和一条 2000000 退款日志；最终钱包回到测试前的 73802740。生成 Asset、Range 下载和输出时长无法验证，因为上游未生成视频。
+- 已确认事实是 Adobe 上游授权失败；“账号缺少 Seedance entitlement 或 Firefly 媒体/生成端点权限”是合理推测，当前响应没有提供更细的权限码，无法进一步确认。
+
+## 2026-07-30 — Adobe 新账号 10000 积分复测
+
+- Adobe2API 当前账号池只有 1 个 active 账号，积分为 `10000/10000`、used=0，已绑定 auto refresh；这是用户新导入的账号。
+- new-api、Adobe2API、PostgreSQL 和 MinIO 均健康。
+- 六个参考素材从 Adobe2API 容器访问均为 HTTP 200，MIME 为 3 个 image/png、2 个 video/mp4、1 个 audio/wav。
+- frame 任务 `task_KXqYhgQOg5CT3E9nByCC1kE4kkGHVTZS` 成功，公开 Asset 为 `asset_ydbAMwlMf4Qp2sDu5cSzL9dndN58EFS2`。
+- frame Asset Range 返回 206、`Content-Range: bytes 0-3/1441463`、4 字节；完整文件 1441463 字节，ffprobe 为 H.264、864x496、4.042 秒。
+- frame 固定按请求 4 秒结算：`$1/秒 x 4 x group 1 x 500000 = 2000000`，资金来源 wallet；请求快照不含 HTTP URL、Base64 或 Data URL。
+- media 任务 `task_NsDG9fOflSKh2e3DfvY7uckpdtJnpp3q` 成功，Asset 为 `asset_BMNce7IEmJVWqWOwXmp4Ix03tXCCANG9`。
+- media Asset Range 返回 206、`Content-Range: bytes 0-3/894202`；完整文件 894202 字节，ffprobe 为 H.264 864x496、AAC 44.1kHz 双声道、4.087 秒。
+- media 快照精确记录 3 图、2 视频、1 音频，仍只按请求 4 秒、group ratio 1、wallet 结算 2000000；不含原始 URL 或 inline data。
+- 两个成功任务共有 2 条消费日志、总额度 4000000、没有退款日志；管理员钱包从 73802740 降到 69802740，净变化完全一致。
+# Adobe Multi-model and Console Upgrade Findings (2026-07-30)
+
+- new-api already has an AdobeVideo adaptor, normalized video tasks, VideoPricing, public assets, and uncommitted model visibility/Self provider fixes that must be extended rather than replaced.
+- Adobe2API currently uses static HTML/CSS/JS, an in-memory video job store, and one configuration API key; account scheduling, balance refresh, health checks, concurrency, and import/export APIs already exist.
+- The approved UI direction is a dense operations console with a dark persistent sidebar, light work area, data tables, status colors, Lucide icons, visible focus states, and responsive drawer navigation.
+- New Adobe result URLs must be persisted privately with signatures intact, but every normal log surface must redact query strings.
+- Adobe2API already contains legacy duration-specific Kling 3.0, Kling O3, Veo 3.1 Standard/Fast catalog entries and payload branches. The new stable SKUs should reuse these upstream shapes while replacing scattered engine conditionals with explicit capabilities.
+- Both Seedance and generic video completion branches currently extract `presignedUrl` and then download it. Direct-URL support must change both branches and keep the old content route only for already persisted local paths.
+- Higgsfield2API already provides the target React/Vite navigation and reusable operational interaction patterns. Adobe can reuse the layout/component structure, but its pages must call Adobe's existing account/config/log APIs plus new task/key/capability APIs.
+- new-api already projects cross-origin HTTPS video Asset URLs as `url_auth=none`; Adobe currently misses that path because its adaptor always persists an internal provider reference and resolver. New completions should persist `VideoOutput.URL`, with resolver fallback only for legacy responses lacking `video_url`.
+- The gateway DTO already carries reference videos and audios. Adding `images` is a validation/capability change, not a storage or database change.
+- Backend model fetching already has generic `/v1/models` support after provider-specific branches. The visible limitation comes from two frontend fetchable-type sets and the absence of a backend capability/reason response.
+- A real Adobe Kling request proves the published plan's `1-15s` assumption is false for the current upstream: Adobe validation requires a minimum of 3 seconds. Both gateway and provider catalogs now use `3-15s`.
+- A real Kling 3.0 `3s frame` request submitted successfully and persisted one upstream job ID, but Adobe's downstream `fal-ai-video` timed out with HTTP 408. new-api refunded the full 1,500,000 quota and Adobe2API created no local media file.
+- A real Kling Omni `images` request proves the image role must be `style`, not `asset`; the upstream error explicitly allows `frame` and `style`. The adapter mapping and contract test were corrected before retrying.
+- The corrected Kling Omni request passed Adobe validation and received an upstream job ID, but the same `fal-ai-video` service later returned HTTP 408. This separates the corrected payload contract from the provider execution outage.
+- Veo Standard `8s/16:9 images` and Veo Fast `4s frame` both completed successfully. Their Assets contain the original signed Adobe S3 URL, `temporary=true`, and `url_auth=none`.
+- The two successful Veo tasks charged exactly 6,000,000 quota at the local `$1/second` test price. All three failed attempts refunded 4,500,000 quota; the wallet moved from 69,802,740 to 63,802,740 with no subscription use.
+- Adobe2API persisted two full signed result URLs, while SQLite request logs and both service logs contain zero signed query parameters. The local generated-file count stayed at 33 with zero files created by these tasks.
+- The Adobe task detail implementation already renders completed direct results through a `<video>` whose `src` is the persisted Adobe URL and provides separate open and download actions using that same URL; the compact task-list cell intentionally exposes only one Adobe URL entry.
+- The final Veo Standard `images` capability is also reflected in the console form: only 8 seconds and 16:9 are selectable in that mode, preventing the UI from advertising combinations rejected by the shared catalog.
+- The UI/UX validation classifies this as a data-dense operational dashboard; the existing dark sidebar, light work area, compact tables, Lucide actions, status badges, and direct task controls fit that use case. No decorative redesign is needed for final acceptance.
+- Mobile compatibility is no longer an acceptance requirement for this task; desktop behavior remains required.
+- Desktop browser verification of the live Adobe task list shows the two successful Veo rows expose cross-origin Adobe S3 URLs directly, while failed Kling rows expose no fabricated result link. The list also renders the persisted model, duration, aspect ratio, reference mode, account, status, progress, and upstream error state.
+- The active browser tab inherited a narrow viewport emulation but no longer retained the previous session's viewport capability handle. The tab itself exposes a capability registry, so desktop restoration must use that supported capability rather than coordinate workarounds.
+- After restoring 1440x1000 desktop metrics, the live Veo Fast task detail opens correctly and shows completed status, exact 4s/16:9/720p/frame parameters, account/upstream identifiers, the redacted reference summary, a temporary-resource label, and distinct open/download links that resolve to the same signed Adobe CDN URL.
+- Runtime DOM inspection confirms the task detail contains one video and exactly two actions (`打开`, `下载`); all three use the identical signed HTTPS Adobe S3 URL, none uses `/content`, and the video is fully loaded (`readyState=4`) with no media error.
+- Desktop geometry is 1440x1000 with document width exactly 1440 and no horizontal overflow. The task dialog stays within the viewport at 980px wide; its long metadata/media content is vertically scrollable, while the video preserves a stable 942x530 content box.
+- Final regression confirms `go test ./... -count=1`, the Adobe React production build, and the new-api production build pass. new-api i18n lint still reports the established 420-item repository baseline and does not introduce a new finding in the modified video/model-discovery UI files.
+- Adobe2API's complete suite passes all 100 tests in a disposable container built from the production runtime image, with the repository mounted read-only and `/src/data` isolated on tmpfs.
+- Rebuilding and recreating only the Adobe Compose service preserves the authenticated console session and all SQLite task rows. After reload, both successful Veo tasks still expose their direct Adobe URLs; the reopened detail again has matching preview/open/download URLs and no `/content` fallback.
+- The post-rebuild preview loads its signed Adobe media successfully after metadata fetch: ready state reaches 4, duration is 4.01 seconds, and no media error is present.
+- The live Generate Test page lists all eight Kling/Veo provider SKUs alongside preserved Seedance models. Capability-driven controls show Kling Omni `frame|images` with 3-15s and both aspect ratios, Veo Standard `frame|images` with images locked to 8s/16:9/three images, and Veo Fast frame-only with 4/6/8s.
+- Explicitly selecting Kling Omni `images` changes the reference control to a three-image maximum while preserving 3-15s and both aspect ratios.
+- Final workspace checks pass in both repositories (`git diff --check`). The rebuilt Adobe and existing new-api containers are healthy on the shared `ai-gateway` network, and `data/generated` remains at 33 files, confirming the direct-URL acceptance work did not persist new media files locally.
+- A new end-to-end request through new-api proves Adobe Kling 3.0 frame requires at least one frame image. The zero-image request passed current gateway validation, was precharged, and then failed at Adobe submit with a 400; this is a capability-contract gap rather than an upstream execution outage.
+- The concurrent corrected Kling Omni images request passed new-api validation and reached `in_progress`, confirming its three-image `usage=style` mapping remains accepted.
+- Both capability implementations currently store only maximum reference-image counts. Neither exposes a per-mode minimum, which explains why zero-image Kling frame reached precharge and upstream submission.
+- The corrected Omni new-api task `task_v0x6857Vgl5ZuUzEN9ud4ec7jJiCJnMc` succeeded. Its exact 3-second charge remains, while the concurrent zero-image Kling frame charge was refunded; the wallet net change is exactly 1,500,000 quota.
+- The final new-api image containing the minimum-reference validation rebuilt as `sha256:2b9148e6274d...`; both `new-api-dev` and `adobe2api` report healthy. Adobe2API does not expose `/health` even though its configured Docker healthcheck passes, so that route's 404 is not a service failure.
+- The live token schema uses `model_limits_enabled` and `model_limits`; no legacy `models_enabled` column exists. The admin wallet baseline before final Kling retries is `62,302,740` quota.
+- Local acceptance token ID 150 belongs to admin, uses aggregate group `video-generation`, and has model limits disabled. Its token-local quota is not the billing balance; the authoritative wallet baseline remains the user quota.
+- The rebuilt gateway rejects a zero-image `adobe-kling-3.0-720p` frame request synchronously with HTTP 400 and `reference_image_required`. Admin quota, matching task count, and matching log count remain exactly `62,302,740`, 6, and 11; Adobe2API received no submit request.
+- The corrected one-image Kling request was accepted through new-api as `task_zasvWwokheIl0fCMrWX56o20PQcXhJ5G`, progressed from queued to in-progress, and succeeded. Its public result contains one Adobe-backed URL with `temporary=true` and `url_auth=none`.
+- Final billing moved the admin wallet from `62,302,740` to `60,802,740`, exactly one 1,500,000-quota three-second charge. The task and Asset expose the same signed Adobe HTTPS URL, the Asset uses `url_auth=none`, and Adobe's local generated-file count remains 33.
+- Post-fix regression passes the complete new-api Go suite and all 101 Adobe2API tests.

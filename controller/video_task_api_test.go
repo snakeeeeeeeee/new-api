@@ -122,6 +122,38 @@ func TestValidateVideoTaskMediaReferences(t *testing.T) {
 	assert.Contains(t, message, "unique")
 }
 
+func TestValidateVideoTaskImagesReferences(t *testing.T) {
+	request := dto.VideoTaskCreateRequest{
+		Model: "adobe-kling-3.0-omni-720p", Operation: "generation",
+		Input: dto.VideoTaskInputRequest{
+			Prompt: "combine references", ReferenceMode: "images",
+			ReferenceImages: []dto.VideoTaskSource{
+				{URL: "https://example.com/a.png"},
+				{URL: "https://example.com/b.png"},
+				{URL: "https://example.com/c.png"},
+			},
+		},
+	}
+	normalizeVideoTaskCreateRequest(&request)
+	param, message := validateVideoTaskCreateRequest(&request)
+	assert.Empty(t, param)
+	assert.Empty(t, message)
+
+	request.Input.ReferenceImages = append(
+		request.Input.ReferenceImages,
+		dto.VideoTaskSource{URL: "https://example.com/d.png"},
+	)
+	param, message = validateVideoTaskCreateRequest(&request)
+	assert.Equal(t, "input.reference_images", param)
+	assert.Contains(t, message, "at most 3")
+
+	request.Input.ReferenceImages = request.Input.ReferenceImages[:3]
+	request.Input.ReferenceAudios = []dto.VideoTaskSource{{URL: "https://example.com/a.mp3"}}
+	param, message = validateVideoTaskCreateRequest(&request)
+	assert.Equal(t, "input.reference_mode", param)
+	assert.Contains(t, message, "image references only")
+}
+
 func TestVideoTaskRequestSnapshotHashesReferenceURLs(t *testing.T) {
 	request := dto.VideoTaskCreateRequest{
 		Model: "seedance-2.0-720p", Operation: "generation",

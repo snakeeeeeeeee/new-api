@@ -103,6 +103,15 @@ func TestVideoPricingExactBindingsAndPublicView(t *testing.T) {
 	require.True(t, public["legacy-video-model"].SubscriptionEnabled)
 }
 
+func TestHasModelPricingRecognizesPricedVideoBindingOnly(t *testing.T) {
+	preserveVideoPricingConfig(t)
+	require.NoError(t, UpdateVideoPricingByJSONString(videoPricingValidConfig))
+
+	require.True(t, HasModelPricing("seedance-1.5-pro-720p"))
+	require.False(t, HasModelPricing("legacy-video-model"), "policy-only bindings are not prices")
+	require.False(t, HasModelPricing("unpriced-video-model"))
+}
+
 func TestVideoPricingInvalidUpdateKeepsPreviousSnapshot(t *testing.T) {
 	preserveVideoPricingConfig(t)
 	require.NoError(t, UpdateVideoPricingByJSONString(videoPricingValidConfig))

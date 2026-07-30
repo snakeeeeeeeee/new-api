@@ -74,6 +74,53 @@ type upstreamModelUpdateChannelSummary struct {
 	RemoveCount int
 }
 
+type channelModelDiscoveryCapability struct {
+	Supported bool   `json:"supported"`
+	Strategy  string `json:"strategy,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+const (
+	modelDiscoveryOpenAI    = "openai_compatible"
+	modelDiscoveryAnthropic = "anthropic"
+	modelDiscoveryGemini    = "gemini"
+	modelDiscoveryOllama    = "ollama"
+)
+
+var channelModelDiscoveryStrategies = map[int]string{
+	constant.ChannelTypeOpenAI:          modelDiscoveryOpenAI,
+	constant.ChannelTypeOllama:          modelDiscoveryOllama,
+	constant.ChannelTypeAnthropic:       modelDiscoveryAnthropic,
+	constant.ChannelTypeCohere:          modelDiscoveryOpenAI,
+	constant.ChannelTypeAli:             modelDiscoveryOpenAI,
+	constant.ChannelTypeZhipu_v4:        modelDiscoveryOpenAI,
+	constant.ChannelTypePerplexity:      modelDiscoveryOpenAI,
+	constant.ChannelTypeGemini:          modelDiscoveryGemini,
+	constant.ChannelTypeXinference:      modelDiscoveryOpenAI,
+	constant.ChannelTypeMoonshot:        modelDiscoveryOpenAI,
+	constant.ChannelTypeOpenRouter:      modelDiscoveryOpenAI,
+	constant.ChannelTypeTencent:         modelDiscoveryOpenAI,
+	constant.ChannelTypeLingYiWanWu:     modelDiscoveryOpenAI,
+	constant.ChannelTypeSiliconFlow:     modelDiscoveryOpenAI,
+	constant.ChannelTypeMistral:         modelDiscoveryOpenAI,
+	constant.ChannelTypeXai:             modelDiscoveryOpenAI,
+	constant.ChannelTypeDeepSeek:        modelDiscoveryOpenAI,
+	constant.ChannelTypeVolcEngine:      modelDiscoveryOpenAI,
+	constant.ChannelTypeAdobeVideo:      modelDiscoveryOpenAI,
+	constant.ChannelTypeHiggsfieldVideo: modelDiscoveryOpenAI,
+}
+
+func getChannelModelDiscoveryCapability(channelType int) channelModelDiscoveryCapability {
+	strategy, ok := channelModelDiscoveryStrategies[channelType]
+	if !ok {
+		return channelModelDiscoveryCapability{
+			Supported: false,
+			Reason:    "该渠道类型没有已适配的模型发现接口",
+		}
+	}
+	return channelModelDiscoveryCapability{Supported: true, Strategy: strategy}
+}
+
 func normalizeModelNames(models []string) []string {
 	return lo.Uniq(lo.FilterMap(models, func(model string, _ int) (string, bool) {
 		trimmed := strings.TrimSpace(model)
@@ -240,6 +287,13 @@ func getUpstreamModelUpdateMinCheckIntervalSeconds() int64 {
 }
 
 func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
+	if channel == nil {
+		return nil, fmt.Errorf("渠道不能为空")
+	}
+	capability := getChannelModelDiscoveryCapability(channel.Type)
+	if !capability.Supported {
+		return nil, fmt.Errorf("%s", capability.Reason)
+	}
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() != "" {
 		baseURL = channel.GetBaseURL()

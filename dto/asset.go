@@ -14,6 +14,8 @@ type AssetDto struct {
 	Model        string         `json:"model"`
 	AssetType    string         `json:"asset_type"`
 	URL          string         `json:"url"`
+	Temporary    bool           `json:"temporary,omitempty"`
+	URLAuth      string         `json:"url_auth,omitempty"`
 	ThumbnailURL string         `json:"thumbnail_url"`
 	MimeType     string         `json:"mime_type"`
 	Filename     string         `json:"filename"`

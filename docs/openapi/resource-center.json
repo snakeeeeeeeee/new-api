@@ -1244,7 +1244,83 @@
         ],
         "operationId": "createVideoTask",
         "summary": "Create an asynchronous video task",
-        "description": "Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated by the selected provider adaptor. Compatibility endpoints under /v1/videos remain unchanged.",
+        "description": "Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Compatibility endpoints under /v1/videos remain unchanged.",
+        "x-description-zh-CN": "创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。原有 /v1/videos 兼容接口保持不变。",
+        "x-supertoken-video-model-capabilities": {
+          "adobe-kling-3.0-{720p|1080p}": {
+            "durations": {
+              "minimum": 3,
+              "maximum": 15,
+              "integer_seconds": true
+            },
+            "aspect_ratios": [
+              "16:9",
+              "9:16"
+            ],
+            "reference_modes": {
+              "frame": {
+                "minimum_images": 1,
+                "maximum_images": 2
+              }
+            }
+          },
+          "adobe-kling-3.0-omni-{720p|1080p}": {
+            "durations": {
+              "minimum": 3,
+              "maximum": 15,
+              "integer_seconds": true
+            },
+            "aspect_ratios": [
+              "16:9",
+              "9:16"
+            ],
+            "reference_modes": {
+              "frame": {
+                "maximum_images": 2
+              },
+              "images": {
+                "maximum_images": 3
+              }
+            }
+          },
+          "adobe-veo-3.1-standard-{720p|1080p}": {
+            "durations": [
+              4,
+              6,
+              8
+            ],
+            "aspect_ratios": [
+              "16:9",
+              "9:16"
+            ],
+            "reference_modes": {
+              "frame": {
+                "maximum_images": 2
+              },
+              "images": {
+                "maximum_images": 3,
+                "duration": 8,
+                "aspect_ratio": "16:9"
+              }
+            }
+          },
+          "adobe-veo-3.1-fast-{720p|1080p}": {
+            "durations": [
+              4,
+              6,
+              8
+            ],
+            "aspect_ratios": [
+              "16:9",
+              "9:16"
+            ],
+            "reference_modes": {
+              "frame": {
+                "maximum_images": 2
+              }
+            }
+          }
+        },
         "security": [
           {
             "ModelTokenAuth": []
@@ -1269,6 +1345,116 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/VideoTaskCreateRequest"
+              },
+              "examples": {
+                "klingFrame": {
+                  "summary": "Kling 3.0 required frame image",
+                  "value": {
+                    "model": "adobe-kling-3.0-720p",
+                    "operation": "generation",
+                    "input": {
+                      "prompt": "A red sports car driving along a coastal road at sunrise",
+                      "reference_mode": "frame",
+                      "image": {
+                        "url": "https://media.example.com/kling/start.jpg",
+                        "name": "start"
+                      }
+                    },
+                    "output": {
+                      "duration": 3,
+                      "aspect_ratio": "16:9"
+                    },
+                    "provider_options": {
+                      "adobe_video": {
+                        "generate_audio": true
+                      }
+                    }
+                  }
+                },
+                "klingOmniImages": {
+                  "summary": "Kling 3.0 Omni with three image references",
+                  "value": {
+                    "model": "adobe-kling-3.0-omni-720p",
+                    "operation": "generation",
+                    "input": {
+                      "prompt": "Use @character, @wardrobe, and @location in one cinematic shot",
+                      "reference_mode": "images",
+                      "reference_images": [
+                        {
+                          "url": "https://media.example.com/kling/character.jpg",
+                          "name": "character"
+                        },
+                        {
+                          "url": "https://media.example.com/kling/wardrobe.jpg",
+                          "name": "wardrobe"
+                        },
+                        {
+                          "url": "https://media.example.com/kling/location.jpg",
+                          "name": "location"
+                        }
+                      ]
+                    },
+                    "output": {
+                      "duration": 5,
+                      "aspect_ratio": "9:16"
+                    },
+                    "provider_options": {
+                      "adobe_video": {
+                        "generate_audio": false
+                      }
+                    }
+                  }
+                },
+                "veoStandardImages": {
+                  "summary": "Veo 3.1 Standard images mode",
+                  "description": "Veo Standard images mode requires exactly the 8-second, 16:9 output combination.",
+                  "value": {
+                    "model": "adobe-veo-3.1-standard-720p",
+                    "operation": "generation",
+                    "input": {
+                      "prompt": "Create a cinematic product shot using @product, @environment, and @lighting",
+                      "reference_mode": "images",
+                      "reference_images": [
+                        {
+                          "url": "https://media.example.com/veo/product.jpg",
+                          "name": "product"
+                        },
+                        {
+                          "url": "https://media.example.com/veo/environment.jpg",
+                          "name": "environment"
+                        },
+                        {
+                          "url": "https://media.example.com/veo/lighting.jpg",
+                          "name": "lighting"
+                        }
+                      ]
+                    },
+                    "output": {
+                      "duration": 8,
+                      "aspect_ratio": "16:9"
+                    }
+                  }
+                },
+                "veoFastFrame": {
+                  "summary": "Veo 3.1 Fast frame-mode generation",
+                  "value": {
+                    "model": "adobe-veo-3.1-fast-720p",
+                    "operation": "generation",
+                    "input": {
+                      "prompt": "Morning clouds flowing through a mountain valley",
+                      "reference_mode": "frame"
+                    },
+                    "output": {
+                      "duration": 4,
+                      "aspect_ratio": "16:9"
+                    },
+                    "provider_options": {
+                      "adobe_video": {
+                        "generate_audio": true
+                      }
+                    }
+                  }
+                }
               }
             }
           }
@@ -1719,7 +1905,7 @@
                   "object": {
                     "id": "task_video_xxx",
                     "object": "video.task",
-                    "model": "grok-imagine-video-1.5",
+                    "model": "adobe-veo-3.1-fast-720p",
                     "operation": "generation",
                     "status": "succeeded",
                     "progress": 100,
@@ -1728,9 +1914,9 @@
                         {
                           "asset_id": "asset_video_xxx",
                           "index": 0,
-                          "url": "https://cdn.example.com/video.mp4",
+                          "url": "https://adobe-cdn.example.com/video.mp4?X-Amz-Signature=...",
                           "mime_type": "video/mp4",
-                          "duration_ms": 5000,
+                          "duration_ms": 4000,
                           "temporary": true,
                           "url_auth": "none"
                         }
@@ -1787,8 +1973,8 @@
                   "object": {
                     "id": "task_video_yyy",
                     "object": "video.task",
-                    "model": "video-model",
-                    "operation": "extension",
+                    "model": "adobe-kling-3.0-720p",
+                    "operation": "generation",
                     "status": "failed",
                     "progress": 100,
                     "result": null,
@@ -1956,8 +2142,8 @@
           "url": {
             "type": "string",
             "format": "uri-reference",
-            "description": "URL used to read this input or output.",
-            "x-description-zh-CN": "用于读取该输入或输出的 URL。"
+            "description": "URL used to read this output. Adobe tasks may return the original signed HTTPS CDN URL; preserve its query string and follow url_auth instead of routing it through a local content endpoint.",
+            "x-description-zh-CN": "用于读取该输出的 URL。Adobe 任务可能直接返回原始 HTTPS CDN 签名地址；应保留查询参数并根据 url_auth 访问，不要改写为本地内容代理地址。"
           },
           "temporary": {
             "type": "boolean",
@@ -3264,10 +3450,11 @@
             "type": "string",
             "enum": [
               "frame",
+              "images",
               "media"
             ],
             "default": "frame",
-            "description": "frame accepts image references only and maps at most two images to start/end frames. media accepts up to 9 images, 3 videos, 3 audio files, and 12 references total."
+            "description": "frame accepts image references only and maps at most two images to start/end frames. images accepts up to 3 image references. media accepts up to 9 images, 3 videos, 3 audio files, and 12 references total."
           },
           "image": {
             "$ref": "#/components/schemas/VideoTaskSource",
@@ -3488,8 +3675,8 @@
           },
           "temporary": {
             "const": true,
-            "description": "Whether the URL points to a temporary upstream resource.",
-            "x-description-zh-CN": "该 URL 是否指向上游临时资源。"
+            "description": "The URL must be treated as temporary. Adobe signed result URLs are not refreshed or archived after expiry.",
+            "x-description-zh-CN": "必须把该 URL 视为临时资源。Adobe 签名结果地址过期后不会刷新或归档。"
           },
           "url_auth": {
             "type": "string",
@@ -3497,8 +3684,8 @@
               "none",
               "resource_api_key"
             ],
-            "description": "Authentication required when requesting url.",
-            "x-description-zh-CN": "请求 url 时需要使用的鉴权方式。"
+            "description": "Authentication required when requesting url. none means the signed URL is requested directly without a SuperToken credential; resource_api_key requires Bearer ak_....",
+            "x-description-zh-CN": "请求 url 时需要使用的鉴权方式。none 表示直接访问签名地址且不附加 SuperToken 密钥；resource_api_key 表示需要 Bearer ak_...。"
           }
         },
         "description": "One temporary video output and its access metadata.",

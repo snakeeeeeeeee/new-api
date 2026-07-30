@@ -1137,3 +1137,77 @@
 - staged 快照首次 Go setup 因临时 worktree 没有 ignored `web/dist` 而停止；未进入业务测试，改为先 build 前端再测试后端。
 - 仅 staged 快照的 Vite build 与 `go test ./... -count=1` 全量通过；临时 detached worktree 已全部清理。
 - 已创建四个 main 提交：new-api `97160e952`、image-handle `93147e2`、Adobe2API `6a58df9`、Higgsfield2API `01ad0a0`。
+
+## 2026-07-30 — Adobe Fast 480p 真实多媒体联调
+
+- 已按 planning-with-files 恢复现有规划状态并建立本次独立联调阶段。
+- 已读取 supertokendoc 的异步、参考素材和 Webhook章节，完成六个媒体素材的预签名上传与完成确认。
+- 已验证本地 URL 主机改写 workaround，准备提交 4 秒 frame 双图任务。
+- 首次 frame 创建在上游鉴权阶段失败，没有任务和扣费；已确认是渠道 124 Key 与 Adobe2API 当前配置不一致，不是 frame 请求语义错误。
+- 已把本地渠道 124 的服务 Key 对齐到 Adobe2API 实际配置并重启 new-api；第二次 frame 创建返回 202。
+- frame 真实任务进入上游后被 Adobe 拒绝，错误为 `Unauthorized to perform request.`；2000000 额度预扣和失败退款均正确。
+- media 的 3 图、2 视频、1 音频任务返回 202 并进入异步执行，最终被同一 Adobe 授权错误拒绝；请求脱敏、4 秒计费和退款均正确。
+- 通过 Adobe 管理接口完成一次账号刷新；刷新后只重试一次 frame，错误不变，因此停止继续提交。
+- 三个失败任务的钱包均已全额恢复，消费/退款日志一一对应；因没有生成 Asset，无法执行结果下载和实际输出时长检查。
+
+## 2026-07-30 — Adobe 新账号 10000 积分复测
+
+- 已确认新账号 active 且可用积分 10000；开始执行渠道、模型和素材预检。
+- 渠道、模型、六个素材预检全部通过。
+- 4 秒 frame 双图任务成功；Range、完整下载、ffprobe 和 2000000 钱包扣费验证通过，开始 media 任务。
+- 4 秒 media 三图、双视频、单音频任务成功；Range、完整下载、视频/音频流和 2000000 钱包扣费验证通过。
+- 两个任务总扣费 4000000、无退款，快照素材计数与脱敏均正确；Docker 服务最终健康。
+# Adobe Multi-model and Console Upgrade Progress (2026-07-30)
+
+- Loaded the required brainstorming, file-planning, and UI/UX workflows.
+- Recovered existing planning state and inspected both Git worktrees without modifying or discarding user changes.
+- Confirmed the implementation phases and started the backend/API contract audit.
+- Located the current Adobe model catalog, video submit/poll/download branches, admin routes, and Higgsfield console reference implementation.
+- Traced new-api normalized Adobe validation, task parsing, direct public Asset projection, legacy content resolver, and channel model-fetch controls.
+- Added Adobe stable Kling/Veo capability definitions, normalized validation, provider payload modes, direct result URL validation, SQLite video-task/API-key stores, and restart recovery.
+- Adobe Docker-mounted focused suite passes all 31 capability and Seedance tests, including no result-media download and legacy Range content compatibility.
+- Completed Adobe2API SQLite task/API-key/request-log persistence, restart recovery, React/Vite operations console, direct result URLs, and multi-stage Docker runtime.
+- Completed new-api eight-SKU capability validation, pre-billing rejection, direct Asset projection, legacy internal-reference fallback, and channel model-discovery strategies.
+- Rebuilt both Docker dev services; `new-api-dev` and `adobe2api` are healthy and share the `ai-gateway` network.
+- Adobe2API full suite passes 99/99 and new-api `go test ./... -count=1` passes after the final controller and Kling duration changes.
+- Real Kling 3.0 `3s frame` reached Adobe and persisted its upstream ID, then failed on a downstream 408; wallet quota was fully refunded and no local result file was added.
+- Real Kling Omni `3s images` reached Adobe but exposed an incorrect `usage=asset` mapping. Adobe requires `style`; corrected the payload and regression test before one controlled retry.
+- Rebuilt Adobe2API after the Omni role correction; focused capability tests pass and the live payload reports three `usage=style` references.
+- The corrected Omni task reached upstream execution but failed on the same Adobe downstream 408; its 1,500,000 quota was refunded and no local media file was created.
+- Real Veo Standard `8s/16:9 images` succeeded as `task_W8CwZxE98qwt4M1FD9EfNmnAHx6ofveT` and returned direct Asset `asset_XOHH7SjE1G3MR4LQQBBFQ6OALscHFDMv`.
+- Real Veo Fast `4s frame` succeeded as `task_2ki2AEKok1CBH4QCKpCVrwG9UcTUo9zX` and returned direct Asset `asset_EKCtKGF9iDc19sG7HHatGtGJbbl9Nb9t`.
+- Verified signed URL persistence without log leakage, zero new generated files, correct temporary/no-auth public projection, and exact 6,000,000 net wallet charge for 12 successful seconds.
+- Recovered the final verification state and confirmed the task detail already includes direct Adobe `<video>` preview plus distinct open/download actions; no implementation patch is needed before desktop browser verification.
+- Updated the verification scope per the user's instruction: mobile compatibility and mobile browser QA are excluded; desktop console QA remains in progress.
+- Live desktop task-list QA passed against `http://127.0.0.1:16000/#/tasks`: successful Veo rows use Adobe CDN links and failed Kling rows correctly have no result URL.
+- The first detail click exposed a stale narrow viewport override from earlier mobile QA; logged it and switched the existing tab back to desktop before retrying.
+- Browser capability inspection confirmed the existing tab supports the CDP capability needed to restore desktop metrics; no page-state workaround or alternate browser is required.
+- Restored 1440x1000 desktop metrics and opened the live Veo Fast success detail. The dialog renders its persisted metadata and separate open/download actions against the same Adobe CDN result.
+- Verified the live media element without fetching through either local service: Adobe URL equality, signed HTTPS host, no local content path, loaded video state, and zero video error all passed.
+- Desktop geometry check passed with no horizontal overflow and an in-viewport 980px dialog; the loaded result video has a stable 942x530 box and uses the modal's vertical content flow.
+- Final regression started in parallel. The host Adobe test invocation stopped on missing FastAPI/Pydantic, so the authoritative Adobe suite will run in Docker; other build/test sessions remain active.
+- new-api full Go tests passed, both frontend production builds passed, and i18n lint reproduced the existing 420-item baseline with no new finding from this task. Adobe Docker-runtime tests remain.
+- A follow-up Adobe test command accidentally omitted `docker exec` and repeated the known host dependency failure. The corrected next invocation is explicitly container-scoped.
+- The production container correctly omits test sources. Switching to a disposable container that reuses its runtime dependencies while mounting the repository read-only and test data in tmpfs.
+- Adobe2API full Docker-runtime suite passed: 100 tests, OK. Final image rebuild and health verification remain.
+- Rebuilt and recreated only `adobe2api`; the new container is healthy. Post-rebuild browser reload preserved the task history and direct URL projection, and the task detail still exposes identical preview/open/download links without local proxying.
+- Post-rebuild Adobe video metadata loaded successfully in the browser (`readyState=4`, 4.01s, no error).
+- Direct capability fetch from the browser evaluation sandbox is unsupported; switching to the Generate Test page, which is the real catalog consumer, for the final model/control audit.
+- Post-rebuild Generate Test UI exposes all eight target SKUs and correctly applies the catalog-driven Kling Omni, Veo Standard images, and Veo Fast constraints without submitting a task.
+- Kling Omni `images` explicitly reports a three-image maximum. Both worktrees pass whitespace checks, both Docker services are healthy on the shared network, and the Adobe generated-file count remains unchanged at 33.
+- Phase 5 verification is complete. Mobile compatibility was intentionally excluded by the user's final scope instruction.
+- The planning helper's file-wide check sees two unrelated historical pending phases around the image-pricing Docker review. This Adobe plan itself has no pending item; unrelated task state remains untouched.
+- Started Phase 6 after a new new-api-linked retry exposed Kling 3.0's missing one-frame minimum. The zero-image task failed at Adobe submit; the Omni images task continues in progress.
+- Located the shared gap: Adobe2API and new-api capability tables encode maximum reference counts only. Started focused source/test inspection while the existing Omni task polls in the background.
+- Added the generic minimum-image capability and Kling frame=1 in both services plus the Adobe console. Adobe focused tests/build pass; one new-api fixture needs a valid required image before it can continue testing its intended video-limit branch.
+- Corrected the dependent test fixture; new-api Adobe adaptor tests now pass. Billing audit confirms the invalid frame task refunded and the successful Omni task retained exactly one 3-second wallet charge.
+- Completed the final new-api Docker rebuild and recreation. The resulting image is healthy alongside the rebuilt Adobe2API container; live precharge and one-image retry checks are next.
+- The first read-only PostgreSQL baseline command failed before execution because nested shell quoting stripped SQL literals. Switched the test harness to a direct `psql -c` invocation; no database state changed.
+- The direct baseline established admin quota `62,302,740`; its token projection then stopped on obsolete `models_enabled`. No writes occurred, and the next query will use the live schema.
+- Confirmed the current token-limit column names. A separate task-count projection then found that `tasks` has no direct `model` column; this was another read-only harness mismatch and will be resolved from the live task/log schemas.
+- Identified the intended local token without exposing its key. The JSON task-count query needs an explicit PostgreSQL text cast; no state-changing command has run.
+- Final zero-reference live acceptance passed: new-api returned `reference_image_required` before task creation, precharge, billing log creation, or Adobe2API submission. Proceeding with one valid frame image.
+- Submitted one valid Picsum frame through new-api. The Kling 3.0 task completed successfully and returned one temporary no-auth direct result; billing, Asset equality, and local-file checks remain.
+- Billing and direct-resource acceptance passed: exactly 1,500,000 quota was retained, no success refund was added, task and Asset URLs are identical Adobe CDN links, and no local media file was created.
+- Full regression passed: `go test ./... -count=1` and Adobe2API's 101-test suite are green.
+- Phase 6 complete. Both Docker services are healthy, both worktrees pass `git diff --check`, and the successful Kling 3.0 frame and Kling Omni images tasks each retain the expected three-second charge.
