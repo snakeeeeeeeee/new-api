@@ -154,6 +154,27 @@ func TestPrepareNormalizedVideoRequestUsesAdobeDefaultsWithoutInventingResolutio
 	assert.NotContains(t, payload, "generate_audio")
 }
 
+func TestPrepareNormalizedVideoRequestEnforcesPromptLimit(t *testing.T) {
+	duration := 4
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "seedance_2.0_480p"},
+	}
+	request := dto.VideoTaskCreateRequest{
+		Model:     "adobe-seedance-2.0-480p",
+		Operation: "generation",
+		Input:     dto.VideoTaskInputRequest{Prompt: strings.Repeat("界", maxVideoPromptRunes)},
+		Output:    dto.VideoTaskOutputRequest{Duration: &duration},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(adobeVideoTestContext(), info, request))
+
+	request.Input.Prompt += "界"
+	taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(adobeVideoTestContext(), info, request)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_video_parameter", taskErr.Code)
+}
+
 func TestPrepareNormalizedVideoRequestRejectsInvalidInputBeforeDispatch(t *testing.T) {
 	validDuration := 4
 	resolution := "480p"

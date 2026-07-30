@@ -30,6 +30,180 @@ const modelTokenSecurity = [{ ModelTokenAuth: [] }];
 const resourceSecurity = [{ ResourceCenterAuth: [] }];
 const webhookSecurity = [{ WebhookAuth: [] }];
 
+const adobeVideoModelCapabilities = {
+  'adobe-kling-3.0-{720p|1080p}': {
+    prompt_max_characters: 1200,
+    durations: {
+      minimum: 3,
+      maximum: 15,
+      integer_seconds: true,
+    },
+    aspect_ratios: ['16:9', '9:16'],
+    reference_modes: {
+      frame: {
+        minimum_images: 1,
+        maximum_images: 2,
+      },
+    },
+  },
+  'adobe-kling-3.0-omni-{720p|1080p}': {
+    prompt_max_characters: 1200,
+    durations: {
+      minimum: 3,
+      maximum: 15,
+      integer_seconds: true,
+    },
+    aspect_ratios: ['16:9', '9:16'],
+    reference_modes: {
+      frame: {
+        maximum_images: 2,
+      },
+      images: {
+        maximum_images: 3,
+      },
+    },
+  },
+  'adobe-veo-3.1-standard-{720p|1080p}': {
+    prompt_max_characters: 1200,
+    durations: [4, 6, 8],
+    aspect_ratios: ['16:9', '9:16'],
+    reference_modes: {
+      frame: {
+        maximum_images: 2,
+      },
+      images: {
+        maximum_images: 3,
+        duration: 8,
+        aspect_ratio: '16:9',
+      },
+    },
+  },
+  'adobe-veo-3.1-fast-{720p|1080p}': {
+    prompt_max_characters: 1200,
+    durations: [4, 6, 8],
+    aspect_ratios: ['16:9', '9:16'],
+    reference_modes: {
+      frame: {
+        maximum_images: 2,
+      },
+    },
+  },
+};
+
+const videoTaskCreateExamples = {
+  klingFrame: {
+    summary: 'Kling 3.0 required frame image',
+    value: {
+      model: 'adobe-kling-3.0-720p',
+      operation: 'generation',
+      input: {
+        prompt: 'A red sports car driving along a coastal road at sunrise',
+        reference_mode: 'frame',
+        image: {
+          url: 'https://media.example.com/kling/start.jpg',
+          name: 'start',
+        },
+      },
+      output: {
+        duration: 3,
+        aspect_ratio: '16:9',
+      },
+      provider_options: {
+        adobe_video: {
+          generate_audio: true,
+        },
+      },
+    },
+  },
+  klingOmniImages: {
+    summary: 'Kling 3.0 Omni with three image references',
+    value: {
+      model: 'adobe-kling-3.0-omni-720p',
+      operation: 'generation',
+      input: {
+        prompt:
+          'Use @character, @wardrobe, and @location in one cinematic shot',
+        reference_mode: 'images',
+        reference_images: [
+          {
+            url: 'https://media.example.com/kling/character.jpg',
+            name: 'character',
+          },
+          {
+            url: 'https://media.example.com/kling/wardrobe.jpg',
+            name: 'wardrobe',
+          },
+          {
+            url: 'https://media.example.com/kling/location.jpg',
+            name: 'location',
+          },
+        ],
+      },
+      output: {
+        duration: 5,
+        aspect_ratio: '9:16',
+      },
+      provider_options: {
+        adobe_video: {
+          generate_audio: false,
+        },
+      },
+    },
+  },
+  veoStandardImages: {
+    summary: 'Veo 3.1 Standard images mode',
+    description:
+      'Veo Standard images mode requires exactly the 8-second, 16:9 output combination.',
+    value: {
+      model: 'adobe-veo-3.1-standard-720p',
+      operation: 'generation',
+      input: {
+        prompt:
+          'Create a cinematic product shot using @product, @environment, and @lighting',
+        reference_mode: 'images',
+        reference_images: [
+          {
+            url: 'https://media.example.com/veo/product.jpg',
+            name: 'product',
+          },
+          {
+            url: 'https://media.example.com/veo/environment.jpg',
+            name: 'environment',
+          },
+          {
+            url: 'https://media.example.com/veo/lighting.jpg',
+            name: 'lighting',
+          },
+        ],
+      },
+      output: {
+        duration: 8,
+        aspect_ratio: '16:9',
+      },
+    },
+  },
+  veoFastFrame: {
+    summary: 'Veo 3.1 Fast frame-mode generation',
+    value: {
+      model: 'adobe-veo-3.1-fast-720p',
+      operation: 'generation',
+      input: {
+        prompt: 'Morning clouds flowing through a mountain valley',
+        reference_mode: 'frame',
+      },
+      output: {
+        duration: 4,
+        aspect_ratio: '16:9',
+      },
+      provider_options: {
+        adobe_video: {
+          generate_audio: true,
+        },
+      },
+    },
+  },
+};
+
 const webhookSucceededExample = {
   id: 'evt_xxx',
   object: 'event',
@@ -121,7 +295,7 @@ const videoWebhookSucceededExample = {
     object: {
       id: 'task_video_xxx',
       object: 'video.task',
-      model: 'grok-imagine-video-1.5',
+      model: 'adobe-veo-3.1-fast-720p',
       operation: 'generation',
       status: 'succeeded',
       progress: 100,
@@ -130,9 +304,9 @@ const videoWebhookSucceededExample = {
           {
             asset_id: 'asset_video_xxx',
             index: 0,
-            url: 'https://cdn.example.com/video.mp4',
+            url: 'https://adobe-cdn.example.com/video.mp4?X-Amz-Signature=...',
             mime_type: 'video/mp4',
-            duration_ms: 5000,
+            duration_ms: 4000,
             temporary: true,
             url_auth: 'none',
           },
@@ -159,8 +333,8 @@ const videoWebhookFailedExample = {
     object: {
       id: 'task_video_yyy',
       object: 'video.task',
-      model: 'video-model',
-      operation: 'extension',
+      model: 'adobe-kling-3.0-720p',
+      operation: 'generation',
       status: 'failed',
       progress: 100,
       result: null,
@@ -785,7 +959,10 @@ const spec = {
         operationId: 'createVideoTask',
         summary: 'Create an asynchronous video task',
         description:
-          'Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated by the selected provider adaptor. Compatibility endpoints under /v1/videos remain unchanged.',
+          'Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. Adobe video prompts accept at most 1200 Unicode characters. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Compatibility endpoints under /v1/videos remain unchanged.',
+        'x-description-zh-CN':
+          '创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。Adobe 视频提示词最多 1200 个 Unicode 字符。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。原有 /v1/videos 兼容接口保持不变。',
+        'x-supertoken-video-model-capabilities': adobeVideoModelCapabilities,
         security: modelTokenSecurity,
         parameters: [
           {
@@ -799,7 +976,12 @@ const spec = {
         ],
         requestBody: {
           required: true,
-          content: jsonContent(ref('VideoTaskCreateRequest')),
+          content: {
+            'application/json': {
+              schema: ref('VideoTaskCreateRequest'),
+              examples: videoTaskCreateExamples,
+            },
+          },
         },
         responses: {
           202: jsonResponse('Task accepted.', ref('VideoTask'), {
@@ -936,7 +1118,7 @@ const spec = {
         operationId: 'receiveVideoTaskSucceededWebhook',
         summary: 'video.task.succeeded callback',
         description:
-          'Sent for every normalized video operation with Authorization: Bearer wk-.... data.object is identical to GET /v1/video/tasks/{task_id}. Video URLs are temporary and may require an ak_ Resource Center API Key when url_auth is resource_api_key.',
+          'Sent for every normalized video operation with Authorization: Bearer wk-.... data.object is identical to GET /v1/video/tasks/{task_id}. Video URLs are temporary. Request url directly without a SuperToken credential when url_auth is none; use an ak_ Resource Center API Key only when url_auth is resource_api_key.',
         security: webhookSecurity,
         parameters: [],
         requestBody: {
@@ -1642,12 +1824,51 @@ const spec = {
           },
           name: {
             type: 'string',
-            minLength: 1,
             maxLength: 100,
             description:
               'Optional reference name, unique across all image, video, and audio references in the request.',
           },
         },
+      },
+      VideoTaskInputVideoSource: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          url: {
+            type: 'string',
+            pattern: '^(?:https?://|data:)',
+            description:
+              'An absolute HTTP(S) URL or data URL containing the source video.',
+          },
+          provider: {
+            type: 'string',
+            minLength: 1,
+            description:
+              'Provider namespace for a provider-managed video file.',
+          },
+          file_id: {
+            type: 'string',
+            minLength: 1,
+            description: 'Provider-managed source video file identifier.',
+          },
+          name: {
+            type: 'string',
+            description:
+              'Optional source label. It does not participate in reference-media @name mapping.',
+          },
+        },
+        oneOf: [
+          {
+            required: ['url'],
+            not: {
+              anyOf: [{ required: ['provider'] }, { required: ['file_id'] }],
+            },
+          },
+          {
+            required: ['provider', 'file_id'],
+            not: { required: ['url'] },
+          },
+        ],
       },
       VideoTaskInput: {
         type: 'object',
@@ -1657,10 +1878,10 @@ const spec = {
           prompt: { type: 'string', minLength: 1 },
           reference_mode: {
             type: 'string',
-            enum: ['frame', 'media'],
+            enum: ['frame', 'images', 'media'],
             default: 'frame',
             description:
-              'frame accepts image references only and maps at most two images to start/end frames. media accepts up to 9 images, 3 videos, 3 audio files, and 12 references total.',
+              'frame accepts image references only and maps at most two images to start/end frames. images accepts up to 3 image references. media accepts up to 9 images, 3 videos, 3 audio files, and 12 references total.',
           },
           image: {
             ...ref('VideoTaskSource'),
@@ -1692,7 +1913,7 @@ const spec = {
               'Reference audio files for media mode. Each provider validates actual media duration and rejects values over 15 seconds.',
           },
           video: {
-            ...ref('VideoTaskSource'),
+            ...ref('VideoTaskInputVideoSource'),
             description:
               'One source video for edit, extension, or remix operations.',
           },
@@ -2206,7 +2427,7 @@ const defaultPropertyDescriptions = {
   provider: 'Provider namespace for a provider-managed file reference.',
   file_id: 'Provider-managed file identifier.',
   reference_images: 'Reference image sources used to guide generation.',
-  reference_mode: 'Reference mapping mode: frame or media.',
+  reference_mode: 'Reference mapping mode: frame, images, or media.',
   reference_videos: 'Reference video sources used in media mode.',
   reference_audios: 'Reference audio sources used in media mode.',
   video: 'Source video for edit, extension, or remix.',
@@ -2259,8 +2480,10 @@ const schemaDescriptions = {
     'Image tasks in request order plus IDs that were not visible to the user.',
   VideoTaskSource:
     'One URL-only video reference source with an optional unique name.',
+  VideoTaskInputVideoSource:
+    'One source video for edit, extension, or remix, represented by an HTTP(S)/data URL or a provider-managed file reference.',
   VideoTaskInput:
-    'Prompt plus provider-neutral URL-only image, video, and audio sources. Non-generation operations require video.',
+    'Prompt plus provider-neutral URL-only reference images, videos, and audios. Non-generation operations require a separate input.video source.',
   VideoTaskOutput: 'Optional provider-neutral video output controls.',
   VideoTaskCreateRequest:
     'Normalized video generation, edit, extension, or remix request.',
@@ -2303,7 +2526,19 @@ const schemaPropertyOverrides = {
     type: 'Error category for broad client handling.',
   },
   Asset: {
+    url: 'Current public Asset URL. Adobe tasks may return the original signed HTTPS CDN URL; preserve its query string and follow url_auth instead of routing it through a local content endpoint.',
+    temporary:
+      'Whether the URL must be treated as temporary. Adobe signed result URLs are not refreshed or archived after expiry.',
+    url_auth:
+      'Authentication required when requesting url. none means direct access without a SuperToken credential; resource_api_key requires Bearer ak_....',
     status: 'Public Assets returned by these APIs are available.',
+  },
+  AssetURLItem: {
+    url: 'Current public Asset URL. Preserve signed query parameters and follow url_auth.',
+    temporary:
+      'Whether the URL must be treated as temporary. Expired Adobe result URLs are not refreshed.',
+    url_auth:
+      'Authentication required when requesting url. none means direct access without a SuperToken credential; resource_api_key requires Bearer ak_....',
   },
   ImageTaskInput: {
     images:
@@ -2328,7 +2563,7 @@ const schemaPropertyOverrides = {
     reference_images:
       'Ordered image references. input.image counts toward the mode-specific image limit.',
     reference_mode:
-      'frame accepts at most two images; media accepts 9 images, 3 videos, 3 audio files, and 12 items total.',
+      'frame accepts at most two images; images accepts at most three images; media accepts 9 images, 3 videos, 3 audio files, and 12 items total.',
     reference_videos:
       'Up to three URL-only video references in media mode; actual duration must not exceed 15 seconds.',
     reference_audios:
@@ -2338,6 +2573,15 @@ const schemaPropertyOverrides = {
   VideoTaskOutput: {
     duration:
       'Requested duration in seconds; for extension, this is the new segment duration.',
+  },
+  VideoTaskResultVideo: {
+    url: 'Current video URL. Adobe tasks return the original signed HTTPS CDN URL with its complete query string.',
+    duration_ms:
+      'Provider result duration metadata in milliseconds. Current Adobe normalized tasks echo the requested output.duration and do not download the media body to probe it.',
+    temporary:
+      'The URL must be treated as temporary. Adobe signed result URLs are not refreshed or archived after expiry.',
+    url_auth:
+      'Authentication required when requesting url. none means direct access without a SuperToken credential; resource_api_key requires Bearer ak_....',
   },
   WebhookEvent: {
     id: 'Stable event ID; use it to make receiver processing idempotent.',
@@ -2412,7 +2656,7 @@ const defaultPropertyDescriptionsZhCN = {
   provider: '供应商托管文件所属的命名空间。',
   file_id: '供应商托管文件的 ID。',
   reference_images: '用于指导生成结果的参考图片来源。',
-  reference_mode: '参考素材映射模式：frame 或 media。',
+  reference_mode: '参考素材映射模式：frame、images 或 media。',
   reference_videos: 'media 模式使用的参考视频来源。',
   reference_audios: 'media 模式使用的参考音频来源。',
   video: '编辑、扩展或 Remix 使用的源视频。',
@@ -2462,8 +2706,10 @@ const schemaDescriptionsZhCN = {
   ImageTaskBatchQueryRequest: '1 到 100 个图片任务 ID。',
   ImageTaskBatchResponse: '按请求顺序返回图片任务，并列出当前用户不可见的 ID。',
   VideoTaskSource: '一个仅使用 URL 的视频参考素材，可携带唯一名称。',
+  VideoTaskInputVideoSource:
+    'edit、extension 或 remix 使用的单个源视频，可使用 HTTP(S)/Data URL 或供应商文件引用。',
   VideoTaskInput:
-    '提示词及供应商无关、仅使用 URL 的图片、视频和音频来源。非 generation 操作必须提供 video。',
+    '提示词及供应商无关、仅使用 URL 的参考图片、视频和音频。非 generation 操作必须另外提供 input.video。',
   VideoTaskOutput: '可选的供应商无关视频输出控制参数。',
   VideoTaskCreateRequest: '规范化的视频生成、编辑、扩展或 Remix 请求。',
   VideoTaskResultVideo: '一个临时视频输出及其访问元数据。',
@@ -2498,7 +2744,18 @@ const schemaPropertyOverridesZhCN = {
     type: '便于客户端进行大类处理的错误类型。',
   },
   Asset: {
+    url: '资源当前公开 URL。Adobe 任务可能直接返回原始 HTTPS CDN 签名地址；必须保留查询参数并根据 url_auth 访问，不要改写为本地内容代理地址。',
+    temporary:
+      '是否必须把 URL 视为临时地址。Adobe 签名结果地址过期后不会刷新或归档。',
+    url_auth:
+      '请求 url 所需的鉴权方式。none 表示不附加 SuperToken 密钥直接访问；resource_api_key 表示需要 Bearer ak_...。',
     status: '这些公开接口返回的资源状态固定为 available。',
+  },
+  AssetURLItem: {
+    url: '资源当前公开 URL。必须保留签名查询参数并根据 url_auth 访问。',
+    temporary: '是否必须把 URL 视为临时地址。过期的 Adobe 结果地址不会刷新。',
+    url_auth:
+      '请求 url 所需的鉴权方式。none 表示不附加 SuperToken 密钥直接访问；resource_api_key 表示需要 Bearer ak_...。',
   },
   ImageTaskInput: {
     images: '使用 URL 的图片输入；operation 为 edit 时至少需要一项。',
@@ -2521,7 +2778,7 @@ const schemaPropertyOverridesZhCN = {
     image: '单个主图片来源，通常用作视频起始帧。',
     reference_images: '有序参考图片；input.image 计入当前模式的图片数量限制。',
     reference_mode:
-      'frame 最多接受两张图片；media 最多接受 9 图、3 视频、3 音频且总计 12 项。',
+      'frame 最多接受两张图片；images 最多接受三张图片；media 最多接受 9 图、3 视频、3 音频且总计 12 项。',
     reference_videos:
       'media 模式最多三个仅 URL 的参考视频，实际时长不得超过 15 秒。',
     reference_audios:
@@ -2530,6 +2787,15 @@ const schemaPropertyOverridesZhCN = {
   },
   VideoTaskOutput: {
     duration: '请求时长，单位为秒；extension 操作中表示新增片段时长。',
+  },
+  VideoTaskResultVideo: {
+    url: '视频当前 URL。Adobe 任务返回原始 HTTPS CDN 签名地址及其完整查询参数。',
+    duration_ms:
+      '供应商返回的结果时长元数据，单位为毫秒。当前 Adobe 规范化任务回显请求的 output.duration，不下载媒体正文探测时长。',
+    temporary:
+      '必须把 URL 视为临时地址。Adobe 签名结果地址过期后不会刷新或归档。',
+    url_auth:
+      '请求 url 所需的鉴权方式。none 表示不附加 SuperToken 密钥直接访问；resource_api_key 表示需要 Bearer ak_...。',
   },
   WebhookEvent: {
     id: '稳定事件 ID，接收端应使用它进行幂等处理。',

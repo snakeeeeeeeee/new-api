@@ -6,6 +6,7 @@ const (
 	videoRequestContextKey   = "adobe_video_request"
 	videoContentResolver     = "adobe-video-content"
 	defaultAspectRatio       = "16:9"
+	maxVideoPromptRunes      = 1200
 )
 
 type videoCapability struct {

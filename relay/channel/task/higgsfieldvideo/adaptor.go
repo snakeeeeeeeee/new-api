@@ -71,9 +71,26 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 func (a *TaskAdaptor) ValidateNormalizedVideoModel(
-	_ *gin.Context,
+	c *gin.Context,
 	info *relaycommon.RelayInfo,
 ) *dto.TaskError {
+	if taskErr := validateHiggsfieldProviderModel(info); taskErr != nil {
+		return taskErr
+	}
+	return adobevideo.ValidateSeedanceNormalizedVideoRequest(c)
+}
+
+func (a *TaskAdaptor) ResolveVideoBilling(
+	c *gin.Context,
+	info *relaycommon.RelayInfo,
+) (channel.VideoBillingEstimate, *dto.TaskError) {
+	if taskErr := validateHiggsfieldProviderModel(info); taskErr != nil {
+		return channel.VideoBillingEstimate{}, taskErr
+	}
+	return adobevideo.ResolveSeedanceVideoBilling(c)
+}
+
+func validateHiggsfieldProviderModel(info *relaycommon.RelayInfo) *dto.TaskError {
 	if info == nil || info.ChannelMeta == nil {
 		return service.TaskErrorWrapperLocal(
 			fmt.Errorf("relay info is required"),

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -103,6 +104,9 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	prompt := strings.TrimSpace(request.Input.Prompt)
 	if prompt == "" {
 		return adobeVideoRequestError("prompt is required", "invalid_video_parameter")
+	}
+	if utf8.RuneCountInString(prompt) > maxVideoPromptRunes {
+		return adobeVideoRequestError("prompt must not exceed 1200 characters", "invalid_video_parameter")
 	}
 	if request.Output.Duration == nil {
 		return adobeVideoRequestError("duration is required", "video_duration_required")
@@ -257,6 +261,32 @@ func (a *TaskAdaptor) ResolveVideoBilling(c *gin.Context, info *relaycommon.Rela
 	}
 	if taskErr := validateVideoCapability(payload, capability); taskErr != nil {
 		return channel.VideoBillingEstimate{}, taskErr
+	}
+	return channel.VideoBillingEstimate{
+		Seconds: payload.Duration,
+		Basis:   types.VideoPricingBasisGeneration,
+	}, nil
+}
+
+// ValidateSeedanceNormalizedVideoRequest applies the shared Seedance capability
+// to a request already normalized by TaskAdaptor.PrepareNormalizedVideoRequest.
+func ValidateSeedanceNormalizedVideoRequest(c *gin.Context) *dto.TaskError {
+	payload, err := normalizedPayload(c)
+	if err != nil {
+		return adobeVideoRequestError(err.Error(), "invalid_request")
+	}
+	return validateVideoCapability(payload, seedanceCapability())
+}
+
+// ResolveSeedanceVideoBilling returns the immutable generation duration after
+// applying the same capability validation used before provider submission.
+func ResolveSeedanceVideoBilling(c *gin.Context) (channel.VideoBillingEstimate, *dto.TaskError) {
+	if taskErr := ValidateSeedanceNormalizedVideoRequest(c); taskErr != nil {
+		return channel.VideoBillingEstimate{}, taskErr
+	}
+	payload, err := normalizedPayload(c)
+	if err != nil {
+		return channel.VideoBillingEstimate{}, adobeVideoRequestError(err.Error(), "invalid_request")
 	}
 	return channel.VideoBillingEstimate{
 		Seconds: payload.Duration,

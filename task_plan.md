@@ -2086,3 +2086,50 @@ Complete
 | PostgreSQL rejected `LIKE` directly on JSON `tasks.properties` | 1 | Cast the JSON value to text for the diagnostic count; this affects only the read-only test query, not application code. |
 
 ---
+
+# Task Plan: Video Contract Alignment (2026-07-31)
+
+## Goal
+Make the normalized video implementation, generated OpenAPI, and SuperToken
+Seedance/Kling/Veo documentation describe the same executable contract.
+
+## Current Phase
+Complete
+
+### Phase 1: Contract tests
+- [x] Add Higgsfield Seedance validation and per-second billing regression coverage.
+- [x] Add Adobe prompt-length precharge-boundary coverage.
+- [x] Lock generated OpenAPI support for `images` and provider-specific capabilities.
+**Status:** complete
+
+### Phase 2: Implementation
+- [x] Share Seedance validation and billing with Higgsfield without model-name parsing.
+- [x] Enforce Adobe's 1200-character prompt limit before pricing.
+- [x] Repair the OpenAPI generator and regenerate the checked-in artifact.
+**Status:** complete
+
+### Phase 3: Documentation
+- [x] Correct Seedance public model names and complete the Adobe model list.
+- [x] Correct direct result URLs, Webhook examples, error codes, prompt limits, and duration semantics.
+**Status:** complete
+
+### Phase 4: Verification
+- [x] Run focused/full backend tests, OpenAPI checks, JSON example parsing, and docs build.
+- [x] Rebuild Docker dev and verify rejection before task creation and billing.
+**Status:** complete
+
+## Locked Decisions
+- Do not parse public model names to infer resolution or pricing.
+- Do not change database schemas, channel IDs, or existing VideoPricing values.
+- Keep URL-only reference sources; do not reintroduce Base64 or multipart into `/v1/video/tasks`.
+- Preserve all unrelated tracked and untracked workspace changes.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| The first local token probe selected a nonexistent `tokens.enabled` column | 1 | Inspect the live PostgreSQL schema and use the actual `status` column. |
+| The Docker health loop assigned zsh's read-only `status` variable | 1 | Keep the already recreated container and repeat the bounded health check with `health_state`. |
+| The first live rejection harness used `rm -f` to clean an exact `mktemp` response file and was rejected before execution | 1 | Avoid filesystem state entirely and capture the response body plus HTTP code in shell memory. |
+| The Adobe2API runtime image does not include `pytest` | 1 | Run the repository's `unittest`-based suites with Python's standard-library test runner. |
+
+---

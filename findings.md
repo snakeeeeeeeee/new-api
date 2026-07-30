@@ -1501,3 +1501,34 @@
 - The corrected one-image Kling request was accepted through new-api as `task_zasvWwokheIl0fCMrWX56o20PQcXhJ5G`, progressed from queued to in-progress, and succeeded. Its public result contains one Adobe-backed URL with `temporary=true` and `url_auth=none`.
 - Final billing moved the admin wallet from `62,302,740` to `60,802,740`, exactly one 1,500,000-quota three-second charge. The task and Asset expose the same signed Adobe HTTPS URL, the Asset uses `url_auth=none`, and Adobe's local generated-file count remains 33.
 - Post-fix regression passes the complete new-api Go suite and all 101 Adobe2API tests.
+
+# Video Contract Alignment Findings (2026-07-31)
+
+- The local `/v1/models` response exposes five Adobe Seedance SKUs with the
+  `adobe-seedance-*` prefix; the Seedance docs use bare names and omit fast/1080p.
+- HiggsfieldVideo promotes AdobeVideo's `ResolveVideoBilling`, but Higgsfield provider
+  SKUs use hyphens while the Adobe capability map uses underscores. A VideoPricing-bound
+  Higgsfield request is therefore rejected as an unsupported Adobe provider SKU.
+- Higgsfield's model validation checks only exact model membership and does not apply
+  the shared Seedance duration, aspect ratio, or reference limits when legacy pricing is used.
+- Adobe2API caps video prompts at 1200 Unicode characters. new-api currently checks only
+  for a non-empty prompt, so the upstream limit is reached after precharge.
+- The checked-in OpenAPI contains Kling/Veo and `images`, but its generator does not.
+  `bun run openapi:check` fails and regeneration would remove the new contract.
+- Current Adobe Seedance completions use direct signed URLs with `url_auth=none`; the
+  Seedance task and Webhook pages still show only the historical protected Asset URL.
+- Normalized reference images, videos, and audios are URL-only HTTP(S) sources.
+  `input.video` is intentionally a separate source contract and also accepts a data URL
+  or an exact `provider` plus `file_id` pair for edit/extension/remix.
+- The Adobe and new-api Kling capability catalogs currently agree on 3-15 seconds, not
+  the earlier proposed 1-15 seconds. Documentation and OpenAPI must describe executable
+  runtime behavior unless both services are deliberately changed together.
+- The repaired OpenAPI generator now owns the Adobe Kling/Veo capability extension,
+  four request examples, `images` mode, direct Adobe result semantics, and the separate
+  source-video schema. Regeneration and drift checking both succeed.
+- Adobe normalized task `duration_ms` currently echoes the validated request duration;
+  neither Adobe2API nor new-api downloads the result media body to probe a final duration.
+- Docker public-endpoint probes show global reference-count and frame/images media-type
+  violations return `invalid_request` in the controller before provider validation.
+  Provider-level `reference_*_limit_exceeded` codes are not externally reachable for the
+  current Adobe limits, so the public docs now describe the observed API response.

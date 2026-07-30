@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel/task/adobevideo"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -98,6 +99,62 @@ func TestPrepareNormalizedVideoRequestRejectsAdobeProviderOptions(t *testing.T) 
 
 	require.NotNil(t, taskErr)
 	assert.Equal(t, "invalid_provider_options", taskErr.Code)
+}
+
+func TestSeedanceCapabilityAndBillingUseHiggsfieldProviderSKU(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	duration := 4
+	aspectRatio := "1:1"
+	request := dto.VideoTaskCreateRequest{
+		Model:     "seedance-2.0-480p",
+		Operation: "generation",
+		Input: dto.VideoTaskInputRequest{
+			Prompt:        "mixed media",
+			ReferenceMode: "media",
+			ReferenceVideos: []dto.VideoTaskSource{
+				{URL: "https://assets.example/motion.mp4"},
+			},
+		},
+		Output: dto.VideoTaskOutputRequest{
+			Duration:    &duration,
+			AspectRatio: &aspectRatio,
+		},
+	}
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "seedance-2.0-480p"},
+	}
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(context, info, request))
+	require.Nil(t, adaptor.ValidateNormalizedVideoModel(context, info))
+	estimate, taskErr := adaptor.ResolveVideoBilling(context, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, 4, estimate.Seconds)
+	assert.Equal(t, types.VideoPricingBasisGeneration, estimate.Basis)
+}
+
+func TestSeedanceCapabilityRejectsInvalidDurationBeforeBilling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	duration := 3
+	request := dto.VideoTaskCreateRequest{
+		Model:     "seedance-2.0-720p",
+		Operation: "generation",
+		Input:     dto.VideoTaskInputRequest{Prompt: "too short"},
+		Output:    dto.VideoTaskOutputRequest{Duration: &duration},
+	}
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "seedance-2.0-720p"},
+	}
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(context, info, request))
+	taskErr := adaptor.ValidateNormalizedVideoModel(context, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_video_duration", taskErr.Code)
 }
 
 func intPointer(value int) *int {

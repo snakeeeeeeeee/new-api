@@ -1231,3 +1231,30 @@
 - 桌面管理页完成临时模板创建、改名改价、刷新持久化和删除测试；完成临时模型绑定、订阅策略修改、模板改绑、刷新持久化和解除绑定测试，测试配置已全部清理。
 - 桌面模型广场确认 Veo 使用 Google/Gemini 分类，Seedance 使用即梦/Jimeng 分类，Kling 保持快手分类。
 - 最终定向回归通过：VideoPricing helper 7/7、`go test ./model -count=1`、VideoPricing/Pricing controller 测试和 `git diff --check`。
+
+## 2026-07-31 - Video contract alignment
+
+- Audited normalized video DTOs, Adobe/Higgsfield adaptors, billing order, public Assets,
+  Webhook delivery, generated OpenAPI, and all Seedance/Kling/Veo documentation.
+- Confirmed local runtime exposes 13 Adobe video SKUs and all use per-second VideoPricing.
+- Focused adaptor/controller/service/relay tests and the VitePress build pass.
+- Confirmed `bun run openapi:check` fails because the generator is behind the artifact.
+- Started implementation with shared Seedance validation/billing and prompt-limit tests.
+- Added shared Seedance capability/billing entry points and a Higgsfield-specific estimator
+  that validates exact Higgsfield SKUs without parsing or rewriting model names.
+- Added Adobe prompt enforcement at 1200 Unicode code points before VideoPricing resolution.
+- Focused AdobeVideo and HiggsfieldVideo package tests pass after formatting.
+- Repaired the Resource Center OpenAPI generator and regenerated its checked-in JSON;
+  `bun run openapi:check` now passes.
+- Updated SuperToken Seedance, Kling, Veo, and shared Webhook pages to use current public
+  SKUs, direct Adobe signed URLs, accurate prompt/default/duration semantics, and corrected
+  error categories. No video page contains a new-api brand reference.
+- Rebuilt Docker dev as `new-api-local:dev` image `sha256:b93d695c51b9...`; the application,
+  Adobe2API, and Higgsfield2API containers are healthy.
+- The real public endpoint exposes all 13 Adobe video SKUs. A 1201-character Adobe
+  Seedance request returned `400 invalid_video_parameter`; user quota, token usage, and
+  task count remained byte-for-byte unchanged before and after the request.
+- Docker probes confirmed missing duration, decimal duration, invalid aspect ratio,
+  over-limit references, unsupported images mode, and frame/video mixing error behavior.
+- Final `go test ./... -count=1`, Adobe2API's 36 Seedance/capability unit tests, OpenAPI
+  drift check, frontend production build, VitePress build, and 24 JSON-example parses pass.

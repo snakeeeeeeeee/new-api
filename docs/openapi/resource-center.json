@@ -1244,10 +1244,11 @@
         ],
         "operationId": "createVideoTask",
         "summary": "Create an asynchronous video task",
-        "description": "Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Compatibility endpoints under /v1/videos remain unchanged.",
-        "x-description-zh-CN": "创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。原有 /v1/videos 兼容接口保持不变。",
+        "description": "Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. Adobe video prompts accept at most 1200 Unicode characters. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Compatibility endpoints under /v1/videos remain unchanged.",
+        "x-description-zh-CN": "创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。Adobe 视频提示词最多 1200 个 Unicode 字符。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。原有 /v1/videos 兼容接口保持不变。",
         "x-supertoken-video-model-capabilities": {
           "adobe-kling-3.0-{720p|1080p}": {
+            "prompt_max_characters": 1200,
             "durations": {
               "minimum": 3,
               "maximum": 15,
@@ -1265,6 +1266,7 @@
             }
           },
           "adobe-kling-3.0-omni-{720p|1080p}": {
+            "prompt_max_characters": 1200,
             "durations": {
               "minimum": 3,
               "maximum": 15,
@@ -1284,6 +1286,7 @@
             }
           },
           "adobe-veo-3.1-standard-{720p|1080p}": {
+            "prompt_max_characters": 1200,
             "durations": [
               4,
               6,
@@ -1305,6 +1308,7 @@
             }
           },
           "adobe-veo-3.1-fast-{720p|1080p}": {
+            "prompt_max_characters": 1200,
             "durations": [
               4,
               6,
@@ -1881,7 +1885,7 @@
       "post": {
         "operationId": "receiveVideoTaskSucceededWebhook",
         "summary": "video.task.succeeded callback",
-        "description": "Sent for every normalized video operation with Authorization: Bearer wk-.... data.object is identical to GET /v1/video/tasks/{task_id}. Video URLs are temporary and may require an ak_ Resource Center API Key when url_auth is resource_api_key.",
+        "description": "Sent for every normalized video operation with Authorization: Bearer wk-.... data.object is identical to GET /v1/video/tasks/{task_id}. Video URLs are temporary. Request url directly without a SuperToken credential when url_auth is none; use an ak_ Resource Center API Key only when url_auth is resource_api_key.",
         "security": [
           {
             "WebhookAuth": []
@@ -2142,13 +2146,13 @@
           "url": {
             "type": "string",
             "format": "uri-reference",
-            "description": "URL used to read this output. Adobe tasks may return the original signed HTTPS CDN URL; preserve its query string and follow url_auth instead of routing it through a local content endpoint.",
-            "x-description-zh-CN": "用于读取该输出的 URL。Adobe 任务可能直接返回原始 HTTPS CDN 签名地址；应保留查询参数并根据 url_auth 访问，不要改写为本地内容代理地址。"
+            "description": "Current public Asset URL. Adobe tasks may return the original signed HTTPS CDN URL; preserve its query string and follow url_auth instead of routing it through a local content endpoint.",
+            "x-description-zh-CN": "资源当前公开 URL。Adobe 任务可能直接返回原始 HTTPS CDN 签名地址；必须保留查询参数并根据 url_auth 访问，不要改写为本地内容代理地址。"
           },
           "temporary": {
             "type": "boolean",
-            "description": "Whether the URL points to a temporary upstream resource.",
-            "x-description-zh-CN": "该 URL 是否指向上游临时资源。"
+            "description": "Whether the URL must be treated as temporary. Adobe signed result URLs are not refreshed or archived after expiry.",
+            "x-description-zh-CN": "是否必须把 URL 视为临时地址。Adobe 签名结果地址过期后不会刷新或归档。"
           },
           "url_auth": {
             "type": "string",
@@ -2156,8 +2160,8 @@
               "none",
               "resource_api_key"
             ],
-            "description": "Authentication required when requesting url.",
-            "x-description-zh-CN": "请求 url 时需要使用的鉴权方式。"
+            "description": "Authentication required when requesting url. none means direct access without a SuperToken credential; resource_api_key requires Bearer ak_....",
+            "x-description-zh-CN": "请求 url 所需的鉴权方式。none 表示不附加 SuperToken 密钥直接访问；resource_api_key 表示需要 Bearer ak_...。"
           },
           "thumbnail_url": {
             "type": "string",
@@ -2399,13 +2403,13 @@
           "url": {
             "type": "string",
             "format": "uri-reference",
-            "description": "URL used to read this input or output.",
-            "x-description-zh-CN": "用于读取该输入或输出的 URL。"
+            "description": "Current public Asset URL. Preserve signed query parameters and follow url_auth.",
+            "x-description-zh-CN": "资源当前公开 URL。必须保留签名查询参数并根据 url_auth 访问。"
           },
           "temporary": {
             "type": "boolean",
-            "description": "Whether the URL points to a temporary upstream resource.",
-            "x-description-zh-CN": "该 URL 是否指向上游临时资源。"
+            "description": "Whether the URL must be treated as temporary. Expired Adobe result URLs are not refreshed.",
+            "x-description-zh-CN": "是否必须把 URL 视为临时地址。过期的 Adobe 结果地址不会刷新。"
           },
           "url_auth": {
             "type": "string",
@@ -2413,8 +2417,8 @@
               "none",
               "resource_api_key"
             ],
-            "description": "Authentication required when requesting url.",
-            "x-description-zh-CN": "请求 url 时需要使用的鉴权方式。"
+            "description": "Authentication required when requesting url. none means direct access without a SuperToken credential; resource_api_key requires Bearer ak_....",
+            "x-description-zh-CN": "请求 url 所需的鉴权方式。none 表示不附加 SuperToken 密钥直接访问；resource_api_key 表示需要 Bearer ak_...。"
           }
         },
         "description": "Current public URL and access requirements for one Asset.",
@@ -3425,13 +3429,71 @@
           },
           "name": {
             "type": "string",
-            "minLength": 1,
             "maxLength": 100,
             "description": "Optional reference name, unique across all image, video, and audio references in the request."
           }
         },
         "description": "One URL-only video reference source with an optional unique name.",
         "x-description-zh-CN": "一个仅使用 URL 的视频参考素材，可携带唯一名称。"
+      },
+      "VideoTaskInputVideoSource": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "pattern": "^(?:https?://|data:)",
+            "description": "An absolute HTTP(S) URL or data URL containing the source video."
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Provider namespace for a provider-managed video file."
+          },
+          "file_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Provider-managed source video file identifier."
+          },
+          "name": {
+            "type": "string",
+            "description": "Optional source label. It does not participate in reference-media @name mapping."
+          }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "url"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "provider"
+                  ]
+                },
+                {
+                  "required": [
+                    "file_id"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "required": [
+              "provider",
+              "file_id"
+            ],
+            "not": {
+              "required": [
+                "url"
+              ]
+            }
+          }
+        ],
+        "description": "One source video for edit, extension, or remix, represented by an HTTP(S)/data URL or a provider-managed file reference.",
+        "x-description-zh-CN": "edit、extension 或 remix 使用的单个源视频，可使用 HTTP(S)/Data URL 或供应商文件引用。"
       },
       "VideoTaskInput": {
         "type": "object",
@@ -3489,13 +3551,13 @@
             "description": "Reference audio files for media mode. Each provider validates actual media duration and rejects values over 15 seconds."
           },
           "video": {
-            "$ref": "#/components/schemas/VideoTaskSource",
+            "$ref": "#/components/schemas/VideoTaskInputVideoSource",
             "description": "One source video for edit, extension, or remix operations.",
             "x-description-zh-CN": "edit、extension 或 remix 操作使用的单个源视频。"
           }
         },
-        "description": "Prompt plus provider-neutral URL-only image, video, and audio sources. Non-generation operations require video.",
-        "x-description-zh-CN": "提示词及供应商无关、仅使用 URL 的图片、视频和音频来源。非 generation 操作必须提供 video。"
+        "description": "Prompt plus provider-neutral URL-only reference images, videos, and audios. Non-generation operations require a separate input.video source.",
+        "x-description-zh-CN": "提示词及供应商无关、仅使用 URL 的参考图片、视频和音频。非 generation 操作必须另外提供 input.video。"
       },
       "VideoTaskOutput": {
         "type": "object",
@@ -3641,8 +3703,8 @@
           "url": {
             "type": "string",
             "format": "uri-reference",
-            "description": "URL used to read this input or output.",
-            "x-description-zh-CN": "用于读取该输入或输出的 URL。"
+            "description": "Current video URL. Adobe tasks return the original signed HTTPS CDN URL with its complete query string.",
+            "x-description-zh-CN": "视频当前 URL。Adobe 任务返回原始 HTTPS CDN 签名地址及其完整查询参数。"
           },
           "mime_type": {
             "type": "string",
@@ -3670,13 +3732,13 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0,
-            "description": "Video duration in milliseconds when known.",
-            "x-description-zh-CN": "已知时返回视频时长，单位为毫秒。"
+            "description": "Provider result duration metadata in milliseconds. Current Adobe normalized tasks echo the requested output.duration and do not download the media body to probe it.",
+            "x-description-zh-CN": "供应商返回的结果时长元数据，单位为毫秒。当前 Adobe 规范化任务回显请求的 output.duration，不下载媒体正文探测时长。"
           },
           "temporary": {
             "const": true,
             "description": "The URL must be treated as temporary. Adobe signed result URLs are not refreshed or archived after expiry.",
-            "x-description-zh-CN": "必须把该 URL 视为临时资源。Adobe 签名结果地址过期后不会刷新或归档。"
+            "x-description-zh-CN": "必须把 URL 视为临时地址。Adobe 签名结果地址过期后不会刷新或归档。"
           },
           "url_auth": {
             "type": "string",
@@ -3684,8 +3746,8 @@
               "none",
               "resource_api_key"
             ],
-            "description": "Authentication required when requesting url. none means the signed URL is requested directly without a SuperToken credential; resource_api_key requires Bearer ak_....",
-            "x-description-zh-CN": "请求 url 时需要使用的鉴权方式。none 表示直接访问签名地址且不附加 SuperToken 密钥；resource_api_key 表示需要 Bearer ak_...。"
+            "description": "Authentication required when requesting url. none means direct access without a SuperToken credential; resource_api_key requires Bearer ak_....",
+            "x-description-zh-CN": "请求 url 所需的鉴权方式。none 表示不附加 SuperToken 密钥直接访问；resource_api_key 表示需要 Bearer ak_...。"
           }
         },
         "description": "One temporary video output and its access metadata.",
