@@ -327,6 +327,11 @@ const spec = {
       name: 'Image Uploads',
       description: 'Upload temporary URL inputs before creating an edit task.',
     },
+    {
+      name: 'Media Uploads',
+      description:
+        'Create presigned direct-upload sessions for video reference media.',
+    },
   ],
   paths: {
     '/v1/assets': {
@@ -721,6 +726,53 @@ const spec = {
             ref('ImageUploadListResponse'),
           ),
           413: responseRef('PayloadTooLarge'),
+          502: responseRef('BadGateway'),
+          503: responseRef('ServiceUnavailable'),
+          ...commonErrorResponses,
+        },
+      },
+    },
+    '/v1/media/uploads': {
+      post: {
+        tags: ['Media Uploads'],
+        operationId: 'createMediaUploadSessions',
+        summary: 'Create reference-media upload sessions',
+        description:
+          'Returns presigned PUT URLs. Upload bytes directly to object storage using the returned method and headers; new-api proxies metadata only and never receives the file body.',
+        security: resourceSecurity,
+        requestBody: {
+          required: true,
+          content: jsonContent(ref('MediaUploadCreateRequest')),
+        },
+        responses: {
+          200: jsonResponse(
+            'Presigned upload sessions.',
+            ref('MediaUploadSessionListResponse'),
+          ),
+          413: responseRef('PayloadTooLarge'),
+          502: responseRef('BadGateway'),
+          503: responseRef('ServiceUnavailable'),
+          ...commonErrorResponses,
+        },
+      },
+    },
+    '/v1/media/uploads/complete': {
+      post: {
+        tags: ['Media Uploads'],
+        operationId: 'completeMediaUploads',
+        summary: 'Confirm reference-media uploads',
+        description:
+          'Verifies each uploaded object with HEAD, including exact size and declared MIME, then returns temporary HTTP(S) URLs for input reference fields.',
+        security: resourceSecurity,
+        requestBody: {
+          required: true,
+          content: jsonContent(ref('MediaUploadCompleteRequest')),
+        },
+        responses: {
+          200: jsonResponse(
+            'Confirmed temporary media URLs.',
+            ref('MediaUploadListResponse'),
+          ),
           502: responseRef('BadGateway'),
           503: responseRef('ServiceUnavailable'),
           ...commonErrorResponses,
@@ -1576,31 +1628,26 @@ const spec = {
         enum: ['queued', 'in_progress', 'succeeded', 'failed'],
       },
       VideoTaskSource: {
-        oneOf: [
-          {
-            type: 'object',
-            additionalProperties: false,
-            required: ['url'],
-            properties: {
-              url: {
-                type: 'string',
-                format: 'uri',
-                pattern: '^(https?://|data:)',
-                description:
-                  'A public HTTP(S) URL or a provider-supported data URL. Asset URLs that require ak_ authentication are not guaranteed to be readable by an upstream provider.',
-              },
-            },
+        type: 'object',
+        additionalProperties: false,
+        required: ['url'],
+        properties: {
+          url: {
+            type: 'string',
+            format: 'uri',
+            maxLength: 8192,
+            pattern: '^https?://',
+            description:
+              'An absolute HTTP(S) URL. Data URLs, base64 data, provider file IDs, and multipart uploads are rejected by /v1/video/tasks.',
           },
-          {
-            type: 'object',
-            additionalProperties: false,
-            required: ['provider', 'file_id'],
-            properties: {
-              provider: { type: 'string', minLength: 1 },
-              file_id: { type: 'string', minLength: 1 },
-            },
+          name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 100,
+            description:
+              'Optional reference name, unique across all image, video, and audio references in the request.',
           },
-        ],
+        },
       },
       VideoTaskInput: {
         type: 'object',
@@ -1608,6 +1655,13 @@ const spec = {
         required: ['prompt'],
         properties: {
           prompt: { type: 'string', minLength: 1 },
+          reference_mode: {
+            type: 'string',
+            enum: ['frame', 'media'],
+            default: 'frame',
+            description:
+              'frame accepts image references only and maps at most two images to start/end frames. media accepts up to 9 images, 3 videos, 3 audio files, and 12 references total.',
+          },
           image: {
             ...ref('VideoTaskSource'),
             description:
@@ -1616,9 +1670,26 @@ const spec = {
           reference_images: {
             type: 'array',
             minItems: 1,
+            maxItems: 9,
             items: ref('VideoTaskSource'),
             description:
-              'Multiple reference image sources. Allowed combinations and provider-specific limits are validated by the selected adaptor.',
+              'Ordered reference image sources. input.image counts toward the image limit.',
+          },
+          reference_videos: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 3,
+            items: ref('VideoTaskSource'),
+            description:
+              'Reference videos for media mode. Each provider validates actual media duration and rejects values over 15 seconds.',
+          },
+          reference_audios: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 3,
+            items: ref('VideoTaskSource'),
+            description:
+              'Reference audio files for media mode. Each provider validates actual media duration and rejects values over 15 seconds.',
           },
           video: {
             ...ref('VideoTaskSource'),
@@ -1889,6 +1960,110 @@ const spec = {
           mask: { type: ['string', 'null'], format: 'uri' },
         },
       },
+      MediaUploadFileRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['kind', 'mime_type', 'size_bytes'],
+        properties: {
+          client_id: { type: 'string', maxLength: 120 },
+          kind: { type: 'string', enum: ['image', 'video', 'audio'] },
+          filename: { type: 'string', maxLength: 255 },
+          mime_type: { type: 'string', minLength: 1, maxLength: 100 },
+          size_bytes: { type: 'integer', format: 'int64', minimum: 1 },
+        },
+      },
+      MediaUploadCreateRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['files'],
+        properties: {
+          files: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 12,
+            items: ref('MediaUploadFileRequest'),
+          },
+        },
+      },
+      MediaUploadSession: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'id',
+          'kind',
+          'method',
+          'upload_url',
+          'headers',
+          'expires_at',
+        ],
+        properties: {
+          id: { type: 'string' },
+          client_id: { type: 'string' },
+          kind: { type: 'string', enum: ['image', 'video', 'audio'] },
+          method: { const: 'PUT' },
+          upload_url: { type: 'string', format: 'uri' },
+          headers: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+          },
+          expires_at: { type: 'integer', format: 'int64', minimum: 0 },
+        },
+      },
+      MediaUploadSessionListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['object', 'data'],
+        properties: {
+          object: { const: 'media.upload.session.list' },
+          data: { type: 'array', items: ref('MediaUploadSession') },
+        },
+      },
+      MediaUploadCompleteRequest: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['upload_ids'],
+        properties: {
+          upload_ids: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 12,
+            uniqueItems: true,
+            items: { type: 'string' },
+          },
+        },
+      },
+      MediaUpload: {
+        type: 'object',
+        additionalProperties: false,
+        required: [
+          'id',
+          'kind',
+          'url',
+          'mime_type',
+          'size_bytes',
+          'temporary',
+          'expires_at',
+        ],
+        properties: {
+          id: { type: 'string' },
+          client_id: { type: 'string' },
+          kind: { type: 'string', enum: ['image', 'video', 'audio'] },
+          url: { type: 'string', format: 'uri', pattern: '^https?://' },
+          mime_type: { type: 'string' },
+          size_bytes: { type: 'integer', format: 'int64', minimum: 1 },
+          temporary: { const: true },
+          expires_at: { type: 'integer', format: 'int64', minimum: 0 },
+        },
+      },
+      MediaUploadListResponse: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['object', 'data'],
+        properties: {
+          object: { const: 'media.upload.list' },
+          data: { type: 'array', items: ref('MediaUpload') },
+        },
+      },
       WebhookEventType: {
         type: 'string',
         enum: [
@@ -2031,6 +2206,9 @@ const defaultPropertyDescriptions = {
   provider: 'Provider namespace for a provider-managed file reference.',
   file_id: 'Provider-managed file identifier.',
   reference_images: 'Reference image sources used to guide generation.',
+  reference_mode: 'Reference mapping mode: frame or media.',
+  reference_videos: 'Reference video sources used in media mode.',
+  reference_audios: 'Reference audio sources used in media mode.',
   video: 'Source video for edit, extension, or remix.',
   duration: 'Requested output or extension duration in seconds.',
   aspect_ratio: 'Requested provider-supported output aspect ratio.',
@@ -2041,6 +2219,16 @@ const defaultPropertyDescriptions = {
   field: 'Upload role: image or mask.',
   b64_json: 'Image bytes encoded as base64.',
   base64: 'Image bytes encoded as base64.',
+  name: 'Optional caller-defined reference name.',
+  kind: 'Reference-media kind.',
+  client_id: 'Optional caller identifier used to correlate upload items.',
+  method: 'HTTP method required for the direct upload.',
+  upload_url: 'Short-lived presigned object-storage upload URL.',
+  headers: 'Headers that must be sent with the direct upload.',
+  expires_at: 'Expiration time in Unix seconds.',
+  files:
+    'Reference-media files whose direct upload sessions should be created.',
+  upload_ids: 'Upload-session IDs to verify and complete.',
   api_version: 'Version of the outbound Webhook payload contract.',
 };
 
@@ -2070,9 +2258,9 @@ const schemaDescriptions = {
   ImageTaskBatchResponse:
     'Image tasks in request order plus IDs that were not visible to the user.',
   VideoTaskSource:
-    'Exactly one source form: url, or provider together with file_id.',
+    'One URL-only video reference source with an optional unique name.',
   VideoTaskInput:
-    'Prompt plus provider-neutral image or video sources. Non-generation operations require video.',
+    'Prompt plus provider-neutral URL-only image, video, and audio sources. Non-generation operations require video.',
   VideoTaskOutput: 'Optional provider-neutral video output controls.',
   VideoTaskCreateRequest:
     'Normalized video generation, edit, extension, or remix request.',
@@ -2093,6 +2281,19 @@ const schemaDescriptions = {
   ImageUpload: 'One temporary uploaded image or mask.',
   ImageUploadListResponse:
     'Uploaded objects plus URL arrays ready for an image edit task.',
+  MediaUploadFileRequest:
+    'Metadata for one image, video, or audio file uploaded directly to object storage.',
+  MediaUploadCreateRequest:
+    'One to twelve media files whose presigned PUT sessions should be created.',
+  MediaUploadSession: 'One short-lived presigned PUT upload session.',
+  MediaUploadSessionListResponse:
+    'Presigned upload sessions in the same order as the requested files.',
+  MediaUploadCompleteRequest:
+    'Upload-session IDs whose object size and MIME should be verified.',
+  MediaUpload:
+    'One confirmed temporary media URL ready for a video task reference.',
+  MediaUploadListResponse:
+    'Confirmed temporary media URLs in the requested upload ID order.',
   WebhookEvent:
     'Outbound terminal task event. data.object matches the corresponding task query DTO.',
 };
@@ -2125,7 +2326,13 @@ const schemaPropertyOverrides = {
   VideoTaskInput: {
     image: 'One primary image source, commonly used as a starting frame.',
     reference_images:
-      'Reference sources; supported combinations and item limits depend on the selected provider adaptor.',
+      'Ordered image references. input.image counts toward the mode-specific image limit.',
+    reference_mode:
+      'frame accepts at most two images; media accepts 9 images, 3 videos, 3 audio files, and 12 items total.',
+    reference_videos:
+      'Up to three URL-only video references in media mode; actual duration must not exceed 15 seconds.',
+    reference_audios:
+      'Up to three URL-only audio references in media mode; actual duration must not exceed 15 seconds.',
     video: 'Required source video for edit, extension, and remix.',
   },
   VideoTaskOutput: {
@@ -2205,6 +2412,9 @@ const defaultPropertyDescriptionsZhCN = {
   provider: '供应商托管文件所属的命名空间。',
   file_id: '供应商托管文件的 ID。',
   reference_images: '用于指导生成结果的参考图片来源。',
+  reference_mode: '参考素材映射模式：frame 或 media。',
+  reference_videos: 'media 模式使用的参考视频来源。',
+  reference_audios: 'media 模式使用的参考音频来源。',
   video: '编辑、扩展或 Remix 使用的源视频。',
   duration: '请求的输出时长或扩展片段时长，单位为秒。',
   aspect_ratio: '供应商支持的输出宽高比。',
@@ -2215,6 +2425,15 @@ const defaultPropertyDescriptionsZhCN = {
   field: '上传用途：image 或 mask。',
   b64_json: '使用 Base64 编码的图片字节。',
   base64: '使用 Base64 编码的图片字节。',
+  name: '可选的调用方参考素材名称。',
+  kind: '参考素材类型。',
+  client_id: '用于关联上传项的可选调用方标识。',
+  method: '直传对象时必须使用的 HTTP 方法。',
+  upload_url: '短期有效的对象存储预签名上传 URL。',
+  headers: '直传对象时必须携带的 Header。',
+  expires_at: '过期时间，Unix 秒。',
+  files: '需要创建直传会话的参考素材文件元数据。',
+  upload_ids: '需要校验并完成的上传会话 ID。',
   api_version: '出站 Webhook Payload 的协议版本。',
 };
 
@@ -2242,9 +2461,9 @@ const schemaDescriptionsZhCN = {
   ImageTaskListResponse: '使用游标分页的图片任务列表。',
   ImageTaskBatchQueryRequest: '1 到 100 个图片任务 ID。',
   ImageTaskBatchResponse: '按请求顺序返回图片任务，并列出当前用户不可见的 ID。',
-  VideoTaskSource: '只能选择一种来源：url，或 provider 与 file_id 组合。',
+  VideoTaskSource: '一个仅使用 URL 的视频参考素材，可携带唯一名称。',
   VideoTaskInput:
-    '提示词及供应商无关的图片或视频来源。非 generation 操作必须提供 video。',
+    '提示词及供应商无关、仅使用 URL 的图片、视频和音频来源。非 generation 操作必须提供 video。',
   VideoTaskOutput: '可选的供应商无关视频输出控制参数。',
   VideoTaskCreateRequest: '规范化的视频生成、编辑、扩展或 Remix 请求。',
   VideoTaskResultVideo: '一个临时视频输出及其访问元数据。',
@@ -2262,6 +2481,14 @@ const schemaDescriptionsZhCN = {
     '至少提供 uploads、images 或 mask 之一；最多接受 10 张 image 和 1 张 mask。',
   ImageUpload: '一张临时上传的图片或遮罩。',
   ImageUploadListResponse: '上传对象，以及可直接用于图片编辑任务的 URL。',
+  MediaUploadFileRequest:
+    '一个直接上传到对象存储的图片、视频或音频文件元数据。',
+  MediaUploadCreateRequest: '需要创建预签名 PUT 会话的 1 到 12 个素材文件。',
+  MediaUploadSession: '一个短期有效的预签名 PUT 上传会话。',
+  MediaUploadSessionListResponse: '与请求文件顺序一致的预签名上传会话。',
+  MediaUploadCompleteRequest: '需要校验对象大小和 MIME 的上传会话 ID。',
+  MediaUpload: '一个可直接放入视频任务参考字段的临时媒体 URL。',
+  MediaUploadListResponse: '按上传 ID 请求顺序返回的临时媒体 URL。',
   WebhookEvent:
     '任务终态出站事件，data.object 与对应任务查询接口返回的 DTO 一致。',
 };
@@ -2292,8 +2519,13 @@ const schemaPropertyOverridesZhCN = {
   },
   VideoTaskInput: {
     image: '单个主图片来源，通常用作视频起始帧。',
-    reference_images:
-      '参考图片来源；允许的组合和数量限制由所选供应商适配器决定。',
+    reference_images: '有序参考图片；input.image 计入当前模式的图片数量限制。',
+    reference_mode:
+      'frame 最多接受两张图片；media 最多接受 9 图、3 视频、3 音频且总计 12 项。',
+    reference_videos:
+      'media 模式最多三个仅 URL 的参考视频，实际时长不得超过 15 秒。',
+    reference_audios:
+      'media 模式最多三个仅 URL 的参考音频，实际时长不得超过 15 秒。',
     video: 'edit、extension 和 remix 操作必填的源视频。',
   },
   VideoTaskOutput: {

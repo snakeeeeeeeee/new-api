@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 )
 
 const maxVideoTaskIdempotencyKeyLength = 128
+const maxVideoTaskRequestBytes = 256 << 10
 
 type videoTaskAPIProblem struct {
 	status  int
@@ -29,6 +31,22 @@ type videoTaskAPIProblem struct {
 }
 
 func PrepareVideoTaskRequest(c *gin.Context) {
+	mediaType, _, mediaErr := mime.ParseMediaType(c.GetHeader("Content-Type"))
+	if mediaErr != nil || mediaType != "application/json" {
+		abortVideoTaskAPIProblem(c, &videoTaskAPIProblem{
+			status: http.StatusUnsupportedMediaType, code: "unsupported_media_type",
+			message: "Content-Type must be application/json", param: "Content-Type",
+		})
+		return
+	}
+	if c.Request.ContentLength > maxVideoTaskRequestBytes {
+		abortVideoTaskAPIProblem(c, &videoTaskAPIProblem{
+			status: http.StatusRequestEntityTooLarge, code: "video_task_request_too_large",
+			message: "Video task request must not exceed 256 KiB",
+		})
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxVideoTaskRequestBytes)
 	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
 	if len(idempotencyKey) > maxVideoTaskIdempotencyKeyLength {
 		abortVideoTaskAPIProblem(c, &videoTaskAPIProblem{
@@ -39,7 +57,22 @@ func PrepareVideoTaskRequest(c *gin.Context) {
 	}
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
-		abortVideoTaskAPIProblem(c, &videoTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: "Invalid JSON request body"})
+		status := http.StatusBadRequest
+		code := "invalid_request"
+		message := "Invalid JSON request body"
+		if common.IsRequestBodyTooLargeError(err) || strings.Contains(strings.ToLower(err.Error()), "request body too large") {
+			status = http.StatusRequestEntityTooLarge
+			code = "video_task_request_too_large"
+			message = "Video task request must not exceed 256 KiB"
+		}
+		abortVideoTaskAPIProblem(c, &videoTaskAPIProblem{status: status, code: code, message: message})
+		return
+	}
+	if storage.Size() > maxVideoTaskRequestBytes {
+		abortVideoTaskAPIProblem(c, &videoTaskAPIProblem{
+			status: http.StatusRequestEntityTooLarge, code: "video_task_request_too_large",
+			message: "Video task request must not exceed 256 KiB",
+		})
 		return
 	}
 	rawBody, err := storage.Bytes()
@@ -68,8 +101,13 @@ func PrepareVideoTaskRequest(c *gin.Context) {
 		return
 	}
 
+	snapshot, err := videoTaskRequestSnapshot(request)
+	if err != nil {
+		abortVideoTaskAPIProblem(c, &videoTaskAPIProblem{status: http.StatusInternalServerError, code: "server_error", message: "Failed to sanitize request"})
+		return
+	}
 	c.Set(relaycommon.VideoTaskPublicRequestContextKey, request)
-	c.Set(relaycommon.VideoTaskPublicRequestJSONContextKey, canonical)
+	c.Set(relaycommon.VideoTaskPublicRequestJSONContextKey, snapshot)
 	c.Set(relaycommon.VideoTaskFingerprintContextKey, fingerprint)
 	c.Set(relaycommon.VideoTaskIdempotencyKeyContextKey, idempotencyKey)
 	common.CleanupBodyStorage(c)
@@ -84,11 +122,18 @@ func normalizeVideoTaskCreateRequest(request *dto.VideoTaskCreateRequest) {
 	request.Model = strings.TrimSpace(request.Model)
 	request.Operation = strings.ToLower(strings.TrimSpace(request.Operation))
 	request.Input.Prompt = strings.TrimSpace(request.Input.Prompt)
+	request.Input.ReferenceMode = strings.ToLower(strings.TrimSpace(request.Input.ReferenceMode))
 	request.ClientReferenceID = strings.TrimSpace(request.ClientReferenceID)
 	normalizeVideoTaskSource(request.Input.Image)
 	normalizeVideoTaskSource(request.Input.Video)
 	for i := range request.Input.ReferenceImages {
 		normalizeVideoTaskSource(&request.Input.ReferenceImages[i])
+	}
+	for i := range request.Input.ReferenceVideos {
+		normalizeVideoTaskSource(&request.Input.ReferenceVideos[i])
+	}
+	for i := range request.Input.ReferenceAudios {
+		normalizeVideoTaskSource(&request.Input.ReferenceAudios[i])
 	}
 	if request.Output.AspectRatio != nil {
 		value := strings.TrimSpace(*request.Output.AspectRatio)
@@ -120,6 +165,7 @@ func normalizeVideoTaskSource(source *dto.VideoTaskSource) {
 	source.URL = strings.TrimSpace(source.URL)
 	source.Provider = strings.ToLower(strings.TrimSpace(source.Provider))
 	source.FileID = strings.TrimSpace(source.FileID)
+	source.Name = strings.TrimSpace(source.Name)
 }
 
 func validateVideoTaskCreateRequest(request *dto.VideoTaskCreateRequest) (string, string) {
@@ -137,8 +183,15 @@ func validateVideoTaskCreateRequest(request *dto.VideoTaskCreateRequest) (string
 	if request.Input.Prompt == "" {
 		return "input.prompt", "input.prompt is required"
 	}
+	referenceMode := request.Input.ReferenceMode
+	if referenceMode == "" {
+		referenceMode = "frame"
+	}
+	if referenceMode != "frame" && referenceMode != "media" {
+		return "input.reference_mode", "input.reference_mode must be frame or media"
+	}
 	if request.Input.Image != nil {
-		if message := validateVideoTaskSource(request.Input.Image); message != "" {
+		if message := validateVideoReferenceSource(request.Input.Image); message != "" {
 			return "input.image", message
 		}
 	}
@@ -146,9 +199,63 @@ func validateVideoTaskCreateRequest(request *dto.VideoTaskCreateRequest) (string
 		return "input.reference_images", "input.reference_images must contain at least one image when provided"
 	}
 	for i := range request.Input.ReferenceImages {
-		if message := validateVideoTaskSource(&request.Input.ReferenceImages[i]); message != "" {
+		if message := validateVideoReferenceSource(&request.Input.ReferenceImages[i]); message != "" {
 			return fmt.Sprintf("input.reference_images[%d]", i), message
 		}
+	}
+	if request.Input.ReferenceVideos != nil && len(request.Input.ReferenceVideos) == 0 {
+		return "input.reference_videos", "input.reference_videos must contain at least one video when provided"
+	}
+	for i := range request.Input.ReferenceVideos {
+		if message := validateVideoReferenceSource(&request.Input.ReferenceVideos[i]); message != "" {
+			return fmt.Sprintf("input.reference_videos[%d]", i), message
+		}
+	}
+	if request.Input.ReferenceAudios != nil && len(request.Input.ReferenceAudios) == 0 {
+		return "input.reference_audios", "input.reference_audios must contain at least one audio file when provided"
+	}
+	for i := range request.Input.ReferenceAudios {
+		if message := validateVideoReferenceSource(&request.Input.ReferenceAudios[i]); message != "" {
+			return fmt.Sprintf("input.reference_audios[%d]", i), message
+		}
+	}
+	imageCount := len(request.Input.ReferenceImages)
+	if request.Input.Image != nil {
+		imageCount++
+	}
+	if referenceMode == "frame" {
+		if imageCount > 2 {
+			return "input.reference_images", "frame mode supports at most 2 reference images"
+		}
+		if len(request.Input.ReferenceVideos) > 0 || len(request.Input.ReferenceAudios) > 0 {
+			return "input.reference_mode", "frame mode accepts image references only"
+		}
+	} else {
+		if imageCount > 9 {
+			return "input.reference_images", "media mode supports at most 9 reference images"
+		}
+		if len(request.Input.ReferenceVideos) > 3 {
+			return "input.reference_videos", "media mode supports at most 3 reference videos"
+		}
+		if len(request.Input.ReferenceAudios) > 3 {
+			return "input.reference_audios", "media mode supports at most 3 reference audio files"
+		}
+		if imageCount+len(request.Input.ReferenceVideos)+len(request.Input.ReferenceAudios) > 12 {
+			return "input", "media mode supports at most 12 total references"
+		}
+	}
+	names := make(map[string]struct{})
+	for _, source := range videoTaskReferenceSources(request) {
+		if len(source.Name) > 100 {
+			return "input", "reference names must not exceed 100 characters"
+		}
+		if source.Name == "" {
+			continue
+		}
+		if _, exists := names[source.Name]; exists {
+			return "input", "reference names must be unique"
+		}
+		names[source.Name] = struct{}{}
 	}
 	if request.Input.Video != nil {
 		if message := validateVideoTaskSource(request.Input.Video); message != "" {
@@ -195,6 +302,83 @@ func validateVideoTaskSource(source *dto.VideoTaskSource) string {
 		return "url must be an absolute HTTP(S) URL or data URL"
 	}
 	return ""
+}
+
+func validateVideoReferenceSource(source *dto.VideoTaskSource) string {
+	if source == nil {
+		return "source is required"
+	}
+	if source.Provider != "" || source.FileID != "" || source.URL == "" {
+		return "reference source must contain exactly one HTTP(S) URL"
+	}
+	if len(source.URL) > 8192 {
+		return "reference URL must not exceed 8192 characters"
+	}
+	parsed, err := url.Parse(source.URL)
+	if err != nil || parsed.User != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "reference URL must be an absolute HTTP(S) URL"
+	}
+	return ""
+}
+
+func videoTaskReferenceSources(request *dto.VideoTaskCreateRequest) []dto.VideoTaskSource {
+	sources := make([]dto.VideoTaskSource, 0, 1+len(request.Input.ReferenceImages)+len(request.Input.ReferenceVideos)+len(request.Input.ReferenceAudios))
+	if request.Input.Image != nil {
+		sources = append(sources, *request.Input.Image)
+	}
+	sources = append(sources, request.Input.ReferenceImages...)
+	sources = append(sources, request.Input.ReferenceVideos...)
+	sources = append(sources, request.Input.ReferenceAudios...)
+	return sources
+}
+
+func videoTaskRequestSnapshot(request dto.VideoTaskCreateRequest) ([]byte, error) {
+	snapshot := request
+	snapshot.Input.Image = cloneVideoTaskSource(request.Input.Image)
+	snapshot.Input.Video = cloneVideoTaskSource(request.Input.Video)
+	snapshot.Input.ReferenceImages = cloneVideoTaskSources(request.Input.ReferenceImages)
+	snapshot.Input.ReferenceVideos = cloneVideoTaskSources(request.Input.ReferenceVideos)
+	snapshot.Input.ReferenceAudios = cloneVideoTaskSources(request.Input.ReferenceAudios)
+	sanitizeSource := func(source *dto.VideoTaskSource) {
+		if source == nil {
+			return
+		}
+		if source.URL != "" {
+			digest := sha256.Sum256([]byte(source.URL))
+			source.URL = "sha256:" + hex.EncodeToString(digest[:])
+		}
+		if source.FileID != "" {
+			digest := sha256.Sum256([]byte(source.FileID))
+			source.FileID = "sha256:" + hex.EncodeToString(digest[:])
+		}
+	}
+	sanitizeSource(snapshot.Input.Image)
+	sanitizeSource(snapshot.Input.Video)
+	for i := range snapshot.Input.ReferenceImages {
+		sanitizeSource(&snapshot.Input.ReferenceImages[i])
+	}
+	for i := range snapshot.Input.ReferenceVideos {
+		sanitizeSource(&snapshot.Input.ReferenceVideos[i])
+	}
+	for i := range snapshot.Input.ReferenceAudios {
+		sanitizeSource(&snapshot.Input.ReferenceAudios[i])
+	}
+	return common.Marshal(snapshot)
+}
+
+func cloneVideoTaskSource(source *dto.VideoTaskSource) *dto.VideoTaskSource {
+	if source == nil {
+		return nil
+	}
+	cloned := *source
+	return &cloned
+}
+
+func cloneVideoTaskSources(sources []dto.VideoTaskSource) []dto.VideoTaskSource {
+	if sources == nil {
+		return nil
+	}
+	return append([]dto.VideoTaskSource(nil), sources...)
 }
 
 func replayVideoTaskRequest(c *gin.Context, idempotencyKey, fingerprint string) bool {

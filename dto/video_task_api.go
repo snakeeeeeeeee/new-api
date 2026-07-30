@@ -4,12 +4,16 @@ type VideoTaskSource struct {
 	URL      string `json:"url,omitempty"`
 	Provider string `json:"provider,omitempty"`
 	FileID   string `json:"file_id,omitempty"`
+	Name     string `json:"name,omitempty"`
 }
 
 type VideoTaskInputRequest struct {
 	Prompt          string            `json:"prompt"`
+	ReferenceMode   string            `json:"reference_mode,omitempty"`
 	Image           *VideoTaskSource  `json:"image,omitempty"`
 	ReferenceImages []VideoTaskSource `json:"reference_images,omitempty"`
+	ReferenceVideos []VideoTaskSource `json:"reference_videos,omitempty"`
+	ReferenceAudios []VideoTaskSource `json:"reference_audios,omitempty"`
 	Video           *VideoTaskSource  `json:"video,omitempty"`
 }
 

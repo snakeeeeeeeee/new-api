@@ -73,6 +73,7 @@ const PLATFORM_OPTIONS = [
   ['54', '豆包视频 / Seedance'],
   ['55', 'Sora'],
   ['59', 'Adobe2API 视频 / Seedance'],
+  ['60', 'Higgsfield2API 视频 / Seedance'],
   ['50', 'Kling'],
   ['51', '即梦'],
   ['52', 'Vidu'],

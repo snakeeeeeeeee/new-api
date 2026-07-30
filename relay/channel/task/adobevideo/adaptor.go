@@ -30,11 +30,14 @@ type requestPayload struct {
 	AspectRatio     string                  `json:"aspect_ratio"`
 	GenerateAudio   *bool                   `json:"generate_audio,omitempty"`
 	ReferenceMode   string                  `json:"reference_mode"`
-	ReferenceImages []referenceImagePayload `json:"reference_images,omitempty"`
+	ReferenceImages []referenceMediaPayload `json:"reference_images,omitempty"`
+	ReferenceVideos []referenceMediaPayload `json:"reference_videos,omitempty"`
+	ReferenceAudios []referenceMediaPayload `json:"reference_audios,omitempty"`
 }
 
-type referenceImagePayload struct {
-	URL string `json:"url"`
+type referenceMediaPayload struct {
+	URL  string `json:"url"`
+	Name string `json:"name,omitempty"`
 }
 
 type responseError struct {
@@ -132,6 +135,13 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		AspectRatio:   aspectRatio,
 		ReferenceMode: "frame",
 	}
+	publicReferenceMode := strings.ToLower(strings.TrimSpace(request.Input.ReferenceMode))
+	if publicReferenceMode != "" {
+		if publicReferenceMode != "frame" && publicReferenceMode != "media" {
+			return adobeVideoRequestError("input.reference_mode must be frame or media", "invalid_video_parameter")
+		}
+		payload.ReferenceMode = publicReferenceMode
+	}
 	for namespace, options := range request.ProviderOptions {
 		if strings.TrimSpace(namespace) != ProviderOptionsNamespace {
 			return adobeVideoRequestError(
@@ -151,6 +161,12 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 				}
 				payload.GenerateAudio = &enabled
 			case "reference_mode":
+				if publicReferenceMode != "" {
+					return adobeVideoRequestError(
+						"provider_options.adobe_video.reference_mode conflicts with input.reference_mode",
+						"invalid_provider_options",
+					)
+				}
 				mode, ok := value.(string)
 				if !ok {
 					return adobeVideoRequestError(
@@ -166,7 +182,7 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 					)
 				}
 				payload.ReferenceMode = mode
-			case "model", "prompt", "duration", "aspect_ratio", "resolution", "image", "reference_images", "video":
+			case "model", "prompt", "duration", "aspect_ratio", "resolution", "image", "reference_images", "reference_videos", "reference_audios", "video":
 				return adobeVideoRequestError(
 					fmt.Sprintf("provider_options.adobe_video.%s duplicates a public or model-bound field", key),
 					"invalid_provider_options",
@@ -180,27 +196,56 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		}
 	}
 
-	referenceSources := make([]dto.VideoTaskSource, 0, 1+len(request.Input.ReferenceImages))
+	imageSources := make([]dto.VideoTaskSource, 0, 1+len(request.Input.ReferenceImages))
 	if request.Input.Image != nil {
-		referenceSources = append(referenceSources, *request.Input.Image)
+		imageSources = append(imageSources, *request.Input.Image)
 	}
-	referenceSources = append(referenceSources, request.Input.ReferenceImages...)
-	referenceLimit := 2
-	if payload.ReferenceMode == "media" {
-		referenceLimit = 9
-	}
-	if len(referenceSources) > referenceLimit {
+	imageSources = append(imageSources, request.Input.ReferenceImages...)
+	if payload.ReferenceMode == "frame" && (len(request.Input.ReferenceVideos) > 0 || len(request.Input.ReferenceAudios) > 0) {
 		return adobeVideoRequestError(
-			fmt.Sprintf("AdobeVideo %s mode supports at most %d reference images", payload.ReferenceMode, referenceLimit),
+			"AdobeVideo frame mode accepts image references only",
 			"invalid_video_parameter",
 		)
 	}
-	for _, source := range referenceSources {
-		image, taskErr := normalizedAdobeVideoReference(source)
+	imageLimit := 2
+	if payload.ReferenceMode == "media" {
+		imageLimit = 9
+	}
+	if len(imageSources) > imageLimit {
+		return adobeVideoRequestError(
+			fmt.Sprintf("AdobeVideo %s mode supports at most %d reference images", payload.ReferenceMode, imageLimit),
+			"invalid_video_parameter",
+		)
+	}
+	if len(request.Input.ReferenceVideos) > 3 {
+		return adobeVideoRequestError("AdobeVideo media mode supports at most 3 reference videos", "invalid_video_parameter")
+	}
+	if len(request.Input.ReferenceAudios) > 3 {
+		return adobeVideoRequestError("AdobeVideo media mode supports at most 3 reference audio files", "invalid_video_parameter")
+	}
+	if len(imageSources)+len(request.Input.ReferenceVideos)+len(request.Input.ReferenceAudios) > 12 {
+		return adobeVideoRequestError("AdobeVideo media mode supports at most 12 total references", "invalid_video_parameter")
+	}
+	for _, source := range imageSources {
+		image, taskErr := normalizedAdobeVideoReference(source, "image")
 		if taskErr != nil {
 			return taskErr
 		}
 		payload.ReferenceImages = append(payload.ReferenceImages, image)
+	}
+	for _, source := range request.Input.ReferenceVideos {
+		video, taskErr := normalizedAdobeVideoReference(source, "video")
+		if taskErr != nil {
+			return taskErr
+		}
+		payload.ReferenceVideos = append(payload.ReferenceVideos, video)
+	}
+	for _, source := range request.Input.ReferenceAudios {
+		audio, taskErr := normalizedAdobeVideoReference(source, "audio")
+		if taskErr != nil {
+			return taskErr
+		}
+		payload.ReferenceAudios = append(payload.ReferenceAudios, audio)
 	}
 
 	if info.TaskRelayInfo == nil {
@@ -261,6 +306,15 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	return a.BuildRequestBodyForProvider(c, info, "AdobeVideo", supportedModels)
+}
+
+func (a *TaskAdaptor) BuildRequestBodyForProvider(
+	c *gin.Context,
+	info *relaycommon.RelayInfo,
+	providerName string,
+	models map[string]struct{},
+) (io.Reader, error) {
 	payload, err := normalizedPayload(c)
 	if err != nil {
 		return nil, err
@@ -272,8 +326,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if upstreamModel == "" && info != nil {
 		upstreamModel = strings.TrimSpace(info.OriginModelName)
 	}
-	if _, ok := supportedModels[upstreamModel]; !ok {
-		return nil, fmt.Errorf("unsupported AdobeVideo provider SKU %q", upstreamModel)
+	if _, ok := models[upstreamModel]; !ok {
+		return nil, fmt.Errorf("unsupported %s provider SKU %q", providerName, upstreamModel)
 	}
 	payload.Model = upstreamModel
 	data, err := common.Marshal(payload)
@@ -459,32 +513,35 @@ func validAspectRatio(value string) bool {
 	}
 }
 
-func normalizedAdobeVideoReference(source dto.VideoTaskSource) (referenceImagePayload, *dto.TaskError) {
+func normalizedAdobeVideoReference(source dto.VideoTaskSource, kind string) (referenceMediaPayload, *dto.TaskError) {
 	if strings.TrimSpace(source.Provider) != "" || strings.TrimSpace(source.FileID) != "" {
-		return referenceImagePayload{}, adobeVideoRequestError(
-			"AdobeVideo reference images require URL or Data URL sources; file references are not supported",
+		return referenceMediaPayload{}, adobeVideoRequestError(
+			fmt.Sprintf("AdobeVideo reference %s requires an HTTP(S) URL; file references are not supported", kind),
 			"unsupported_file_provider",
 		)
 	}
 	sourceURL := strings.TrimSpace(source.URL)
-	lowerURL := strings.ToLower(sourceURL)
-	if strings.HasPrefix(lowerURL, "data:") {
-		return referenceImagePayload{URL: sourceURL}, nil
-	}
-	if !strings.HasPrefix(lowerURL, "http://") && !strings.HasPrefix(lowerURL, "https://") {
-		return referenceImagePayload{}, adobeVideoRequestError(
-			"AdobeVideo reference images must use http, https, or data URLs",
+	if sourceURL == "" || len(sourceURL) > 8192 {
+		return referenceMediaPayload{}, adobeVideoRequestError(
+			fmt.Sprintf("AdobeVideo reference %s URL is required and must not exceed 8192 characters", kind),
 			"invalid_video_parameter",
 		)
 	}
 	parsed, err := url.Parse(sourceURL)
-	if err != nil || parsed.Host == "" {
-		return referenceImagePayload{}, adobeVideoRequestError(
-			"AdobeVideo reference image URL is invalid",
+	if err != nil || parsed.User != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return referenceMediaPayload{}, adobeVideoRequestError(
+			fmt.Sprintf("AdobeVideo reference %s must use an absolute HTTP(S) URL", kind),
 			"invalid_video_parameter",
 		)
 	}
-	return referenceImagePayload{URL: sourceURL}, nil
+	name := strings.TrimSpace(source.Name)
+	if len(name) > 100 {
+		return referenceMediaPayload{}, adobeVideoRequestError(
+			"AdobeVideo reference name must not exceed 100 characters",
+			"invalid_video_parameter",
+		)
+	}
+	return referenceMediaPayload{URL: sourceURL, Name: name}, nil
 }
 
 func adobeVideoRequestError(message, code string) *dto.TaskError {

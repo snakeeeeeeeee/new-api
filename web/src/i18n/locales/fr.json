@@ -5125,6 +5125,19 @@
     "视频按秒计价接管": "Remplacement par la tarification vidéo à la seconde",
     "视频按秒计价已接管当前模型": "La tarification vidéo à la seconde remplace ce modèle",
     "当前实际费用由视频按秒计价模板计算。这里的固定价格和倍率仍会保存，解除视频计价绑定后自动恢复使用。": "Le coût réel est calculé par le profil vidéo à la seconde. Le prix fixe et les coefficients restent enregistrés et seront réutilisés automatiquement après suppression de la liaison vidéo.",
-    "已跳过 {{count}} 个由图片或视频计价接管的模型": "{{count}} modèles gérés par la tarification image ou vidéo ont été ignorés"
+    "已跳过 {{count}} 个由图片或视频计价接管的模型": "{{count}} modèles gérés par la tarification image ou vidéo ont été ignorés",
+    "创建媒体直传会话": "Créer des sessions de téléversement direct de médias",
+    "确认媒体直传结果": "Confirmer les téléversements directs de médias",
+    "查询异步图片/视频任务、预上传图片或视频参考素材，以及查询、下载和导出生成资源": "Consulter les tâches image/vidéo asynchrones, précharger des images ou médias vidéo de référence, puis consulter, télécharger ou exporter les ressources générées",
+    "可选：预上传图片编辑输入或视频参考素材": "Facultatif : précharger les entrées de retouche d’image ou les médias vidéo de référence",
+    "多媒体参考生成": "Génération avec références multimédias",
+    "视频任务只接受绝对 HTTP(S) URL；media 模式支持最多 9 图、3 视频、3 音频且总计不超过 12 项。": "Les tâches vidéo acceptent uniquement des URL HTTP(S) absolues ; le mode media prend en charge jusqu’à 9 images, 3 vidéos et 3 fichiers audio, avec 12 éléments au total.",
+    "参考视频和参考音频由供应商按真实内容探测，单项时长不得超过 15 秒。": "Le fournisseur inspecte le contenu réel des vidéos et fichiers audio de référence ; chaque élément ne doit pas dépasser 15 secondes.",
+    "参考素材不改变视频按秒计费，计费时长仍使用 output.duration。": "Les médias de référence ne modifient pas la facturation vidéo à la seconde ; la durée facturée reste output.duration.",
+    "预上传视频参考素材": "Précharger les médias vidéo de référence",
+    "先申请预签名会话，再把文件直接 PUT 到对象存储；new-api 不接收文件字节。确认后使用返回的 URL 创建视频任务。": "Créez d’abord une session présignée, puis envoyez directement le fichier vers le stockage d’objets avec PUT ; new-api ne reçoit jamais les octets du fichier. Après confirmation, utilisez l’URL renvoyée pour créer une tâche vidéo.",
+    "1. 创建上传会话": "1. Créer une session de téléversement",
+    "2. 直接上传文件": "2. Téléverser directement le fichier",
+    "3. 确认上传": "3. Confirmer le téléversement"
   }
 }

@@ -101,3 +101,49 @@ func TestPublicVideoAssetURLDoesNotExposeAuthenticatedProviderURL(t *testing.T) 
 	assert.Equal(t, VideoURLAuthResourceAPIKey, urlAuth)
 	assert.NotContains(t, publicURL, "provider-secret")
 }
+
+func TestBuildPublicVideoTaskPreservesKnownReferenceDurationErrors(t *testing.T) {
+	for _, code := range []string{
+		"invalid_reference_media_duration",
+		"reference_media_duration_exceeded",
+	} {
+		t.Run(code, func(t *testing.T) {
+			task := &model.Task{
+				TaskID:     "task_" + code,
+				Status:     model.TaskStatusFailure,
+				FailReason: "reference media rejected",
+			}
+			task.SetData(map[string]any{
+				"error": map[string]any{
+					"code":    code,
+					"message": "reference media rejected",
+				},
+			})
+
+			public := buildPublicVideoTask(task, nil, nil)
+
+			require.NotNil(t, public.Error)
+			assert.Equal(t, code, public.Error.Code)
+			assert.Equal(t, "reference media rejected", public.Error.Message)
+		})
+	}
+}
+
+func TestBuildPublicVideoTaskMasksUnknownProviderErrorCodes(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_private_provider_error",
+		Status:     model.TaskStatusFailure,
+		FailReason: "provider rejected the request",
+	}
+	task.SetData(map[string]any{
+		"error": map[string]any{
+			"code":    "provider_internal_policy",
+			"message": "provider rejected the request",
+		},
+	})
+
+	public := buildPublicVideoTask(task, nil, nil)
+
+	require.NotNil(t, public.Error)
+	assert.Equal(t, "video_task_failed", public.Error.Code)
+}

@@ -24,3 +24,19 @@ func TestAdobeVideoTaskAdaptorRegistration(t *testing.T) {
 	_, content := adaptor.(channel.VideoContentResolver)
 	assert.True(t, content)
 }
+
+func TestHiggsfieldVideoTaskAdaptorRegistration(t *testing.T) {
+	assert.Equal(t, "HiggsfieldVideo", constant.GetChannelTypeName(constant.ChannelTypeHiggsfieldVideo))
+	require.Greater(t, len(constant.ChannelBaseURLs), constant.ChannelTypeHiggsfieldVideo)
+
+	adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeHiggsfieldVideo)))
+	require.NotNil(t, adaptor)
+	assert.Equal(t, "higgsfield-video", adaptor.GetChannelName())
+	assert.Equal(t, []string{"seedance-2.0-480p", "seedance-2.0-720p"}, adaptor.GetModelList())
+	_, normalized := adaptor.(channel.NormalizedVideoTaskAdaptor)
+	assert.True(t, normalized)
+	_, billed := adaptor.(channel.VideoBillingEstimator)
+	assert.True(t, billed)
+	_, content := adaptor.(channel.VideoContentResolver)
+	assert.True(t, content)
+}

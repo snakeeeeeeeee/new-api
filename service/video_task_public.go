@@ -146,9 +146,35 @@ func buildPublicVideoTask(task *model.Task, requestRecord *model.VideoTaskReques
 		if message == "" {
 			message = "Video task failed"
 		}
-		public.Error = &dto.VideoTaskPublicError{Code: "video_task_failed", Message: message}
+		public.Error = &dto.VideoTaskPublicError{
+			Code:    publicVideoTaskErrorCode(task),
+			Message: message,
+		}
 	}
 	return public
+}
+
+func publicVideoTaskErrorCode(task *model.Task) string {
+	const fallback = "video_task_failed"
+	if task == nil || len(task.Data) == 0 {
+		return fallback
+	}
+	var response struct {
+		Error *struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := common.Unmarshal(task.Data, &response); err != nil || response.Error == nil {
+		return fallback
+	}
+	switch strings.TrimSpace(response.Error.Code) {
+	case "invalid_reference_media_duration":
+		return "invalid_reference_media_duration"
+	case "reference_media_duration_exceeded":
+		return "reference_media_duration_exceeded"
+	default:
+		return fallback
+	}
 }
 
 func PublicVideoTaskStatus(status model.TaskStatus) string {

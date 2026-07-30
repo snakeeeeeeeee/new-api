@@ -67,11 +67,14 @@ type videoTaskRequest struct {
 	AspectRatio     string                `json:"aspect_ratio"`
 	GenerateAudio   *bool                 `json:"generate_audio,omitempty"`
 	ReferenceMode   string                `json:"reference_mode,omitempty"`
-	ReferenceImages []videoReferenceImage `json:"reference_images,omitempty"`
+	ReferenceImages []videoReferenceMedia `json:"reference_images,omitempty"`
+	ReferenceVideos []videoReferenceMedia `json:"reference_videos,omitempty"`
+	ReferenceAudios []videoReferenceMedia `json:"reference_audios,omitempty"`
 }
 
-type videoReferenceImage struct {
-	URL string `json:"url"`
+type videoReferenceMedia struct {
+	URL  string `json:"url"`
+	Name string `json:"name,omitempty"`
 }
 
 type videoRequestCounts struct {
@@ -406,7 +409,12 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 	}
 	if strings.TrimSpace(payload.Model) == "" || strings.TrimSpace(payload.Prompt) == "" ||
 		payload.Duration < 4 || payload.Duration > 15 || !validVideoAspectRatio(payload.AspectRatio) ||
-		!validVideoReferences(payload.ReferenceMode, payload.ReferenceImages) {
+		!validVideoReferences(
+			payload.ReferenceMode,
+			payload.ReferenceImages,
+			payload.ReferenceVideos,
+			payload.ReferenceAudios,
+		) {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid video request"}})
 		return
 	}
@@ -541,23 +549,45 @@ func videoTaskResponse(taskID string, payload videoTaskRequest, status string, p
 	return response
 }
 
-func validVideoReferences(mode string, images []videoReferenceImage) bool {
-	limit := 2
-	if mode == "media" {
-		limit = 9
-	} else if mode != "frame" {
-		return false
-	}
-	if len(images) > limit {
-		return false
-	}
-	for _, image := range images {
-		sourceURL := strings.ToLower(strings.TrimSpace(image.URL))
-		if !strings.HasPrefix(sourceURL, "http://") &&
-			!strings.HasPrefix(sourceURL, "https://") &&
-			!strings.HasPrefix(sourceURL, "data:") {
+func validVideoReferences(
+	mode string,
+	images []videoReferenceMedia,
+	videos []videoReferenceMedia,
+	audios []videoReferenceMedia,
+) bool {
+	switch mode {
+	case "frame":
+		if len(images) > 2 || len(videos) != 0 || len(audios) != 0 {
 			return false
 		}
+	case "media":
+		if len(images) > 9 || len(videos) > 3 || len(audios) > 3 ||
+			len(images)+len(videos)+len(audios) > 12 {
+			return false
+		}
+	default:
+		return false
+	}
+
+	names := make(map[string]struct{}, len(images)+len(videos)+len(audios))
+	references := make([]videoReferenceMedia, 0, len(images)+len(videos)+len(audios))
+	references = append(references, images...)
+	references = append(references, videos...)
+	references = append(references, audios...)
+	for _, reference := range references {
+		sourceURL := strings.ToLower(strings.TrimSpace(reference.URL))
+		if !strings.HasPrefix(sourceURL, "http://") &&
+			!strings.HasPrefix(sourceURL, "https://") {
+			return false
+		}
+		name := strings.TrimSpace(reference.Name)
+		if name == "" {
+			continue
+		}
+		if _, exists := names[name]; exists {
+			return false
+		}
+		names[name] = struct{}{}
 	}
 	return true
 }

@@ -116,9 +116,14 @@ func TestVideoLifecycleAndRangeContent(t *testing.T) {
 		Model: "seedance_2.0_fast_480p", Prompt: "ocean sunrise",
 		Duration: 4, AspectRatio: "16:9", GenerateAudio: &audio,
 		ReferenceMode: "media",
-		ReferenceImages: []videoReferenceImage{
-			{URL: "data:image/png;base64,aW1hZ2U="},
-			{URL: "https://example.com/style.webp"},
+		ReferenceImages: []videoReferenceMedia{
+			{URL: "https://media.example.com/character.png", Name: "character"},
+		},
+		ReferenceVideos: []videoReferenceMedia{
+			{URL: "https://media.example.com/motion.mp4", Name: "motion"},
+		},
+		ReferenceAudios: []videoReferenceMedia{
+			{URL: "https://media.example.com/music.mp3", Name: "music"},
 		},
 	})
 	if err != nil {
@@ -193,8 +198,12 @@ func TestVideoLifecycleAndRangeContent(t *testing.T) {
 	if metrics.LastVideoSubmit == nil || metrics.LastVideoSubmit.Model != "seedance_2.0_fast_480p" ||
 		metrics.LastVideoSubmit.Duration != 4 || metrics.LastVideoSubmit.GenerateAudio == nil ||
 		*metrics.LastVideoSubmit.GenerateAudio || metrics.LastVideoSubmit.ReferenceMode != "media" ||
-		len(metrics.LastVideoSubmit.ReferenceImages) != 2 ||
-		metrics.LastVideoSubmit.ReferenceImages[0].URL != "data:image/png;base64,aW1hZ2U=" {
+		len(metrics.LastVideoSubmit.ReferenceImages) != 1 ||
+		len(metrics.LastVideoSubmit.ReferenceVideos) != 1 ||
+		len(metrics.LastVideoSubmit.ReferenceAudios) != 1 ||
+		metrics.LastVideoSubmit.ReferenceImages[0].Name != "character" ||
+		metrics.LastVideoSubmit.ReferenceVideos[0].URL != "https://media.example.com/motion.mp4" ||
+		metrics.LastVideoSubmit.ReferenceAudios[0].Name != "music" {
 		t.Fatalf("unexpected last video submit: %+v", metrics.LastVideoSubmit)
 	}
 }
@@ -204,10 +213,8 @@ func TestVideoSubmitRejectsInvalidReferenceContract(t *testing.T) {
 	server := httptest.NewServer(state.handler())
 	defer server.Close()
 
-	response, err := http.Post(
-		server.URL+"/v1/videos",
-		"application/json",
-		bytes.NewBufferString(`{
+	tests := []string{
+		`{
 			"model":"seedance_2.0_fast_480p",
 			"prompt":"too many frames",
 			"duration":4,
@@ -218,14 +225,47 @@ func TestVideoSubmitRejectsInvalidReferenceContract(t *testing.T) {
 				{"url":"https://example.com/2.png"},
 				{"url":"https://example.com/3.png"}
 			]
-		}`),
-	)
-	if err != nil {
-		t.Fatal(err)
+		}`,
+		`{
+			"model":"seedance_2.0_fast_480p",
+			"prompt":"frame cannot include video",
+			"duration":4,
+			"aspect_ratio":"16:9",
+			"reference_mode":"frame",
+			"reference_videos":[{"url":"https://example.com/clip.mp4"}]
+		}`,
+		`{
+			"model":"seedance_2.0_fast_480p",
+			"prompt":"reject non URL data",
+			"duration":4,
+			"aspect_ratio":"16:9",
+			"reference_mode":"media",
+			"reference_audios":[{"url":"data:audio/mpeg;base64,YXVkaW8="}]
+		}`,
+		`{
+			"model":"seedance_2.0_fast_480p",
+			"prompt":"names must be unique",
+			"duration":4,
+			"aspect_ratio":"16:9",
+			"reference_mode":"media",
+			"reference_images":[{"url":"https://example.com/image.png","name":"subject"}],
+			"reference_videos":[{"url":"https://example.com/clip.mp4","name":"subject"}]
+		}`,
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusBadRequest)
+	for _, body := range tests {
+		response, err := http.Post(
+			server.URL+"/v1/videos",
+			"application/json",
+			bytes.NewBufferString(body),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusBadRequest {
+			response.Body.Close()
+			t.Fatalf("status = %d, want %d for %s", response.StatusCode, http.StatusBadRequest, body)
+		}
+		response.Body.Close()
 	}
 }
 

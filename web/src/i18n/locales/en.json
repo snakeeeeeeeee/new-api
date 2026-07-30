@@ -5142,6 +5142,19 @@
     "视频按秒计价接管": "Video per-second pricing override",
     "视频按秒计价已接管当前模型": "Per-second video pricing overrides this model",
     "当前实际费用由视频按秒计价模板计算。这里的固定价格和倍率仍会保存，解除视频计价绑定后自动恢复使用。": "The actual charge is calculated by the per-second video pricing profile. The fixed price and ratios here are still saved and resume automatically when the video pricing binding is removed.",
-    "已跳过 {{count}} 个由图片或视频计价接管的模型": "Skipped {{count}} models managed by image or video pricing"
+    "已跳过 {{count}} 个由图片或视频计价接管的模型": "Skipped {{count}} models managed by image or video pricing",
+    "创建媒体直传会话": "Create direct media upload sessions",
+    "确认媒体直传结果": "Confirm direct media uploads",
+    "查询异步图片/视频任务、预上传图片或视频参考素材，以及查询、下载和导出生成资源": "Query asynchronous image/video tasks, pre-upload image or video reference media, and query, download, or export generated assets",
+    "可选：预上传图片编辑输入或视频参考素材": "Optional: pre-upload image editing inputs or video reference media",
+    "多媒体参考生成": "Multimedia reference generation",
+    "视频任务只接受绝对 HTTP(S) URL；media 模式支持最多 9 图、3 视频、3 音频且总计不超过 12 项。": "Video tasks accept only absolute HTTP(S) URLs; media mode supports up to 9 images, 3 videos, 3 audio files, and 12 items total.",
+    "参考视频和参考音频由供应商按真实内容探测，单项时长不得超过 15 秒。": "Providers inspect the actual content of reference videos and audio; each item must be no longer than 15 seconds.",
+    "参考素材不改变视频按秒计费，计费时长仍使用 output.duration。": "Reference media does not change per-second video billing; billed duration still uses output.duration.",
+    "预上传视频参考素材": "Pre-upload video reference media",
+    "先申请预签名会话，再把文件直接 PUT 到对象存储；new-api 不接收文件字节。确认后使用返回的 URL 创建视频任务。": "First create a presigned session, then PUT the file directly to object storage; new-api never receives file bytes. After confirmation, use the returned URL to create a video task.",
+    "1. 创建上传会话": "1. Create upload session",
+    "2. 直接上传文件": "2. Upload file directly",
+    "3. 确认上传": "3. Confirm upload"
   }
 }

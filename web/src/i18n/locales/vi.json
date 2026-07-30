@@ -5623,6 +5623,19 @@
     "视频按秒计价接管": "Được thay thế bằng giá video theo giây",
     "视频按秒计价已接管当前模型": "Giá video theo giây đang thay thế mô hình này",
     "当前实际费用由视频按秒计价模板计算。这里的固定价格和倍率仍会保存，解除视频计价绑定后自动恢复使用。": "Chi phí thực tế được tính theo hồ sơ giá video theo giây. Giá cố định và hệ số ở đây vẫn được lưu và tự động dùng lại khi xóa liên kết giá video.",
-    "已跳过 {{count}} 个由图片或视频计价接管的模型": "Đã bỏ qua {{count}} mô hình do giá hình ảnh hoặc video quản lý"
+    "已跳过 {{count}} 个由图片或视频计价接管的模型": "Đã bỏ qua {{count}} mô hình do giá hình ảnh hoặc video quản lý",
+    "创建媒体直传会话": "Tạo phiên tải trực tiếp phương tiện",
+    "确认媒体直传结果": "Xác nhận tải trực tiếp phương tiện",
+    "查询异步图片/视频任务、预上传图片或视频参考素材，以及查询、下载和导出生成资源": "Truy vấn tác vụ ảnh/video bất đồng bộ, tải trước ảnh hoặc phương tiện video tham chiếu, đồng thời truy vấn, tải xuống và xuất tài nguyên đã tạo",
+    "可选：预上传图片编辑输入或视频参考素材": "Tùy chọn: tải trước đầu vào chỉnh sửa ảnh hoặc phương tiện video tham chiếu",
+    "多媒体参考生成": "Tạo video với tham chiếu đa phương tiện",
+    "视频任务只接受绝对 HTTP(S) URL；media 模式支持最多 9 图、3 视频、3 音频且总计不超过 12 项。": "Tác vụ video chỉ chấp nhận URL HTTP(S) tuyệt đối; chế độ media hỗ trợ tối đa 9 ảnh, 3 video, 3 tệp âm thanh và tổng cộng không quá 12 mục.",
+    "参考视频和参考音频由供应商按真实内容探测，单项时长不得超过 15 秒。": "Nhà cung cấp kiểm tra nội dung thực của video và âm thanh tham chiếu; mỗi mục không được dài quá 15 giây.",
+    "参考素材不改变视频按秒计费，计费时长仍使用 output.duration。": "Phương tiện tham chiếu không thay đổi cách tính phí video theo giây; thời lượng tính phí vẫn dùng output.duration.",
+    "预上传视频参考素材": "Tải trước phương tiện video tham chiếu",
+    "先申请预签名会话，再把文件直接 PUT 到对象存储；new-api 不接收文件字节。确认后使用返回的 URL 创建视频任务。": "Trước tiên tạo phiên ký sẵn, sau đó PUT tệp trực tiếp vào kho đối tượng; new-api không nhận byte của tệp. Sau khi xác nhận, dùng URL trả về để tạo tác vụ video.",
+    "1. 创建上传会话": "1. Tạo phiên tải lên",
+    "2. 直接上传文件": "2. Tải tệp trực tiếp",
+    "3. 确认上传": "3. Xác nhận tải lên"
   }
 }

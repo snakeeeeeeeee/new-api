@@ -39,6 +39,14 @@ func SetVideoRouter(router *gin.Engine) {
 		imageTaskQueryRouter.POST("/image/uploads/base64", controller.ProxyImageTaskUpload)
 	}
 
+	mediaUploadRouter := router.Group("/v1")
+	mediaUploadRouter.Use(middleware.RouteTag("relay"))
+	mediaUploadRouter.Use(middleware.AssetKeyAuth(), middleware.UploadRateLimit())
+	{
+		mediaUploadRouter.POST("/media/uploads", controller.CreateMediaUploadSessions)
+		mediaUploadRouter.POST("/media/uploads/complete", controller.CompleteMediaUploads)
+	}
+
 	videoTaskQueryRouter := router.Group("/v1")
 	videoTaskQueryRouter.Use(middleware.RouteTag("relay"))
 	videoTaskQueryRouter.Use(middleware.AssetKeyAuth())

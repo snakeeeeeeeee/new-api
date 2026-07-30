@@ -46,6 +46,7 @@ func TestValidateVideoTaskCreateRequestOperations(t *testing.T) {
 			name: "reference generation",
 			request: dto.VideoTaskCreateRequest{Model: "video-model", Operation: "generation",
 				Input: dto.VideoTaskInputRequest{Prompt: "generate", ReferenceImages: []dto.VideoTaskSource{{Provider: "xai", FileID: "file_1"}}}},
+			wantParam: "input.reference_images[0]",
 		},
 		{
 			name: "edit output is provider validated",
@@ -60,9 +61,10 @@ func TestValidateVideoTaskCreateRequestOperations(t *testing.T) {
 			wantParam: "input.video",
 		},
 		{
-			name: "generation image combinations are provider validated",
+			name: "generation data URL is rejected",
 			request: dto.VideoTaskCreateRequest{Model: "video-model", Operation: "generation",
 				Input: dto.VideoTaskInputRequest{Prompt: "generate", Image: &dto.VideoTaskSource{URL: "data:image/png;base64,AA"}, ReferenceImages: []dto.VideoTaskSource{{URL: "https://example.com/ref.png"}}}},
+			wantParam: "input.image",
 		},
 		{
 			name: "edit images are provider validated",
@@ -96,6 +98,46 @@ func TestValidateVideoTaskSourceRejectsAmbiguousSource(t *testing.T) {
 	}))
 	assert.NotEmpty(t, validateVideoTaskSource(&dto.VideoTaskSource{Provider: "xai"}))
 	assert.Empty(t, validateVideoTaskSource(&dto.VideoTaskSource{URL: "data:video/mp4;base64,AA"}))
+	assert.NotEmpty(t, validateVideoReferenceSource(&dto.VideoTaskSource{URL: "data:video/mp4;base64,AA"}))
+}
+
+func TestValidateVideoTaskMediaReferences(t *testing.T) {
+	request := dto.VideoTaskCreateRequest{
+		Model: "seedance-2.0-720p", Operation: "generation",
+		Input: dto.VideoTaskInputRequest{
+			Prompt: "combine references", ReferenceMode: "media",
+			ReferenceImages: []dto.VideoTaskSource{{URL: "https://example.com/a.png", Name: "character"}},
+			ReferenceVideos: []dto.VideoTaskSource{{URL: "https://example.com/a.mp4", Name: "motion"}},
+			ReferenceAudios: []dto.VideoTaskSource{{URL: "https://example.com/a.m4a", Name: "music"}},
+		},
+	}
+	normalizeVideoTaskCreateRequest(&request)
+	param, message := validateVideoTaskCreateRequest(&request)
+	assert.Empty(t, param)
+	assert.Empty(t, message)
+
+	request.Input.ReferenceAudios[0].Name = "motion"
+	param, message = validateVideoTaskCreateRequest(&request)
+	assert.Equal(t, "input", param)
+	assert.Contains(t, message, "unique")
+}
+
+func TestVideoTaskRequestSnapshotHashesReferenceURLs(t *testing.T) {
+	request := dto.VideoTaskCreateRequest{
+		Model: "seedance-2.0-720p", Operation: "generation",
+		Input: dto.VideoTaskInputRequest{
+			Prompt: "generate", ReferenceMode: "media",
+			ReferenceVideos: []dto.VideoTaskSource{{
+				URL: "https://media.example.com/clip.mp4?signature=secret", Name: "clip",
+			}},
+		},
+	}
+	snapshot, err := videoTaskRequestSnapshot(request)
+	require.NoError(t, err)
+	assert.NotContains(t, string(snapshot), "signature")
+	assert.NotContains(t, string(snapshot), "secret")
+	assert.Contains(t, string(snapshot), `"url":"sha256:`)
+	assert.Equal(t, "https://media.example.com/clip.mp4?signature=secret", request.Input.ReferenceVideos[0].URL)
 }
 
 func TestNormalizeVideoTaskProviderOptionsNamespace(t *testing.T) {

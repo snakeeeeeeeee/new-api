@@ -64,6 +64,13 @@ const OPERATION_TITLES = {
   downloadVideoAsset: '下载视频资源',
   uploadImageInputs: '预上传图片',
   uploadBase64ImageInputs: '预上传 Base64 图片',
+  createMediaUploadSessions: '创建媒体直传会话',
+  completeMediaUploads: '确认媒体直传结果',
+};
+
+const MEDIA_UPLOAD_OPERATION_IDS = {
+  create: 'createMediaUploadSessions',
+  complete: 'completeMediaUploads',
 };
 
 const ASYNC_CREATE_REQUEST = `curl "$BASE_URL/v1/image/tasks" \\
@@ -229,17 +236,50 @@ const VIDEO_REFERENCE_GENERATION_REQUEST = `curl "$BASE_URL/v1/video/tasks" \\
   -H "Authorization: Bearer $MODEL_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "grok-imagine-video",
+    "model": "seedance-2.0-720p",
     "operation": "generation",
     "input": {
-      "prompt": "Use the references to keep the character consistent",
+      "prompt": "Use @character, follow @motion, and match @music",
+      "reference_mode": "media",
       "reference_images": [
-        {"url": "https://cdn.example.com/reference-1.png"},
-        {"provider": "xai", "file_id": "file_reference_2"}
+        {"url": "https://cdn.example.com/character.png", "name": "character"}
+      ],
+      "reference_videos": [
+        {"url": "https://cdn.example.com/motion.mp4", "name": "motion"}
+      ],
+      "reference_audios": [
+        {"url": "https://cdn.example.com/music.mp3", "name": "music"}
       ]
     },
-    "output": {"duration": 5, "resolution": "720p"}
+    "output": {"duration": 4, "aspect_ratio": "16:9"}
   }'`;
+
+const MEDIA_UPLOAD_CREATE_REQUEST = `curl "$BASE_URL/v1/media/uploads" \\
+  -X POST \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "files": [
+      {
+        "client_id": "motion",
+        "kind": "video",
+        "filename": "motion.mp4",
+        "mime_type": "video/mp4",
+        "size_bytes": 1048576
+      }
+    ]
+  }'`;
+
+const MEDIA_UPLOAD_PUT_REQUEST = `curl "$UPLOAD_URL" \\
+  -X PUT \\
+  -H "Content-Type: video/mp4" \\
+  --data-binary @motion.mp4`;
+
+const MEDIA_UPLOAD_COMPLETE_REQUEST = `curl "$BASE_URL/v1/media/uploads/complete" \\
+  -X POST \\
+  -H "Authorization: Bearer $RESOURCE_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"upload_ids":["upload_xxx"]}'`;
 
 const VIDEO_EDIT_REQUEST = `curl "$BASE_URL/v1/video/tasks" \\
   -X POST \\
@@ -938,7 +978,7 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
             ],
             [
               t(
-                '查询异步图片/视频任务、预上传图片，以及查询、下载和导出生成资源',
+                '查询异步图片/视频任务、预上传图片或视频参考素材，以及查询、下载和导出生成资源',
               ),
               t('资源 API Key（ak_...）'),
               'Bearer ak_...',
@@ -973,8 +1013,8 @@ function OverviewDocs({ onOpenApiKeys, onOpenWebhook, t }) {
           rows={[
             [
               '1',
-              '/v1/image/uploads',
-              t('可选：预上传图片编辑所需的图片或遮罩'),
+              '/v1/image/uploads 或 /v1/media/uploads',
+              t('可选：预上传图片编辑输入或视频参考素材'),
             ],
             [
               '2',
@@ -1172,7 +1212,7 @@ function AsyncVideoDocs({ t }) {
         )}
       >
         <EndpointTable
-          tags={['Async Videos']}
+          tags={['Async Videos', 'Media Uploads']}
           apiKey={(operation) =>
             operation.operationId === 'createVideoTask'
               ? t('普通 API Token')
@@ -1208,9 +1248,9 @@ function AsyncVideoDocs({ t }) {
       </DocumentationSection>
 
       <DocumentationSection
-        title={`${t('参考图生成')} · POST /v1/video/tasks`}
+        title={`${t('多媒体参考生成')} · POST /v1/video/tasks`}
         description={t(
-          '输入源支持公共 URL、供应商支持的 data URL，以及 provider + file_id 文件引用。',
+          '视频任务只接受绝对 HTTP(S) URL；media 模式支持最多 9 图、3 视频、3 音频且总计不超过 12 项。',
         )}
       >
         <CodeExample title={t('请求示例')}>
@@ -1218,14 +1258,37 @@ function AsyncVideoDocs({ t }) {
         </CodeExample>
         <Text type='tertiary'>
           {t(
-            '需要 ak_ 鉴权的 Asset URL 不保证上游能够读取；应使用公开 URL 或供应商文件引用。',
+            '参考视频和参考音频由供应商按真实内容探测，单项时长不得超过 15 秒。',
           )}
         </Text>
         <Text type='tertiary'>
-          {t(
-            'xAI 参考图生成最多支持 7 张图片，当前应使用 grok-imagine-video；grok-imagine-video-1.5 不支持 reference_images。',
-          )}
+          {t('参考素材不改变视频按秒计费，计费时长仍使用 output.duration。')}
         </Text>
+      </DocumentationSection>
+
+      <DocumentationSection
+        title={`${t('预上传视频参考素材')} · POST /v1/media/uploads`}
+        description={t(
+          '先申请预签名会话，再把文件直接 PUT 到对象存储；new-api 不接收文件字节。确认后使用返回的 URL 创建视频任务。',
+        )}
+      >
+        <div className='grid grid-cols-1 gap-4 xl:grid-cols-2'>
+          <CodeExample title={t('1. 创建上传会话')}>
+            {MEDIA_UPLOAD_CREATE_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('2. 直接上传文件')}>
+            {MEDIA_UPLOAD_PUT_REQUEST}
+          </CodeExample>
+          <CodeExample title={t('3. 确认上传')}>
+            {MEDIA_UPLOAD_COMPLETE_REQUEST}
+          </CodeExample>
+        </div>
+        <OperationSchemaDefinition
+          operationId={MEDIA_UPLOAD_OPERATION_IDS.create}
+        />
+        <OperationSchemaDefinition
+          operationId={MEDIA_UPLOAD_OPERATION_IDS.complete}
+        />
       </DocumentationSection>
 
       <DocumentationSection

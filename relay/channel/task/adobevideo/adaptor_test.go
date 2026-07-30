@@ -82,17 +82,17 @@ func TestPrepareNormalizedVideoRequestMapsReferenceImagesInPublicOrder(t *testin
 		Model:     "seedance-2.0-fast-480p",
 		Operation: "generation",
 		Input: dto.VideoTaskInputRequest{
-			Prompt: "keep the subject",
-			Image:  &dto.VideoTaskSource{URL: "data:image/png;base64,aW1hZ2U="},
+			Prompt:        "keep the subject",
+			ReferenceMode: "media",
+			Image:         &dto.VideoTaskSource{URL: "https://example.com/subject.png", Name: "subject"},
 			ReferenceImages: []dto.VideoTaskSource{
-				{URL: "https://example.com/style.webp"},
+				{URL: "https://example.com/style.webp", Name: "style"},
 				{URL: "https://example.com/background.png"},
 			},
+			ReferenceVideos: []dto.VideoTaskSource{{URL: "https://example.com/motion.mp4", Name: "motion"}},
+			ReferenceAudios: []dto.VideoTaskSource{{URL: "https://example.com/music.m4a", Name: "music"}},
 		},
 		Output: dto.VideoTaskOutputRequest{Duration: &duration},
-		ProviderOptions: map[string]map[string]any{
-			ProviderOptionsNamespace: {"reference_mode": "media"},
-		},
 	}
 	info := &relaycommon.RelayInfo{
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
@@ -112,9 +112,14 @@ func TestPrepareNormalizedVideoRequestMapsReferenceImagesInPublicOrder(t *testin
 	require.NoError(t, common.Unmarshal(data, &payload))
 	assert.Equal(t, "media", payload.ReferenceMode)
 	require.Len(t, payload.ReferenceImages, 3)
-	assert.Equal(t, "data:image/png;base64,aW1hZ2U=", payload.ReferenceImages[0].URL)
+	assert.Equal(t, "https://example.com/subject.png", payload.ReferenceImages[0].URL)
+	assert.Equal(t, "subject", payload.ReferenceImages[0].Name)
 	assert.Equal(t, "https://example.com/style.webp", payload.ReferenceImages[1].URL)
 	assert.Equal(t, "https://example.com/background.png", payload.ReferenceImages[2].URL)
+	require.Len(t, payload.ReferenceVideos, 1)
+	assert.Equal(t, "motion", payload.ReferenceVideos[0].Name)
+	require.Len(t, payload.ReferenceAudios, 1)
+	assert.Equal(t, "music", payload.ReferenceAudios[0].Name)
 
 	estimate, taskErr := adaptor.ResolveVideoBilling(c, info)
 	require.Nil(t, taskErr)
@@ -216,6 +221,18 @@ func TestPrepareNormalizedVideoRequestRejectsInvalidInputBeforeDispatch(t *testi
 				Output: dto.VideoTaskOutputRequest{Duration: &validDuration},
 				ProviderOptions: map[string]map[string]any{
 					ProviderOptionsNamespace: {"duration": 8},
+				},
+			},
+			code: "invalid_provider_options",
+		},
+		{
+			name: "public and provider reference mode conflict",
+			request: dto.VideoTaskCreateRequest{
+				Model: "alias", Operation: "generation",
+				Input:  dto.VideoTaskInputRequest{Prompt: "cat", ReferenceMode: "media"},
+				Output: dto.VideoTaskOutputRequest{Duration: &validDuration},
+				ProviderOptions: map[string]map[string]any{
+					ProviderOptionsNamespace: {"reference_mode": "media"},
 				},
 			},
 			code: "invalid_provider_options",

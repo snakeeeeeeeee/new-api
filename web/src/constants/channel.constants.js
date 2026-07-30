@@ -199,6 +199,11 @@ export const CHANNEL_OPTIONS = [
     color: 'orange',
     label: 'Adobe2API 视频 / Seedance',
   },
+  {
+    value: 60,
+    color: 'green',
+    label: 'Higgsfield2API 视频 / Seedance',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.
