@@ -205,6 +205,60 @@ func newClaudeIntegrityResponseError(reason string, err error, responseBody []by
 	return apiErr
 }
 
+func claudeIntegrityStreamSummary(
+	info *relaycommon.RelayInfo,
+	diagnostics *claudeResponseDiagnostics,
+	reason string,
+	committed bool,
+) map[string]any {
+	summary := make(map[string]any)
+	if diagnostics != nil {
+		for key, value := range diagnostics.summary() {
+			summary[key] = value
+		}
+	}
+	summary["reason"] = strings.TrimSpace(reason)
+	summary["response_committed"] = committed
+	if info != nil {
+		summary["received_events"] = info.ReceivedResponseCount
+		summary["sent_events"] = info.SendResponseCount
+	}
+	return summary
+}
+
+func attachClaudeIntegrityStreamDiagnostic(
+	apiErr *types.NewAPIError,
+	info *relaycommon.RelayInfo,
+	diagnostics *claudeResponseDiagnostics,
+	reason string,
+	committed bool,
+) *types.NewAPIError {
+	if apiErr == nil {
+		return nil
+	}
+	if apiErr.Diagnostic == nil {
+		apiErr.Diagnostic = &types.RelayErrorDiagnostic{}
+	}
+	apiErr.Diagnostic.StreamSummary = claudeIntegrityStreamSummary(info, diagnostics, reason, committed)
+	return apiErr
+}
+
+func newClaudeIntegrityStreamError(
+	reason string,
+	err error,
+	info *relaycommon.RelayInfo,
+	diagnostics *claudeResponseDiagnostics,
+	committed bool,
+) *types.NewAPIError {
+	return attachClaudeIntegrityStreamDiagnostic(
+		newClaudeIntegrityError(reason, err),
+		info,
+		diagnostics,
+		reason,
+		committed,
+	)
+}
+
 func newClaudeClientDisconnectedError(err error) *types.NewAPIError {
 	if err == nil {
 		err = errors.New("client disconnected")
@@ -282,6 +336,7 @@ func handleClaudeIntegrityStreamEvent(c *gin.Context, info *relaycommon.RelayInf
 			}
 			data = patchClaudeCacheTTLBillingCompatUsageData(data, info, "usage", patchUsage)
 		}
+		claudeInfo.Diagnostics.recordDownstream(event.Type, data)
 		if err := writeClaudeIntegrityEvent(c, event.Type, data); err != nil {
 			return false, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
@@ -295,6 +350,7 @@ func handleClaudeIntegrityStreamEvent(c *gin.Context, info *relaycommon.RelayInf
 		if err != nil {
 			return false, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
+		claudeInfo.Diagnostics.recordDownstream(event.Type, string(jsonData))
 		if err = writeOpenAIIntegrityData(c, string(jsonData)); err != nil {
 			return false, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
@@ -317,29 +373,31 @@ func finalizeClaudeIntegrityUsage(c *gin.Context, info *relaycommon.RelayInfo, c
 
 func finishClaudeIntegrityStream(c *gin.Context, info *relaycommon.RelayInfo, claudeInfo *ClaudeResponseInfo) *types.NewAPIError {
 	finalizeClaudeIntegrityUsage(c, info, claudeInfo)
-	if info.RelayFormat != types.RelayFormatOpenAI {
-		return nil
-	}
-	if info.ShouldIncludeUsage {
-		openAIUsage := buildDownstreamOpenAIStyleUsageFromClaudeUsage(info, claudeInfo.Usage)
-		response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, openAIUsage)
-		data, err := common.Marshal(response)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeBadResponseBody)
+	if info.RelayFormat == types.RelayFormatOpenAI {
+		if info.ShouldIncludeUsage {
+			openAIUsage := buildDownstreamOpenAIStyleUsageFromClaudeUsage(info, claudeInfo.Usage)
+			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, openAIUsage)
+			data, err := common.Marshal(response)
+			if err != nil {
+				return types.NewError(err, types.ErrorCodeBadResponseBody)
+			}
+			claudeInfo.Diagnostics.recordDownstream("usage", string(data))
+			if err = writeOpenAIIntegrityData(c, string(data)); err != nil {
+				return types.NewError(err, types.ErrorCodeBadResponseBody)
+			}
+			info.SendResponseCount++
 		}
-		if err = writeOpenAIIntegrityData(c, string(data)); err != nil {
+		claudeInfo.Diagnostics.recordDownstream("done", "[DONE]")
+		if err := writeOpenAIIntegrityData(c, "[DONE]"); err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 		info.SendResponseCount++
 	}
-	if err := writeOpenAIIntegrityData(c, "[DONE]"); err != nil {
-		return types.NewError(err, types.ErrorCodeBadResponseBody)
-	}
-	info.SendResponseCount++
+	captureSuspiciousClaudeResponse(c, info, claudeInfo, nil)
 	return nil
 }
 
-func sendClaudeIntegrityStreamError(c *gin.Context, info *relaycommon.RelayInfo) {
+func sendClaudeIntegrityStreamError(c *gin.Context, info *relaycommon.RelayInfo, diagnostics *claudeResponseDiagnostics) {
 	message := "Upstream Claude stream ended before completion."
 	if info.RelayFormat == types.RelayFormatClaude {
 		payload := struct {
@@ -354,8 +412,11 @@ func sendClaudeIntegrityStreamError(c *gin.Context, info *relaycommon.RelayInfo)
 			},
 		}
 		data, err := common.Marshal(payload)
-		if err == nil && writeClaudeIntegrityEvent(c, "error", string(data)) == nil {
-			info.SendResponseCount++
+		if err == nil {
+			diagnostics.recordDownstream("error", string(data))
+			if writeClaudeIntegrityEvent(c, "error", string(data)) == nil {
+				info.SendResponseCount++
+			}
 		}
 		return
 	}
@@ -369,23 +430,28 @@ func sendClaudeIntegrityStreamError(c *gin.Context, info *relaycommon.RelayInfo)
 		},
 	}
 	data, err := common.Marshal(payload)
-	if err == nil && writeOpenAIIntegrityData(c, string(data)) == nil {
-		info.SendResponseCount++
+	if err == nil {
+		diagnostics.recordDownstream("error", string(data))
+		if writeOpenAIIntegrityData(c, string(data)) == nil {
+			info.SendResponseCount++
+		}
 	}
 }
 
-func markClaudeIntegrityStreamIncomplete(c *gin.Context, info *relaycommon.RelayInfo, reason string, upstreamFailure bool) {
+func markClaudeIntegrityStreamIncomplete(
+	c *gin.Context,
+	info *relaycommon.RelayInfo,
+	diagnostics *claudeResponseDiagnostics,
+	reason string,
+	upstreamFailure bool,
+) {
 	common.SetContextKey(c, constant.ContextKeyClaudeStreamIncomplete, true)
 	common.SetContextKey(c, constant.ContextKeyClaudeStreamIncompleteReason, reason)
 	logger.LogError(c, "claude_stream_incomplete: "+reason)
 	if upstreamFailure {
-		service.CaptureStreamErrorSnapshot(c, reason, map[string]any{
-			"reason":             reason,
-			"upstream_failure":   true,
-			"received_events":    info.ReceivedResponseCount,
-			"sent_events":        info.SendResponseCount,
-			"response_committed": true,
-		})
+		summary := claudeIntegrityStreamSummary(info, diagnostics, reason, true)
+		summary["upstream_failure"] = true
+		service.CaptureStreamErrorSnapshot(c, reason, summary)
 		service.RecordAggregateRouteRPMFailure(c, info.OriginModelName)
 		routeGroup := common.GetContextKeyString(c, constant.ContextKeyRouteGroup)
 		service.RecordAggregateRouteSmartFailure(c, info.OriginModelName, routeGroup, http.StatusBadGateway)
@@ -401,6 +467,7 @@ func ClaudeIntegrityStreamHandler(c *gin.Context, resp *http.Response, info *rel
 		Created:      common.GetTimestamp(),
 		Model:        info.UpstreamModelName,
 		ResponseText: strings.Builder{},
+		Diagnostics:  newClaudeResponseDiagnostics(info.UpstreamModelName),
 		Usage:        &dto.Usage{},
 	}
 	state := newClaudeIntegrityState(claudeIntegrityAllowsEmpty(info))
@@ -430,17 +497,23 @@ func ClaudeIntegrityStreamHandler(c *gin.Context, resp *http.Response, info *rel
 			if !committed {
 				return nil, newClaudeClientDisconnectedError(c.Request.Context().Err())
 			}
-			markClaudeIntegrityStreamIncomplete(c, info, "client_disconnected", false)
+			markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, "client_disconnected", false)
 			return finalizeClaudeIntegrityUsage(c, info, claudeInfo), nil
 		case <-info.ClaudeResponseIntegrityAttemptDone():
 			if info.ClaudeResponseIntegrityFirstBlockTimedOut() && !committed {
-				return nil, newClaudeIntegrityError("first_block_timeout", errors.New("first content block timeout"))
+				return nil, newClaudeIntegrityStreamError(
+					"first_block_timeout",
+					errors.New("first content block timeout"),
+					info,
+					claudeInfo.Diagnostics,
+					false,
+				)
 			}
 			if c.Request.Context().Err() != nil {
 				if !committed {
 					return nil, newClaudeClientDisconnectedError(c.Request.Context().Err())
 				}
-				markClaudeIntegrityStreamIncomplete(c, info, "client_disconnected", false)
+				markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, "client_disconnected", false)
 				return finalizeClaudeIntegrityUsage(c, info, claudeInfo), nil
 			}
 		case item, ok := <-items:
@@ -449,7 +522,7 @@ func ClaudeIntegrityStreamHandler(c *gin.Context, resp *http.Response, info *rel
 				if !committed {
 					return nil, newClaudeClientDisconnectedError(c.Request.Context().Err())
 				}
-				markClaudeIntegrityStreamIncomplete(c, info, "client_disconnected", false)
+				markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, "client_disconnected", false)
 				return finalizeClaudeIntegrityUsage(c, info, claudeInfo), nil
 			}
 			if !ok {
@@ -457,18 +530,30 @@ func ClaudeIntegrityStreamHandler(c *gin.Context, resp *http.Response, info *rel
 					return claudeInfo.Usage, nil
 				}
 				if !committed {
-					return nil, newClaudeIntegrityError("eof_before_first_block", io.ErrUnexpectedEOF)
+					return nil, newClaudeIntegrityStreamError(
+						"eof_before_first_block",
+						io.ErrUnexpectedEOF,
+						info,
+						claudeInfo.Diagnostics,
+						false,
+					)
 				}
-				markClaudeIntegrityStreamIncomplete(c, info, "eof_before_message_stop", true)
-				sendClaudeIntegrityStreamError(c, info)
+				sendClaudeIntegrityStreamError(c, info, claudeInfo.Diagnostics)
+				markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, "eof_before_message_stop", true)
 				return finalizeClaudeIntegrityUsage(c, info, claudeInfo), nil
 			}
 			if item.err != nil {
 				if !committed {
-					return nil, newClaudeIntegrityError("scanner_error_before_first_block", item.err)
+					return nil, newClaudeIntegrityStreamError(
+						"scanner_error_before_first_block",
+						item.err,
+						info,
+						claudeInfo.Diagnostics,
+						false,
+					)
 				}
-				markClaudeIntegrityStreamIncomplete(c, info, "scanner_error", true)
-				sendClaudeIntegrityStreamError(c, info)
+				sendClaudeIntegrityStreamError(c, info, claudeInfo.Diagnostics)
+				markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, "scanner_error", true)
 				return finalizeClaudeIntegrityUsage(c, info, claudeInfo), nil
 			}
 			if !firstEventRecorded {
@@ -479,29 +564,49 @@ func ClaudeIntegrityStreamHandler(c *gin.Context, resp *http.Response, info *rel
 			info.ReceivedResponseCount++
 			var event dto.ClaudeResponse
 			if err := common.UnmarshalJsonStr(item.data, &event); err != nil {
+				claudeInfo.Diagnostics.recordUpstream("malformed_json", item.data)
 				if !committed {
-					return nil, newClaudeIntegrityError("malformed_json_before_first_block", err)
+					return nil, newClaudeIntegrityStreamError(
+						"malformed_json_before_first_block",
+						err,
+						info,
+						claudeInfo.Diagnostics,
+						false,
+					)
 				}
-				markClaudeIntegrityStreamIncomplete(c, info, "malformed_json", true)
-				sendClaudeIntegrityStreamError(c, info)
+				sendClaudeIntegrityStreamError(c, info, claudeInfo.Diagnostics)
+				markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, "malformed_json", true)
 				return finalizeClaudeIntegrityUsage(c, info, claudeInfo), nil
 			}
+			claudeInfo.Diagnostics.recordUpstream(event.Type, item.data)
 			if claudeError := event.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
 				if !committed {
-					return nil, types.WithClaudeError(*claudeError, http.StatusInternalServerError)
+					return nil, attachClaudeIntegrityStreamDiagnostic(
+						types.WithClaudeError(*claudeError, http.StatusInternalServerError),
+						info,
+						claudeInfo.Diagnostics,
+						"upstream_error_event_before_first_block",
+						false,
+					)
 				}
-				markClaudeIntegrityStreamIncomplete(c, info, "upstream_error_event", true)
-				sendClaudeIntegrityStreamError(c, info)
+				sendClaudeIntegrityStreamError(c, info, claudeInfo.Diagnostics)
+				markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, "upstream_error_event", true)
 				return finalizeClaudeIntegrityUsage(c, info, claudeInfo), nil
 			}
 
 			observation, observeErr := state.observe(&event)
 			if observeErr != nil {
 				if !committed {
-					return nil, newClaudeIntegrityError("invalid_sequence_before_first_block", observeErr)
+					return nil, newClaudeIntegrityStreamError(
+						"invalid_sequence_before_first_block",
+						observeErr,
+						info,
+						claudeInfo.Diagnostics,
+						false,
+					)
 				}
-				markClaudeIntegrityStreamIncomplete(c, info, observeErr.Error(), true)
-				sendClaudeIntegrityStreamError(c, info)
+				sendClaudeIntegrityStreamError(c, info, claudeInfo.Diagnostics)
+				markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, observeErr.Error(), true)
 				return finalizeClaudeIntegrityUsage(c, info, claudeInfo), nil
 			}
 
@@ -509,7 +614,13 @@ func ClaudeIntegrityStreamHandler(c *gin.Context, resp *http.Response, info *rel
 				bufferedBytes += len(item.data)
 				buffer = append(buffer, claudeIntegrityBufferedEvent{raw: item.data, parsed: event})
 				if len(buffer) > claudeIntegrityMaxBufferedEvents || bufferedBytes > claudeIntegrityMaxBufferedBytes {
-					return nil, newClaudeIntegrityError("first_block_buffer_limit", errors.New("first content block buffer limit exceeded"))
+					return nil, newClaudeIntegrityStreamError(
+						"first_block_buffer_limit",
+						errors.New("first content block buffer limit exceeded"),
+						info,
+						claudeInfo.Diagnostics,
+						false,
+					)
 				}
 				if !observation.firstBlock && !(observation.terminal && state.allowEmpty) {
 					continue
@@ -517,9 +628,17 @@ func ClaudeIntegrityStreamHandler(c *gin.Context, resp *http.Response, info *rel
 				info.MarkClaudeResponseIntegrityFirstBlock()
 				for i := range buffer {
 					if apiErr := writeEvent(&buffer[i].parsed, buffer[i].raw); apiErr != nil {
-						if claudeIntegrityDownstreamCommitted(c) {
+						responseCommitted := claudeIntegrityDownstreamCommitted(c)
+						apiErr = attachClaudeIntegrityStreamDiagnostic(
+							apiErr,
+							info,
+							claudeInfo.Diagnostics,
+							"downstream_write_error",
+							responseCommitted,
+						)
+						if responseCommitted {
 							committed = true
-							markClaudeIntegrityStreamIncomplete(c, info, "downstream_write_error", false)
+							markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, "downstream_write_error", false)
 							return finalizeClaudeIntegrityUsage(c, info, claudeInfo), nil
 						}
 						return nil, apiErr
@@ -532,14 +651,14 @@ func ClaudeIntegrityStreamHandler(c *gin.Context, resp *http.Response, info *rel
 				bufferedBytes = 0
 				committed = true
 			} else if apiErr := writeEvent(&event, item.data); apiErr != nil {
-				markClaudeIntegrityStreamIncomplete(c, info, "downstream_write_error", false)
+				markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, "downstream_write_error", false)
 				return finalizeClaudeIntegrityUsage(c, info, claudeInfo), nil
 			}
 
 			if observation.terminal {
 				normalStop = true
 				if apiErr := finishClaudeIntegrityStream(c, info, claudeInfo); apiErr != nil {
-					markClaudeIntegrityStreamIncomplete(c, info, "downstream_final_write_error", false)
+					markClaudeIntegrityStreamIncomplete(c, info, claudeInfo.Diagnostics, "downstream_final_write_error", false)
 					return claudeInfo.Usage, nil
 				}
 				return claudeInfo.Usage, nil
@@ -583,6 +702,7 @@ func ClaudeIntegrityHandler(c *gin.Context, resp *http.Response, info *relaycomm
 		Created:      common.GetTimestamp(),
 		Model:        info.UpstreamModelName,
 		ResponseText: strings.Builder{},
+		Diagnostics:  newClaudeResponseDiagnostics(info.UpstreamModelName),
 		Usage:        &dto.Usage{},
 	}
 	if handleErr := HandleClaudeResponseData(c, info, claudeInfo, resp, responseBody); handleErr != nil {

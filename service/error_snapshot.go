@@ -39,12 +39,13 @@ const (
 var errorSnapshotSecretAssignmentPattern = regexp.MustCompile(`(?i)((?:authorization|proxy[-_ ]?authorization|cookie|set[-_ ]?cookie|api[-_ ]?key|apikey|x[-_ ]?api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|channel[-_ ]?key|password|credential|secret)["']?\s*[:=]\s*["']?)[^"',}\]\r\n]+`)
 
 const (
-	errorSnapshotRetryIndexKey      = "_error_snapshot_retry_index"
-	errorSnapshotUpstreamRequestKey = "_error_snapshot_upstream_request"
-	errorSnapshotChannelSelectedKey = "_error_snapshot_channel_selected"
-	errorSnapshotCurrentCapturedKey = "_error_snapshot_current_captured"
-	errorSnapshotAnyCapturedKey     = "_error_snapshot_any_captured"
-	errorSnapshotTerminalOutcomeKey = "_error_snapshot_terminal_outcome"
+	errorSnapshotRetryIndexKey          = "_error_snapshot_retry_index"
+	errorSnapshotUpstreamRequestKey     = "_error_snapshot_upstream_request"
+	errorSnapshotUpstreamPassthroughKey = "_error_snapshot_upstream_passthrough"
+	errorSnapshotChannelSelectedKey     = "_error_snapshot_channel_selected"
+	errorSnapshotCurrentCapturedKey     = "_error_snapshot_current_captured"
+	errorSnapshotAnyCapturedKey         = "_error_snapshot_any_captured"
+	errorSnapshotTerminalOutcomeKey     = "_error_snapshot_terminal_outcome"
 )
 
 const (
@@ -53,6 +54,7 @@ const (
 	ErrorSnapshotOutcomeFinalFailure       = "final_failure"
 	ErrorSnapshotOutcomeStreamIncomplete   = "stream_incomplete"
 	ErrorSnapshotOutcomeClientDisconnected = "client_disconnected"
+	ErrorSnapshotOutcomeSuspiciousSuccess  = "suspicious_success"
 )
 
 type ErrorSnapshotSettingsView struct {
@@ -118,6 +120,7 @@ type errorSnapshotEnvelope struct {
 	ClientRequest    *errorSnapshotBodyFragment `json:"client_request,omitempty"`
 	UpstreamRequest  *errorSnapshotBodyFragment `json:"upstream_request,omitempty"`
 	UpstreamResponse *errorSnapshotBodyFragment `json:"upstream_response,omitempty"`
+	Response         map[string]any             `json:"response,omitempty"`
 	Stream           map[string]any             `json:"stream,omitempty"`
 }
 
@@ -170,6 +173,7 @@ func BeginErrorSnapshotAttempt(c *gin.Context, retryIndex int) {
 	}
 	c.Set(errorSnapshotRetryIndexKey, retryIndex)
 	c.Set(errorSnapshotUpstreamRequestKey, nil)
+	c.Set(errorSnapshotUpstreamPassthroughKey, false)
 	c.Set(errorSnapshotChannelSelectedKey, false)
 	c.Set(errorSnapshotCurrentCapturedKey, false)
 }
@@ -201,6 +205,28 @@ func CaptureErrorSnapshotUpstreamRequestIfNeeded(c *gin.Context, body []byte) {
 		capture.Body = append([]byte(nil), body...)
 	}
 	c.Set(errorSnapshotUpstreamRequestKey, capture)
+}
+
+func CaptureClaudeDiagnosticUpstreamRequestIfNeeded(c *gin.Context, body []byte) {
+	if c == nil || len(body) == 0 || !error_snapshot_setting.GetSnapshot().Enabled {
+		return
+	}
+	diagnosticBody, truncated := buildClaudeDiagnosticRequestBody(body, errorSnapshotMaxBodyFragment)
+	capture := errorSnapshotBodyCapture{
+		OriginalSize: int64(len(body)),
+		ContentType:  "application/json",
+		SHA256:       hashErrorSnapshotBytes(body),
+		Truncated:    truncated,
+		Body:         diagnosticBody,
+	}
+	c.Set(errorSnapshotUpstreamRequestKey, capture)
+}
+
+func MarkClaudeDiagnosticUpstreamPassthrough(c *gin.Context) {
+	if c == nil || !error_snapshot_setting.GetSnapshot().Enabled {
+		return
+	}
+	c.Set(errorSnapshotUpstreamPassthroughKey, true)
 }
 
 func CaptureRelayErrorSnapshot(c *gin.Context, err *types.NewAPIError, internalRetry bool) {

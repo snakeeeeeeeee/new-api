@@ -8,8 +8,9 @@ import (
 )
 
 const (
-	ErrorSnapshotCaptureLevelSummary  = "summary"
-	ErrorSnapshotCaptureLevelPriority = "priority"
+	ErrorSnapshotCaptureLevelSummary    = "summary"
+	ErrorSnapshotCaptureLevelPriority   = "priority"
+	ErrorSnapshotCaptureLevelDiagnostic = "diagnostic"
 )
 
 type ErrorSnapshot struct {

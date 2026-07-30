@@ -1114,3 +1114,296 @@
 - Docker dev already connects new-api and Adobe2API through the external `ai-gateway` network, while the opt-in async mock shares new-api's private dev network. Mock acceptance can target `http://async-test-mock:8080` without exposing or changing the real Adobe2API channel.
 - The local `VideoPricing` Option is currently absent and `GroupRatio` exists. Acceptance cleanup must therefore delete the temporary VideoPricing Option rather than restoring an invented empty value, while restoring the exact prior GroupRatio text.
 - A meaningful wallet-only check requires an active subscription and `subscription_only` user preference. The disposable fixture will include both; wallet movement and unchanged subscription usage will be asserted independently.
+## 2026-07-29 — Claude 渠道“空任务回复”
+
+- 当前只确认了用户提供的材料：测试脚本路径、两张截图、仓库当前源码。
+- 截图声称 channel 70 为原生 Claude 协议，`new-api` 只透传上游 SSE；该说法尚需对当前源码和脚本验证。
+- 截图中的三类现象不能预先视为同一根因：
+  - 9/12 正常；
+  - 2/12 HTTP 200 且只有 ping、无 usage；
+  - 1/12 HTTP 200 返回空任务式文本，但有完整 input/cache usage。
+- 工作树已有大量与本诊断无关的未跟踪文件；本次不触碰。
+- 客户脚本的已确认行为：
+  - `burst` 并发复用一个 `http.Client`，每条请求重新构造 body，只改唯一 tag。
+  - body 并非“形态完全一致、只改哨兵”：默认还会覆盖 `max_tokens=256`，并在第一个 system 文本块前注入唯一 marker；指定 `-model` 时还可能删除 `thinking`。
+  - `setLastUserText` 是从尾部寻找最后一个 `role=user`，只替换其最后一个 text block；不会删除同一 user 消息内的其他非 text 内容，也不会删除该 user 后面的任何 assistant/system 消息。
+  - `GREET` 实际口径包含任何“既无哨兵、又非 tool、又非空”的输出，不只是真正问候语。
+  - `EMPTY` 只表示脚本没有收集到 `content_block_delta.delta.text`；它会忽略 thinking、JSON delta 等非 text 内容，因此不等价于“上游 SSE 只有 ping”。
+  - usage 只取 `message_start.message.usage`，不是最终 `message_delta` 的完整 usage。
+- 因此脚本注释中“回问候语即证明模型没拿到任务正文”和“空流即整条 SSE 无任何内容事件”均超出了代码能证明的范围。
+- 用户已澄清：截图中的 `channel: 70` 只是客户接入后记录到的渠道 ID，`supertoken` 即己方服务层。本诊断不再把 channel 70 当作协议或供应商线索。
+- 当前仓库存在 `relay/channel/claude/response_integrity.go` 及覆盖 ping、提前 EOF、`message_stop` 的测试；需确认客户部署 commit 是否包含该逻辑。
+- 在本机常见临时路径未找到 `gwprobe-sample.json`；目前没有真实 capture body 可核验消息顺序和 content block 结构。
+- 已确认旧 Claude 原生流路径的行为：
+  - `ClaudeStreamHandler` 使用通用 `StreamScannerHandler`，该 helper 会先设置下游 SSE headers，并可由独立 goroutine 定时调用 `PingData(c)`。
+  - scanner EOF、scanner error、idle timeout 只写日志/context stop reason，不作为错误返回给 `ClaudeStreamHandler`。
+  - 之后 `HandleStreamFinalResponse` 会在 usage 不完整时本地估算 usage，handler 最终仍返回成功。因此“HTTP 200 且只有 ping”可以由 `new-api` 自己造成，不要求 supertoken 发过 ping。
+- 当前完整性保护路径会在首个 `content_block_start` 前缓冲所有事件；如果只有 ping 后 EOF，则返回 `claude_content_block_missing` / 502，允许 controller 在响应尚未提交时重试。该能力受 `ClaudeResponseIntegrityEnabled` 开关控制。
+- `I'm ready. What would you like me to work on?` 不存在于当前仓库源码。旧原生 Claude relay 对 `content_block_delta` 文本没有生成逻辑，只做解析、usage patch 和 SSE 重写；该文本不是 `new-api` 内置兜底文案，但仍可能由己方 supertoken 后面的模型调用链响应，不能据此把责任推给外部渠道。
+- 完整 usage 只能证明上游对某份约 27k token 的输入做了计费；不能证明客户期望的最后任务文本包含在上游实际处理的那份输入中。
+- Claude 响应完整性修复 commit 为 `148a2c626`，提交时间 2026-07-20 05:21:23 +0800。
+- 当前 `main` 已包含修复，但默认设置仍是 `response_integrity_fallback_enabled=false`，首块超时默认 30 秒。若 supertoken 未显式开启该配置，请求仍走旧的“先提交 200 + 本地 ping + EOF/scanner error 不上抛”路径。
+- 仓库已有两组与此问题直接相关的既有诊断/验证材料：
+  - `tmp/claude-fable-5-content-block-diagnosis`
+  - `tmp/claude-response-integrity-validation`
+  后续将读取其结论和复现记录，不重新制造生产请求。
+- 既有 fault-injection 验证已确认：
+  - 开启完整性保护后，首块缺失的坏路由返回内部 502 并可切换到下一真实路由；
+  - 坏尝试不产生 consume log，只有最终成功路由计费；
+  - 关闭开关时仍走 legacy handler；
+  - 测试完成后运行时配置恢复为“关闭、30 秒”。
+- “空任务问候”包含正常文本 content block，响应完整性状态机不会把它判为坏流。因此它与“只有 ping”可能同源于上游不稳定，但不是同一个可观测协议错误，不能用首块完整性修复直接识别。
+- 既有 `Content block not found` 诊断针对 HTTP 200 + `content=[]`/refusal，证明旧 non-stream handler 同样会把空内容成功响应原样交给客户端；这与本次有文本问候的样本不同，但共同说明旧路径把 HTTP 200 当成功，缺少语义/结构完整性门槛。
+- 当前 native Claude 请求处理会为每次请求 `DeepCopy` 出独立 DTO，Anthropic adaptor 的 `ConvertClaudeRequest` 本身不改消息；后续 compat/param override 可能改 JSON，需继续核对 body storage 与实际配置。
+- 对 native Claude relay，OpenAI-style role 归一化只在 `RelayFormatOpenAI -> FinalRequestRelayFormatClaude` 时启用；原生 `/v1/messages` 不会自动把中途/尾部 `role=system` 转成 user。是否原样放行取决于 pass-through 与 schema validation 配置。
+- 客户脚本的 `keep-system` 对照是关键但当前截图没有给出两组结果；没有 capture body 也无法确认最后 user 后是否仍有 assistant/system。
+- 异常条目的大额 `input/cache_creation` 是“超大请求被计费”的证据，不足以证明哨兵是上游最后一个有效任务或确实进入了最终模型上下文。
+- `BodyStorage` 存在于单个 Gin context 内；pooled buffer 只在 storage close 后归还，request 间没有共享 reader。每次 relay/retry 都通过 `GetBodyStorage` seek 到 0。现有代码不支持“并发 12 条随机共用/串写请求 body”的猜测。
+- pass-through 路径用 `ReaderOnly(storage)` 避免 `http.NewRequest` 提前关闭 storage；非 pass-through 路径为每条请求创建独立 marshaled buffer。未发现会按概率丢掉最后 message 的本地代码分支。
+- capture 阶段只抓第一个 body >1000 字节的 `/v1/messages`，没有断言 body 包含 `GWPROBE_CAPTURE`，也没有断言最后一条 message 是 user；这是测试样本有效性的缺口。
+- 本机文件中查不到截图两条 Request ID，无法从当前 workspace 还原它们的 request dump 或 raw SSE。
+- 普通相关包测试通过：`go test ./relay/channel/claude ./relay/helper ./controller ./common -count=1`。
+- race run 失败并发现两类竞争：
+  - legacy `StreamScannerHandler` cleanup 的 `stopChan` send/close race，出现在 `TestClaudeStreamHandlerMessageStopOpenUpstreamReturns` 和关闭完整性开关的 legacy 测试；与流收尾可靠性直接相关，但不修改请求正文。
+  - `GetClaudeSettings().NormalizeValidationModes()` 对全局 settings 的原地写入与 Claude 包内并行测试的 settings 访问竞争；需隔离测试夹具因素，当前不能归因到客户 greeting。
+- settings race 的触发测试本身不修改全局配置，只是 `t.Parallel()` 同时调用请求转换；因此 `GetClaudeSettings()` 并发同值写入是实际生产代码竞争，不只是测试 cleanup 干扰。竞争字段为 validation modes 等全局配置，不直接持有/改写 request `messages`。
+- legacy stream 单例 race 测试首次隔离运行通过，stop-channel race 具有时序性；继续多次单例确认。它即使存在也位于流 cleanup，而非请求 upload/body mutation。
+- `go test -race ./relay/channel/claude -run '^TestClaudeStreamHandlerMessageStopOpenUpstreamReturns$' -count=30` 稳定复现 stop-channel send/close race 并失败。该 race 是确认的 legacy 流收尾缺陷。
+- stop-channel race 与已确认的“EOF/scanner error 只记日志、不返回 handler error”共同支持 ping-only 的网关根因；两者都不能生成语义完整的英文 greeting。
+- 测试负载并非普通重复请求：默认 `cold=true` 在第一个 system block 注入唯一 marker，且每条 sentinel 不同；截图 `cache_read=0`、约 27k cache creation 表明 12 路都是大冷前缀。按异常条目约 30,198 输入 token 估算，12 路同时约 36 万输入 token，可能主动放大后端排队/超时问题。
+- 延迟分层（正常 4.5–7.3s、ping-only 约 22s、greeting 58.9s）与并发冷启动下的排队/超时或后端异常分支相符；这是合理推测，不是仅凭时间即可证明的根因。
+- `1/12` 的 Wilson 95% 区间约为 1.5%–35.4%，生产 `39/500` 约为 5.8%–10.5%；点估计接近不是强证据。若合并 2 条 ping-only，本轮静默失败为 `3/12=25%`（区间约 8.9%–53.2%）。
+- 现有 request dump 支持 `raw_request` 和 `upstream_request` 两阶段，后者记录最终转换 JSON；对 pass-through 且未启用 compat 的路径，raw body 本身就是最终 upstream body。greeting 要定根因仍需这两阶段 body/tag 和出口 raw SSE。
+
+### Final assessment
+
+- 已确认根因（ping-only）：legacy Claude stream handler 在收到首个 content block 前就允许本地 ping 提交 HTTP 200；EOF/scanner error/timeout 不上抛，最后仍按成功结束。该路径另有可复现的 stop-channel send/close race。
+- 已有但默认未启用的保护：2026-07-20 的 Claude response integrity fallback 会缓冲至首个 content block，并把首块前 EOF 变为 retryable 502；当前默认开关是 false。
+- 不能确认的根因（greeting）：英文问候不是 new-api 固定文本，且它是有正常 content block/usage 的协议完整响应；当前代码未发现并发 BodyStorage 串包或随机丢 message 的路径。
+- greeting 的高优先级候选：
+  1. capture/replay 没保证 sentinel 是最终有效 message（可能有尾部 assistant/system 或同 message 其他 block）；
+  2. 12 路约 3 万 token 冷前缀并发触发己方后端排队、超时恢复或语义降级；
+  3. 更下游模型服务处理了完整计费输入但未遵从指令。
+- 排除/低优先级：new-api 内置问候兜底、prompt output cache 命中、当前代码中的跨请求 body reader 复用。
+- 最小闭环证据：异常 tag 对应的 raw request、final upstream request、出口 raw SSE；并验证 `messages[len-1].role=user` 且最后 user 只有一个 sentinel text block。
+## 2026-07-29 — Claude 空流/空任务回复公开讨论检索
+
+- 待确认官方仓库 remote 后再开始 GitHub issue/PR 定向检索。
+- 目标症状拆为四组关键词：
+  - `empty stream`, `empty response`, `ping only`, `EOF`, `scanner error`
+  - `content block not found`, `missing content block`, `content=[]`
+  - `I'm ready`, `What would you like me to work on`, `no task`
+  - `model mapping`, `wrong model`, `model spoofing`, `fallback model`
+- 本地 remote 关系：
+  - 当前 new-api checkout 的 origin 是 `snakeeeeeeeee/new-api` fork；代码 module/项目身份指向官方候选 `QuantumNous/new-api`。
+  - sub2api checkout 的 origin 是 `snakeeeeeeeee/sub2api` fork，upstream 明确为 `Wei-Shaw/sub2api`。
+- 已加载 GitHub repository/issue search 与 Exa web search/fetch；后续优先读取原始页面。
+- GitHub connector 已确认 `QuantumNous/new-api` 为公开、未归档仓库，默认分支 `main`，repo id `717197250`。
+- GitHub connector 已确认 `Wei-Shaw/sub2api` 为公开、未归档仓库，默认分支 `main`，repo id `1118601518`。
+- new-api 初步高相关 Issues：
+  - `#5411`：Claude Code ultracode 尾部 `role: system` 经 DeepSeek Anthropic-compatible relay 后返回合法但空的 assistant turn；SSE 有 `message_start(content:[]) -> message_delta(output_tokens:1,end_turn) -> message_stop`，没有 content block。与当前“最后 user 不一定是最终 message”的假设高度吻合，但上游模型不同，且需核对作者/日期确认是否为独立报告。https://github.com/QuantumNous/new-api/issues/5411
+  - `#6429`：AgentRouter + Claude Code/Trae 间歇性 `API returned an empty or malformed response (HTTP 200)`，另伴随 new-api panic。相似症状，但部署与根因未确认。https://github.com/QuantumNous/new-api/issues/6429
+  - `#5483`：OpenAI→Claude 流转换产生非连续 content block index，官方 Anthropic SDK 崩溃。证明 Claude SSE 转换路径有公开协议完整性问题，但与 ping-only 不是同一缺陷。https://github.com/QuantumNous/new-api/issues/5483
+  - `#5402`：Claude native relay 额外空行，属于 SSE frame formatting 差异，不会直接解释无正文。https://github.com/QuantumNous/new-api/issues/5402
+- sub2api 初步高相关 Issues：
+  - `#4493`：Grok free 账户经 Claude Code 偶发 `API returned an empty or malformed response (HTTP 200)`。与空回复症状直接相似，根因尚未给出。https://github.com/Wei-Shaw/sub2api/issues/4493
+  - `#1528`：Anthropic content block 缺 `text:""`，usage 有 output tokens 但 SDK 得到 `text=None`；是“计费/usage 正常但正文丢失”的另一个已报告兼容层缺陷。https://github.com/Wei-Shaw/sub2api/issues/1528
+- Issue 元数据核验：
+  - new-api `#5411` 由独立用户 `chensunny` 于 2026-06-10 创建，标签 `bug`，2 条评论，同日关闭；早于本次排查，可视为独立相似报告，仍需读取关闭理由。
+  - new-api `#6429` 由 `RAJAT-KHANDELWAL-PROFILE` 于 2026-07-23 创建，30 秒内关闭并标记 `invalid`；证据权重低。
+  - sub2api `#4493` 由 `liushunqiu` 于 2026-07-17 创建，当前 open、0 评论。
+  - sub2api `#1528` 由 `ycjcl868` 于 2026-04-09 创建，当前 open、0 评论。
+- new-api `#5411` 评论/关闭理由：
+  - reviewer bot 仅要求补充精确版本/commit，没有否定复现。
+  - 维护者 `seefs001` 回复：“原生 claude -> deepseek官方 路径的话，这种事情应由Provider去做而不是NewAPI”。
+  - 因此该 Issue 确认了公开相似症状与尾部 system 触发链，但官方把修复责任归给 Provider；它不是 new-api 官方承认自身 bug。
+- new-api `#6429` 被标 invalid 是因为缺失必填模板/版本/复现步骤，bot 建议重新提交；不是对间歇性 HTTP 200 空/畸形响应真实性的反驳。
+- sub2api `#2377` 是目前与客户 greeting 最接近的公开报告：2026-05-11，独立用户 `selfancy` 报告 OpenAI 转发给 Claude Code 后只返回 `Great — thanks. I’m ready. What would you like me to do next?`，并明确称“丢失了上下文信息”；issue 当前仍 open。
+- sub2api `#2377` 下另一位独立用户 `realzolo` 明确回复“同样遇到了这个问题”；但该 issue 没有维护者定因、原始请求体、上游响应或修复链接，因此只能证明同症状不止一人，不能证明与客户样本同一根因。
+- sub2api `#4077` 报告 DeepSeek V4 Pro 经 `/v1/messages` 转换时频繁出现 `API Error: Content block not found`；另一名用户在评论中给出 `#4114` 的代码级根因。
+- sub2api `#4114` 已确认一类具体转换 bug：Read 工具参数被缓冲但依赖上游 `.done` 事件 flush；GLM/DeepSeek Chat Completions 上游不发该事件时，参数和对应 delta 被吞，Claude Code 合成 `Content block not found`。修复 PR `#4138` 于 2026-07-13 合并。
+- sub2api `#4193` 确认另一类独立转换 bug：并行 tool use 时 block index 错位，向从未 start 的 block 发送 delta；两名其他用户在评论中确认遇到同错误。精准修复 PR `#4294` 与直转重构 PR `#4295` 均于 2026-07-15 合并。
+- sub2api `#4177` 证明模型映射实现确实可能出错，但方向与“暗中换模”不同：配置 `claude-fable-5 -> gpt-5.6-sol` 后，转发层反而丢弃已解析映射，最终仍把原始 `claude-fable-5` 发给上游。关联修复 PR 为 `#4179`，需继续核验合并状态。
+- new-api `#4067`（2026-04-03）报告 Claude Code 卡在思考状态、后台已扣费但无回复；维护者认为客户端一次对话可能对应多次 API 调用，并要求本地抓包。issue 最终因信息不足关闭，因此是相似症状证据，不是已确认的 new-api 根因。
+- new-api `#4697`（2026-05-08，当前 open）报告 OpenAI→Claude SSE 缺少尾部 `content_block_stop/message_delta/message_stop`，已有另一用户确认相同问题；维护者在官方 Qwen 渠道无法复现，后续报告者提供的是“与阿里云格式一致”的企业上游而非维护者要求的同一官方测试条件。因此该问题存在公开争议，不能写成官方确认。
+- new-api `#4139`（2026-04-08，当前 open）确认另一种 HTTP 200 空输出路径：阿里百炼流式审核错误在 HTTP 200 流内返回，new-api 已提交成功响应且不会重试其他渠道；维护者当时回复“目前无法修复”，报告者随后询问是否支持空回复重试。它证明“HTTP 200 但无正常正文、不能重试”是公开已知问题，但供应商和事件形态与客户 ping-only 不同。
+- new-api `#2999` 报告高并发/高负载时 stream scanner 的硬编码 10 秒 channel 写入超时可能中断正常长思考请求，当前 open；这是客户并发冷请求会放大流中断的旁证，不是 ping-only 的直接复现。
+- new-api `#3511/#4129` 与已合并 PR `#4128` 证明 Claude 原生流在中断路径曾存在 usage fallback/计费字段丢失问题；这解释“断流后本地如何结算”，但不负责生成 greeting。
+- new-api `#1502` 报告 Claude SSE 事件顺序异常，维护者仅回复升级新版后关闭；new-api `#4697` 报告结尾事件缺失。这些均说明 Claude Code 对 SSE 生命周期严格，而兼容层曾有多种公开协议缺陷，但不能都合并为同一故障。
+- new-api `#4389` 是较大规模的 `Content block not found` 集中报告：2026-04-22 创建后至少十余名用户回复同症状，部分用户称新 Claude Code 版本更容易触发，另有人称改用旧版可用。维护者因缺少可控官方上游复现于 2026-06-16 关闭；后续关联到 OpenAI→Claude 并行 tool block 修复 PR `#6394`。它证明现象广泛，但每个回复未必同一根因。
+- LiteLLM `#24765` 公开了相同协议级错误：OpenAI SSE 转 Anthropic SSE 时偶发丢 `content_block_start`，后续 delta 指向不存在的 block，Claude Code 报 `Content block not found` 并回退到非流。该报告提供了转换链和响应指纹，是强相关的跨项目证据。
+- `ik_llama.cpp #1524` 也报告 Claude Code 流式 Anthropic API 的 `Content block not found`，non-stream 正常，并由 PR `#1543` 修复；再次说明该错误通常是 SSE block 生命周期/转换问题，不是模型“不会回答”。
+- `free-claude-code #137` 有多位用户报告 `API returned an empty or malformed response (HTTP 200)`；该案例最终通过把 llama.cpp context size 从较小值提升到 262k 后消失。它不能解释客户约 30k 输入为何失败，但证明同一客户端错误也可能由上下文容量/代理后端产生。
+- `9router #1025` 报告 GLM 经过 Claude→OpenAI 转换后，代理日志显示约 98k input、291 output、上游“成功”，Claude Code 仍显示 HTTP 200 空/畸形响应。该 issue 当前 open，根因未闭环。
+- Claude Code 官方 issue `#68582` 报告多个后台 agent 输出同时注入导致上下文瞬间溢出，随后 API 返回 HTTP 200 empty/malformed；这是“大并发/大上下文可触发空成功”的官方客户端侧相似案例，但触发点与客户 12 个独立请求不同。
+- LINUX DO 可检索到至少三条相似主题：
+  - `2037625`：`求助: sub2api, 模型经常返回空值`；
+  - `1996734`：`cc这个报错是什么原因：API Error: Content block not found`；
+  - `2408402`：CLIProxyAPI + Grok 在 Claude Code 中经常 `Content block not found`。
+  其中后两条可确认正文主题；`2037625` 页面正文未能通过公开抓取稳定提取，因此只将标题视作弱证据。
+- V2EX 定向搜索只返回标签/节点页，没有找到可核验的具体同症状帖子。X 定向搜索也没有返回稳定可访问的结果；这只能说明本次检索未命中，不能写成“X 上无人遇到”。
+- sub2api `#1493` 是明确的 HTTP 200 + 正常 usage + `output=[]`：非流式 `/v1/responses` 未从上游 SSE delta 重建最终 output。修复 PR `#1501` 于 2026-04-08 合并；issue 本身仍 open，但 PR 明确写明 fixes `#1493`。
+- sub2api `#2972` 是另一条高度相关的已合并修复：兼容层曾把上游 `response.failed` 错误转换成 `HTTP 200 + 空 assistant message + finish_reason=stop`。2026-06-05 合并后会在客户端输出提交前触发 failover/502。
+- sub2api `#1661` 报告接入 new-api 的账号测试会在无任何正文时仍显示测试成功；说明“只以 HTTP/流程完成判断成功”也出现在管理测试路径。
+- sub2api `#2064` 报告大输入跨过特定边界后稳定返回 HTTP 200、`content:null`、`finish_reason=stop`、无 usage；同样请求较小或换模型正常。它支持“上下文/路由容量边界可能表现为空成功”，但模型与 token 规模都不同于客户案例。
+- 关于“换模/掺假”的公开证据需要区分能力与事实：
+  - new-api 本身明确支持 `model_mapping`，因此网关从技术上能把对外模型 A 映射到上游模型 B。
+  - new-api `#4465/#5868` 显示当前设计会把上游实际响应的 model 名返回给客户端，维护者明确拒绝增加“隐藏原始模型名”的功能。因此在上游如实回显 model 且未再嵌套代理时，响应 model 字段是可用线索；但它不是密码学证明，上游仍可自行回显别名。
+  - sub2api `#4177` 及已合并 PR `#4179` 证明 Fable 精确映射曾有实现 bug：期望 `claude-fable-5 -> gpt-5.6-sol`，实际却继续发送原始 Fable 名。方向是“映射没生效”，不是“暗换成别的模型”。
+  - sub2api `#1651` 报告 `/v1/chat/completions` 曾稳定把 `gpt-5.4-mini/gpt-5.3-codex` 静默改写为 `gpt-5.4`，并有多位用户确认类似 fallback；issue 当前 open。sub2api `#3915` 也有用户报告 5.6 降到 5.4，但信息不足。
+  - 这些资料证明代理层确实可能因显式 mapping、fallback 或 bug 改变实际模型；它们不能证明本次客户的 Fable 5 请求被换模，更不能仅凭 greeting 或空回复识别替代模型。
+
+## 2026-07-29 — Claude 可疑成功响应被动采集
+
+- 用户已确认覆盖所有 Claude 成功响应，仅命中时采集，不重试；目标是保留定因证据。
+- 当前 Request Dump 关键词 haystack 不包含 Claude 成功响应正文；Responses API 流事件追踪不能直接覆盖 `/v1/messages`。
+- `ClaudeResponseInfo.ResponseText` 同时拼接 `delta.text` 与 `delta.thinking`，不能直接作为客户可见回复匹配源。
+- 现有自动错误快照默认只由 relay error 或 stream incomplete 触发；需要新增不会参与错误/fallback outcome 的成功快照入口。
+- 成功快照必须继续服从 `error_snapshot.enabled`。关闭被动快照时不得额外采集或保留响应。
+- 三个采集挂载点已经明确：
+  - 非流式：完整响应成功解析、完整性校验通过之后；
+  - legacy 流式：scanner 返回且最终 usage 处理之前；
+  - 完整性流式：收到合法 `message_stop`、正常向客户完成写入之后。
+- 非流式 `HandleClaudeResponseData` 当前不会写入 `ClaudeResponseInfo.ResponseText`；匹配器应直接遍历全部 `content[type=text]`，不能复用 OpenAI 转换里最后文本块覆盖前一文本块的行为。
+- 成功快照不能使用现有 `FinalizeErrorSnapshotRequest`，否则 `err == nil` 会把它改成 `fallback_succeeded`；应在创建时直接使用稳定 outcome，且不设置失败 attempt 的 context 标记。
+- 当前最终上游请求只为重点用户/渠道预留。为满足“所有 Claude 请求命中后可定因”，需在自动快照开启时对 Claude 请求临时保留有界上游 JSON；未命中的副本只存在于单请求 context，结束即释放。
+- UI outcome 映射目前只有失败/fallback/流不完整。新增 `suspicious_success` 后需要单独颜色和中文标签，并避免列表“错误”列把 HTTP 200 渲染成红色失败。
+- `ErrorSnapshot` 可直接复用现有索引表，不需要新增数据库字段；分类可用既有 `error_type`、`error_code` 和 `final_outcome` 表达。
+- 流式匹配只能在末尾判定，因此 raw SSE 必须在请求期间有界缓存；仅 `error_snapshot.enabled=true` 时启用，命中后写盘，正常请求直接随局部对象释放。
+- 可见文本累加器只收 `content_block_delta.delta.text`；thinking、tool JSON、signature 不参与问候语匹配。
+- 匹配器应要求短回复且同时出现 ready 语义与 “what would you like me to work on/do” 结构，全文匹配而不是任意 substring，降低包含引用或正常长回答的误报。
+- 写流 helper 不提供已写 frame 的回读接口。诊断 trace 应在 handler 写出前保存 upstream/downstream data payload，并记录 relay format、event type 和序号；页面可据此比较转换前后，无需包裹全局 ResponseWriter。
+- legacy handler 已有 `message_stop` 单测，可扩展完整合法文本流测试；完整性 handler 的测试夹具可直接验证命中后排队的快照 work，不必启动后台 worker或真实落盘。
+- controller 仅根据 Claude handler 返回的 `NewAPIError` 决定 retry。成功快照函数不返回错误且不设置 `relayInfo.LastError`，因此不会进入 `shouldRetry` 或渠道失败记录。
+- 非流式下游是一次 JSON body 写入；诊断可以把完整脱敏响应作为 `upstream_response` 片段保存，同时在 summary 中保存 content block 类型、模型、stop reason 和 usage。
+- 现有 `preserveBodyHeadTail` 正好适合可疑响应证据：长请求保留前后文和原始 SHA-256，尾部可覆盖客户最终 user task；该行为只用于 diagnostic capture，不改变普通错误快照既有的大正文仅元数据策略。
+- pass-through 且无 compat 的 Claude 请求不经过 `DumpUpstreamRequestIfNeeded`；需显式标记 upstream 与 client body 相同，快照构建时复用客户请求片段，避免额外读取/复制整个 body。
+- 后端实现已通过聚焦测试：matcher 覆盖原始短语、弯引号和公开变体；长请求摘要保留最终 client/upstream task；嵌套 SSE JSON 字符串中的 secret 会脱敏；成功快照不会设置任何失败 context。
+- Claude 侧测试确认 visible text 不含 thinking；native 非流式拼接全部 text block，OpenAI 非流式只使用实际下发的最后一个 text block；双向 trace 严格受事件数和 16 KiB/侧限制。
+- UI 仅需新增三个语义标签和两处说明文案；现有 ErrorSnapshot API、筛选、下载和详情读取协议可直接承载 `response` 字段，不需要 controller 改动。
+- Claude 兼容上游可能直接在 `content_block_start.content_block.text` 放首段文本；现有转发会下发它，诊断现已与客户可见语义一致地计入。
+- OpenAI `/v1/chat/completions` 转 Claude 的 converted 与 compat-passthrough 路径也已加入最终上游 JSON 临时留存；AWS 等无同形 JSON 的 Claude 响应仍可保存客户请求、响应和 SSE。
+- 生产启动路径在 `main.go` 始终调用 `StartErrorSnapshotManager()`；启用自动错误快照后，命中的成功快照队列有常驻 worker 消费。
+- 流式诊断在构造时冻结 requested upstream model，避免后续 `message_start.model` 覆盖后丢失对比证据；快照同时保存 requested model 与 response-reported model。
+- 最终验证：`go test ./... -count=1`、相关包聚焦 race、前端 `bun run build`、Prettier 和 `git diff --check` 全部通过；i18n lint 保持既有 441 条，无本次页面新增项。
+
+## 2026-07-29 — Claude 客户令牌实流量复现与诊断快照验收
+
+- 客户脚本不会连接业务库或任务队列；`burst` 通过 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN` 调用 `/v1/messages`。
+- 探针要求模型只返回每请求唯一哨兵；问候回复代表任务正文疑似未生效，HTTP 200 且没有内容事件则归为空流。
+- 6 个临时令牌属于敏感凭据，只能在运行时注入；实验记录只使用用户提供的别名。
+- 需要分别验证“目标网关能否复现”和“本地修改能否捕获”。若生产目标尚未部署本次代码，本地 Docker 无法被动观察直接发往生产的请求，必须通过本地 new-api 转发或构造等价故障注入完成采集验收。
+- `gwprobe` 默认样本路径是 `/tmp/gwprobe-sample.json`，当前不存在；当前 shell 也没有 `ANTHROPIC_BASE_URL`。
+- 脚本的真正问候正则包括 `what would you like me to work on`、`i'm ready`、`don't see a task` 等，但最终 `default` 分支也会把任何非空、非哨兵、非工具回复计为 `GREET`。实验结论必须复核每条截断文本，不能把汇总中的全部 `GREET` 自动解释为同一种根因。
+- 客户脚本只在 `content_block_delta.delta.text` 中累加正文，不读取 `content_block_start.content_block.text`；如果上游把首段文本放在 block start，探针可能把实际有文本的响应误判为空流。本次 new-api 采集代码已覆盖 block-start 文本，二者结果需要分别解释。
+- 本机存在 Claude Code `2.1.220`，可以用客户脚本的本地固定-400 capture 代理生成真实请求样本而不产生上游调用。
+- `new-api-dev` 已运行约 8 小时且健康；当前镜像早于本次可疑成功采集补丁，验收前必须重新 build/recreate。
+- `2dev/scripts/README.md` 和现有探针命令均使用 `https://supertoken.cc` 作为 Anthropic 端点。这支持但不能绝对证明 6 个新令牌的目标地址；先用 1 条请求确认授权与模型可用性。
+- 实测 Claude Code `2.1.220` 未进入客户脚本的固定-400 capture handler，而是报告 `401 authentication_failed` 并自动重试；本次运行费用和 token 均为 0。附件的 capture 子命令在当前 CLI 环境不可直接使用，但不影响 burst 对已有样本的重放能力。
+- 三个既有 Claude 诊断目录只保存报告、假上游事件和复现代码，没有 `messages` 请求体；全仓库临时 JSON/JSONL 也未命中可重放的 Claude Messages 样本。
+- 正确测试拓扑是 client probe -> 本地 `new-api-dev:3001` -> 6 个隔离 Claude 渠道 -> `https://hk.supertoken.cc`。这样本地代码才能记录本次快照；直接调用远端端点无法验证未部署的本地修改。
+- 本地数据库已有大量互不相关渠道，因此本轮必须使用独立 group，而不是把新渠道放入 `default` 随机路由。
+- `claude.response_integrity_fallback_enabled=true` 已在本地启用；可疑成功快照开关尚未从简单 option 名称查询中出现，需要定位聚合设置键。
+- `options` 中没有任何 `error_snapshot.*` 行，等价于保持默认关闭；只有重建包含新代码的容器并启用该配置后，命中才会落盘。
+- Claude 原生渠道类型为 `14`；channels 表支持独立 base URL、group 和精确模型列表，无需修改业务代码即可创建六个隔离实验渠道。
+- `middleware/auth.go` 在管理员 token 被解析成多个部分时把第二部分写入 `specific_channel_id`；普通用户会被明确拒绝。这提供了比独立 group 更直接的一对一渠道选择能力。
+- token group 若走普通路由必须同时满足用户可用组与 `GroupRatio`/聚合组校验；因此不应仅靠数据库插入任意 token group。
+- 指定渠道路径会校验渠道存在且启用，但不会走普通 abilities/group 随机选择；`shouldRetry` 也对存在 `specific_channel_id` 的请求直接返回 false。因此它既能固定渠道，也满足“不重试”的实验约束。
+- `error_snapshot` 默认 TTL 60 分钟、256 MiB、1000 文件；本轮可保留这些上限，仅开启 enabled 并把六个测试渠道列为 priority，确保保存完整上游请求证据。
+- 实验渠道 ID 固定为：dra=115、vll=116、doubv5=117、maidoucoding=118、9527=119、yimo=120；模型均为 `claude-fable-5`，base URL 均为 `https://hk.supertoken.cc`，auto-ban 关闭。
+- 本地快照 TTL 临时设为 120 分钟，priority user 为管理员 ID 1，priority channels 为 115–120；这只影响本地 dev。
+- 首条端到端基线证明 `sk-<local-key>-115` 能固定渠道且不会被其他本地渠道分流；HK 上游接受 `claude-fable-5` 和 synthetic Claude Code 形态请求。
+- 基线移除中途 system role 后正确返回 `SENTINEL_*`，说明最小 Claude Code 形态、2 个工具和约 2094 input tokens 本身不会触发客户现象。
+- 六渠道低成本基线结果为 3/6 正常、3/6 上游流不完整：vll 提前出现非法序列，doubv5 与 9527 在首内容块超时。由于本地启用了 response integrity，这三条返回明确 502；在旧 handler 下，它们可能表现为 HTTP 200 + 本地 ping/空 EOF。
+- 客户截图中的 12 并发实验：9 条 4.5–7.3 秒正常哨兵，2 条约 22 秒 HTTP 200 ping-only 且无 usage，1 条 58.9 秒返回精确问候；问候 usage 为 input=2715、cache_creation=27483、cache_read=0，正常样本 cache_creation 约 27930。总输入量约 30k，而当前本地基线只有 2094 input tokens。
+- 客户声称生产 39/500（约 8%）问候与网关 1/12（约 8.3%）吻合；样本量下只能称“点估计接近”，不能据此证明同一概率或同一根因。
+- 第二张截图列出两个具体请求在网关侧 `stream=eof/ok`、output 224/219，且声称无 scanner error/客户端断开；最近 24 小时 supertoken channel 共 1836 请求、83 条零输出、其中 35 条正常 EOF 但零输出。该统计支持异常集中在上游链路，但“问候不是 AI 生成”这一表述逻辑不成立：new-api 不生成文本，只能说明文本来自 supertoken 后续模型/代理链，而非 new-api 本地兜底。
+- 客户的 ping-only 与本地完整性 502 在症状上高度对应；`I'm ready` 是结构完整的成功 SSE，必须由可疑成功快照而非完整性失败快照捕获，两者需要分开取证。
+- 当前三份错误快照大小约 1.6–1.8 KiB compressed、11.7–12.2 KiB original，均保存 request ID、channel、retry=0、完整 5051-byte client/upstream JSON 和错误/timing，证明现有错误快照基本链路工作。
+- 但三份 payload 顶层均无 `stream`：vll 仅保存 new-api 合成的 502 JSON，doubv5/9527 连 upstream_response 也为空。说明 response-integrity 失败尚未把已观察 SSE/ping trace 附加到 `NewAPIError.Diagnostic`，这是分析 ping-only 根因的实际可观测性缺口。
+- 192,208 system characters 在 dra/115 的实际 Anthropic usage 中产生 input=1259、cache_creation=47685、cache_read=0；客户问候样本为 2715+27483，因此并发复现样本应按约 0.58 比例缩减，不能仅按字符/token 通用估算。
+- 111,408 system characters 实测产生 cache_creation=27953，和客户正常样本约 27930 的差值仅 23 tokens；该样本足以用于对齐输入规模的并发实验。
+- 当前 native `/v1/messages` 校验会拒绝 `messages[].role=system`，即使带 `claude-code` beta；客户实验若成功到达上游，说明其实际 burst 可能使用了 `keep-system=false`，或走不同入口/版本。不能把 role:system 直接认定为问候根因。
+- 管理员本地用户的 `UserGroup-admin` group ratio=99，使约 30k 输入单条预扣费约 $25；这只是本地计费配置，不代表上游实际成本或客户环境。
+- `local-adobe2api` 是当前 `UserUsableGroups` 明确允许且 ratio=1 的隔离本地计费组；指定渠道仍固定为 115–120，不会真的路由到 Adobe 渠道。
+- dra/115 在相同约 29k input 形态下既有 4.807 秒正确哨兵，也有 30.064 秒首块超时，证明空流不是固定令牌失效或固定请求格式错误，而是间歇性上游/代理行为。
+- dra/115 在 12 并发冷缓存大输入下 100% 首块超时，显著高于客户 2/12 ping-only；这说明该 HK/令牌组合的并发容量或上游状态更差，不能直接把 100% 当作生产故障率。
+- 响应完整性 first-block timeout=30s 与客户 58.9s 问候存在观察偏差：启用保护后会在问候到达前返回 502。要验收 `suspicious_success` 必须临时延长本地 timeout，但生产取值仍需在“快速失败”和“保留晚到诊断”之间权衡。
+- 延长到 90 秒后 dra/115 仍没有任何请求出现首内容块，说明本轮不是单纯慢到 30–60 秒，而是至少 90 秒的上游无首块/排队挂起。`I'm ready` 与这种空流仍可能共享容量触发条件，但不是同一个响应形态。
+- maidoucoding/118 在相同并发下不是空流，而是上游明确返回 400/502；client 统一看到 500 “Service temporarily unavailable”，说明还有一处状态/错误正文抽象，需通过快照读取真实上游错误。
+- yimo/120 证明相同 local new-api、HK 域名、模型、请求形态和并发可以 12/12 正常；因此 dra/maidoucoding 的失败不能归因于本地通用 Claude 转换或探针哨兵逻辑，更可能与令牌后端路由、账号池或上游容量有关。
+- yimo 的 38.7–62.9 秒首结果显著慢于客户正常 4.5–7.3 秒，但跨过客户 58.9 秒问候窗口仍能正确执行最终 user 指令；延迟本身不是问候的充分条件。
+- maidoucoding 快照中的 400/502 `upstream_response.body` 已经是上游代理生成的二次错误 JSON，不含原始 provider body；多个嵌套 request ID 表明 `hk.supertoken.cc` 后面还有至少一层请求转发/错误包装。
+- 目前自动快照已覆盖所有 40 条失败，但没有任何 `suspicious_success`，因为尚未真实命中问候；成功哨兵按设计不落盘。
+- yimo/120 两轮 24/24 正常；按客户点估计 8% 独立概率，24 条零命中的概率约 13.5%，因此未命中并不反证客户现象，但不宜继续无界真实采样。
+- `ClaudeIntegrityStreamHandler` 已创建 `ClaudeResponseInfo.Diagnostics`，并在事件处理函数写 downstream trace；修正方向应复用该有界结构，不新增第二套 SSE 缓冲。
+- 已确认缺失 `stream` 的直接原因：diagnostics 已采集事件，但首块前错误没有写入 `NewAPIError.Diagnostic.StreamSummary`，已提交后的 `CaptureStreamErrorSnapshot` 也只收到计数摘要。
+- 修复后每个方向仍严格限制为 256 events、16 KiB，额外保存单事件原始字节数、SHA-256 和截断标记；不会形成无界响应复制。
+- ping-only 故障注入证明旧式“HTTP 200 只有 ping”可在当前保护下稳定转为 commit 前的 502，快照精确记录唯一上游 ping、0 个下游事件、retry=0、channel/request/timing 和完整请求证据。
+- 完整 SSE 的 `I'm ready. What would you like me to work on?` 故障注入证明 matcher 不会干预响应：客户仍收到原始 HTTP 200；旁路快照标为 `suspicious_success/claude_idle_greeting`，包含模型、usage、stop reason、客户/上游请求和上下游 SSE。
+- “问候不是 AI 生成”仍不是可成立结论。已确认的边界是 new-api 没有该固定文本生成逻辑，文本来自 supertoken 后续模型或代理链；仅凭问候和 model 回显无法证明 Fable 5 被换模。
+- 客户实流量与本地受控结果共同支持“令牌后端路由/账号池/上游容量差异”优先级高于“new-api 通用转换错误”：同一代码、域名、模型和请求下，yimo 24/24 正常，而 dra、vll、doubv5、9527 和 maidoucoding 呈现不同失败形态。
+- 当前证据不足以断言 ping-only 和问候是同一根因。前者是 SSE 完整性失败；后者是结构完整但语义异常的成功响应，只能通过两类独立快照在生产中继续关联 channel、request、usage、延迟和原始 SSE。
+
+## 2026-07-30 — AdobeVideo 异步参考图片
+
+- Adobe2API `/v1/chat/completions` 已支持 Seedance `frame` 与 `media` 两种参考语义，能够加载 HTTP(S)/Data URL 图片并复用现有 Adobe UGS 上传和 `referenceBlobs` 构造。
+- 当前异步 `VideoGenerateRequest` 没有参考字段，worker 固定传 `source_media=[]` 与 `reference_mode="frame"`，因此底层能力没有暴露到 `/v1/videos`。
+- new-api 统一视频 DTO 已有 `input.image` 与 `reference_images`，无需修改公共请求结构。
+- 当前 AdobeVideo adaptor 明确拒绝任何图片输入；应在 adaptor 内完成精确 provider 映射，而不是放宽共享 controller。
+- 首版只桥接图片，避免把 Adobe2API 的视频/音频 Media 能力提前扩大为新的统一公共契约。
+- 主图与参考图按 `input.image`、`reference_images...` 的稳定顺序发送；默认 `frame`，`media` 必须显式声明。
+- 异步参考素材应在 worker 内加载，URL/MIME/大小错误进入异步失败与既有退款路径，而不是让任务提交阻塞等待远端下载。
+- Adobe2API 异步 DTO 现支持 `reference_mode` 与 `{url,name?}` 参考图；提交阶段只校验模式、数量和 URL scheme，worker 复用 `_load_seedance_media` 下载并校验 MIME/大小。
+- worker 加载失败会写入 `failed / invalid_reference_media`，不会占用 Adobe 账号或调用 `generate_video`；上游生成错误继续保留原有错误类型。
+- new-api AdobeVideo adaptor 仅放开图片：主图先于 `reference_images`，拒绝视频输入和 `provider + file_id`，并禁止 provider options 覆盖公共图片字段。
+- 参考图不会改变 `ResolveVideoBilling` 的有效秒数。Docker 验收的 4 秒请求保持 `$0.03/秒 * 4 * 分组倍率 1 = 60000` 额度，资金来源为 wallet。
+- Docker mock 收到 `seedance_2.0_fast_480p`、`duration=4`、`reference_mode=media` 和两张顺序正确的图片；后台 3 次轮询后成功，Range 内容代理返回 206。
+- 异步失败 mock 在 1 次轮询后进入 `FAILURE`，预扣的 60000 额度按现有终态流程退款。
+- 所有临时渠道、令牌、VideoPricing Option、任务和日志均已删除；管理员 quota 与 used_quota 恢复到验收前数值。
+
+## 2026-07-30 — Seedance URL-only 多媒体异步链路
+
+- 现有 image-handle 已提供 `/v1/image/uploads` 和 `/v1/image/uploads/base64`，会写入 R2 并返回临时公开 URL。
+- 现有 image-handle multipart 路径使用 `part.toBuffer()`，new-api 图片上传代理使用 `storage.Bytes()`；两层都会完整缓冲文件，不能原样扩展为视频/音频入口。
+- 选定 R2 预签名 PUT：new-api 仅承担鉴权和上传会话元数据，文件直接由客户端传到 R2。
+- new-api `/v1/video/tasks` 最终只接收 HTTP(S) 参考 URL；旧计划中的 multipart/Base64/Data URL 仅保留给 Adobe2API、Higgsfield2API 的直连接口兼容。
+- Adobe2API 当前提交已包含异步 Seedance media references；需要审计后复用，避免重复改写。
+- Higgsfield2API 当前仓库只有初始实现，需要依据已确认的 `/media/batch`、预签名 PUT、upload confirm 与 `params.medias` 角色契约扩展。
+- Adobe2API `995b6fd` 已扩展异步 `reference_videos`、`reference_audios`，并在提交层校验 frame/media、9/3/3 和总计 12；不应重复实现这部分。
+- Adobe2API 当前仍缺统一 multipart 入口、Pydantic `extra="forbid"` 和基于 ffprobe 的参考视频/音频 15 秒真实时长校验。
+- Higgsfield2API 公共 schema 当前把 `reference_mode` 固定为 `frame`、参考图最多 2；submission 服务只调用图片专用 `upload_reference_image`。
+- Higgsfield2API upstream 已存在 `/media/batch`、预签名 PUT、upload confirm 和 `params.medias` 构造，可泛化而无需重写任务生命周期。
+- new-api 当前 AdobeVideo adaptor 只桥接图片参考，统一 DTO 尚无 `ReferenceMode`、`ReferenceVideos`、`ReferenceAudios`；当前没有 HiggsfieldVideo 渠道。
+- Higgsfield 公共 `VideoReferenceImage.url` 当前允许约 28 MB 字符串，说明 Data URL 会直接进入 Pydantic 对象；URL-only 合并后应把统一入口收紧到普通 HTTP(S) URL。
+- Higgsfield 的 BaseModel 当前未统一设置 `extra="forbid"`，未知的 `reference_videos`/`reference_audios` 会被静默丢弃。
+- 2026-07-30 恢复实施审计确认：Higgsfield 已有 `/media/batch`、预签名 PUT、`/media/{id}/upload` 和 `params.medias` 构造，缺口集中在公共 schema、通用媒体准备、批量上传编排和 account retry 重传，不需要重写异步任务生命周期。
+- Higgsfield 当前 `PublicVideoCreateRequest` 仍把 `reference_mode` 固定为 `frame`，仅允许两张 `VideoReferenceImage`；`ReferenceImageService` 仍以内存 `bytes` 保存图片，未实现视频/音频、ffprobe 和任务级临时文件。
+- Adobe2API 当前测试已覆盖 `reference_videos`、`reference_audios` 和 media 计数，但 Docker 镜像只安装 `tzdata`，尚无 ffmpeg/ffprobe runtime。
+- Adobe2API Docker 目前仅安装 `tzdata`，没有 ffmpeg/ffprobe；15 秒真实探测需要补充固定 Debian runtime 包。
+- image-handle 已依赖 S3 client 与 Redis，但未依赖 `@aws-sdk/s3-request-presigner`；预签名实现需要新增该依赖并复用现有 Redis connection。
+- Adobe2API 与 Higgsfield2API 的边界测试均覆盖 14.999、15.000 和 15.001 秒；实现使用真实 ffprobe duration，前两者接受，15.001 拒绝。
+- Higgsfield2API 的 `params_json` 仅保存素材 kind/source/name/MIME/size/SHA-256/duration，不保存 bytes、Base64、临时路径或预签名 URL；账号切换会在新 workspace 重新上传。
+- Higgsfield 公共模型 preset 会覆盖外部 `resolution`，new-api adaptor 又拒绝 `output.resolution` 并只允许 480p/720p provider SKU，因此 480p 定价模型无法通过请求参数提升到更高分辨率。
+- new-api 公开视频失败原先统一投影为 `video_task_failed`；本次只允许 `invalid_reference_media_duration` 与 `reference_media_duration_exceeded` 从已脱敏的 provider task JSON 穿透，其他未知上游码继续隐藏。
+- Resource Center locale 自动提取会把存量缺失键一并同步，产生大量无关空翻译；最终 locale 仅保留 HEAD、既有 Claude 诊断键和本次媒体文档键。
+- 首次 Docker 综合验收已生成 Adobe Mock 成功任务 `task_wzLkRwoB7Y7JJPJTf3moALyEBO03kzVg`，返回 4 秒 MP4 Asset；消费日志记录钱包扣费 60000，快照为 `$0.03/秒 × 4 秒 × 分组倍率 1`。
+- 该任务的 `video_task_requests.request_json` 长度为 590，三类参考 URL 均被替换为 `sha256:<digest>`，不含 Base64 或文件内容。
+- Mock `/metrics` 证明 Adobe 上游收到 `seedance_2.0_fast_480p`、`media`、4 秒及 1 图/1 视频/1 音频；素材名称分别为 character/motion/music。
+- Adobe 终态审计记录 `reported_duration_ms=4000`、`requested_seconds=4`、`matches_request=true`；成功 Webhook 一次投递即返回 204。
+- 首次验收退出前 Mock content 计数仍为 0；结合 `/control` 只返回配置、`/metrics` 才返回请求指标，失败原因是验收脚本读取了错误的 Mock endpoint，不是产品链路失败。
+- Adobe 公开 Asset `asset_yMf6bCRW5QcEZTtxCcFOrkVWWveRgE0R` 使用 `mvqa-resource` 执行 4 字节 Range 下载返回 HTTP 206、`video/mp4` 和正文 `mock`。
+- HiggsfieldVideo Docker 联动任务 `task_nbtuhrLJmzp3KjK56Frp23pPzYDisQWe` 成功；上游精确模型为 `seedance-2.0-480p`，4 秒和三类 media 数量/名称均正确，Asset Range 返回 206。
+- Higgsfield 成功后用户余额为 880000、累计 used_quota 为 120000，证明两个 4 秒任务分别按 60000 额度结算。
+- Higgsfield 失败任务 `task_1z49broMpbvFAnaUsGD5aLRGrfxX93Ps` 先预扣 60000，终态失败后可用钱包从 820000 恢复到 880000，并生成 quota=60000 的退款日志。
+- `users.used_quota` 在退款后仍为 180000，这是现有累计消费审计口径，不代表钱包未退款；净钱包支出应由初始与当前 `quota` 差额计算，仍为 120000。
+- 同一失败任务重复查询三次后退款日志仍只有 1 条、退款额度仍为 60000，证明退款幂等。
+- 三个 new-api 任务请求快照均不含 HTTP(S) URL、Base64 或 Data URL；三个任务均持久化 `video_pricing` 与 `subscription_enabled=false` 快照。
+- 两个成功事件和一个失败事件均一次投递成功，HTTP 状态均为 204。
+- Docker ffprobe 确认测试 WAV 为 15.001000 秒；Adobe 任务在提交真实上游前异步失败，Higgsfield 同步返回 400，错误码均为 `reference_media_duration_exceeded`。
+
+## 2026-07-30 — 四服务 main 分支发布
+
+- 四个仓库本地 main 与 fetch 后的 origin/main 完全一致。
+- new-api 的业务候选文件与多媒体实现一致；Claude 响应诊断、RequestDump、临时文件和规划日志必须留在工作树。
+- locale 的完整 JSON diff 会额外带入 6 个 Claude 诊断键及既有重复键规范化；必须仅暂存 13 个媒体文档键。

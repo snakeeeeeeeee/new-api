@@ -125,6 +125,7 @@ const outcomeTag = (outcome, t) => {
     final_failure: { color: 'red', label: t('最终失败') },
     stream_incomplete: { color: 'orange', label: t('流不完整') },
     client_disconnected: { color: 'grey', label: t('客户端已断开') },
+    suspicious_success: { color: 'orange', label: t('可疑成功') },
   };
   const value = values[outcome] || { color: 'grey', label: outcome || '-' };
   return <Tag color={value.color}>{value.label}</Tag>;
@@ -562,7 +563,15 @@ const ErrorSnapshots = () => {
         render: (value, record) => (
           <div className='min-w-0'>
             <div className='mb-1 flex flex-wrap gap-1'>
-              <Tag color='red'>{record.status_code || 0}</Tag>
+              <Tag
+                color={
+                  record.final_outcome === 'suspicious_success'
+                    ? 'orange'
+                    : 'red'
+                }
+              >
+                {record.status_code || 0}
+              </Tag>
               {record.error_code ? <Tag>{record.error_code}</Tag> : null}
             </div>
             <Text ellipsis={{ showTooltip: true, rows: 2 }}>
@@ -589,8 +598,20 @@ const ErrorSnapshots = () => {
         dataIndex: 'capture_level',
         width: 105,
         render: (value) => (
-          <Tag color={value === 'priority' ? 'orange' : 'blue'}>
-            {value === 'priority' ? t('重点') : t('摘要')}
+          <Tag
+            color={
+              value === 'priority'
+                ? 'orange'
+                : value === 'diagnostic'
+                  ? 'cyan'
+                  : 'blue'
+            }
+          >
+            {value === 'priority'
+              ? t('重点')
+              : value === 'diagnostic'
+                ? t('诊断')
+                : t('摘要')}
           </Tag>
         ),
       },
@@ -679,7 +700,7 @@ const ErrorSnapshots = () => {
             {t('自动错误快照')}
           </Title>
           <Text type='tertiary'>
-            {t('自动记录每次失败 attempt，包括最终被 fallback 掩盖的错误')}
+            {t('自动记录每次失败 attempt，并采集命中规则的可疑成功响应')}
           </Text>
         </div>
         <Space wrap>
@@ -703,7 +724,7 @@ const ErrorSnapshots = () => {
         type='info'
         closeIcon={null}
         description={t(
-          '普通错误只采集诊断摘要，不保存 Prompt；重点用户或渠道会额外保存脱敏后的客户端和上游请求。所有快照都受 TTL、容量、文件数和 128 KiB 单文件上限约束。',
+          '普通错误只采集诊断摘要，不保存 Prompt；重点用户、重点渠道或命中可疑响应规则时，会额外保存脱敏后的客户端和上游请求。所有快照都受 TTL、容量、文件数和 128 KiB 单文件上限约束。',
         )}
       />
 
@@ -861,7 +882,7 @@ const ErrorSnapshots = () => {
         statsArea={
           <div className='flex flex-col gap-2 md:flex-row md:items-center md:justify-between'>
             <div>
-              <Text strong>{t('失败 Attempt')}</Text>
+              <Text strong>{t('诊断快照')}</Text>
               <div className='mt-1'>
                 <Text size='small' type='tertiary'>
                   {t('同一 Request ID 可能对应多次内部重试或跨渠道 fallback')}
@@ -1030,12 +1051,16 @@ const ErrorSnapshots = () => {
                     color={
                       selectedSnapshot.capture_level === 'priority'
                         ? 'orange'
-                        : 'blue'
+                        : selectedSnapshot.capture_level === 'diagnostic'
+                          ? 'cyan'
+                          : 'blue'
                     }
                   >
                     {selectedSnapshot.capture_level === 'priority'
                       ? t('重点')
-                      : t('摘要')}
+                      : selectedSnapshot.capture_level === 'diagnostic'
+                        ? t('诊断')
+                        : t('摘要')}
                   </Tag>
                   {selectedSnapshot.payload_truncated ? (
                     <Tag color='orange'>{t('快照已截断')}</Tag>
@@ -1148,7 +1173,7 @@ const ErrorSnapshots = () => {
                 </TabPane>
                 <TabPane tab={t('请求')} itemKey='request'>
                   <div className='flex flex-col gap-5 pt-3'>
-                    {selectedSnapshot.capture_level !== 'priority' ? (
+                    {selectedSnapshot.capture_level === 'summary' ? (
                       <Banner
                         type='info'
                         closeIcon={null}
@@ -1179,9 +1204,14 @@ const ErrorSnapshots = () => {
                   </div>
                 </TabPane>
                 <TabPane tab={t('上游响应')} itemKey='response'>
-                  <div className='pt-3'>
+                  <div className='flex flex-col gap-5 pt-3'>
+                    <JSONSection
+                      title={t('响应诊断')}
+                      value={payload.response}
+                      emptyText={t('没有可用的上游响应片段')}
+                    />
                     <BodySection
-                      title={t('异常上游响应')}
+                      title={t('上游响应')}
                       fragment={payload.upstream_response}
                       missingText={t('没有可用的上游响应片段')}
                       truncatedText={t('快照已截断')}

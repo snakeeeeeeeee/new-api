@@ -800,12 +800,16 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 }
 
 type ClaudeResponseInfo struct {
-	ResponseId   string
-	Created      int64
-	Model        string
-	ResponseText strings.Builder
-	Usage        *dto.Usage
-	Done         bool
+	ResponseId          string
+	Created             int64
+	Model               string
+	ResponseText        strings.Builder
+	VisibleResponseText strings.Builder
+	StopReason          string
+	ContentBlockTypes   []string
+	Diagnostics         *claudeResponseDiagnostics
+	Usage               *dto.Usage
+	Done                bool
 }
 
 func cacheCreationTokensForOpenAIUsage(usage *dto.Usage) int {
@@ -978,12 +982,18 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 		if claudeResponse.Delta != nil {
 			if claudeResponse.Delta.Text != nil {
 				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Text)
+				if claudeInfo.Diagnostics != nil {
+					claudeInfo.VisibleResponseText.WriteString(*claudeResponse.Delta.Text)
+				}
 			}
 			if claudeResponse.Delta.Thinking != nil {
 				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Thinking)
 			}
 		}
 	} else if claudeResponse.Type == "message_delta" {
+		if claudeInfo.Diagnostics != nil && claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
+			claudeInfo.StopReason = *claudeResponse.Delta.StopReason
+		}
 		// 最终的usage获取
 		if claudeResponse.Usage != nil {
 			claudeInfo.Usage.UsageSemantic = "anthropic"
@@ -1012,6 +1022,15 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 		// 判断是否完整
 		claudeInfo.Done = true
 	} else if claudeResponse.Type == "content_block_start" {
+		if claudeInfo.Diagnostics != nil && claudeResponse.ContentBlock != nil {
+			claudeInfo.ContentBlockTypes = appendClaudeContentBlockType(
+				claudeInfo.ContentBlockTypes,
+				claudeResponse.ContentBlock.Type,
+			)
+			if claudeResponse.ContentBlock.Type == "text" && claudeResponse.ContentBlock.Text != nil {
+				claudeInfo.VisibleResponseText.WriteString(*claudeResponse.ContentBlock.Text)
+			}
+		}
 	} else {
 		return false
 	}
@@ -1033,6 +1052,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	if claudeError := claudeResponse.GetClaudeError(); claudeError != nil && claudeError.Type != "" {
 		return types.WithClaudeError(*claudeError, http.StatusInternalServerError)
 	}
+	claudeInfo.Diagnostics.recordUpstream(claudeResponse.Type, data)
 	if claudeResponse.StopReason != "" {
 		maybeMarkClaudeRefusal(c, claudeResponse.StopReason)
 	}
@@ -1057,12 +1077,16 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			}
 			data = patchClaudeCacheTTLBillingCompatUsageData(data, info, "usage", patchUsage)
 		}
+		claudeInfo.Diagnostics.recordDownstream(claudeResponse.Type, data)
 		helper.ClaudeChunkData(c, claudeResponse, data)
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		response := StreamResponseClaude2OpenAI(&claudeResponse)
 
 		if !FormatClaudeResponseInfo(&claudeResponse, response, claudeInfo) {
 			return nil
+		}
+		if data, marshalErr := common.Marshal(response); marshalErr == nil {
+			claudeInfo.Diagnostics.recordDownstream(claudeResponse.Type, string(data))
 		}
 
 		err = helper.ObjectData(c, response)
@@ -1093,13 +1117,18 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 		if info.ShouldIncludeUsage {
 			openAIUsage := buildDownstreamOpenAIStyleUsageFromClaudeUsage(info, claudeInfo.Usage)
 			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, openAIUsage)
+			if data, marshalErr := common.Marshal(response); marshalErr == nil {
+				claudeInfo.Diagnostics.recordDownstream("usage", string(data))
+			}
 			err := helper.ObjectData(c, response)
 			if err != nil {
 				common.SysLog("send final response failed: " + err.Error())
 			}
 		}
+		claudeInfo.Diagnostics.recordDownstream("done", "[DONE]")
 		helper.Done(c)
 	}
+	captureSuspiciousClaudeResponse(c, info, claudeInfo, nil)
 }
 
 func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError) {
@@ -1108,6 +1137,7 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		Created:      common.GetTimestamp(),
 		Model:        info.UpstreamModelName,
 		ResponseText: strings.Builder{},
+		Diagnostics:  newClaudeResponseDiagnostics(info.UpstreamModelName),
 		Usage:        &dto.Usage{},
 	}
 	var err *types.NewAPIError
@@ -1153,6 +1183,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		claudeInfo.Usage.ClaudeCacheCreation5mTokens = claudeResponse.Usage.GetCacheCreation5mTokens()
 		claudeInfo.Usage.ClaudeCacheCreation1hTokens = claudeResponse.Usage.GetCacheCreation1hTokens()
 	}
+	observeClaudeNonStreamResponse(info, claudeInfo, &claudeResponse)
 	var responseData []byte
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
@@ -1171,6 +1202,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	}
 
 	service.IOCopyBytesGracefully(c, httpResp, responseData)
+	captureSuspiciousClaudeResponse(c, info, claudeInfo, data)
 	return nil
 }
 
@@ -1182,6 +1214,7 @@ func ClaudeHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayI
 		Created:      common.GetTimestamp(),
 		Model:        info.UpstreamModelName,
 		ResponseText: strings.Builder{},
+		Diagnostics:  newClaudeResponseDiagnostics(info.UpstreamModelName),
 		Usage:        &dto.Usage{},
 	}
 	responseBody, err := io.ReadAll(resp.Body)

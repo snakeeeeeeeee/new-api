@@ -955,3 +955,185 @@
 - Real content testing exposed that the installed Starlette `FileResponse` ignored Range. Adobe2API now implements authenticated single-byte ranges, suffix ranges, `If-Range`, and 416 responses; all 72 Adobe2API tests pass and its Docker image was rebuilt.
 - Removed the disposable user, token, Resource Key, subscriptions, plan, tasks, Assets, logs, Webhook events, mock/real channels, abilities, pricing Option, and backup Options. Restored the exact original GroupRatio and reset the async mock to zero counters/default behavior.
 - Final verification passes `go test ./... -count=1`, 17 frontend helper tests, the production frontend build, i18n status, both repository whitespace checks, and Docker health. Repository i18n lint remains at its 441-item pre-existing baseline with no newly introduced finding.
+## 2026-07-29 — Claude 渠道“空任务回复”诊断
+
+- 已读取 `planning-with-files` 技能说明并执行 session catch-up，无未同步报告输出。
+- 已检查工作树：发现既有大型规划文件及多个无关未跟踪文件，均保持不变。
+- 下一步：读取客户 `main.go`，然后对照 channel 70/Claude SSE 代码路径。
+- 已完整读取客户 `main.go`（710 行），确认判定器存在证据口径偏宽问题。
+- 下一步：寻找实际 capture 样本，并追踪当前源码的 channel 70、Claude 请求与 SSE 转发路径。
+- 未找到客户 capture 样本；递归临时目录时遇到 macOS 系统目录权限错误，已停止扩大搜索范围。
+- 已确认 DB channel ID 70 不能等同于 channel type；当前源码 Anthropic type 为 14。
+- 已追踪旧 Claude 原生 SSE 路径，确认网关本地 ping + 吞掉 EOF/scanner error 可形成“200 只有 ping”。
+- 已追踪新增完整性保护路径：首个 content block 前缓冲，空流会转 502；需继续核对默认开关、客户版本和重试条件。
+- 用户澄清 supertoken 即己方服务，channel 70 无诊断价值；后续聚焦己方请求转发与异常成功判定。
+- 已确认完整性修复 commit 日期为 2026-07-20，当前默认开关关闭；这可解释昨天生产仍出现旧行为。
+- 已定位既有 Claude content-block 诊断与完整性验证材料，准备交叉核验。
+- 已完整读取两组既有诊断文档和 task-local repro：空流/空内容均属于旧 handler 的异常成功判定；有文本问候仍需从请求顺序或上游响应链定位。
+- 已核对 role 归一化：native Claude 路径不会自动改中途/尾部 system role；正在排除 body storage/并发复用并查找 Request ID 证据。
+- 已排除当前实现中的跨请求 BodyStorage 共享；两个截图 Request ID 在本机无匹配日志。
+- 普通相关包测试通过；race detector 暴露 legacy stream stop-channel race 和 Claude global settings race，正在隔离验证。
+- 单例 legacy stream race 测试首次通过；settings race 已确认可由纯并行请求读取触发，但不直接改请求正文。
+- 30 次单例 legacy stream race run 已复现并确认 stop-channel send/close 竞争。
+- 已校验小样本置信区间并核对 request-dump 能力；准备汇总结论和取证边界。
+- 诊断完成：未改业务代码；普通相关包测试通过，race run 揭示并确认两类竞争，其中 legacy stream stop-channel race 与 ping-only 直接相关。
+- 通用 completion script 因共享 task plan 中较早任务的两个 pending phase 返回非零；未修改无关历史任务，本次四阶段已全部完成。
+## 2026-07-29 — 公开讨论检索
+
+- 已读取 `github` 与 `planning-with-files` 技能，完成 session catch-up。
+- 已建立检索计划；下一步确认两个官方仓库 remote，并加载 GitHub/网页搜索工具。
+- 已确认 sub2api upstream remote，定位 new-api 官方候选，并加载 GitHub 与 Exa 工具。
+- GitHub connector 已确认 `QuantumNous/new-api` 仓库元数据。
+- 已完成首轮两个官方仓库 Issue 搜索，定位多条直接相似报告；下一步核对 issue 元数据、评论、关联 PR/commit。
+- `gh` CLI 不可用；已切换到 connector + GitHub public REST 的只读方案。
+- 已通过 public REST 核验四个高相关 Issue 的作者、日期、标签与状态。
+- 已读取 new-api #5411/#6429 评论，确认关闭理由与证据权重。
+- 已核验 new-api #4067/#4139/#4389/#4697、sub2api #1493/#1651/#1661/#2064/#2377/#4077/#4114/#4177/#4193 等高相关报告的作者、时间、状态和正文。
+- 已核验 sub2api #1501/#2972/#4138/#4179/#4294/#4295 及 new-api #4128 等关联 PR 的合并状态，区分“已修复代码缺陷”和“仅有用户报告”。
+- 已完成 LiteLLM、llama.cpp、9router、Claude Code 官方 tracker、LINUX DO、V2EX 与 X 的定向检索；未对搜索未命中的平台作否定性结论。
+- 公开讨论检索完成：确认多个独立用户和多个网关项目遇到相似空成功/SSE block/上下文丢失问题；未发现能证明本次 Fable 5 被暗中替换的公开证据。
+
+## 2026-07-29 — Claude 可疑成功响应被动采集
+
+- 已确认范围：所有 Claude 成功响应、仅匹配后落盘、不重试、不改写响应、不改变计费或渠道健康。
+- 已读取 brainstorming 与 planning-with-files 技能，并完成 session catch-up。
+- 已建立四阶段实现计划；正在梳理三条 Claude 响应路径和快照生命周期。
+- 已定位非流式、legacy 流式和完整性保护流式的安全采集点；下一步核对 DTO block 字段、快照页面 outcome/filter 和测试夹具。
+- 已确认无需数据库迁移，但需扩展成功快照入口、Claude 可见文本收集、Claude-only 上游请求临时留存和 UI outcome 展示。
+- 已确定有界 trace 和可见文本的实现边界；正在落代码前核对辅助写流函数和现有测试覆盖。
+- 已完成主要代码路径审计，准备实现 service 侧匹配/快照入口和 Claude 侧有界诊断 trace。
+- 已确认成功采集不会穿透到 controller 的 retry/渠道失败分支；开始业务代码修改。
+- 已新增 diagnostic capture level、suspicious outcome、上游请求临时留存入口和 service 侧匹配/快照构建器。
+- 后端和 Claude 聚焦测试通过；阶段 1-2 完成，开始更新 Dump 分析页面的结果标签、采集级别和响应详情。
+- Dump 页面与七语言文案已更新，Prettier 通过；i18n lint 仍为仓库既有 441 条基线，本次页面无新增 finding。
+- 前端生产构建与 `git diff --check` 通过；Go 回归仅发现新测试夹具缺少 diagnostics，已按设计修正，待重跑。
+- 修正夹具后相关 Go 包和聚焦 race 测试全部通过；额外覆盖 content_block_start 首段文本及 OpenAI-to-Claude 上游请求留存。
+- 全量 `go test ./... -count=1` 通过；前端生产构建、Prettier、差异检查通过。
+- requested upstream model 与 response-reported model 已分开冻结和保存，相关包与 race 测试再次通过。
+- 四个阶段全部完成；本地 Vite 前端运行于 `http://127.0.0.1:5173/`，未擅自启动会接触现有数据库的后端。
+
+## 2026-07-29 — Claude 客户令牌实流量复现与诊断快照验收
+
+- 已读取 `planning-with-files` 工作流并运行 session catch-up；没有返回未同步上下文。
+- 已确认客户附件是独立 `gwprobe`，支持 capture 与 burst，按哨兵命中、空任务问候和 HTTP 200 空流分类。
+- 当前正在核对完整 burst 参数、样本文件、目标端点和 Docker dev 拓扑；尚未发出任何带客户令牌的网络请求。
+- 已完整审计 burst 实现：默认并发 12、单轮、`max_tokens=256`，会掩码打印凭据并读取 capture 样本；当前默认样本和目标端点均缺失。
+- Docker dev 使用 `localhost:3001`、独立 PostgreSQL/Redis 和持久 `data-dev`/`logs-dev`，可用于验证本次快照代码，但不能自动观察直接发往生产网关的流量。
+- 已确认本机 Claude Code `2.1.220` 可执行；现有 `new-api-dev`、PostgreSQL、Redis 均健康，`/api/status` 正常。
+- 仓库既有 Anthropic 探针示例将 `https://supertoken.cc` 作为目标，因此先将其作为本轮客户令牌端点的可验证推测，以单请求确认，不直接扩大并发。
+- 首次无计费 capture 等待 60 秒后未收到 `/v1/messages`；客户脚本吞掉了 CLI 输出，下一步改为可见错误的本地直连诊断。
+- 直接运行同配置后确认 Claude Code 在发送前持续 `401 authentication_failed`；第 6 次重试时终止，结果显示 `total_cost_usd=0`、usage 全 0。停止 capture 重试，转向现有请求样本。
+- 已检查三组既有 Claude 诊断目录和 `tmp/2dev` JSON/JSONL；没有完整 Messages 请求样本。将使用临时本地捕获器验证仅 AUTH_TOKEN 的当前 CLI 兼容方式。
+- 用户纠正验收拓扑：临时令牌是本地 new-api 的上游渠道凭据；停止本地 Claude CLI 路径，改为创建隔离渠道并调用 `localhost:3001`。
+- 用户指定上游香港加速线路 `https://hk.supertoken.cc`。已确认本地 Claude 渠道类型为 14，计划使用六个独立 group 保证请求与渠道一一对应。
+- 已确认本地仅启用了 `claude.response_integrity_fallback_enabled=true`，尚无 `error_snapshot.*` 持久配置；验收前需启用自动错误快照。
+- 已读取 channels/users/tokens schema；尚未写入任何渠道或令牌。
+- 鉴权代码确认管理员令牌支持 `specific_channel_id` 后缀，普通用户不允许；这可用一个隔离的本地管理员令牌逐个固定命中六个渠道，避免新建六套 group ratio。
+- abilities 表结构与 channels 一致，若仍使用普通分组路由可直接配套写入；当前优先采用指定渠道路径。
+- 已确认精确格式为 `sk-<数据库48字符key>-<channel_id>`；distributor 直接读取启用渠道，指定渠道请求在 relay 错误时也不会跨渠道重试。
+- 快照配置在启动时从 `options` 加载；写入 `error_snapshot.enabled=true` 等选项并重启即可生效，无需管理后台会话。
+- `docker compose -f docker-compose-dev.yml build new-api-dev` 已成功，镜像 `new-api-local:dev` 已包含当前后端和前端改动。
+- 拓扑审计阶段完成；开始创建事务性实验夹具并建立逐渠道基线。
+- 已在单个 PostgreSQL 事务中创建渠道 `115–120`、一个本地管理员探针令牌，并写入六项 `error_snapshot.*` 配置；查询输出只包含别名、ID 和配置，不包含完整上游凭据。
+- `new-api-dev` 已使用新镜像 recreate，健康检查通过；渠道缓存与快照配置已从数据库重新加载。
+- 已创建权限 `0600` 的无凭据 Claude Code 形态样本，包含 system blocks、2 个工具、历史对话、中途 system role 和最终 user 任务；附件 `gwprobe` 已编译到 `/tmp`。
+- dra/channel 115 在 `keep-system=false`、单请求基线中 4.464 秒正确返回唯一哨兵，input usage=2094，未出现问候或空流。
+- 其余五渠道单请求基线：maidoucoding/118 与 yimo/120 正确返回哨兵；vll/116 在 5.165 秒被完整性保护转换为 502 `invalid_sequence_before_first_block`；doubv5/117 与 9527/119 均在约 30.04 秒被转换为 502 `first content block timeout`。
+- 已以原始分辨率读取客户新增两张截图，确认其 12 并发约 30k-input 实验和生产 24 小时零输出统计；下一阶段将放大输入并保留中途 system role。
+- 本地 consume/error logs 已验证 6 条请求均命中指定渠道；三条 502 未重试，失败请求预扣费返还。开始检查自动错误快照的落盘内容。
+- 三条完整性失败均生成 `priority/final_failure` 快照，文件权限 `0600`，请求体与渠道证据完整且未截断。
+- 验收发现完整性失败快照当前没有 `stream` 字段：非法序列只保存合成 502 response，首块超时只保存请求与错误。已记录为后续针对性修正项。
+- 首个大输入样本在 dra/115 上正确返回哨兵，耗时 10.293 秒，usage input=1259、cache_creation=47685；高于客户约 27.5k–27.9k cache-creation，正在按实测比例缩小。
+- 将 system 扩展块从 1900 行缩到 1100 行后，dra/115 校准请求耗时 4.807 秒，usage input=1271、cache_creation=27953、cache_read=0，已精确贴近客户正常样本。
+- 开始 dra/115 的 12 并发、保留中途 system role 实验。
+- 保留中途 system role 的 12 条均在本地 31–41 ms 被 400 拒绝，未调用上游；当前原生 Claude DTO 只允许 user/assistant message roles。
+- 移除 system role 后的 12 并发中，1 条到达上游并正确返回哨兵，11 条因本地管理员组倍率 99 导致预扣费不足而 403；开始调整隔离 token 的本地计费组。
+- `ccmax-yimo` 倍率虽为 1 但管理员无权限，单条被本地 403；已改用允许的 `local-adobe2api` 倍率 1 分组并精确清除 token cache。
+- 新分组下 dra/115 单条大输入到达上游，但 30.064 秒首内容块超时并返回 502，进一步确认相同令牌的间歇性空流。
+- dra/115 正式 12 并发全部在 30.108–30.137 秒首内容块超时，12/12 返回明确 502；没有本地配额或路由错误。
+- 客户问候样本耗时 58.9 秒，当前 30 秒 first-block timeout 会提前取消，无法验证成功问候采集；准备把本地超时临时提高到 90 秒。
+- 本地 first-block timeout 临时提高到 90 秒并重启后，dra/115 重复 12 并发仍全部在 90.117–90.132 秒超时；跨过客户 58.9 秒问候点后仍无内容事件。
+- 开始在曾成功的 maidoucoding/118 上重复 12 并发大输入，继续寻找结构完整的空任务问候。
+- maidoucoding/118 的 12 并发在 33.9–36.5 秒全部返回客户端 500；本地内部日志显示上游实际为 5 条 400 与 7 条 502，均已生成 priority 快照。
+- yimo/120 的 12 并发全部正确返回哨兵，耗时 38.736–62.913 秒，usage 全部 input=1271、cache_creation=27953、cache_read=0；未出现问候或空流。
+- 已打开 maidoucoding 的一份 400 和一份 502 快照：upstream response 仅保留嵌套 request IDs 与 `bad response status code`，更深层 provider 原因未透出。
+- 当前六渠道实验共 18 条成功、40 条错误，已生成 40 份 priority error snapshots；准备在 yimo/120 加一轮 12 并发作为有限追加采样。
+- yimo/120 第二轮 12 并发仍全部正确返回哨兵，耗时 10.215–53.656 秒；两轮合计 24/24 正常，真实采样停止。
+- 已读取 brainstorming 工作流并选择最小方案：在 response-integrity 失败构造处复用现有有界 Claude diagnostics，附加 StreamSummary；不包裹全局 writer、不加重试。
+- 已实现完整性失败诊断附加：首块超时、首块前 EOF/scanner/malformed/error/非法序列/buffer limit 和写失败均保留 reason、commit 状态、事件计数与有界 SSE trace。
+- malformed JSON 与 upstream error event 现会在提前返回前保存原始事件；已提交流的不完整结束同时保存此前下发事件和合成 `error` 事件。
+- 修正错误快照 `is_stream=false`：请求解析出 `RelayInfo.IsStream` 后立即写入 context，不再等到成功日志/计费阶段。
+- 聚焦单测通过，覆盖 ping 后超时、malformed raw event、非法序列、双向 committed trace 与 stream context 时序。
+- Docker 故障注入 E2E 通过：问候保持 HTTP 200 并生成含 6 入/6 出 SSE 的 `suspicious_success`；ping-only 在 commit 前返回 502，快照为 received=1/sent=0；首块后 EOF 返回流内 error 并生成含 3 入/4 出 SSE 的 `stream_incomplete`。
+- `go test ./...` 与 `bun run build` 全部通过；前端仅有既有 eval/chunk-size 警告。
+- 本次新增测试的定向 `-race` 全部通过；三个相关包的全量 `-race` 仍会命中既有 logger 全局状态和 Claude settings 归一化竞争，未在本任务中扩大修改范围。
+- 已删除渠道 115–123、9 条 abilities、令牌 147、44 份实验快照及临时探针/假上游文件；移除全部临时 `error_snapshot.*` 和 90 秒 timeout option，恢复管理员 quota=73,802,740，保留 `claude.response_integrity_fallback_enabled=true`。
+- 最终 `new-api-dev` 镜像为 `sha256:561eec1cc0b9...`，容器健康，默认快照关闭且首块超时恢复 30 秒。
+
+## 2026-07-30 — AdobeVideo 异步参考图片
+
+- 已读取 brainstorming 与 planning-with-files 工作流并运行 session catch-up。
+- 已确认 Adobe2API Chat 路径底层支持参考图，但异步 DTO/worker 与 new-api AdobeVideo adaptor 尚未桥接。
+- 已锁定 V1 契约：统一 `input.image + reference_images`，provider option 选择 `frame|media`，仅 URL/Data URL，参考图不影响按秒计费。
+- 当前开始扩展 Adobe2API 异步 worker 与聚焦测试；保留 new-api 工作树中另一组 Claude 诊断修改。
+- Adobe2API 已增加异步参考图片 DTO、提交结构校验、worker 内媒体加载和稳定失败错误；README 中英文已补充异步接口说明。
+- new-api AdobeVideo adaptor 已映射主图与参考图，支持 `provider_options.adobe_video.reference_mode=frame|media`，并保留原 4-15 秒计费估算。
+- async-test mock 已记录并校验参考模式与图片列表，覆盖成功轮询、失败终态和 Range 内容。
+- Adobe2API Docker 完整测试 75/75 通过；new-api `go test ./... -count=1` 通过；两仓库 `git diff --check` 通过。
+- Docker dev 已重建 `new-api-dev` 与 `async-test-mock`。4 秒 media 参考图任务成功，计费 60000；失败任务退款 60000；临时数据库夹具和测试额度变化已完整清理。
+
+## 2026-07-30 — Seedance URL-only 多媒体异步链路
+
+- 已读取 brainstorming 与 planning-with-files 工作流并运行 session catch-up。
+- 用户确认上传采用 R2 预签名直传，上传会话公开入口放在 new-api 控制面。
+- 已合并旧多媒体计划与最新 URL-only 决策：保留 frame/media、9/3/3、15 秒、Adobe/Higgsfield 映射；移除 new-api 任务 multipart/Base64 暂存。
+- 正在审计四个服务现有代码与测试，下一步按现有边界拆分最小修改。
+- 第一轮代码审计完成：Adobe 已有 media references 主体，Higgsfield 有通用上传骨架但公共接口仅 frame，两者缺口已拆分。
+- 已定位 R2 预签名所需现有 S3/Redis 注入点，以及 Adobe ffprobe 和 Higgsfield严格 schema 的具体缺口。
+- 审计阶段完成，合并设计已写入 `docs/plans/2026-07-30-seedance-url-media-design.md`；开始实现上传控制面。
+- image-handle 已新增内部媒体上传会话创建/完成接口：Redis 保存会话，R2 预签名 PUT，HEAD 校验大小与 MIME，失败对象删除。
+- 恢复跨四仓库实施状态并核对工作树：new-api 与 image-handle 保留本任务改动；Adobe2API 只有无关未跟踪设计文档；Higgsfield2API 当前工作树干净。
+- 完成 provider 第二轮代码审计：Higgsfield 可复用现有通用上游上传骨架，Adobe 已有多媒体映射测试；下一步补 schema、媒体探测、multipart 和批量上传编排。
+- new-api 已完成 HiggsfieldVideo 精确 SKU、注册、provider options 和统一多媒体请求测试；相关 Go 包全部通过。
+- Higgsfield2API 已完成严格 schema、JSON/multipart、9/3/3、总 12、全局名称唯一、通用媒体准备、ffprobe 15 秒规则、脱敏任务快照、单 batch/并行 PUT/串行 confirm、frame/media 角色映射和账号重试重传。
+- Higgsfield 定向测试 26 项与 Ruff 检查通过；旧 frame、管理端单图上传和完整任务生命周期均保持通过。
+- image-handle TypeScript 编译及 3 个媒体上传测试通过；文件 body 不经过该接口。
+- new-api 已新增 `/v1/media/uploads` 与 `/v1/media/uploads/complete` 小型 JSON 控制面，使用 Resource API Key 和上传限流，仅转发元数据。
+- new-api controller/router/dto 聚焦测试通过，上传控制阶段完成。
+- Adobe2API 已完成严格请求、JSON/multipart、9/3/3/12、ffprobe 15 秒探测、稳定错误码和 Docker ffmpeg runtime；Seedance 聚焦测试通过。
+- Higgsfield2API 已完成严格请求、通用媒体上传、单 batch/并行 PUT/串行 confirm、frame/media 角色映射、脱敏持久化和账号切换重传；62 项测试与 Ruff 通过。
+- Resource Center OpenAPI/React 文档及 supertokendoc Seedance 新异步章节已更新为 URL-only 任务与 R2 预签名直传流程，覆盖 mixed media、Webhook 和按秒计费。
+- 收敛七个 locale 的提取器噪声并补齐真实翻译；键级差异为每种语言新增 19、修改 0、删除 0、空新增 0。
+- 修正 HiggsfieldVideo provider options 命名空间歧义和媒体上传 session object 名称；new-api 聚焦测试通过，image-handle 全量 91 项通过。
+- new-api 公开任务/Webhook 现可保留两个参考素材时长错误码，其他未知 provider 码仍使用 `video_task_failed`；service 聚焦测试通过。
+- 构建并启动最终源码的 new-api、async mock、image-handle/MinIO、Adobe2API 和 Higgsfield2API Docker dev 容器；所有健康检查通过，两个 provider 镜像均包含 ffprobe 5.1.9。
+- Adobe URL-only media 联动已创建 4 秒成功任务并返回 MP4 Asset；消费日志精确扣费 60000、资金来源为钱包，幂等请求快照仅保存参考素材 SHA-256 标识。
+- 首次综合脚本在打印 Adobe 成功任务后退出；不盲目重跑，正在按真实 Mock/数据库 schema 从断点核查 Range、Webhook、Higgsfield 成功与异步失败退款。
+- Adobe 上游映射、终态审计和成功 Webhook 已从 Mock 与数据库逐项确认；首次脚本误读 `/control`（配置）而非 `/metrics`（请求指标），产品链路没有因此失败。
+- Adobe Asset 通过 Resource API Key 执行 `Range: bytes=0-3` 返回 206、4 字节和 `video/mp4`，成功链路已闭环；准备从断点提交 HiggsfieldVideo。
+- HiggsfieldVideo 4 秒 media 任务成功：Mock 收到 `seedance-2.0-480p` 和 1 图/1 视频/1 音频，公开 Asset Range 返回 206；第二次精确扣费 60000，累计 `used_quota=120000`。
+- Higgsfield 异步失败任务已验证：预扣后公开终态为 failed，可用钱包全额恢复并记录 60000 退款日志；修正了将累计 `used_quota` 误当净消费的验收断言。
+- 已确认两个运行中 provider 的本地服务凭据均可访问 `/v1/models`，开始通过各自 `/v1/videos` multipart 入口执行真实 ffprobe 15.001 秒拒绝检查。
+- 已用 Docker ffmpeg 生成并由 Docker ffprobe 确认 15.001000 秒 WAV；Adobe 边界任务已创建，轮询脚本变量冲突已修正并从已有任务续跑。
+- Adobe/Higgsfield Docker 15.001 秒边界均以 `reference_media_duration_exceeded` 拒绝；两个成功和一个失败 Webhook 均一次 204 投递。
+- 重复查询失败任务未重复退款；三个请求快照无 URL/Base64/Data URL，三个计费快照均固定 wallet-only 策略。开始精确清理一次性 fixture。
+- 3 个 MinIO 对象和 3 个 image-handle Redis 会话已删除并验证 404/不存在；首次 PostgreSQL here-doc 因 `docker exec` 缺少 stdin 参数未执行，数据库尚未变化，准备补执行同一精确事务。
+- PostgreSQL fixture 第二次事务已完整删除并验证 14 项计数全 0；Mock 指标已清零且配置恢复 completed/3。Adobe 重启后的脚本误探测 `/health` 404，改用 `/v1/models` 完成健康检查。
+- Adobe 容器经自身 healthcheck 和鉴权 `/v1/models` 验证健康，内存边界任务已清除；4 个本地媒体 fixture 已精确删除，清理阶段完成。
+- new-api 全量 `go test ./... -count=1` 与前端 `bun run build` 通过；i18n status 通过。
+- i18n lint 的本次新增 21 项均为 OpenAPI operation/schema 标识，配置为非展示属性后 ResourceCenterDocs 为 0 项，仓库恢复既有 420 项基线。
+- supertokendoc VitePress 生产构建通过；五仓库最终 `git diff --check` 全部通过。
+- 最终 Docker 健康、Mock 归零、fixture 数据/Option/本地文件清理全部核验通过；Seedance URL-only 多媒体异步链路阶段完成。
+
+## 2026-07-30 — 四服务 main 分支发布
+
+- 已确认四仓库均位于 main，当前 HEAD 与本地记录的 origin/main 一致。
+- 已锁定排除项：new-api 的 Claude/请求转储/临时内容、Adobe 的无关设计文档、以及不在四服务范围内的 supertokendoc。
+- 四个 origin/main fetch 后均为 `0 ahead / 0 behind`，不存在需要合并的远程提交。
+- new-api 七个 locale 同时包含 Claude 诊断键和 13 个媒体文档键；发布将从 HEAD 文本构造仅追加媒体键的 index blob，保留工作树中的 Claude 翻译但不纳入提交。
+- 四仓库目标文件已暂存；new-api locale 索引通过 HEAD 文本加 13 个媒体键构造，未改写工作树。
+- 四仓库 staged diff 通过 whitespace 检查；new-api staged 列表不含 Claude/RequestDump/规划文件，Adobe 无关设计文档保持未跟踪。
+- new-api 将在临时 detached worktree 验证仅 staged 快照，防止未暂存 Claude 改动影响测试可信度。
+- staged 快照首次 Go setup 因临时 worktree 没有 ignored `web/dist` 而停止；未进入业务测试，改为先 build 前端再测试后端。
+- 仅 staged 快照的 Vite build 与 `go test ./... -count=1` 全量通过；临时 detached worktree 已全部清理。
+- 已创建四个 main 提交：new-api `97160e952`、image-handle `93147e2`、Adobe2API `6a58df9`、Higgsfield2API `01ad0a0`。

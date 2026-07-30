@@ -17,6 +17,8 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/error_snapshot_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -47,6 +49,24 @@ func newClaudeIntegrityTestInfo(c *gin.Context, stream bool, maxTokens uint) *re
 	info.MarkFinalRequestRelayFormat(types.RelayFormatClaude)
 	info.BeginClaudeResponseIntegrityAttempt(c.Request.Context())
 	return info
+}
+
+func enableClaudeIntegrityDiagnostics(t *testing.T) {
+	t.Helper()
+	cfg := config.GlobalConfig.Get("error_snapshot")
+	original, err := config.ConfigToMap(cfg)
+	require.NoError(t, err)
+	enabled := make(map[string]string, len(original))
+	for key, value := range original {
+		enabled[key] = value
+	}
+	enabled["enabled"] = "true"
+	require.NoError(t, config.UpdateConfigFromMap(cfg, enabled))
+	error_snapshot_setting.RefreshSnapshot()
+	t.Cleanup(func() {
+		require.NoError(t, config.UpdateConfigFromMap(cfg, original))
+		error_snapshot_setting.RefreshSnapshot()
+	})
 }
 
 func claudeIntegrityHTTPResponse(body io.Reader, stream bool) *http.Response {
@@ -342,6 +362,34 @@ func TestClaudeIntegrityStreamFirstBlockTimeout(t *testing.T) {
 	require.Empty(t, recorder.Body.String())
 }
 
+func TestClaudeIntegrityStreamFirstBlockTimeoutDiagnosticIncludesBufferedPing(t *testing.T) {
+	enableClaudeIntegrityDiagnostics(t)
+	c, recorder := newClaudeIntegrityTestContext(t)
+	info := newClaudeIntegrityTestInfo(c, true, 32)
+	info.EndClaudeResponseIntegrityAttempt()
+	info.ClaudeResponseIntegrityFirstBlockTimeout = 20 * time.Millisecond
+	info.BeginClaudeResponseIntegrityAttempt(c.Request.Context())
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+	go func() {
+		_, _ = io.WriteString(writer, "data: {\"type\":\"ping\"}\n\n")
+	}()
+
+	usage, apiErr := ClaudeIntegrityStreamHandler(c, claudeIntegrityHTTPResponse(reader, true), info)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.NotNil(t, apiErr.Diagnostic)
+	require.Equal(t, "first_block_timeout", apiErr.Diagnostic.StreamSummary["reason"])
+	require.Equal(t, false, apiErr.Diagnostic.StreamSummary["response_committed"])
+	upstream := apiErr.Diagnostic.StreamSummary["upstream"].(map[string]any)
+	events := upstream["events"].([]claudeDiagnosticTraceEvent)
+	require.Len(t, events, 1)
+	require.Equal(t, "ping", events[0].EventType)
+	require.Contains(t, events[0].Data, `"type":"ping"`)
+	require.Empty(t, recorder.Body.String())
+}
+
 func TestClaudeIntegrityStreamRejectsMalformedJSONBeforeCommit(t *testing.T) {
 	c, recorder := newClaudeIntegrityTestContext(t)
 	info := newClaudeIntegrityTestInfo(c, true, 32)
@@ -355,6 +403,67 @@ func TestClaudeIntegrityStreamRejectsMalformedJSONBeforeCommit(t *testing.T) {
 	require.Equal(t, types.ErrorCodeClaudeContentBlockMissing, apiErr.GetErrorCode())
 	require.Contains(t, apiErr.Error(), "malformed_json_before_first_block")
 	require.Empty(t, recorder.Body.String())
+}
+
+func TestClaudeIntegrityStreamMalformedDiagnosticPreservesRawEvent(t *testing.T) {
+	enableClaudeIntegrityDiagnostics(t)
+	c, _ := newClaudeIntegrityTestContext(t)
+	info := newClaudeIntegrityTestInfo(c, true, 32)
+	body := "data: {\"type\":\"message_start\",\"message\":{}}\n\n" +
+		"data: {not-json}\n\n"
+
+	usage, apiErr := ClaudeIntegrityStreamHandler(c, claudeIntegrityHTTPResponse(strings.NewReader(body), true), info)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.NotNil(t, apiErr.Diagnostic)
+	upstream := apiErr.Diagnostic.StreamSummary["upstream"].(map[string]any)
+	events := upstream["events"].([]claudeDiagnosticTraceEvent)
+	require.Len(t, events, 2)
+	require.Equal(t, "message_start", events[0].EventType)
+	require.Equal(t, "malformed_json", events[1].EventType)
+	require.Equal(t, "{not-json}", events[1].Data)
+}
+
+func TestClaudeIntegrityStreamInvalidSequenceDiagnosticIncludesUpstreamOnly(t *testing.T) {
+	enableClaudeIntegrityDiagnostics(t)
+	c, recorder := newClaudeIntegrityTestContext(t)
+	info := newClaudeIntegrityTestInfo(c, true, 32)
+	body := "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n"
+
+	usage, apiErr := ClaudeIntegrityStreamHandler(c, claudeIntegrityHTTPResponse(strings.NewReader(body), true), info)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.NotNil(t, apiErr.Diagnostic)
+	require.Equal(t, "invalid_sequence_before_first_block", apiErr.Diagnostic.StreamSummary["reason"])
+	require.Equal(t, 1, apiErr.Diagnostic.StreamSummary["received_events"])
+	require.Equal(t, 0, apiErr.Diagnostic.StreamSummary["sent_events"])
+	upstream := apiErr.Diagnostic.StreamSummary["upstream"].(map[string]any)
+	upstreamEvents := upstream["events"].([]claudeDiagnosticTraceEvent)
+	require.Len(t, upstreamEvents, 1)
+	require.Equal(t, "content_block_stop", upstreamEvents[0].EventType)
+	downstream := apiErr.Diagnostic.StreamSummary["downstream"].(map[string]any)
+	require.Empty(t, downstream["events"].([]claudeDiagnosticTraceEvent))
+	require.Empty(t, recorder.Body.String())
+}
+
+func TestClaudeIntegrityCommittedStreamSummaryIncludesBothDirections(t *testing.T) {
+	diagnostics := &claudeResponseDiagnostics{}
+	diagnostics.recordUpstream("content_block_start", `{"type":"content_block_start"}`)
+	diagnostics.recordDownstream("content_block_start", `{"type":"content_block_start"}`)
+	info := &relaycommon.RelayInfo{ReceivedResponseCount: 2, SendResponseCount: 1}
+
+	summary := claudeIntegrityStreamSummary(info, diagnostics, "eof_before_message_stop", true)
+
+	require.Equal(t, "eof_before_message_stop", summary["reason"])
+	require.Equal(t, true, summary["response_committed"])
+	require.Equal(t, 2, summary["received_events"])
+	require.Equal(t, 1, summary["sent_events"])
+	upstream := summary["upstream"].(map[string]any)
+	require.Len(t, upstream["events"].([]claudeDiagnosticTraceEvent), 1)
+	downstream := summary["downstream"].(map[string]any)
+	require.Len(t, downstream["events"].([]claudeDiagnosticTraceEvent), 1)
 }
 
 func TestClaudeIntegrityStreamEmitsErrorForMalformedJSONAfterCommit(t *testing.T) {

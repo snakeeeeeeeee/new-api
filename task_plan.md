@@ -1688,3 +1688,235 @@ Complete
 | The first UI/UX recommendation command used the short skill alias as if it were a real scripts directory | 1 | Resolve and run the installed skill from `/Users/zhangyu/.agents/skills/ui-ux-pro-max`; the data-dense documentation-table guidance completed successfully. |
 
 ---
+## 2026-07-29 — Claude 渠道“空任务回复”诊断
+
+### Goal
+
+基于客户测试脚本、两张截图和当前 `new-api` 代码，定位“完整计费但回复 `I'm ready. What would you like me to work on?`”以及“整条 SSE 只有 ping”的成因；明确已确认事实、合理推测和仍缺失的上游证据。当前任务仅诊断，不修改业务代码。
+
+### Phases
+
+- [completed] 读取客户脚本并还原请求、并发和响应判定逻辑
+- [completed] 追踪 Claude 请求转换、SSE 转发和 usage 处理链路
+- [completed] 用截图统计与代码行为验证候选原因
+- [completed] 汇总结论、证据边界及下一步取证方式
+
+### Scope / constraints
+
+- 保留工作树内所有既有未跟踪文件。
+- 遵守项目跨数据库、JSON wrapper 和受保护标识规则。
+- 不在未获修复授权的情况下修改业务代码。
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| 在 macOS 临时目录递归查找样本时遇到多个系统目录 `Operation not permitted` | 1 | 不扩大权限；后续只检查 `TMPDIR` 根目录及已知精确路径 |
+| `go test -race ./common ./relay/channel/claude` 失败 | 1 | race detector 发现 legacy stream `stopChan` send/close 竞争，以及并行 Claude settings 读写竞争；改用单测隔离并按与客户现象的相关性分别判断 |
+| 通用 planning completion check 报 2 个 pending phase | 1 | 两项均属于共享文件内较早的 image-pricing 任务（约 1012–1021 行）；保留其历史状态，本次诊断四阶段均已完成 |
+## 2026-07-29 — Claude 空流/空任务回复公开讨论检索
+
+### Goal
+
+检索 new-api 官方仓库、sub2api 官方仓库，以及 X/技术论坛中是否存在与以下现象相似的公开报告：Claude SSE HTTP 200 但只有 ping/空输出、`Content block not found`/缺失 content block、模型返回 `I'm ready. What would you like me to work on?`、疑似模型映射或换模。区分“相似症状”“同一代码路径”和“已确认同一根因”。
+
+### Phases
+
+- [completed] 确认 new-api 与 sub2api 官方仓库及检索关键词
+- [completed] 检索 new-api Issues/PRs/Discussions 与相关提交
+- [completed] 检索 sub2api Issues/PRs/Discussions
+- [completed] 检索 X、Reddit、V2EX、技术论坛及其他网关项目
+- [completed] 汇总可核验链接、时间、相似度与证据边界
+
+### Constraints
+
+- 只做公开信息的只读检索。
+- 不把标题相似或单条用户描述直接认定为同一根因。
+- 优先引用原始 Issue/PR/帖子，搜索摘要仅用于发现线索。
+
+### Errors
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| 本机无 `gh` CLI，四个 `gh api` 元数据查询均返回 `command not found` | 1 | 不重复；改用 GitHub connector 读取评论、GitHub 公共 REST API 读取 Issue 元数据 |
+| LINUX DO Discourse JSON 端点返回非 JSON 拦截页，无法直接读取两个主题正文 | 1 | 不绕过站点限制；只引用 Exa 可公开提取的标题/正文片段，并降低标题-only 结果的证据等级 |
+| X 和 V2EX 定向搜索未返回可核验的具体同症状帖子 | 1 | 明确记录为“本次未命中”，不将其解释为平台上不存在相关讨论 |
+
+## 2026-07-29 — Claude 可疑成功响应被动采集
+
+### Goal
+
+对所有 Claude 成功响应被动检测空任务式问候，仅在命中时通过现有自动错误快照存储诊断证据；不得重试、改写客户响应、改变计费或计入渠道失败。
+
+### Phases
+
+- [completed] 梳理 Claude 非流式、legacy 流式和完整性保护流式路径
+- [completed] 实现可疑回复匹配、成功快照构建和有界证据采集
+- [completed] 在 Dump 分析页面清晰展示“可疑成功”
+- [completed] 添加聚焦测试并完成后端与前端验证
+
+### Locked decisions
+
+- 覆盖所有 Claude 成功响应；只在命中规则时落盘。
+- 第一版只匹配空任务式待命回复，不将命中视为错误。
+- 不触发重试，不修改 HTTP/SSE，不记录渠道 RPM 失败。
+- 复用现有错误快照的脱敏、TTL、容量、文件数和下载能力。
+- 匹配客户可见文本，不使用包含 thinking 的聚合文本。
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| 当前工作树含既有规划文件改动和大量无关文件 | 1 | 仅向规划文件追加本任务小节，业务修改严格限定在相关模块 |
+| 首次跨三个共享规划文件的追加补丁因末尾上下文混淆而未应用 | 1 | 分别读取各文件真实末尾，再使用独立上下文追加 |
+| 首次业务大补丁因 `error_snapshot.go` 常量对齐上下文不匹配而未应用 | 1 | 拆成模型、快照基础结构、新文件和 handler 四组小补丁 |
+| 首次页面大补丁因 JSX 长文案换行上下文不匹配而未应用 | 1 | 按标签映射、列表列、详情区和文案拆分应用 |
+| 首次七语言 Banner 批量替换因现有繁体译文不匹配而未应用 | 1 | 读取七个精确现值后重新应用 |
+| `bun run i18n:lint` 返回 441 条 | 1 | 与仓库既有基线完全一致；本次 ErrorSnapshots 页面没有新增 lint finding |
+| 相关 Go 包首次完整回归有一个新测试失败 | 1 | 热路径优化后测试夹具未启用 diagnostics；修正夹具，不回退“开关关闭时不复制回复”行为 |
+
+## 2026-07-29 — Claude 客户令牌实流量复现与诊断快照验收
+
+### Goal
+
+使用客户提供的 `gwprobe` 与 6 个临时令牌，对目标网关执行受控 Claude 并发重放，尝试复现空任务问候或 HTTP 200 空流；在本地 Docker dev 中验证本次“可疑成功”采集能否保存足以分析渠道、模型映射、请求、回复和 SSE 的证据。不得把凭据写入仓库、规划文件或持久日志。
+
+### Phases
+
+- [completed] 审计脚本、样本、目标端点和 Docker dev 拓扑，设计不泄露凭据的实验矩阵
+- [completed] 建立基线并使用 6 个临时令牌进行受控 burst 复现
+- [completed] 在本地 Docker dev 中启用自动错误快照并验证命中采集链路
+- [completed] 分析请求、渠道、模型与 SSE 证据，并修正完整性失败快照的 SSE/流式元数据缺口
+- [completed] 完成回归验证、清理临时凭据与实验夹具并汇总结论
+
+### Locked decisions
+
+- 临时令牌仅通过进程环境或权限为 `0600` 的仓库外临时文件注入，任何输出都不得包含完整令牌。
+- 六个上游渠道统一使用用户确认的 `https://hk.supertoken.cc`，本地客户端只接触隔离的本地测试令牌。
+- 第一阶段只复现和取证；不因可疑回复自动重试，不改写客户响应，不改变计费和渠道失败状态。
+- 不能仅凭问候语断言换模；需结合 requested upstream model、response-reported model、渠道和原始 SSE 判断。
+- 控制并发和轮数，先小样本确认端点与脚本行为，再扩大实验，避免不必要计费。
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| 通用 planning completion check 在上一任务结束时仍报告 2 个 pending phase | 1 | 已确认属于共享文件内较早的 image-pricing 历史任务；本轮新增独立阶段，不篡改历史状态 |
+| 首次跨三个规划文件追加本轮计划时 `progress.md` 锚点不匹配 | 1 | 补丁未产生部分写入；分别读取三个文件真实末尾并改用独立追加 |
+| 默认样本 `/tmp/gwprobe-sample.json` 不存在，且当前环境未设置目标端点 | 1 | 不发出盲目请求；先从现有诊断材料或 Claude CLI 生成脱敏样本，并只解析可核验的目标端点配置 |
+| 客户脚本 `capture` 在 60 秒内未捕获 Claude CLI 请求 | 1 | 不原样重试；脚本丢弃 CLI 输出，改为使用同一无凭据本地端点直接运行 CLI，读取实际错误后选择现有样本或兼容的抓样方式 |
+| Claude Code `2.1.220` 使用 dummy 本地 capture 配置时在请求发送前持续 `401 authentication_failed` | 1 | 第 6 次自动重试时人工终止，确认费用与 usage 均为 0；停止此路径，改用仓库现有脱敏 Claude 请求样本 |
+| 错把生成本机 Claude CLI capture 样本当成实流量验收前置步骤 | 1 | 用户澄清后纠正：6 个临时令牌应作为本地 Docker dev 的上游渠道凭据，调用本地 `/v1/messages`，使本次诊断代码位于实际请求链路中 |
+| 用户纠正测试拓扑后的首次规划补丁锚点不匹配 | 1 | 补丁未产生部分写入；读取真实末尾后追加正确拓扑和 `hk.supertoken.cc` |
+| 令牌元数据只读查询误用了不存在的 `models_enabled` 列 | 1 | 根据 `\\d tokens` 改用 `model_limits_enabled`；查询未产生任何数据库修改 |
+| error_snapshots 只读查询误用了不存在的 `file_name` 列 | 1 | 根据真实 schema 改用 payload_path 等字段；快照写入本身未受影响 |
+| 12 并发保留中途 `role:system` 全部被本地 Claude DTO 400 拒绝 | 1 | 该非标准 role 未到上游且未计费；按客户脚本的 `keep-system=false` 对照继续，记录生产/入口差异 |
+| 12 并发大输入在本地预扣费阶段有 11 条因管理员组倍率 99 返回 403 | 1 | 只有 1 条到达上游且成功；不改全局倍率，改把隔离探针 token 切到 `default` 组并刷新精确 token 缓存 |
+| 探针 token 切到 `ccmax-yimo` 后因管理员无该组权限返回 403 | 1 | 未到上游；改用 `UserUsableGroups` 明确允许且倍率为 1 的 `local-adobe2api`，精确删除该 token Redis 缓存 |
+
+## 2026-07-30 — AdobeVideo 异步参考图片
+
+### Goal
+
+让 Adobe2API `/v1/videos` 与 new-api `/v1/video/tasks` 的 AdobeVideo 渠道支持 Seedance 异步参考图片，同时保持现有纯文本请求、按秒计费、异步轮询和 Asset 下载契约不变。
+
+### Phases
+
+- [completed] 核对 Adobe2API Chat 参考媒体能力、异步 DTO/worker 和 new-api adaptor 限制
+- [completed] 扩展 Adobe2API 异步请求、校验、worker 参考图加载与测试
+- [completed] 扩展 new-api AdobeVideo 标准化映射、provider options、mock 与测试
+- [completed] 运行两仓库全量回归、Docker mock 验收和差异检查
+
+### Locked decisions
+
+- V1 只桥接参考图片，不同时扩展视频/音频参考。
+- 统一接口继续使用 `input.image` 和 `reference_images`；顺序为主图在前，其余参考图随后。
+- `provider_options.adobe_video.reference_mode` 显式支持 `frame` 与 `media`，默认 `frame`。
+- `frame` 最多两张，分别为首帧和尾帧；`media` 最多九张普通参考图。
+- V1 只接受 URL/Data URL，不接受 `provider + file_id`，不得静默丢弃不支持的来源。
+- 参考图片不改变按秒计费数量，不增加分辨率倍率。
+- Adobe2API 在异步 worker 内下载、验证和上传素材，提交接口本身保持快速返回 202。
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| session catch-up 只发现上一轮已中断的 `GWPROBE_CAPTURE` 指令 | 1 | 判定与本任务无关；以当前用户请求和现有规划文件为准继续，不恢复旧请求 |
+| 首次跨三个共享规划文件追加补丁因末尾上下文已变化而失败 | 1 | 补丁原子失败且无部分写入；读取三个文件真实末尾后分别追加 |
+| 本机 Python 环境缺少 FastAPI，无法直接导入 Seedance 测试 | 1 | 重建 Adobe2API Docker 镜像并在镜像依赖环境中运行完整测试 |
+| 首次验收查询把公开字符串 `task_id` 当成 tasks 主键 `id` | 1 | 根据真实表结构改查 `tasks.task_id`，任务本身和后台轮询未受影响 |
+| 首次用创建任务的 `sk-` token 查询 `/v1/video/tasks/{id}` 返回 401 | 1 | 核对后确认查询按公开契约使用资源 API Key `ak_`；不放宽鉴权边界，本轮通过任务表、mock 指标和 token 内容代理验证生命周期 |
+
+## 2026-07-30 — Seedance URL-only 多媒体异步链路
+
+### Goal
+
+在不让图片、视频、音频文件内容进入 new-api 视频任务请求的前提下，统一 Adobe2API、Higgsfield2API 和 new-api 的 `frame|media` 参考素材语义，并通过 image-handle 提供 R2 预签名直传控制面。
+
+### Phases
+
+- [completed] 审计四个服务现状并锁定最终公共契约
+- [completed] 在 image-handle 与 new-api 增加媒体预签名上传控制面
+- [completed] 扩展 new-api URL-only 多媒体 DTO、AdobeVideo 与 HiggsfieldVideo adaptor
+- [completed] 补齐 Adobe2API、Higgsfield2API 的 9/3/3、15 秒探测和上游映射
+- [completed] 更新 Seedance 异步文档与 Resource Center OpenAPI
+- [completed] 完成定向、全量和 Docker dev 联动验收
+
+## 2026-07-30 — 四服务 main 分支发布
+
+### Goal
+
+仅提交并推送 Seedance URL-only 多媒体异步链路在 new-api、image-handle、Adobe2API、Higgsfield2API 的改动，保留各仓库所有无关工作树内容。
+
+### Phases
+
+- [completed] fetch 四个远程并审计提交边界
+- [completed] 分仓库精确暂存并复核 staged diff
+- [completed] 在四个 main 分支分别创建提交
+- [in_progress] 推送 origin/main 并验证远程 SHA
+
+### Exclusions
+
+- new-api 的 Claude 响应诊断、请求转储脚本、临时输出和其他历史任务改动不进入本次提交。
+- Adobe2API 未跟踪的管理员凭据脱敏设计文档不进入本次提交。
+- supertokendoc 不属于用户本次指定的“四个服务”，不提交或推送。
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| staged 临时 worktree 先运行 Go 测试时缺少被忽略的 `web/dist` | 1 | 临时 worktree 已自动清理；改为先执行前端 build 生成 embed 目录，再运行 `go test ./...` |
+| 长命令经嵌套 exec 返回后台 session，首次未取得最终输出且留下临时 worktree | 1 | 不重复创建快照；复用同一 worktree直接取得全量测试退出码 0，并精确移除两个临时 worktree |
+
+### Locked decisions
+
+- 最新 URL-only 决策覆盖旧计划中 new-api 接收 multipart、Base64、Data URL和任务级文件暂存的部分。
+- `frame` 最多两张图；`media` 最多 9 图、3 视频、3 音频，总计最多 12。
+- 客户端通过 new-api 小型控制请求获取 R2 预签名 PUT，文件字节直接进入 R2；new-api 不代理 PUT。
+- Adobe2API、Higgsfield2API 仍为直连兼容接口支持 JSON/multipart，并统一基于实际内容探测 15 秒限制。
+- 参考素材不改变 `output.duration` 的按秒计费；分辨率仍由精确模型 SKU 固定。
+- 不新增 new-api 或 Higgsfield 业务数据库字段；持久化内容必须脱敏。
+
+### Errors encountered
+
+| Error | Attempt | Resolution |
+|---|---:|---|
+| URL-only DTO 首次聚焦测试仍按旧契约期待 provider file reference 与 Data URL 合法 | 1 | 更新旧断言为明确拒绝，并增加 media/名称/URL 脱敏覆盖 |
+| AdobeVideo adaptor 首次大补丁因底部 helper 的实际错误码与上下文不同未应用 | 1 | 确认补丁原子失败，读取精确片段后拆为结构、计数和 URL helper 三个小补丁 |
+| 首次注册 HiggsfieldVideo 的跨前后端补丁因前端 Adobe 颜色上下文不同未应用 | 1 | 确认没有部分写入，拆分后端注册与三个前端精确片段 |
+| 本机 Higgsfield Python 环境没有安装 pytest | 1 | 不修改全局 Python；后续使用项目已有 `uv run pytest` 或现有 Docker 镜像执行 |
+| 首版 HiggsfieldVideo 测试按简化签名调用嵌入的 Adobe adaptor | 1 | 对齐真实 `BuildRequestBody(c, info)`、`DoRequest(c, info, body)` 与 `ChannelMeta.ApiKey` 后重跑 |
+| Higgsfield 旧双图测试仍模拟每张图单独申请 `/media/batch` | 1 | 按已确认契约更新为一次传两个 MIME；实现保持单 batch、并行 PUT、串行 confirm |
+| HiggsfieldVideo 继承 Adobe adaptor 时仍使用 Adobe 私有 SKU 集合 | 1 | 抽出 provider 参数化请求体构建，并在 Higgsfield adaptor 覆盖精确模型校验 |
+| i18n 提取与同步把七个 locale 扩大为数千行无关重排和空翻译 | 1 | 以各 locale 的 HEAD 为基线，机械叠加既有 Claude 诊断键和本次 13 个媒体文档键；键级审计确认无删除、无空新增 |
+| TypeScript 格式化首次在 new-api 目录运行，找不到 image-handle 文件 | 1 | Go 格式化已成功；切换到 image-handle 真实目录后执行 Prettier |
+| HiggsfieldVideo 新测试漏导入 Adobe 命名空间常量 | 1 | 增加精确 import；controller、router、HiggsfieldVideo 聚焦测试全部通过 |
+| image-handle 返回 `media.upload_session.list`，OpenAPI 声明 `media.upload.session.list` | 1 | 统一实现、测试和文档为 `media.upload.session.list` |
+| HiggsfieldVideo 会接受或覆盖错误的 `provider_options.adobe_video` | 1 | 在命名空间桥接前明确拒绝 Adobe 命名空间，并增加回归测试 |
+| 首次 Docker 综合验收在 Adobe 成功任务后退出，终端只输出成功任务 JSON | 1 | 不重复整条流程；已确认实际扣费 60000、钱包来源和 URL 脱敏持久化，按真实 Mock/数据库 schema 从断点核查 Range、Webhook 与后续 Higgsfield 流程 |
+| 异步失败退款断言要求 `used_quota` 回到 120000，但实际为 180000 | 1 | 可用钱包已恢复 60000 且存在退款日志；`used_quota` 是累计消费审计值而非净支出，验收改为断言可用额度、退款日志和退款幂等性 |
+| 15.001 秒 Docker 探测脚本使用 zsh 只读变量 `status` | 1 | Adobe 任务已创建且不重复提交；改用 `task_state` 从已有任务 ID继续轮询，再执行 Higgsfield 同步拒绝 |
+| 首次 PostgreSQL fixture 清理通过未带 `-i` 的 `docker exec` 发送 here-doc | 1 | 对象与 Redis 已精确删除且验证；数据库计数确认未变化，补执行一次带 stdin 的同一精确事务后再重启核验 |
+| Adobe2API 清理重启脚本探测不存在的 `/health` 路径 | 1 | 数据库和 Mock 清理已完成；中止无效循环，改用已验证的鉴权 `/v1/models` 与容器 healthcheck 检查，再删除本地媒体 fixture |
+| 仓库级 i18n lint 从既有 420 项增至 441 项 | 1 | 新增 21 项全部是 Resource Center 的 OpenAPI `operationId`/`schemaName` 属性；将这两个非展示协议属性加入 ignoredAttributes 后恢复 420 基线，本次文件为 0 项 |
+| 最终并行健康检查脚本引用了未在新 isolate 声明的 `repos` | 1 | 无测试动作被执行；在同一脚本内声明 `repoPaths` 后运行，所有健康、清理和 diff 检查通过 |

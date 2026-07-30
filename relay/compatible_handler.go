@@ -143,6 +143,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 				relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)
 			}
 			relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
+			service.CaptureClaudeDiagnosticUpstreamRequestIfNeeded(c, jsonData)
 			requestBody = bytes.NewBuffer(jsonData)
 		} else {
 			if relaycommon.ShouldApplyOpenAIReservedFunctionNameCompat(info) ||
@@ -261,6 +262,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		relaycommon.CaptureClaudeToolSchemaCompatFinalSchemasInJSON(jsonData, info)
 		relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
 		service.DumpUpstreamRequestIfNeeded(c, jsonData)
+		if info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
+			service.CaptureClaudeDiagnosticUpstreamRequestIfNeeded(c, jsonData)
+		}
 		requestBody = bytes.NewBuffer(jsonData)
 	}
 
