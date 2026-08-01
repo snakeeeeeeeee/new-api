@@ -509,13 +509,19 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
 
-	logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask response: %s", string(responseBody)))
+	logger.LogDebug(ctx, fmt.Sprintf(
+		"updateVideoSingleTask response received: task=%s status=%d bytes=%d",
+		taskId, resp.StatusCode, len(responseBody),
+	))
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
 	var responseItems dto.TaskResponse[model.Task]
 	if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
-		logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask parsed as new api response format: %+v", responseItems))
+		logger.LogDebug(ctx, fmt.Sprintf(
+			"updateVideoSingleTask parsed new-api response: task=%s status=%s",
+			taskId, responseItems.Data.Status,
+		))
 		t := responseItems.Data
 		taskResult.TaskID = t.TaskID
 		taskResult.Status = string(t.Status)

@@ -369,15 +369,10 @@ export const getTaskLogsColumns = ({
         const displayText = String(record.username || userId || '?');
         return (
           <Space>
-            <Avatar
-              size='extra-small'
-              color={stringToColor(displayText)}
-            >
+            <Avatar size='extra-small' color={stringToColor(displayText)}>
               {displayText.slice(0, 1)}
             </Avatar>
-            <Typography.Text>
-              {displayText}
-            </Typography.Text>
+            <Typography.Text>{displayText}</Typography.Text>
           </Space>
         );
       },
@@ -440,7 +435,15 @@ export const getTaskLogsColumns = ({
                     ? 'var(--semi-color-warning)'
                     : null
                 }
-                percent={text ? parseInt(text.replace('%', '')) : 0}
+                percent={
+                  ['SUCCESS', 'FAILURE'].includes(
+                    String(record.status || '').toUpperCase(),
+                  )
+                    ? 100
+                    : text
+                      ? parseInt(text.replace('%', ''))
+                      : 0
+                }
                 showInfo={true}
                 aria-label='task progress'
                 style={{ minWidth: '160px' }}

@@ -31,6 +31,8 @@ func GetEndpointTypesByChannelType(channelType int, modelName string) []constant
 	case constant.ChannelTypeSora:
 		endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAIVideo}
 	case constant.ChannelTypeAdobeVideo:
+		fallthrough
+	case constant.ChannelTypeLeonardoVideo:
 		endpointTypes = []constant.EndpointType{constant.EndpointTypeVideoTask}
 	default:
 		if IsOpenAIResponseOnlyModel(modelName) {

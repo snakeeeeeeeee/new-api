@@ -74,6 +74,7 @@ const PLATFORM_OPTIONS = [
   ['55', 'Sora'],
   ['59', 'Self-Adobe'],
   ['60', 'Self-Higgsfield'],
+  ['61', 'Self-Leonardo'],
   ['50', 'Kling'],
   ['51', '即梦'],
   ['52', 'Vidu'],

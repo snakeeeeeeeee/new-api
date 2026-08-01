@@ -289,7 +289,15 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 4. 价格计算：按秒视频、图片参数或旧按次模型价格
 	info.OriginModelName = modelName
-	if _, _, _, videoPricingBound := ratio_setting.GetVideoPricingForModel(modelName); videoPricingBound {
+	_, _, _, videoPricingBound := ratio_setting.GetVideoPricingForModel(modelName)
+	if isVideoTask && info.ChannelType == constant.ChannelTypeLeonardoVideo && !videoPricingBound {
+		return nil, service.TaskErrorWrapperLocal(
+			fmt.Errorf("video pricing is not configured for model %s", modelName),
+			"video_pricing_not_configured",
+			http.StatusServiceUnavailable,
+		)
+	}
+	if videoPricingBound {
 		videoEstimator, ok := adaptor.(channel.VideoBillingEstimator)
 		if !ok {
 			return nil, service.TaskErrorWrapperLocal(
@@ -432,12 +440,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
 		return resolveTaskSubmitFailure(c, createdTask, createdLease,
-			service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError))
+			sanitizeLeonardoSubmitError(info, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)))
 	}
 	if resp != nil && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
 		responseBody, _ := io.ReadAll(resp.Body)
 		return resolveTaskSubmitFailure(c, createdTask, createdLease,
-			service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode))
+			projectTaskSubmitHTTPError(info, resp.StatusCode, responseBody))
 	}
 
 	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
@@ -451,7 +459,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 11. 解析响应
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
 	if taskErr != nil {
-		return resolveTaskSubmitFailure(c, createdTask, createdLease, taskErr)
+		return resolveTaskSubmitFailure(c, createdTask, createdLease, sanitizeLeonardoSubmitError(info, taskErr))
 	}
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
@@ -902,6 +910,9 @@ func resolveTaskSubmitFailure(c *gin.Context, task *model.Task, lease *model.Ima
 	task.Status = model.TaskStatusFailure
 	task.Progress = taskcommon.ProgressComplete
 	task.FailReason = taskErr.Message
+	task.SetData(map[string]any{
+		"error": map[string]any{"code": taskErr.Code, "message": taskErr.Message},
+	})
 	task.FinishTime = now
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		won, err := task.UpdateWithStatusTx(tx, snapshot.Status)
@@ -914,6 +925,73 @@ func resolveTaskSubmitFailure(c *gin.Context, task *model.Task, lease *model.Ima
 		common.SysError("mark normalized video submit failed: " + err.Error())
 	}
 	return nil, taskErr
+}
+
+func sanitizeLeonardoSubmitError(info *relaycommon.RelayInfo, taskErr *dto.TaskError) *dto.TaskError {
+	if taskErr == nil || info == nil || info.ChannelType != constant.ChannelTypeLeonardoVideo {
+		return taskErr
+	}
+	return service.TaskErrorWrapperLocal(
+		errors.New("video task submission failed"),
+		"video_task_failed",
+		http.StatusBadGateway,
+	)
+}
+
+func projectTaskSubmitHTTPError(info *relaycommon.RelayInfo, statusCode int, body []byte) *dto.TaskError {
+	if info == nil || info.ChannelType != constant.ChannelTypeLeonardoVideo {
+		return service.TaskErrorWrapper(
+			fmt.Errorf("%s", string(body)), "fail_to_fetch_task", statusCode,
+		)
+	}
+	code, message, ok := trustedLeonardoValidationError(statusCode, body)
+	if !ok {
+		return sanitizeLeonardoSubmitError(info, service.TaskErrorWrapperLocal(
+			errors.New("untrusted Leonardo submission response"),
+			"fail_to_fetch_task",
+			statusCode,
+		))
+	}
+	return service.TaskErrorWrapperLocal(errors.New(message), code, statusCode)
+}
+
+func trustedLeonardoValidationError(statusCode int, body []byte) (string, string, bool) {
+	switch statusCode {
+	case http.StatusBadRequest, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+	default:
+		return "", "", false
+	}
+	if len(body) > 64*1024 {
+		return "", "", false
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", "", false
+	}
+	candidate := body
+	if detail, ok := envelope["detail"]; ok {
+		candidate = detail
+	} else if responseError, ok := envelope["error"]; ok {
+		candidate = responseError
+	}
+	var value struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(candidate, &value); err != nil {
+		return "", "", false
+	}
+	code := strings.TrimSpace(value.Code)
+	message := strings.TrimSpace(value.Message)
+	switch code {
+	case "invalid_request", "invalid_reference_media_duration", "reference_media_duration_exceeded":
+	default:
+		return "", "", false
+	}
+	if message == "" || len(message) > 500 {
+		return "", "", false
+	}
+	return code, message, true
 }
 
 func markAsyncImageSubmitFailed(task *model.Task, lease *model.ImageCredentialLease, reason string) (bool, error) {
@@ -1494,6 +1572,12 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 			resultURL = taskcommon.BuildProxyPath(task.TaskID)
 		}
 	}
+	progress := task.Progress
+	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
+		// Terminal tasks are complete from the task API's perspective. This
+		// also normalizes older records saved with Leonardo's 0-1 progress.
+		progress = taskcommon.ProgressComplete
+	}
 	displayPlatform := taskDisplayPlatform(task)
 	return &dto.TaskDto{
 		ID:              task.ID,
@@ -1513,7 +1597,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		SubmitTime:      task.SubmitTime,
 		StartTime:       task.StartTime,
 		FinishTime:      task.FinishTime,
-		Progress:        task.Progress,
+		Progress:        progress,
 		IsBlocked:       task.IsBlocked,
 		Properties:      task.Properties,
 		Username:        task.Username,

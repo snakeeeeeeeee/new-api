@@ -39,6 +39,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/imagehandle"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
+	taskleonardovideo "github.com/QuantumNous/new-api/relay/channel/task/leonardovideo"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
@@ -171,6 +172,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskadobevideo.TaskAdaptor{}
 		case constant.ChannelTypeHiggsfieldVideo:
 			return &taskhiggsfieldvideo.TaskAdaptor{}
+		case constant.ChannelTypeLeonardoVideo:
+			return &taskleonardovideo.TaskAdaptor{}
 		}
 	}
 	return nil

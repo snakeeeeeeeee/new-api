@@ -147,3 +147,47 @@ func TestBuildPublicVideoTaskMasksUnknownProviderErrorCodes(t *testing.T) {
 	require.NotNil(t, public.Error)
 	assert.Equal(t, "video_task_failed", public.Error.Code)
 }
+
+func TestBuildPublicVideoTaskSanitizesLegacySubmissionFailure(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_submission_unknown",
+		Status:     model.TaskStatusFailure,
+		FailReason: "Adobe submission connection ended after it may have been accepted",
+	}
+	task.SetData(map[string]any{
+		"error": map[string]any{
+			"code":    "submission_unknown",
+			"message": task.FailReason,
+		},
+	})
+
+	public := buildPublicVideoTask(task, nil, nil)
+
+	assert.Equal(t, "failed", public.Status)
+	require.NotNil(t, public.Error)
+	assert.Equal(t, "video_task_failed", public.Error.Code)
+	assert.Equal(t, "Submission connection ended before the result was confirmed", public.Error.Message)
+	assert.False(t, public.Error.Retryable)
+	assert.NotContains(t, public.Error.Message, "Adobe")
+}
+
+func TestBuildPublicVideoTaskProjectsModerationAsRetryable(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_content_moderated",
+		Status:     model.TaskStatusFailure,
+		FailReason: "The generation was rejected by content moderation. Please revise the prompt or reference media and try again.",
+	}
+	task.SetData(map[string]any{
+		"error": map[string]any{
+			"code":    "content_moderated",
+			"message": task.FailReason,
+		},
+	})
+
+	public := buildPublicVideoTask(task, nil, nil)
+
+	require.NotNil(t, public.Error)
+	assert.Equal(t, "content_moderated", public.Error.Code)
+	assert.Equal(t, task.FailReason, public.Error.Message)
+	assert.True(t, public.Error.Retryable)
+}

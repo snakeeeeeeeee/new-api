@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -305,5 +306,162 @@ func TestVideoFailureControl(t *testing.T) {
 	}
 	if task["status"] != "failed" {
 		t.Fatalf("status = %v, want failed", task["status"])
+	}
+}
+
+func TestLeonardoVideoPayloadContractAndIdempotency(t *testing.T) {
+	state := newServerState()
+	server := httptest.NewServer(state.handler())
+	defer server.Close()
+
+	audio := false
+	public := false
+	seed := -1
+	payload := videoTaskRequest{
+		Model: "seedance-2.0-fast-480p", Prompt: "a cinematic cat", Duration: 4,
+		AspectRatio: "16:9", GenerateAudio: &audio, Public: &public, Seed: &seed,
+		ImageReferences: []videoReferenceMedia{
+			{URL: "https://media.example.com/1.png"},
+			{URL: "https://media.example.com/2.png"},
+			{URL: "https://media.example.com/3.png"},
+			{URL: "https://media.example.com/4.png"},
+		},
+		VideoReferences: []videoReferenceMedia{
+			{URL: "https://media.example.com/1.mp4"},
+			{URL: "https://media.example.com/2.mp4"},
+			{URL: "https://media.example.com/3.mp4"},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func() (map[string]any, int) {
+		request, requestErr := http.NewRequest(http.MethodPost, server.URL+"/v1/videos", bytes.NewReader(body))
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		request.Header.Set("Authorization", "Bearer mock-key")
+		request.Header.Set("Idempotency-Key", "public-task-1")
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		defer response.Body.Close()
+		var result map[string]any
+		if decodeErr := json.NewDecoder(response.Body).Decode(&result); decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		return result, response.StatusCode
+	}
+	first, status := post()
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", status, http.StatusAccepted)
+	}
+	firstID, _ := first["task_id"].(string)
+	if firstID == "" {
+		t.Fatal("first response omitted task_id")
+	}
+	second, status := post()
+	if status != http.StatusAccepted || second["task_id"] != firstID {
+		t.Fatalf("idempotent replay = status %d task %v, want %d task %s", status, second["task_id"], http.StatusAccepted, firstID)
+	}
+
+	metrics := state.snapshot()
+	if metrics.VideoRequests.Submit != 1 || metrics.VideoRequests.SubmitAttempts != 2 {
+		t.Fatalf("unexpected submit metrics: %+v", metrics.VideoRequests)
+	}
+	if metrics.LastVideoSubmit == nil || metrics.LastVideoSubmit.Public == nil || *metrics.LastVideoSubmit.Public ||
+		metrics.LastVideoSubmit.Seed == nil || *metrics.LastVideoSubmit.Seed != -1 ||
+		len(metrics.LastVideoSubmit.ImageReferences) != 4 || len(metrics.LastVideoSubmit.VideoReferences) != 3 ||
+		metrics.LastVideoSubmit.ReferenceMode != "" || len(metrics.LastVideoSubmit.ReferenceImages) != 0 ||
+		len(metrics.LastVideoSubmit.ReferenceVideos) != 0 || len(metrics.LastVideoSubmit.ReferenceAudios) != 0 {
+		t.Fatalf("unexpected Leonardo payload: %+v", metrics.LastVideoSubmit)
+	}
+}
+
+func TestLeonardoMockSupportsModerationFailure(t *testing.T) {
+	state := newServerState()
+	terminal := "failed"
+	after := 1
+	code := "content_moderated"
+	message := "The generation was rejected by content moderation."
+	if _, err := state.updateConfig(controlUpdate{
+		VideoTerminalStatus:    &terminal,
+		VideoTerminalAfterPoll: &after,
+		VideoTerminalErrorCode: &code,
+		VideoTerminalErrorMsg:  &message,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(state.handler())
+	defer server.Close()
+
+	body := `{"model":"seedance-2.0-fast-480p","prompt":"moderated","duration":4,"aspect_ratio":"16:9","public":false,"seed":-1}`
+	response, err := http.Post(server.URL+"/v1/videos", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var submitted map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&submitted); err != nil {
+		response.Body.Close()
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	taskID, _ := submitted["task_id"].(string)
+	response, err = http.Get(server.URL + "/v1/videos/" + taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var task map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&task); err != nil {
+		t.Fatal(err)
+	}
+	if task["status"] != "failed" {
+		t.Fatalf("status = %v, want failed", task["status"])
+	}
+	errorObject, ok := task["error"].(map[string]any)
+	if !ok || errorObject["code"] != code || errorObject["message"] != message {
+		t.Fatalf("unexpected moderation error: %v", task["error"])
+	}
+}
+
+func TestLeonardoMockDisconnectsFirstResponseWithoutCreatingSecondJob(t *testing.T) {
+	state := newServerState()
+	disconnect := true
+	if _, err := state.updateConfig(controlUpdate{VideoDisconnectFirst: &disconnect}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(state.handler())
+	defer server.Close()
+
+	body := []byte(`{"model":"seedance-2.0-fast-480p","prompt":"retry transport","duration":4,"aspect_ratio":"16:9","public":false,"seed":-1}`)
+	firstRequest, err := http.NewRequest(http.MethodPost, server.URL+"/v1/videos", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRequest.Header.Set("Idempotency-Key", "transport-task-1")
+	if response, requestErr := http.DefaultClient.Do(firstRequest); requestErr == nil {
+		response.Body.Close()
+		t.Fatal("first response unexpectedly succeeded")
+	}
+
+	secondRequest, err := http.NewRequest(http.MethodPost, server.URL+"/v1/videos", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRequest.Header.Set("Idempotency-Key", "transport-task-1")
+	response, err := http.DefaultClient.Do(secondRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("second status = %d, want %d", response.StatusCode, http.StatusAccepted)
+	}
+	metrics := state.snapshot()
+	if metrics.VideoRequests.Submit != 1 || metrics.VideoRequests.SubmitAttempts != 2 || len(state.videoJobs) != 1 {
+		t.Fatalf("transport replay created duplicate job: metrics=%+v jobs=%d", metrics.VideoRequests, len(state.videoJobs))
 	}
 }

@@ -90,6 +90,39 @@ const adobeVideoModelCapabilities = {
   },
 };
 
+const leonardoVideoModelCapabilities = Object.fromEntries(
+  [
+    'leonardo-seedance-2.0-fast-480p',
+    'leonardo-seedance-2.0-fast-720p',
+    'leonardo-seedance-2.0-480p',
+    'leonardo-seedance-2.0-720p',
+    'leonardo-seedance-2.0-1080p',
+  ].map((model) => [
+    model,
+    {
+      channel: 'Self-Leonardo',
+      upstream_model: model.replace(/^leonardo-/, ''),
+      operations: ['generation'],
+      prompt_max_characters: 1200,
+      durations: {
+        minimum: 4,
+        maximum: 15,
+        integer_seconds: true,
+      },
+      aspect_ratios: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
+      reference_modes: {
+        media: {
+          maximum_images: 4,
+          maximum_videos: 3,
+          maximum_total: 7,
+        },
+      },
+      audio_reference: false,
+      generate_audio_option: 'provider_options.leonardo_video.generate_audio',
+    },
+  ]),
+);
+
 const videoTaskCreateExamples = {
   klingFrame: {
     summary: 'Kling 3.0 required frame image',
@@ -197,6 +230,58 @@ const videoTaskCreateExamples = {
       },
       provider_options: {
         adobe_video: {
+          generate_audio: true,
+        },
+      },
+    },
+  },
+  leonardoText: {
+    summary: 'Leonardo Seedance 2.0 Fast text generation',
+    description:
+      'Leonardo accepts generation only. Pure text may omit input.reference_mode; 4-15 second output uses the model-fixed resolution.',
+    value: {
+      model: 'leonardo-seedance-2.0-fast-480p',
+      operation: 'generation',
+      input: {
+        prompt: 'A cat walking across a moonlit rooftop',
+      },
+      output: {
+        duration: 4,
+        aspect_ratio: '16:9',
+      },
+      provider_options: {
+        leonardo_video: {
+          generate_audio: false,
+        },
+      },
+    },
+  },
+  leonardoMedia: {
+    summary: 'Leonardo Seedance with image and video references',
+    description:
+      'Leonardo requires media when references are present, accepts up to four images and three videos, and does not accept audio references.',
+    value: {
+      model: 'leonardo-seedance-2.0-720p',
+      operation: 'generation',
+      input: {
+        prompt: 'Keep the subject appearance and follow the reference motion',
+        reference_mode: 'media',
+        image: {
+          url: 'https://media.example.com/leonardo/subject.png',
+        },
+        reference_images: [
+          { url: 'https://media.example.com/leonardo/style.jpg' },
+        ],
+        reference_videos: [
+          { url: 'https://media.example.com/leonardo/motion.mp4' },
+        ],
+      },
+      output: {
+        duration: 4,
+        aspect_ratio: '16:9',
+      },
+      provider_options: {
+        leonardo_video: {
           generate_audio: true,
         },
       },
@@ -959,10 +1044,13 @@ const spec = {
         operationId: 'createVideoTask',
         summary: 'Create an asynchronous video task',
         description:
-          'Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. Adobe video prompts accept at most 1200 Unicode characters. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Compatibility endpoints under /v1/videos remain unchanged.',
+          'Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. Adobe video prompts accept at most 1200 Unicode characters. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Self-Leonardo exposes five leonardo-seedance-2.0-* models, generation only, 4-15 seconds, six aspect ratios, and HTTP(S) media references limited to four images, three videos, and seven total items. Leonardo does not support frame, images, audio references, data URLs, base64, or provider file references; generate_audio remains available under provider_options.leonardo_video. HTTPS is recommended for reference integrity. Compatibility endpoints under /v1/videos remain unchanged.',
         'x-description-zh-CN':
-          '创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。Adobe 视频提示词最多 1200 个 Unicode 字符。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。原有 /v1/videos 兼容接口保持不变。',
-        'x-supertoken-video-model-capabilities': adobeVideoModelCapabilities,
+          '创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。Adobe 视频提示词最多 1200 个 Unicode 字符。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。Self-Leonardo 公开五个 leonardo-seedance-2.0-* 模型，仅支持 generation、4-15 秒、六种画幅，以及最多 4 图、3 视频、7 项总参考的 HTTP(S) media 模式。Leonardo 不支持 frame、images、音频参考、Data URL、Base64 或 provider file；generate_audio 仍可通过 provider_options.leonardo_video 控制，参考素材建议使用 HTTPS 以保证传输完整性。原有 /v1/videos 兼容接口保持不变。',
+        'x-supertoken-video-model-capabilities': {
+          ...adobeVideoModelCapabilities,
+          ...leonardoVideoModelCapabilities,
+        },
         security: modelTokenSecurity,
         parameters: [
           {
@@ -1946,7 +2034,7 @@ const spec = {
           provider_options: {
             type: 'object',
             description:
-              'Provider-specific options keyed by provider namespace, for example provider_options.xai.',
+              'Provider-specific options keyed by provider namespace, for example provider_options.xai or provider_options.leonardo_video.generate_audio.',
             additionalProperties: {
               type: 'object',
               additionalProperties: true,
@@ -2483,10 +2571,10 @@ const schemaDescriptions = {
   VideoTaskInputVideoSource:
     'One source video for edit, extension, or remix, represented by an HTTP(S)/data URL or a provider-managed file reference.',
   VideoTaskInput:
-    'Prompt plus provider-neutral URL-only reference images, videos, and audios. Non-generation operations require a separate input.video source.',
+    'Prompt plus provider-neutral URL-only reference images, videos, and audios. Non-generation operations require a separate input.video source. Self-Leonardo accepts generation-only media references with at most four images, three videos, and seven total items.',
   VideoTaskOutput: 'Optional provider-neutral video output controls.',
   VideoTaskCreateRequest:
-    'Normalized video generation, edit, extension, or remix request.',
+    'Normalized video generation, edit, extension, or remix request. Self-Leonardo model mappings accept generation only.',
   VideoTaskResultVideo: 'One temporary video output and its access metadata.',
   VideoTaskResult: 'Successful video task output.',
   VideoTaskError: 'Terminal video task failure.',
@@ -2563,11 +2651,11 @@ const schemaPropertyOverrides = {
     reference_images:
       'Ordered image references. input.image counts toward the mode-specific image limit.',
     reference_mode:
-      'frame accepts at most two images; images accepts at most three images; media accepts 9 images, 3 videos, 3 audio files, and 12 items total.',
+      'frame accepts at most two images; images accepts at most three images; media accepts 9 images, 3 videos, 3 audio files, and 12 items total for providers that support them. Self-Leonardo allows media only when references are present and limits it to 4 images, 3 videos, and 7 total items.',
     reference_videos:
       'Up to three URL-only video references in media mode; actual duration must not exceed 15 seconds.',
     reference_audios:
-      'Up to three URL-only audio references in media mode; actual duration must not exceed 15 seconds.',
+      'Up to three URL-only audio references in media mode for providers that support audio references; Self-Leonardo rejects this field.',
     video: 'Required source video for edit, extension, and remix.',
   },
   VideoTaskOutput: {

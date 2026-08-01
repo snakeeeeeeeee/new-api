@@ -12,6 +12,8 @@ import (
 )
 
 func TestChannelModelDiscoveryRegistry(t *testing.T) {
+	assert.Equal(t, constant.ChannelTypeLeonardoVideo+1, constant.ChannelTypeDummy)
+
 	tests := []struct {
 		channelType int
 		strategy    string
@@ -24,6 +26,7 @@ func TestChannelModelDiscoveryRegistry(t *testing.T) {
 		{constant.ChannelTypeVolcEngine, modelDiscoveryOpenAI, true},
 		{constant.ChannelTypeAdobeVideo, modelDiscoveryOpenAI, true},
 		{constant.ChannelTypeHiggsfieldVideo, modelDiscoveryOpenAI, true},
+		{constant.ChannelTypeLeonardoVideo, modelDiscoveryOpenAI, true},
 		{constant.ChannelTypeMidjourney, "", false},
 	}
 	for _, test := range tests {
@@ -57,6 +60,33 @@ func TestSelfHostedVideoChannelsDiscoverStandardModelList(t *testing.T) {
 		assert.Equal(t, []string{"kling_3.0_720p", "veo_3.1_fast_720p"}, models)
 		assert.Equal(t, "Bearer provider-key", authorization)
 	}
+}
+
+func TestLeonardoVideoDiscoveryFiltersToSupportedSKUs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/models", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[
+            {"id":"seedance-2.0"},
+            {"id":"seedance-2.0-fast-480p"},
+            {"id":"seedance-2.0-fast-720p"},
+            {"id":"seedance-2.0-480p"},
+            {"id":"seedance-2.0-720p"},
+            {"id":"seedance-2.0-1080p"},
+            {"id":"seedance-2.0-2160p"},
+            {"id":"future-model"}
+        ]}`))
+	}))
+	defer server.Close()
+	baseURL := server.URL
+	models, err := fetchChannelUpstreamModelIDs(&model.Channel{
+		Type: constant.ChannelTypeLeonardoVideo, Key: "provider-key", BaseURL: &baseURL,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"seedance-2.0-fast-480p", "seedance-2.0-fast-720p",
+		"seedance-2.0-480p", "seedance-2.0-720p", "seedance-2.0-1080p",
+	}, models)
 }
 
 func TestUnsupportedChannelModelDiscoveryReturnsReasonWithoutRequest(t *testing.T) {

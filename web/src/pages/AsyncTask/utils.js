@@ -75,6 +75,7 @@ export const PLATFORM_LABELS = {
   55: 'Sora',
   59: 'Self-Adobe',
   60: 'Self-Higgsfield',
+  61: 'Self-Leonardo',
   mj: 'Midjourney',
   suno: 'Suno',
 };

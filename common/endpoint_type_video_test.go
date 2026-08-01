@@ -19,3 +19,11 @@ func TestAdobeVideoUsesNormalizedVideoTaskEndpoint(t *testing.T) {
 	assert.Equal(t, "/v1/video/tasks", endpoint.Path)
 	assert.Equal(t, "POST", endpoint.Method)
 }
+
+func TestLeonardoVideoUsesNormalizedVideoTaskEndpoint(t *testing.T) {
+	assert.Equal(
+		t,
+		[]constant.EndpointType{constant.EndpointTypeVideoTask},
+		GetEndpointTypesByChannelType(constant.ChannelTypeLeonardoVideo, "leonardo-seedance-2.0-fast-480p"),
+	)
+}

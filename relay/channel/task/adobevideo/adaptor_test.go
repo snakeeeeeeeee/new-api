@@ -413,6 +413,12 @@ func TestDoResponseAndParseTaskLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusFailure, failed.Status)
 	assert.Equal(t, "request rejected", failed.Reason)
+
+	failedWithoutMessage, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-2","status":"failed","error":{"code":"submission_unknown"}}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailure, failedWithoutMessage.Status)
+	assert.Equal(t, "Video task failed", failedWithoutMessage.Reason)
+	assert.NotContains(t, failedWithoutMessage.Reason, "Adobe")
 }
 
 func TestFetchTaskAndResolveVideoContentUseStoredCredentialAndRange(t *testing.T) {

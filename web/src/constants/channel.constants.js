@@ -204,6 +204,11 @@ export const CHANNEL_OPTIONS = [
     color: 'green',
     label: 'Self-Higgsfield',
   },
+  {
+    value: 61,
+    color: 'cyan',
+    label: 'Self-Leonardo',
+  },
 ];
 
 export const MODEL_TABLE_PAGE_SIZE = 10;

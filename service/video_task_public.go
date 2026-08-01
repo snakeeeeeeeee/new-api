@@ -142,16 +142,35 @@ func buildPublicVideoTask(task *model.Task, requestRecord *model.VideoTaskReques
 		}
 	}
 	if public.Status == "failed" {
-		message := strings.TrimSpace(task.FailReason)
+		message := publicVideoTaskErrorMessage(task.FailReason)
 		if message == "" {
 			message = "Video task failed"
 		}
 		public.Error = &dto.VideoTaskPublicError{
-			Code:    publicVideoTaskErrorCode(task),
-			Message: message,
+			Code:      publicVideoTaskErrorCode(task),
+			Message:   message,
+			Retryable: publicVideoTaskErrorRetryable(task),
 		}
 	}
 	return public
+}
+
+func publicVideoTaskErrorMessage(reason string) string {
+	message := strings.TrimSpace(reason)
+	switch message {
+	case "Adobe submission result is unknown":
+		return "Submission result could not be confirmed"
+	case "Adobe submission connection ended after it may have been accepted":
+		return "Submission connection ended before the result was confirmed"
+	case "Adobe submission timed out after it may have been accepted":
+		return "Submission timed out before the result was confirmed"
+	case "AdobeVideo task failed":
+		return "Video task failed"
+	case "AdobeVideo completed without a task reference":
+		return "Video task completed without a task reference"
+	default:
+		return message
+	}
 }
 
 func publicVideoTaskErrorCode(task *model.Task) string {
@@ -168,6 +187,8 @@ func publicVideoTaskErrorCode(task *model.Task) string {
 		return fallback
 	}
 	switch strings.TrimSpace(response.Error.Code) {
+	case "content_moderated":
+		return "content_moderated"
 	case "invalid_reference_media_duration":
 		return "invalid_reference_media_duration"
 	case "reference_media_duration_exceeded":
@@ -175,6 +196,21 @@ func publicVideoTaskErrorCode(task *model.Task) string {
 	default:
 		return fallback
 	}
+}
+
+func publicVideoTaskErrorRetryable(task *model.Task) bool {
+	if task == nil || len(task.Data) == 0 {
+		return false
+	}
+	var response struct {
+		Error *struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := common.Unmarshal(task.Data, &response); err != nil || response.Error == nil {
+		return false
+	}
+	return strings.TrimSpace(response.Error.Code) == "content_moderated"
 }
 
 func PublicVideoTaskStatus(status model.TaskStatus) string {

@@ -58,8 +58,9 @@ const (
 	ChannelTypeImageHandle     = 58
 	ChannelTypeAdobeVideo      = 59
 	ChannelTypeHiggsfieldVideo = 60
-	ChannelTypeDummy           // this one is only for count, do not add any channel after this
-
+	ChannelTypeLeonardoVideo   = 61
+	// Keep the sentinel one past the last real channel. Do not add channels after it.
+	ChannelTypeDummy = ChannelTypeLeonardoVideo + 1
 )
 
 var ChannelBaseURLs = []string{
@@ -124,6 +125,7 @@ var ChannelBaseURLs = []string{
 	"http://127.0.0.1:8787",                     //58
 	"",                                          //59
 	"",                                          //60
+	"",                                          //61
 }
 
 var ChannelTypeNames = map[int]string{
@@ -184,6 +186,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeImageHandle:     "ImageHandle",
 	ChannelTypeAdobeVideo:      "AdobeVideo",
 	ChannelTypeHiggsfieldVideo: "HiggsfieldVideo",
+	ChannelTypeLeonardoVideo:   "LeonardoVideo",
 }
 
 func GetChannelTypeName(channelType int) string {

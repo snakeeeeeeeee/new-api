@@ -68,6 +68,15 @@ func TestTaskModel2DtoOmitsFailedTaskResultURL(t *testing.T) {
 	assert.Empty(t, TaskModel2Dto(failure).ResultURL)
 }
 
+func TestTaskModel2DtoNormalizesTerminalProgress(t *testing.T) {
+	for _, status := range []model.TaskStatus{model.TaskStatusSuccess, model.TaskStatusFailure} {
+		t.Run(string(status), func(t *testing.T) {
+			task := &model.Task{Status: status, Progress: "1%"}
+			assert.Equal(t, taskcommon.ProgressComplete, TaskModel2Dto(task).Progress)
+		})
+	}
+}
+
 func TestRecalcQuotaFromRatiosSaturatesHugeRatio(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		PriceData: types.PriceData{

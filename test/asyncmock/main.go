@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,9 @@ type mockConfig struct {
 	VideoSubmitStatus      int    `json:"video_submit_status"`
 	VideoTerminalStatus    string `json:"video_terminal_status"`
 	VideoTerminalAfterPoll int    `json:"video_terminal_after_poll"`
+	VideoTerminalErrorCode string `json:"video_terminal_error_code"`
+	VideoTerminalErrorMsg  string `json:"video_terminal_error_message"`
+	VideoDisconnectFirst   bool   `json:"video_disconnect_first_response"`
 }
 
 type controlUpdate struct {
@@ -43,6 +47,9 @@ type controlUpdate struct {
 	VideoSubmitStatus      *int    `json:"video_submit_status"`
 	VideoTerminalStatus    *string `json:"video_terminal_status"`
 	VideoTerminalAfterPoll *int    `json:"video_terminal_after_poll"`
+	VideoTerminalErrorCode *string `json:"video_terminal_error_code"`
+	VideoTerminalErrorMsg  *string `json:"video_terminal_error_message"`
+	VideoDisconnectFirst   *bool   `json:"video_disconnect_first_response"`
 }
 
 type requestCounts struct {
@@ -66,10 +73,14 @@ type videoTaskRequest struct {
 	Duration        int                   `json:"duration"`
 	AspectRatio     string                `json:"aspect_ratio"`
 	GenerateAudio   *bool                 `json:"generate_audio,omitempty"`
+	Public          *bool                 `json:"public,omitempty"`
+	Seed            *int                  `json:"seed,omitempty"`
 	ReferenceMode   string                `json:"reference_mode,omitempty"`
 	ReferenceImages []videoReferenceMedia `json:"reference_images,omitempty"`
 	ReferenceVideos []videoReferenceMedia `json:"reference_videos,omitempty"`
 	ReferenceAudios []videoReferenceMedia `json:"reference_audios,omitempty"`
+	ImageReferences []videoReferenceMedia `json:"image_references,omitempty"`
+	VideoReferences []videoReferenceMedia `json:"video_references,omitempty"`
 }
 
 type videoReferenceMedia struct {
@@ -78,9 +89,10 @@ type videoReferenceMedia struct {
 }
 
 type videoRequestCounts struct {
-	Submit  int64 `json:"submit"`
-	Poll    int64 `json:"poll"`
-	Content int64 `json:"content"`
+	Submit         int64 `json:"submit"`
+	SubmitAttempts int64 `json:"submit_attempts"`
+	Poll           int64 `json:"poll"`
+	Content        int64 `json:"content"`
 }
 
 type metricsResponse struct {
@@ -107,22 +119,28 @@ type serverState struct {
 	videoRequests   videoRequestCounts
 	lastVideoSubmit *videoTaskRequest
 	videoJobs       map[string]*videoJob
+	idempotencyJobs map[string]string
+	disconnectSeen  map[string]bool
 	config          mockConfig
 	sequence        atomic.Uint64
 }
 
 func newServerState() *serverState {
 	return &serverState{
-		startedAt: time.Now().Unix(),
-		current:   concurrencyCounts{ByEndpoint: make(map[string]int)},
-		peak:      concurrencyCounts{ByEndpoint: make(map[string]int)},
-		videoJobs: make(map[string]*videoJob),
+		startedAt:       time.Now().Unix(),
+		current:         concurrencyCounts{ByEndpoint: make(map[string]int)},
+		peak:            concurrencyCounts{ByEndpoint: make(map[string]int)},
+		videoJobs:       make(map[string]*videoJob),
+		idempotencyJobs: make(map[string]string),
+		disconnectSeen:  make(map[string]bool),
 		config: mockConfig{
 			ImageStatus:            http.StatusAccepted,
 			WebhookStatus:          http.StatusNoContent,
 			VideoSubmitStatus:      http.StatusAccepted,
 			VideoTerminalStatus:    "completed",
 			VideoTerminalAfterPoll: 3,
+			VideoTerminalErrorCode: "mock_video_failed",
+			VideoTerminalErrorMsg:  "async-test mock forced video failure",
 		},
 	}
 }
@@ -221,6 +239,7 @@ func (s *serverState) resetMetrics() metricsResponse {
 	s.requests = requestCounts{}
 	s.videoRequests = videoRequestCounts{}
 	s.lastVideoSubmit = nil
+	s.disconnectSeen = make(map[string]bool)
 	s.mu.Unlock()
 	return s.snapshot()
 }
@@ -256,6 +275,15 @@ func (s *serverState) updateConfig(update controlUpdate) (mockConfig, error) {
 	if update.VideoTerminalAfterPoll != nil {
 		next.VideoTerminalAfterPoll = *update.VideoTerminalAfterPoll
 	}
+	if update.VideoTerminalErrorCode != nil {
+		next.VideoTerminalErrorCode = strings.TrimSpace(*update.VideoTerminalErrorCode)
+	}
+	if update.VideoTerminalErrorMsg != nil {
+		next.VideoTerminalErrorMsg = strings.TrimSpace(*update.VideoTerminalErrorMsg)
+	}
+	if update.VideoDisconnectFirst != nil {
+		next.VideoDisconnectFirst = *update.VideoDisconnectFirst
+	}
 	if err := validateConfig(next); err != nil {
 		return s.config, err
 	}
@@ -278,6 +306,12 @@ func validateConfig(config mockConfig) error {
 	}
 	if config.VideoTerminalAfterPoll < 1 || config.VideoTerminalAfterPoll > 100 {
 		return errors.New("video_terminal_after_poll must be between 1 and 100")
+	}
+	if len(config.VideoTerminalErrorCode) > 100 {
+		return errors.New("video_terminal_error_code must not exceed 100 characters")
+	}
+	if len(config.VideoTerminalErrorMsg) > 500 {
+		return errors.New("video_terminal_error_message must not exceed 500 characters")
 	}
 	if config.ImageDelayMS < 0 || config.ImageDelayMS > maxDelayMS {
 		return fmt.Errorf("image_delay_ms must be between 0 and %d", maxDelayMS)
@@ -396,31 +430,61 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 		writeMethodNotAllowed(writer)
 		return
 	}
+	rawBody, err := io.ReadAll(io.LimitReader(request.Body, maxBodySize))
+	if err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid video JSON"}})
+		return
+	}
 	var payload videoTaskRequest
-	decoder := json.NewDecoder(io.LimitReader(request.Body, maxBodySize))
+	decoder := json.NewDecoder(bytes.NewReader(rawBody))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&payload); err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid video JSON"}})
 		return
 	}
-	payload.ReferenceMode = strings.ToLower(strings.TrimSpace(payload.ReferenceMode))
-	if payload.ReferenceMode == "" {
-		payload.ReferenceMode = "frame"
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rawBody, &fields); err != nil {
+		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid video JSON"}})
+		return
+	}
+	leonardo := payload.Public != nil || payload.Seed != nil || fields["image_references"] != nil || fields["video_references"] != nil
+	if leonardo {
+		for _, legacyField := range []string{"reference_mode", "reference_images", "reference_videos", "reference_audios"} {
+			if fields[legacyField] != nil {
+				writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "Leonardo mock received a legacy reference field"}})
+				return
+			}
+		}
+		if payload.Public == nil || *payload.Public || payload.Seed == nil || *payload.Seed != -1 ||
+			len(payload.ImageReferences) > 4 || len(payload.VideoReferences) > 3 ||
+			len(payload.ImageReferences)+len(payload.VideoReferences) > 7 ||
+			!validVideoReferences("media", payload.ImageReferences, payload.VideoReferences, nil) {
+			writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid Leonardo video request"}})
+			return
+		}
+	} else {
+		payload.ReferenceMode = strings.ToLower(strings.TrimSpace(payload.ReferenceMode))
+		if payload.ReferenceMode == "" {
+			payload.ReferenceMode = "frame"
+		}
 	}
 	if strings.TrimSpace(payload.Model) == "" || strings.TrimSpace(payload.Prompt) == "" ||
 		payload.Duration < 4 || payload.Duration > 15 || !validVideoAspectRatio(payload.AspectRatio) ||
-		!validVideoReferences(
+		(!leonardo && !validVideoReferences(
 			payload.ReferenceMode,
 			payload.ReferenceImages,
 			payload.ReferenceVideos,
 			payload.ReferenceAudios,
-		) {
+		)) {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid video request"}})
 		return
 	}
 
 	config := s.getConfig()
 	finish := s.begin("video", "video:/v1/videos", request.Header.Get("Authorization") != "")
+	s.mu.Lock()
+	s.videoRequests.SubmitAttempts++
+	s.mu.Unlock()
 	succeeded := config.VideoSubmitStatus >= 200 && config.VideoSubmitStatus < 300
 	defer finish(succeeded)
 	if !succeeded {
@@ -428,13 +492,43 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 		return
 	}
 
-	taskID := fmt.Sprintf("mock_video_%d", s.sequence.Add(1))
+	idempotencyKey := strings.TrimSpace(request.Header.Get("Idempotency-Key"))
 	s.mu.Lock()
+	if idempotencyKey != "" {
+		if existingTaskID := s.idempotencyJobs[idempotencyKey]; existingTaskID != "" {
+			job := s.videoJobs[existingTaskID]
+			s.mu.Unlock()
+			if job == nil {
+				writeJSON(writer, http.StatusConflict, map[string]any{"error": map[string]any{"message": "idempotency task missing"}})
+				return
+			}
+			writeJSON(writer, config.VideoSubmitStatus, videoTaskResponse(existingTaskID, job.Request, "queued", 0, nil))
+			return
+		}
+	}
+	taskID := fmt.Sprintf("mock_video_%d", s.sequence.Add(1))
 	s.videoJobs[taskID] = &videoJob{Request: payload}
+	if idempotencyKey != "" {
+		s.idempotencyJobs[idempotencyKey] = taskID
+	}
 	s.videoRequests.Submit++
 	last := payload
 	s.lastVideoSubmit = &last
+	disconnect := config.VideoDisconnectFirst && idempotencyKey != "" && !s.disconnectSeen[idempotencyKey]
+	if disconnect {
+		s.disconnectSeen[idempotencyKey] = true
+	}
 	s.mu.Unlock()
+	if disconnect {
+		if hijacker, ok := writer.(http.Hijacker); ok {
+			connection, _, hijackErr := hijacker.Hijack()
+			if hijackErr == nil {
+				_ = connection.Close()
+				return
+			}
+		}
+		return
+	}
 	writeJSON(writer, config.VideoSubmitStatus, videoTaskResponse(taskID, payload, "queued", 0, nil))
 }
 
@@ -491,7 +585,7 @@ func (s *serverState) handleVideoTask(writer http.ResponseWriter, request *http.
 		status = config.VideoTerminalStatus
 		progress = 100
 		if status == "failed" {
-			responseErr = map[string]any{"code": "mock_video_failed", "message": "async-test mock forced video failure"}
+			responseErr = map[string]any{"code": config.VideoTerminalErrorCode, "message": config.VideoTerminalErrorMsg}
 		}
 	}
 	writeJSON(writer, http.StatusOK, videoTaskResponse(taskID, payload, status, progress, responseErr))

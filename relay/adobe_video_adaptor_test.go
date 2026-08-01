@@ -40,3 +40,22 @@ func TestHiggsfieldVideoTaskAdaptorRegistration(t *testing.T) {
 	_, content := adaptor.(channel.VideoContentResolver)
 	assert.True(t, content)
 }
+
+func TestLeonardoVideoTaskAdaptorRegistration(t *testing.T) {
+	assert.Equal(t, "LeonardoVideo", constant.GetChannelTypeName(constant.ChannelTypeLeonardoVideo))
+	require.Greater(t, len(constant.ChannelBaseURLs), constant.ChannelTypeLeonardoVideo)
+
+	adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeLeonardoVideo)))
+	require.NotNil(t, adaptor)
+	assert.Equal(t, "leonardo-video", adaptor.GetChannelName())
+	assert.Equal(t, []string{
+		"seedance-2.0-fast-480p", "seedance-2.0-fast-720p",
+		"seedance-2.0-480p", "seedance-2.0-720p", "seedance-2.0-1080p",
+	}, adaptor.GetModelList())
+	_, normalized := adaptor.(channel.NormalizedVideoTaskAdaptor)
+	assert.True(t, normalized)
+	_, billed := adaptor.(channel.VideoBillingEstimator)
+	assert.True(t, billed)
+	_, content := adaptor.(channel.VideoContentResolver)
+	assert.True(t, content)
+}

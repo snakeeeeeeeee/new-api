@@ -413,7 +413,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskID := firstNonEmpty(response.TaskID, response.ID)
 		if taskID == "" {
 			result.Status = model.TaskStatusFailure
-			result.Reason = "AdobeVideo completed without a task reference"
+			result.Reason = "Video task completed without a task reference"
 			break
 		}
 		result.Status = model.TaskStatusSuccess
@@ -657,7 +657,7 @@ func adobeVideoRequestError(message, code string) *dto.TaskError {
 
 func responseErrorMessage(response *responseError) string {
 	if response == nil || strings.TrimSpace(response.Message) == "" {
-		return "AdobeVideo task failed"
+		return "Video task failed"
 	}
 	return strings.TrimSpace(response.Message)
 }
