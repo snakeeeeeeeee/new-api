@@ -292,7 +292,7 @@ func TestValidateNormalizedVideoModelAppliesProviderCapabilityBeforeBilling(t *t
 		wantCode    string
 	}{
 		{name: "kling 3 three second frame", model: "kling_3.0_720p", duration: 3, aspectRatio: "16:9", mode: "frame", images: 2},
-		{name: "kling 3 frame requires an image", model: "kling_3.0_720p", duration: 3, aspectRatio: "16:9", mode: "frame", wantCode: "reference_image_required"},
+		{name: "kling 3 text to video", model: "kling_3.0_720p", duration: 3, aspectRatio: "16:9", mode: "frame"},
 		{name: "kling 3 below minimum", model: "kling_3.0_1080p", duration: 2, aspectRatio: "9:16", mode: "frame", wantCode: "invalid_video_duration"},
 		{name: "kling 3 images rejected", model: "kling_3.0_1080p", duration: 3, aspectRatio: "9:16", mode: "images", wantCode: "unsupported_reference_mode"},
 		{name: "kling omni images", model: "kling_3.0_omni_720p", duration: 15, aspectRatio: "9:16", mode: "images", images: 3},
