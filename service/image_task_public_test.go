@@ -3,8 +3,29 @@ package service
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/model"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestBuildPublicImageTaskExposesTruthfulProgressMetadata(t *testing.T) {
+	public := buildPublicImageTask(&model.Task{
+		Status: model.TaskStatusInProgress, Progress: "42%",
+		PrivateData: model.TaskPrivateData{
+			ProgressMetadataSet: true, ProgressKnown: true,
+			ProgressSource: "upstream_percent", ProgressStage: "generating",
+		},
+	}, nil, nil)
+
+	assert.Equal(t, 42, public.Progress)
+	assert.True(t, public.ProgressKnown)
+	assert.Equal(t, "upstream_percent", public.ProgressSource)
+	assert.Equal(t, "generating", public.Stage)
+
+	legacy := buildPublicImageTask(&model.Task{Status: model.TaskStatusInProgress, Progress: "30%"}, nil, nil)
+	assert.False(t, legacy.ProgressKnown)
+	assert.Equal(t, "local_status", legacy.ProgressSource)
+	assert.Equal(t, "in_progress", legacy.Stage)
+}
 
 func TestBuildPublicImageTaskErrorMasksInternalUpstreamQuotaDetails(t *testing.T) {
 	publicError := buildPublicImageTaskError(&imageTaskCallbackError{

@@ -79,6 +79,9 @@ type VideoTaskPublic struct {
 	Operation         string                `json:"operation"`
 	Status            string                `json:"status"`
 	Progress          int                   `json:"progress"`
+	ProgressKnown     bool                  `json:"progress_known"`
+	ProgressSource    string                `json:"progress_source,omitempty"`
+	Stage             string                `json:"stage,omitempty"`
 	Result            *VideoTaskResult      `json:"result"`
 	Error             *VideoTaskPublicError `json:"error"`
 	ClientReferenceID string                `json:"client_reference_id,omitempty"`

@@ -5638,6 +5638,11 @@
     "3. 确认上传": "3. Xác nhận tải lên",
     "该渠道不支持获取模型列表": "Kênh này không hỗ trợ lấy danh sách mô hình",
     "无法确认该渠道的模型发现能力": "Không thể xác định khả năng khám phá mô hình của kênh này",
-    "从上游获取模型列表": "Lấy danh sách mô hình từ nhà cung cấp"
+    "从上游获取模型列表": "Lấy danh sách mô hình từ nhà cung cấp",
+    "图片上游执行协议": "Chế độ thực thi ảnh thượng nguồn",
+    "传统同步": "Đồng bộ truyền thống",
+    "Adobe2API 异步图片": "Ảnh bất đồng bộ Adobe2API",
+    "生成中": "Đang tạo",
+    "收尾中": "Đang hoàn tất"
   }
 }

@@ -48,17 +48,20 @@ type responseError struct {
 }
 
 type responsePayload struct {
-	ID            string         `json:"id"`
-	TaskID        string         `json:"task_id"`
-	Model         string         `json:"model"`
-	Status        string         `json:"status"`
-	Progress      int            `json:"progress"`
-	Duration      int            `json:"duration"`
-	AspectRatio   string         `json:"aspect_ratio"`
-	Resolution    string         `json:"resolution"`
-	GenerateAudio *bool          `json:"generate_audio,omitempty"`
-	VideoURL      string         `json:"video_url,omitempty"`
-	Error         *responseError `json:"error,omitempty"`
+	ID             string         `json:"id"`
+	TaskID         string         `json:"task_id"`
+	Model          string         `json:"model"`
+	Status         string         `json:"status"`
+	Progress       int            `json:"progress"`
+	ProgressKnown  *bool          `json:"progress_known,omitempty"`
+	ProgressSource string         `json:"progress_source,omitempty"`
+	Stage          string         `json:"stage,omitempty"`
+	Duration       int            `json:"duration"`
+	AspectRatio    string         `json:"aspect_ratio"`
+	Resolution     string         `json:"resolution"`
+	GenerateAudio  *bool          `json:"generate_audio,omitempty"`
+	VideoURL       string         `json:"video_url,omitempty"`
+	Error          *responseError `json:"error,omitempty"`
 }
 
 type TaskAdaptor struct {
@@ -401,8 +404,16 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	result := &relaycommon.TaskInfo{Code: 0}
-	if response.Progress > 0 {
+	if response.Progress > 0 || (response.ProgressKnown != nil && *response.ProgressKnown) {
 		result.Progress = fmt.Sprintf("%d%%", min(response.Progress, 100))
+	}
+	if response.ProgressKnown != nil || response.ProgressSource != "" || response.Stage != "" {
+		result.ProgressMetadataSet = true
+		if response.ProgressKnown != nil {
+			result.ProgressKnown = *response.ProgressKnown
+		}
+		result.ProgressSource = response.ProgressSource
+		result.Stage = response.Stage
 	}
 	switch strings.ToLower(strings.TrimSpace(response.Status)) {
 	case "queued", "pending":

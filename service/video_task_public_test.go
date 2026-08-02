@@ -40,6 +40,21 @@ func setupPublicVideoTaskTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
+func TestBuildPublicVideoTaskExposesTruthfulProgressMetadata(t *testing.T) {
+	public := buildPublicVideoTask(&model.Task{
+		Status: model.TaskStatusInProgress, Progress: "47%",
+		PrivateData: model.TaskPrivateData{
+			ProgressMetadataSet: true, ProgressKnown: true,
+			ProgressSource: "upstream_percent", ProgressStage: "generating",
+		},
+	}, nil, nil)
+
+	assert.Equal(t, 47, public.Progress)
+	assert.True(t, public.ProgressKnown)
+	assert.Equal(t, "upstream_percent", public.ProgressSource)
+	assert.Equal(t, "generating", public.Stage)
+}
+
 func TestBuildPublicVideoTaskProjectsDirectAndProxiedOutputs(t *testing.T) {
 	db := setupPublicVideoTaskTestDB(t)
 	baseURL := "https://upstream.example/api"

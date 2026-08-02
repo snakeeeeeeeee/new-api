@@ -424,8 +424,23 @@ export const getTaskLogsColumns = ({
       title: t('进度'),
       dataIndex: 'progress',
       render: (text, record, index) => {
+        const terminal = ['SUCCESS', 'FAILURE'].includes(
+          String(record.status || '').toUpperCase(),
+        );
+        const finalizing =
+          String(record.stage || '').toLowerCase() === 'finalizing';
+        if (!terminal && record.progress_known !== true) {
+          return (
+            <Tag
+              color={finalizing ? 'orange' : 'blue'}
+              prefixIcon={<Loader size={14} />}
+            >
+              {t(finalizing ? '收尾中' : '生成中')}
+            </Tag>
+          );
+        }
         return (
-          <div>
+          <div className='flex min-w-[160px] flex-col gap-1'>
             {isNaN(text?.replace('%', '')) ? (
               text || '-'
             ) : (
@@ -436,19 +451,18 @@ export const getTaskLogsColumns = ({
                     : null
                 }
                 percent={
-                  ['SUCCESS', 'FAILURE'].includes(
-                    String(record.status || '').toUpperCase(),
-                  )
-                    ? 100
-                    : text
-                      ? parseInt(text.replace('%', ''))
-                      : 0
+                  terminal ? 100 : text ? parseInt(text.replace('%', '')) : 0
                 }
                 showInfo={true}
                 aria-label='task progress'
                 style={{ minWidth: '160px' }}
               />
             )}
+            {!terminal && finalizing ? (
+              <Typography.Text size='small' type='tertiary'>
+                {t('收尾中')}
+              </Typography.Text>
+            ) : null}
           </div>
         );
       },

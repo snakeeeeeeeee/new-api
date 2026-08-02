@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -75,6 +76,39 @@ func TestTaskModel2DtoNormalizesTerminalProgress(t *testing.T) {
 			assert.Equal(t, taskcommon.ProgressComplete, TaskModel2Dto(task).Progress)
 		})
 	}
+}
+
+func TestTaskModel2DtoExposesTruthfulProgressMetadata(t *testing.T) {
+	task := &model.Task{
+		Status:   model.TaskStatusInProgress,
+		Progress: "47%",
+		PrivateData: model.TaskPrivateData{
+			ProgressMetadataSet: true,
+			ProgressKnown:       true,
+			ProgressSource:      "upstream_percent",
+			ProgressStage:       "generating",
+		},
+	}
+
+	result := TaskModel2Dto(task)
+	assert.True(t, result.ProgressKnown)
+	assert.Equal(t, "upstream_percent", result.ProgressSource)
+	assert.Equal(t, "generating", result.Stage)
+
+	legacy := TaskModel2Dto(&model.Task{Status: model.TaskStatusInProgress, Progress: "30%"})
+	assert.False(t, legacy.ProgressKnown)
+	assert.Equal(t, "local_status", legacy.ProgressSource)
+	assert.Equal(t, "processing", legacy.Stage)
+}
+
+func TestImageCredentialLeaseTTLUsesAsyncTaskTimeoutOnlyForAdobeDriver(t *testing.T) {
+	task := &model.Task{Platform: constant.TaskPlatform("58"), Action: constant.TaskActionImageGeneration}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+	assert.EqualValues(t, imageCredentialLeaseTTLSeconds, imageCredentialLeaseTTL(info, task))
+
+	info.ChannelOtherSettings.ImageHandleExecutionDriver = dto.ImageHandleExecutionDriverAdobeAsyncImage
+	expected := int64(async_task_setting.ResolveTimeoutMinutes(task.Platform, task.Action)+adobeAsyncImageLeaseBufferMinutes) * 60
+	assert.Equal(t, expected, imageCredentialLeaseTTL(info, task))
 }
 
 func TestRecalcQuotaFromRatiosSaturatesHugeRatio(t *testing.T) {

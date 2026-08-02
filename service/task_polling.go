@@ -572,6 +572,19 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 	shouldRefund := false
 	shouldSettle := false
 	quota := task.Quota
+	if taskResult.ProgressMetadataSet {
+		task.PrivateData.ProgressMetadataSet = true
+		task.PrivateData.ProgressKnown = taskResult.ProgressKnown
+		if taskResult.ProgressSource != "" {
+			task.PrivateData.ProgressSource = taskResult.ProgressSource
+		}
+		if taskResult.Stage != "" {
+			task.PrivateData.ProgressStage = taskResult.Stage
+		}
+		if taskResult.Sequence > 0 {
+			task.PrivateData.ProgressSequence = taskResult.Sequence
+		}
+	}
 
 	task.Status = model.TaskStatus(taskResult.Status)
 	switch taskResult.Status {
@@ -647,23 +660,23 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 		})
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))
-			task.Status = snap.Status
-			task.Progress = snap.Progress
-			task.StartTime = snap.StartTime
-			task.FinishTime = snap.FinishTime
-			task.FailReason = snap.FailReason
-			task.PrivateData.ResultURL = snap.ResultURL
-			task.Data = snap.Data
+			restoreTaskSnapshot(task, snap)
 			shouldRefund = false
 			shouldSettle = false
 		} else if !won {
 			logger.LogWarn(ctx, fmt.Sprintf("Task %s already transitioned by another process, skip billing", task.TaskID))
+			restoreTaskSnapshot(task, snap)
 			shouldRefund = false
 			shouldSettle = false
 		}
 	} else if !snap.Equal(task.Snapshot()) {
-		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
+		won, err := task.UpdateWithStatus(snap.Status)
+		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Failed to update task %s: %s", task.TaskID, err.Error()))
+			restoreTaskSnapshot(task, snap)
+		} else if !won {
+			logger.LogDebug(ctx, fmt.Sprintf("Ignored stale task update for %s", task.TaskID))
+			restoreTaskSnapshot(task, snap)
 		}
 	} else {
 		// No changes, skip update
@@ -679,6 +692,21 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 		billed = true
 	}
 	return !snap.Equal(task.Snapshot()), billed
+}
+
+func restoreTaskSnapshot(task *model.Task, snap model.TaskSnapshot) {
+	task.Status = snap.Status
+	task.Progress = snap.Progress
+	task.StartTime = snap.StartTime
+	task.FinishTime = snap.FinishTime
+	task.FailReason = snap.FailReason
+	task.PrivateData.ResultURL = snap.ResultURL
+	task.PrivateData.ProgressMetadataSet = snap.ProgressMetadataSet
+	task.PrivateData.ProgressKnown = snap.ProgressKnown
+	task.PrivateData.ProgressSource = snap.ProgressSource
+	task.PrivateData.ProgressStage = snap.ProgressStage
+	task.PrivateData.ProgressSequence = snap.ProgressSequence
+	task.Data = snap.Data
 }
 
 func redactVideoResponseBody(body []byte) []byte {

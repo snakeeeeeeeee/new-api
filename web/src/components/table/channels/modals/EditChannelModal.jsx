@@ -239,6 +239,7 @@ const EditChannelModal = (props) => {
     is_enterprise_account: false,
     image_response_adapter: '',
     image_handle_sync_mode: 'inherit',
+    image_handle_execution_driver: 'legacy_sync',
     callback_secret: '',
     // 字段透传控制默认值
     allow_service_tier: false,
@@ -895,6 +896,11 @@ const EditChannelModal = (props) => {
             parsedSettings.image_response_adapter || '';
           data.image_handle_sync_mode =
             parsedSettings.image_handle_sync_mode || 'inherit';
+          data.image_handle_execution_driver =
+            parsedSettings.image_handle_execution_driver ===
+            'adobe2api_async_image_v1'
+              ? 'adobe2api_async_image_v1'
+              : 'legacy_sync';
           data.callback_secret = parsedSettings.callback_secret || '';
           // 读取 Vertex 密钥格式
           data.vertex_key_type = parsedSettings.vertex_key_type || 'json';
@@ -942,6 +948,7 @@ const EditChannelModal = (props) => {
           data.azure_responses_version = '';
           data.image_response_adapter = '';
           data.image_handle_sync_mode = 'inherit';
+          data.image_handle_execution_driver = 'legacy_sync';
           data.callback_secret = '';
           data.region = '';
           data.vertex_key_type = 'json';
@@ -966,6 +973,7 @@ const EditChannelModal = (props) => {
         // 兼容历史数据：老渠道没有 settings 时，默认按 json 展示
         data.image_response_adapter = '';
         data.image_handle_sync_mode = 'inherit';
+        data.image_handle_execution_driver = 'legacy_sync';
         data.callback_secret = '';
         data.vertex_key_type = 'json';
         data.aws_key_type = 'ak_sk';
@@ -1876,6 +1884,16 @@ const EditChannelModal = (props) => {
       delete settings.image_handle_sync_mode;
     }
 
+    const imageHandleExecutionDriver =
+      localInputs.image_handle_execution_driver === 'adobe2api_async_image_v1'
+        ? 'adobe2api_async_image_v1'
+        : 'legacy_sync';
+    if (imageHandleExecutionDriver === 'adobe2api_async_image_v1') {
+      settings.image_handle_execution_driver = imageHandleExecutionDriver;
+    } else if ('image_handle_execution_driver' in settings) {
+      delete settings.image_handle_execution_driver;
+    }
+
     if (localInputs.callback_secret && localInputs.callback_secret.trim()) {
       settings.callback_secret = localInputs.callback_secret.trim();
     } else if ('callback_secret' in settings) {
@@ -1958,6 +1976,7 @@ const EditChannelModal = (props) => {
     delete localInputs.is_enterprise_account;
     delete localInputs.image_response_adapter;
     delete localInputs.image_handle_sync_mode;
+    delete localInputs.image_handle_execution_driver;
     delete localInputs.callback_secret;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
@@ -2886,6 +2905,29 @@ const EditChannelModal = (props) => {
                     extraText={t(
                       '仅影响同步图片接口。强制开启会让该真实渠道经 image-handle /v1/image/tasks/sync 执行；强制关闭会保持老直连逻辑。',
                     )}
+                  />
+
+                  <Form.Select
+                    field='image_handle_execution_driver'
+                    label={t('图片上游执行协议')}
+                    value={
+                      inputs.image_handle_execution_driver || 'legacy_sync'
+                    }
+                    optionList={[
+                      { label: t('传统同步'), value: 'legacy_sync' },
+                      {
+                        label: t('Adobe2API 异步图片'),
+                        value: 'adobe2api_async_image_v1',
+                      },
+                    ]}
+                    onChange={(value) =>
+                      handleChannelOtherSettingsChange(
+                        'image_handle_execution_driver',
+                        value === 'adobe2api_async_image_v1'
+                          ? value
+                          : 'legacy_sync',
+                      )
+                    }
                   />
 
                   {inputs.type === 1 && (

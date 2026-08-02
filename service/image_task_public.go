@@ -118,17 +118,20 @@ func BuildPublicImageTaskTx(tx *gorm.DB, task *model.Task) (*dto.ImageTaskPublic
 
 func buildPublicImageTask(task *model.Task, requestRecord *model.ImageTaskRequest, assets []*model.Asset) *dto.ImageTaskPublic {
 	public := &dto.ImageTaskPublic{
-		ID:        task.TaskID,
-		Object:    "image.task",
-		Model:     firstNonEmptyString(task.Properties.OriginModelName, task.Properties.UpstreamModelName),
-		Operation: publicImageOperation(task.Action),
-		Status:    PublicImageTaskStatus(task.Status),
-		Progress:  publicImageProgress(task),
-		Result:    nil,
-		Usage:     nil,
-		Error:     nil,
-		CreatedAt: task.CreatedAt,
-		UpdatedAt: task.UpdatedAt,
+		ID:             task.TaskID,
+		Object:         "image.task",
+		Model:          firstNonEmptyString(task.Properties.OriginModelName, task.Properties.UpstreamModelName),
+		Operation:      publicImageOperation(task.Action),
+		Status:         PublicImageTaskStatus(task.Status),
+		Progress:       publicImageProgress(task),
+		ProgressKnown:  task.PrivateData.ProgressMetadataSet && task.PrivateData.ProgressKnown,
+		ProgressSource: publicTaskProgressSource(task),
+		Stage:          publicImageProgressStage(task),
+		Result:         nil,
+		Usage:          nil,
+		Error:          nil,
+		CreatedAt:      task.CreatedAt,
+		UpdatedAt:      task.UpdatedAt,
 	}
 	if public.CreatedAt == 0 {
 		public.CreatedAt = task.SubmitTime
@@ -192,6 +195,25 @@ func buildPublicImageTask(task *model.Task, requestRecord *model.ImageTaskReques
 		public.Error = buildPublicImageTaskError(callback.Error, task.FailReason)
 	}
 	return public
+}
+
+func publicTaskProgressSource(task *model.Task) string {
+	if task != nil {
+		if source := strings.TrimSpace(task.PrivateData.ProgressSource); source != "" {
+			return source
+		}
+	}
+	return "local_status"
+}
+
+func publicImageProgressStage(task *model.Task) string {
+	if task != nil {
+		if stage := strings.TrimSpace(task.PrivateData.ProgressStage); stage != "" {
+			return stage
+		}
+		return PublicImageTaskStatus(task.Status)
+	}
+	return "queued"
 }
 
 func buildPublicImageTaskError(callbackError *imageTaskCallbackError, failReason string) *dto.ImageTaskPublicError {

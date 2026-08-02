@@ -77,6 +77,9 @@ type ImageTaskPublic struct {
 	Operation         string                `json:"operation"`
 	Status            string                `json:"status"`
 	Progress          int                   `json:"progress"`
+	ProgressKnown     bool                  `json:"progress_known"`
+	ProgressSource    string                `json:"progress_source,omitempty"`
+	Stage             string                `json:"stage,omitempty"`
 	Result            *ImageTaskResult      `json:"result"`
 	Usage             map[string]any        `json:"usage"`
 	Error             *ImageTaskPublicError `json:"error"`

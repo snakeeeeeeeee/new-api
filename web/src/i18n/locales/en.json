@@ -5161,6 +5161,11 @@
     "3. 确认上传": "3. Confirm upload",
     "该渠道不支持获取模型列表": "This channel does not support model discovery",
     "无法确认该渠道的模型发现能力": "Unable to determine this channel's model discovery capability",
-    "从上游获取模型列表": "Fetch the model list from upstream"
+    "从上游获取模型列表": "Fetch the model list from upstream",
+    "图片上游执行协议": "Image upstream execution",
+    "传统同步": "Legacy synchronous",
+    "Adobe2API 异步图片": "Adobe2API async images",
+    "生成中": "Generating",
+    "收尾中": "Finalizing"
   }
 }

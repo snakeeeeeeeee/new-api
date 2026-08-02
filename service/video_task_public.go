@@ -97,7 +97,11 @@ func buildPublicVideoTask(task *model.Task, requestRecord *model.VideoTaskReques
 		ID: task.TaskID, Object: "video.task",
 		Model:     firstNonEmptyString(task.Properties.OriginModelName, task.Properties.UpstreamModelName),
 		Operation: publicVideoOperation(task), Status: PublicVideoTaskStatus(task.Status),
-		Progress: publicVideoProgress(task), CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
+		Progress:       publicVideoProgress(task),
+		ProgressKnown:  task.PrivateData.ProgressMetadataSet && task.PrivateData.ProgressKnown,
+		ProgressSource: publicTaskProgressSource(task),
+		Stage:          publicVideoProgressStage(task),
+		CreatedAt:      task.CreatedAt, UpdatedAt: task.UpdatedAt,
 	}
 	if public.CreatedAt == 0 {
 		public.CreatedAt = task.SubmitTime
@@ -153,6 +157,16 @@ func buildPublicVideoTask(task *model.Task, requestRecord *model.VideoTaskReques
 		}
 	}
 	return public
+}
+
+func publicVideoProgressStage(task *model.Task) string {
+	if task != nil {
+		if stage := strings.TrimSpace(task.PrivateData.ProgressStage); stage != "" {
+			return stage
+		}
+		return PublicVideoTaskStatus(task.Status)
+	}
+	return "queued"
 }
 
 func publicVideoTaskErrorMessage(reason string) string {

@@ -74,6 +74,10 @@ type imageHandleTaskResponse struct {
 	ClientTaskID     string                 `json:"client_task_id"`
 	Status           string                 `json:"status"`
 	Progress         string                 `json:"progress"`
+	ProgressKnown    *bool                  `json:"progress_known,omitempty"`
+	ProgressSource   string                 `json:"progress_source,omitempty"`
+	Stage            string                 `json:"stage,omitempty"`
+	Sequence         int64                  `json:"sequence,omitempty"`
 	ResultDataFormat string                 `json:"result_data_format,omitempty"`
 	Result           *imageHandleResult     `json:"result,omitempty"`
 	Usage            *imageHandleUsage      `json:"usage,omitempty"`
@@ -435,6 +439,15 @@ func taskResponseToTaskInfo(item imageHandleTaskResponse) *relaycommon.TaskInfo 
 	info := &relaycommon.TaskInfo{
 		TaskID:   item.ProviderTaskID,
 		Progress: item.Progress,
+	}
+	if item.ProgressKnown != nil || item.ProgressSource != "" || item.Stage != "" || item.Sequence > 0 {
+		info.ProgressMetadataSet = true
+		if item.ProgressKnown != nil {
+			info.ProgressKnown = *item.ProgressKnown
+		}
+		info.ProgressSource = item.ProgressSource
+		info.Stage = item.Stage
+		info.Sequence = item.Sequence
 	}
 	if data, err := common.Marshal(item); err == nil {
 		info.Data = data

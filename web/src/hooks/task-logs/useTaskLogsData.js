@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Modal } from '@douyinfe/semi-ui';
 import {
@@ -30,6 +30,9 @@ import {
 } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
+
+const TASK_LOG_REFRESH_INTERVALS = [0, 5, 15, 30];
+const TASK_LOG_REFRESH_STORAGE_KEY = 'task-logs-refresh-interval';
 
 export const useTaskLogsData = () => {
   const { t } = useTranslation();
@@ -54,9 +57,18 @@ export const useTaskLogsData = () => {
   // Basic state
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
+  const loadingRef = useRef(false);
   const [activePage, setActivePage] = useState(1);
   const [logCount, setLogCount] = useState(0);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
+  const [refreshInterval, setRefreshInterval] = useState(() => {
+    const saved = Number.parseInt(
+      localStorage.getItem(TASK_LOG_REFRESH_STORAGE_KEY),
+      10,
+    );
+    return TASK_LOG_REFRESH_INTERVALS.includes(saved) ? saved : 5;
+  });
+  const refreshRef = useRef(null);
 
   // User and admin
   const isAdminUser = isAdmin();
@@ -234,22 +246,33 @@ export const useTaskLogsData = () => {
 
   // Load logs function
   const loadLogs = async (page = 1, size = pageSize) => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     setLoading(true);
-    const { channel_id, task_id, asset_type, start_timestamp, end_timestamp } =
-      getFormValues();
-    let localStartTimestamp = parseInt(Date.parse(start_timestamp) / 1000);
-    let localEndTimestamp = parseInt(Date.parse(end_timestamp) / 1000);
-    let url = isAdminUser
-      ? `/api/task/?p=${page}&page_size=${size}&channel_id=${channel_id}&task_id=${task_id}&asset_type=${asset_type}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`
-      : `/api/task/self?p=${page}&page_size=${size}&task_id=${task_id}&asset_type=${asset_type}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
-    const res = await API.get(url);
-    const { success, message, data } = res.data;
-    if (success) {
-      syncPageData(data);
-    } else {
-      showError(message);
+    try {
+      const {
+        channel_id,
+        task_id,
+        asset_type,
+        start_timestamp,
+        end_timestamp,
+      } = getFormValues();
+      let localStartTimestamp = parseInt(Date.parse(start_timestamp) / 1000);
+      let localEndTimestamp = parseInt(Date.parse(end_timestamp) / 1000);
+      let url = isAdminUser
+        ? `/api/task/?p=${page}&page_size=${size}&channel_id=${channel_id}&task_id=${task_id}&asset_type=${asset_type}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`
+        : `/api/task/self?p=${page}&page_size=${size}&task_id=${task_id}&asset_type=${asset_type}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
+      const res = await API.get(url);
+      const { success, message, data } = res.data;
+      if (success) {
+        syncPageData(data);
+      } else {
+        showError(message);
+      }
+    } finally {
+      loadingRef.current = false;
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   // Page handlers
@@ -265,6 +288,16 @@ export const useTaskLogsData = () => {
   // Refresh function
   const refresh = async () => {
     await loadLogs(1, pageSize);
+  };
+  refreshRef.current = refresh;
+
+  const handleRefreshIntervalChange = (value) => {
+    const parsed = Number(value);
+    const nextInterval = TASK_LOG_REFRESH_INTERVALS.includes(parsed)
+      ? parsed
+      : 5;
+    setRefreshInterval(nextInterval);
+    localStorage.setItem(TASK_LOG_REFRESH_STORAGE_KEY, String(nextInterval));
   };
 
   const updateTaskBlockStatus = async (record, isBlocked) => {
@@ -332,6 +365,16 @@ export const useTaskLogsData = () => {
     loadLogs(1, localPageSize).then();
   }, []);
 
+  useEffect(() => {
+    if (!refreshInterval) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        refreshRef.current?.();
+      }
+    }, refreshInterval * 1000);
+    return () => window.clearInterval(timer);
+  }, [refreshInterval]);
+
   return {
     // Basic state
     logs,
@@ -340,6 +383,8 @@ export const useTaskLogsData = () => {
     logCount,
     pageSize,
     isAdminUser,
+    refreshInterval,
+    handleRefreshIntervalChange,
 
     // Modal state
     isModalOpen,

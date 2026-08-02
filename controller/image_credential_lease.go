@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -25,14 +26,15 @@ type imageCredentialLeaseResolveRequest struct {
 }
 
 type imageCredentialLeaseResolveResponse struct {
-	Provider      string `json:"provider"`
-	BaseURL       string `json:"base_url"`
-	APIKey        string `json:"api_key"`
-	Model         string `json:"model"`
-	ChannelID     string `json:"channel_id"`
-	RequestFormat string `json:"request_format"`
-	EndpointURL   string `json:"endpoint_url,omitempty"`
-	ExpiresAt     string `json:"expires_at"`
+	Provider        string `json:"provider"`
+	BaseURL         string `json:"base_url"`
+	APIKey          string `json:"api_key"`
+	Model           string `json:"model"`
+	ChannelID       string `json:"channel_id"`
+	RequestFormat   string `json:"request_format"`
+	ExecutionDriver string `json:"execution_driver"`
+	EndpointURL     string `json:"endpoint_url,omitempty"`
+	ExpiresAt       string `json:"expires_at"`
 }
 
 type imageCredentialLeaseErrorBody struct {
@@ -168,6 +170,10 @@ func ResolveImageCredentialLease(c *gin.Context) {
 	baseURL := resolveChannelBaseURL(channel)
 	provider := "openai_compatible"
 	requestFormat := "openai_images"
+	executionDriver := dto.ImageHandleExecutionDriverLegacySync
+	if task != nil {
+		executionDriver = dto.NormalizeImageHandleExecutionDriver(task.PrivateData.ImageHandleExecutionDriver)
+	}
 	endpointURL := ""
 	if isGemini {
 		baseURL = resolveGeminiChannelBaseURL(channel)
@@ -198,14 +204,15 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		))
 	}
 	c.JSON(http.StatusOK, imageCredentialLeaseResolveResponse{
-		Provider:      provider,
-		BaseURL:       baseURL,
-		APIKey:        key,
-		Model:         upstreamModelName,
-		ChannelID:     fmt.Sprintf("channel_%d", channel.Id),
-		RequestFormat: requestFormat,
-		EndpointURL:   endpointURL,
-		ExpiresAt:     time.Unix(lease.ExpiresAt, 0).UTC().Format(time.RFC3339),
+		Provider:        provider,
+		BaseURL:         baseURL,
+		APIKey:          key,
+		Model:           upstreamModelName,
+		ChannelID:       fmt.Sprintf("channel_%d", channel.Id),
+		RequestFormat:   requestFormat,
+		ExecutionDriver: executionDriver,
+		EndpointURL:     endpointURL,
+		ExpiresAt:       time.Unix(lease.ExpiresAt, 0).UTC().Format(time.RFC3339),
 	})
 }
 

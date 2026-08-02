@@ -105,9 +105,15 @@ func (m Properties) Value() (driver.Value, error) {
 }
 
 type TaskPrivateData struct {
-	Key            string `json:"key,omitempty"`
-	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
-	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
+	Key                        string `json:"key,omitempty"`
+	UpstreamTaskID             string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
+	ResultURL                  string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
+	ImageHandleExecutionDriver string `json:"image_handle_execution_driver,omitempty"`
+	ProgressMetadataSet        bool   `json:"progress_metadata_set,omitempty"`
+	ProgressKnown              bool   `json:"progress_known,omitempty"`
+	ProgressSource             string `json:"progress_source,omitempty"`
+	ProgressStage              string `json:"progress_stage,omitempty"`
+	ProgressSequence           int64  `json:"progress_sequence,omitempty"`
 	// 异步图片上下文。ImageRequest/ImageInputURLs/ImageMaskURL 用于任务审计和后续兜底；
 	// ImageHandleProviderTask/ExecuteEventID/ImageExecuteResponse 仅保留历史 internal execute 数据兼容。
 	ImageRequest            json.RawMessage `json:"image_request,omitempty"`
@@ -559,35 +565,53 @@ func (Task *Task) Insert() error {
 	return err
 }
 
-type taskSnapshot struct {
-	Status     TaskStatus
-	Progress   string
-	StartTime  int64
-	FinishTime int64
-	FailReason string
-	ResultURL  string
-	Data       json.RawMessage
+type TaskSnapshot struct {
+	Status              TaskStatus
+	Progress            string
+	StartTime           int64
+	FinishTime          int64
+	FailReason          string
+	ResultURL           string
+	ProgressMetadataSet bool
+	ProgressKnown       bool
+	ProgressSource      string
+	ProgressStage       string
+	ProgressSequence    int64
+	Data                json.RawMessage
 }
 
-func (s taskSnapshot) Equal(other taskSnapshot) bool {
+// taskSnapshot keeps package-local tests and callers source-compatible.
+type taskSnapshot = TaskSnapshot
+
+func (s TaskSnapshot) Equal(other TaskSnapshot) bool {
 	return s.Status == other.Status &&
 		s.Progress == other.Progress &&
 		s.StartTime == other.StartTime &&
 		s.FinishTime == other.FinishTime &&
 		s.FailReason == other.FailReason &&
 		s.ResultURL == other.ResultURL &&
+		s.ProgressMetadataSet == other.ProgressMetadataSet &&
+		s.ProgressKnown == other.ProgressKnown &&
+		s.ProgressSource == other.ProgressSource &&
+		s.ProgressStage == other.ProgressStage &&
+		s.ProgressSequence == other.ProgressSequence &&
 		bytes.Equal(s.Data, other.Data)
 }
 
-func (t *Task) Snapshot() taskSnapshot {
-	return taskSnapshot{
-		Status:     t.Status,
-		Progress:   t.Progress,
-		StartTime:  t.StartTime,
-		FinishTime: t.FinishTime,
-		FailReason: t.FailReason,
-		ResultURL:  t.PrivateData.ResultURL,
-		Data:       t.Data,
+func (t *Task) Snapshot() TaskSnapshot {
+	return TaskSnapshot{
+		Status:              t.Status,
+		Progress:            t.Progress,
+		StartTime:           t.StartTime,
+		FinishTime:          t.FinishTime,
+		FailReason:          t.FailReason,
+		ResultURL:           t.PrivateData.ResultURL,
+		ProgressMetadataSet: t.PrivateData.ProgressMetadataSet,
+		ProgressKnown:       t.PrivateData.ProgressKnown,
+		ProgressSource:      t.PrivateData.ProgressSource,
+		ProgressStage:       t.PrivateData.ProgressStage,
+		ProgressSequence:    t.PrivateData.ProgressSequence,
+		Data:                t.Data,
 	}
 }
 
@@ -678,6 +702,11 @@ func (t *Task) UpdateWithStatusTx(tx *gorm.DB, fromStatus TaskStatus) (bool, err
 		}
 		return false, err
 	}
+	if t.PrivateData.ProgressMetadataSet && t.PrivateData.ProgressSequence > 0 &&
+		current.PrivateData.ProgressMetadataSet &&
+		t.PrivateData.ProgressSequence <= current.PrivateData.ProgressSequence {
+		return false, nil
+	}
 	mergeMonotonicTaskPrivateData(&t.PrivateData, current.PrivateData)
 	result := tx.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
 	if result.Error != nil {
@@ -689,6 +718,16 @@ func (t *Task) UpdateWithStatusTx(tx *gorm.DB, fromStatus TaskStatus) (bool, err
 func mergeMonotonicTaskPrivateData(incoming *TaskPrivateData, stored TaskPrivateData) {
 	if incoming.UpstreamTaskID == "" {
 		incoming.UpstreamTaskID = stored.UpstreamTaskID
+	}
+	if incoming.ImageHandleExecutionDriver == "" {
+		incoming.ImageHandleExecutionDriver = stored.ImageHandleExecutionDriver
+	}
+	if !incoming.ProgressMetadataSet {
+		incoming.ProgressMetadataSet = stored.ProgressMetadataSet
+		incoming.ProgressKnown = stored.ProgressKnown
+		incoming.ProgressSource = stored.ProgressSource
+		incoming.ProgressStage = stored.ProgressStage
+		incoming.ProgressSequence = stored.ProgressSequence
 	}
 	if incoming.BillingContext == nil {
 		incoming.BillingContext = stored.BillingContext

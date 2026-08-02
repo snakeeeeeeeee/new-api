@@ -271,10 +271,14 @@ func TestParseTaskResultMapsImageHandleStatusAndUsage(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	info, err := adaptor.ParseTaskResult([]byte(`{
 		"provider_task_id":"imgtask_1",
-		"client_task_id":"task_1",
-		"status":"succeeded",
-		"progress":"100%",
-		"result":{"images":[{"url":"https://cdn.example.com/a.webp","mime_type":"image/webp","format":"webp","width":1024,"height":768,"size_bytes":123456}],"output":{"quality":"high"},"metadata":{"image_count":1}},
+			"client_task_id":"task_1",
+			"status":"succeeded",
+			"progress":"100%",
+			"progress_known":true,
+			"progress_source":"upstream_percent",
+			"stage":"completed",
+			"sequence":9,
+			"result":{"images":[{"url":"https://cdn.example.com/a.webp","mime_type":"image/webp","format":"webp","width":1024,"height":768,"size_bytes":123456}],"output":{"quality":"high"},"metadata":{"image_count":1}},
 		"usage":{"total_tokens":12,"actual_quota":34}
 	}`))
 	require.NoError(t, err)
@@ -283,6 +287,11 @@ func TestParseTaskResultMapsImageHandleStatusAndUsage(t *testing.T) {
 	assert.Equal(t, "https://cdn.example.com/a.webp", info.Url)
 	assert.Equal(t, 12, info.TotalTokens)
 	assert.Equal(t, 34, info.ActualQuota)
+	assert.True(t, info.ProgressMetadataSet)
+	assert.True(t, info.ProgressKnown)
+	assert.Equal(t, "upstream_percent", info.ProgressSource)
+	assert.Equal(t, "completed", info.Stage)
+	assert.EqualValues(t, 9, info.Sequence)
 	require.NotNil(t, info.Usage)
 	assert.Equal(t, 12, info.Usage.TotalTokens)
 	var payload map[string]any

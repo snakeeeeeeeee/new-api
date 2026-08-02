@@ -5144,6 +5144,11 @@
     "3. 确认上传": "3. Confirmer le téléversement",
     "该渠道不支持获取模型列表": "Ce canal ne prend pas en charge la découverte des modèles",
     "无法确认该渠道的模型发现能力": "Impossible de déterminer la capacité de découverte des modèles de ce canal",
-    "从上游获取模型列表": "Récupérer la liste des modèles en amont"
+    "从上游获取模型列表": "Récupérer la liste des modèles en amont",
+    "图片上游执行协议": "Exécution d’image en amont",
+    "传统同步": "Synchronisation traditionnelle",
+    "Adobe2API 异步图片": "Images asynchrones Adobe2API",
+    "生成中": "Génération en cours",
+    "收尾中": "Finalisation"
   }
 }

@@ -42,6 +42,10 @@ type imageCallbackEvent struct {
 	ProviderTaskID           string               `json:"provider_task_id"`
 	Status                   string               `json:"status"`
 	Progress                 string               `json:"progress"`
+	ProgressKnown            *bool                `json:"progress_known,omitempty"`
+	ProgressSource           string               `json:"progress_source,omitempty"`
+	Stage                    string               `json:"stage,omitempty"`
+	Sequence                 int64                `json:"sequence,omitempty"`
 	Result                   *imageCallbackResult `json:"result"`
 	Usage                    *imageCallbackUsage  `json:"usage"`
 	Error                    *imageCallbackError  `json:"error"`
@@ -328,6 +332,11 @@ func handleImageCallbackEvent(c *gin.Context, event imageCallbackEvent) imageCal
 		result.Status = "ignored_terminal"
 		return result
 	}
+	if event.Sequence > 0 && task.PrivateData.ProgressMetadataSet &&
+		event.Sequence <= task.PrivateData.ProgressSequence {
+		result.Status = "ignored_stale"
+		return result
+	}
 	taskInfo := imageCallbackEventToTaskInfo(event)
 	if taskInfo.Status == "" {
 		result.Status = "invalid_status"
@@ -355,6 +364,15 @@ func imageCallbackEventToTaskInfo(event imageCallbackEvent) *relaycommon.TaskInf
 	info := &relaycommon.TaskInfo{
 		TaskID:   event.ProviderTaskID,
 		Progress: event.Progress,
+	}
+	if event.ProgressKnown != nil || event.ProgressSource != "" || event.Stage != "" || event.Sequence > 0 {
+		info.ProgressMetadataSet = true
+		if event.ProgressKnown != nil {
+			info.ProgressKnown = *event.ProgressKnown
+		}
+		info.ProgressSource = event.ProgressSource
+		info.Stage = event.Stage
+		info.Sequence = event.Sequence
 	}
 	switch strings.ToLower(event.Status) {
 	case "submitted":

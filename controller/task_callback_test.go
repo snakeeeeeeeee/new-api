@@ -212,7 +212,18 @@ func TestResolveImageCredentialLeaseAccepted(t *testing.T) {
 	assert.Equal(t, "real-upstream-key", resolveResp.APIKey)
 	assert.Equal(t, "gpt-image-2", resolveResp.Model)
 	assert.Equal(t, "channel_777", resolveResp.ChannelID)
+	assert.Equal(t, dto.ImageHandleExecutionDriverLegacySync, resolveResp.ExecutionDriver)
 	assert.NotEmpty(t, resolveResp.ExpiresAt)
+
+	var persistedTask model.Task
+	require.NoError(t, db.Where("task_id = ?", "task_lease_resolve").First(&persistedTask).Error)
+	persistedTask.PrivateData.ImageHandleExecutionDriver = dto.ImageHandleExecutionDriverAdobeAsyncImage
+	require.NoError(t, db.Save(&persistedTask).Error)
+	secondContext, secondRecorder := makeLeaseResolveRequest(t, "lease_resolve", body, "image_handle_1", secret)
+	ResolveImageCredentialLease(secondContext)
+	require.Equal(t, http.StatusOK, secondRecorder.Code)
+	require.NoError(t, common.Unmarshal(secondRecorder.Body.Bytes(), &resolveResp))
+	assert.Equal(t, dto.ImageHandleExecutionDriverAdobeAsyncImage, resolveResp.ExecutionDriver)
 }
 
 func TestResolveImageCredentialLeaseBuildsGeminiGenerateContentEndpoint(t *testing.T) {
@@ -663,6 +674,58 @@ func TestImageTaskCallbackBatchIgnoredTerminal(t *testing.T) {
 	var task model.Task
 	require.NoError(t, db.Where("task_id = ?", "task_image_done").First(&task).Error)
 	assert.Equal(t, "https://cdn.example.com/old.webp", task.PrivateData.ResultURL)
+}
+
+func TestImageTaskCallbackBatchRejectsStaleProgressSequence(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	secret := "callback-secret"
+	settings, err := common.Marshal(dto.ChannelOtherSettings{CallbackSecret: secret})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 123, Type: constant.ChannelTypeOpenAI, Name: "real-openai-image",
+		Key: "real-upstream-key", Status: common.ChannelStatusEnabled, OtherSettings: string(settings),
+	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID: "task_image_sequence", Platform: constant.TaskPlatform("58"),
+		Action: constant.TaskActionImageGeneration, UserId: 1, ChannelId: 123,
+		Status: model.TaskStatusInProgress, Progress: "55%",
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "imgtask_sequence", ProgressMetadataSet: true,
+			ProgressKnown: true, ProgressSource: "upstream_percent",
+			ProgressStage: "generating", ProgressSequence: 5,
+		},
+	}).Error)
+
+	known := true
+	staleBody, err := common.Marshal(imageCallbackBatchRequest{Events: []imageCallbackEvent{{
+		EventID: "evt_stale", ClientTaskID: "task_image_sequence", ProviderTaskID: "imgtask_sequence",
+		Status: "processing", Progress: "40%", ProgressKnown: &known,
+		ProgressSource: "upstream_percent", Stage: "generating", Sequence: 4,
+	}}})
+	require.NoError(t, err)
+	context, recorder := makeCallbackRequest(t, staleBody, secret)
+	ImageTaskCallbackBatch(context)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"status":"ignored_stale"`)
+
+	var persisted model.Task
+	require.NoError(t, db.Where("task_id = ?", "task_image_sequence").First(&persisted).Error)
+	assert.Equal(t, "55%", persisted.Progress)
+	assert.EqualValues(t, 5, persisted.PrivateData.ProgressSequence)
+
+	freshBody, err := common.Marshal(imageCallbackBatchRequest{Events: []imageCallbackEvent{{
+		EventID: "evt_fresh", ClientTaskID: "task_image_sequence", ProviderTaskID: "imgtask_sequence",
+		Status: "processing", Progress: "60%", ProgressKnown: &known,
+		ProgressSource: "upstream_percent", Stage: "generating", Sequence: 6,
+	}}})
+	require.NoError(t, err)
+	context, recorder = makeCallbackRequest(t, freshBody, secret)
+	ImageTaskCallbackBatch(context)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"status":"accepted"`)
+	require.NoError(t, db.Where("task_id = ?", "task_image_sequence").First(&persisted).Error)
+	assert.Equal(t, "60%", persisted.Progress)
+	assert.EqualValues(t, 6, persisted.PrivateData.ProgressSequence)
 }
 
 func TestImageTaskCallbackBatchAcceptsProviderTaskBeforeUpstreamIDPersisted(t *testing.T) {

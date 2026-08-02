@@ -1,5 +1,21 @@
 package dto
 
+import "strings"
+
+const (
+	ImageHandleExecutionDriverLegacySync      = "legacy_sync"
+	ImageHandleExecutionDriverAdobeAsyncImage = "adobe2api_async_image_v1"
+)
+
+func NormalizeImageHandleExecutionDriver(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ImageHandleExecutionDriverAdobeAsyncImage:
+		return ImageHandleExecutionDriverAdobeAsyncImage
+	default:
+		return ImageHandleExecutionDriverLegacySync
+	}
+}
+
 type ChannelSettings struct {
 	ForceFormat            bool   `json:"force_format,omitempty"`
 	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
@@ -27,6 +43,7 @@ type ChannelOtherSettings struct {
 	AzureResponsesVersion                 string        `json:"azure_responses_version,omitempty"`
 	ImageResponseAdapter                  string        `json:"image_response_adapter,omitempty"`
 	ImageHandleSyncMode                   string        `json:"image_handle_sync_mode,omitempty"`
+	ImageHandleExecutionDriver            string        `json:"image_handle_execution_driver,omitempty"`
 	CallbackSecret                        string        `json:"callback_secret,omitempty"`
 	VertexKeyType                         VertexKeyType `json:"vertex_key_type,omitempty"` // "json" or "api_key"
 	OpenRouterEnterprise                  *bool         `json:"openrouter_enterprise,omitempty"`

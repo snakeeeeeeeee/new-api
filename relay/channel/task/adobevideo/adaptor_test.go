@@ -387,10 +387,14 @@ func TestDoResponseAndParseTaskLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusQueued, queued.Status)
 
-	inProgress, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-1","status":"in_progress","progress":47}`))
+	inProgress, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-1","status":"in_progress","progress":47,"progress_known":true,"progress_source":"upstream_percent","stage":"generating"}`))
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusInProgress, inProgress.Status)
 	assert.Equal(t, "47%", inProgress.Progress)
+	assert.True(t, inProgress.ProgressMetadataSet)
+	assert.True(t, inProgress.ProgressKnown)
+	assert.Equal(t, "upstream_percent", inProgress.ProgressSource)
+	assert.Equal(t, "generating", inProgress.Stage)
 
 	directURL := "https://pre-signed-firefly-prod.s3.amazonaws.com/generated/provider-task-1.mp4?X-Amz-Signature=secret&X-Amz-Expires=3600"
 	completed, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-1","status":"completed","progress":100,"duration":4,"video_url":"` + directURL + `"}`))

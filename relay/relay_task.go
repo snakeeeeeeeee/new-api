@@ -21,6 +21,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -28,7 +29,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const imageCredentialLeaseTTLSeconds = 30 * 60
+const (
+	imageCredentialLeaseTTLSeconds    = 30 * 60
+	adobeAsyncImageLeaseBufferMinutes = 10
+)
 
 var (
 	errImageTaskIdempotencyConflict = errors.New("idempotency_key_conflict")
@@ -657,6 +661,9 @@ func newAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, platform con
 	task.Action = info.Action
 	task.Status = model.TaskStatusQueued
 	task.Progress = taskcommon.ProgressQueued
+	task.PrivateData.ImageHandleExecutionDriver = dto.NormalizeImageHandleExecutionDriver(
+		info.ChannelOtherSettings.ImageHandleExecutionDriver,
+	)
 	if snapshot, err := buildAsyncImageTaskRequestSnapshot(c, info); err == nil && snapshot != nil && len(snapshot.request) > 0 {
 		task.PrivateData.ImageRequest = snapshot.request
 		task.PrivateData.ImageInputURLs = snapshot.images
@@ -729,7 +736,7 @@ func createAsyncImageTaskAndLease(c *gin.Context, info *relaycommon.RelayInfo, p
 		if err := tx.Create(task).Error; err != nil {
 			return err
 		}
-		lease = model.NewImageCredentialLease(task, operation, info.UpstreamModelName, imageCredentialLeaseTTLSeconds)
+		lease = model.NewImageCredentialLease(task, operation, info.UpstreamModelName, imageCredentialLeaseTTL(info, task))
 		return tx.Create(lease).Error
 	}); err != nil {
 		return nil, nil, err
@@ -769,7 +776,7 @@ func createDurableAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, pl
 		if err := tx.Create(task).Error; err != nil {
 			return err
 		}
-		lease := model.NewImageCredentialLease(task, operation, info.UpstreamModelName, imageCredentialLeaseTTLSeconds)
+		lease := model.NewImageCredentialLease(task, operation, info.UpstreamModelName, imageCredentialLeaseTTL(info, task))
 		if err := tx.Create(lease).Error; err != nil {
 			return err
 		}
@@ -806,6 +813,18 @@ func createDurableAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, pl
 		return nil, nil, err
 	}
 	return nil, existingTask, nil
+}
+
+func imageCredentialLeaseTTL(info *relaycommon.RelayInfo, task *model.Task) int64 {
+	if info == nil || task == nil ||
+		dto.NormalizeImageHandleExecutionDriver(info.ChannelOtherSettings.ImageHandleExecutionDriver) != dto.ImageHandleExecutionDriverAdobeAsyncImage {
+		return imageCredentialLeaseTTLSeconds
+	}
+	timeoutMinutes := async_task_setting.ResolveTimeoutMinutes(task.Platform, task.Action)
+	if timeoutMinutes <= 0 {
+		timeoutMinutes = async_task_setting.DefaultTimeoutMinutes
+	}
+	return int64(timeoutMinutes+adobeAsyncImageLeaseBufferMinutes) * 60
 }
 
 func createDurableVideoTask(c *gin.Context, info *relaycommon.RelayInfo, platform constant.TaskPlatform, quota int) (*model.Task, *model.Task, error) {
@@ -1579,6 +1598,14 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		progress = taskcommon.ProgressComplete
 	}
 	displayPlatform := taskDisplayPlatform(task)
+	progressSource := strings.TrimSpace(task.PrivateData.ProgressSource)
+	if progressSource == "" {
+		progressSource = "local_status"
+	}
+	stage := strings.TrimSpace(task.PrivateData.ProgressStage)
+	if stage == "" {
+		stage = mapTaskStatusToSimple(task.Status)
+	}
 	return &dto.TaskDto{
 		ID:              task.ID,
 		CreatedAt:       task.CreatedAt,
@@ -1598,6 +1625,9 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		StartTime:       task.StartTime,
 		FinishTime:      task.FinishTime,
 		Progress:        progress,
+		ProgressKnown:   task.PrivateData.ProgressMetadataSet && task.PrivateData.ProgressKnown,
+		ProgressSource:  progressSource,
+		Stage:           stage,
 		IsBlocked:       task.IsBlocked,
 		Properties:      task.Properties,
 		Username:        task.Username,
