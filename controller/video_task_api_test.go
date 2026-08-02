@@ -2,6 +2,8 @@ package controller
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -21,13 +23,138 @@ func TestVideoTaskCreateRequestPreservesExplicitZero(t *testing.T) {
 		"model":"grok-imagine-video-1.5",
 		"operation":"generation",
 		"input":{"prompt":"animate"},
-		"output":{"duration":0}
+		"output":{"duration":0,"generate_audio":false}
 	}`), &request))
 	require.NotNil(t, request.Output.Duration)
 	assert.Zero(t, *request.Output.Duration)
+	require.NotNil(t, request.Output.GenerateAudio)
+	assert.False(t, *request.Output.GenerateAudio)
 	canonical, err := common.Marshal(request)
 	require.NoError(t, err)
 	assert.Contains(t, string(canonical), `"duration":0`)
+	assert.Contains(t, string(canonical), `"generate_audio":false`)
+}
+
+func TestVideoTaskGenerateAudioStrictTypes(t *testing.T) {
+	valid := []string{
+		`{"model":"video","operation":"generation","input":{"prompt":"cat"},"output":{"generate_audio":true}}`,
+		`{"model":"video","operation":"generation","input":{"prompt":"cat"},"output":{"generate_audio":false}}`,
+		`{"model":"video","operation":"generation","input":{"prompt":"cat"},"output":{}}`,
+	}
+	for _, body := range valid {
+		var request dto.VideoTaskCreateRequest
+		require.NoError(t, common.UnmarshalStrict([]byte(body), &request))
+		assert.Nil(t, validateVideoTaskGenerateAudioJSON([]byte(body)))
+	}
+
+	invalid := []string{
+		`{"model":"video","operation":"generation","input":{"prompt":"cat"},"output":{"generate_audio":"true"}}`,
+		`{"model":"video","operation":"generation","input":{"prompt":"cat"},"output":{"generate_audio":1}}`,
+		`{"model":"video","operation":"generation","input":{"prompt":"cat"},"output":{"generate_audio":{}}}`,
+		`{"model":"video","operation":"generation","input":{"prompt":"cat"},"output":{"generate_audio":[]}}`,
+	}
+	for _, body := range invalid {
+		var request dto.VideoTaskCreateRequest
+		assert.Error(t, common.UnmarshalStrict([]byte(body), &request))
+	}
+
+	problem := validateVideoTaskGenerateAudioJSON([]byte(
+		`{"model":"video","operation":"generation","input":{"prompt":"cat"},"output":{"generate_audio":null}}`,
+	))
+	require.NotNil(t, problem)
+	assert.Equal(t, http.StatusBadRequest, problem.status)
+	assert.Equal(t, "invalid_request", problem.code)
+	assert.Equal(t, "output.generate_audio", problem.param)
+}
+
+func TestValidateReservedVideoProviderOptionsRejectsPublicDuplicates(t *testing.T) {
+	tests := []struct {
+		key         string
+		replacement string
+	}{
+		{key: " Generate_Audio ", replacement: "output.generate_audio"},
+		{key: " Reference_Mode ", replacement: "input.reference_mode"},
+	}
+	for _, test := range tests {
+		t.Run(test.key, func(t *testing.T) {
+			request := dto.VideoTaskCreateRequest{ProviderOptions: map[string]map[string]any{
+				" Leonardo_Video ": {test.key: false},
+			}}
+			normalizeVideoTaskCreateRequest(&request)
+			problem := validateReservedVideoProviderOptions(&request)
+			require.NotNil(t, problem)
+			assert.Equal(t, "invalid_provider_options", problem.code)
+			assert.Contains(t, problem.message, test.replacement)
+		})
+	}
+
+	request := dto.VideoTaskCreateRequest{ProviderOptions: map[string]map[string]any{
+		"xai": {"user": "customer-1"},
+	}}
+	assert.Nil(t, validateReservedVideoProviderOptions(&request))
+}
+
+func TestVideoTaskGenerateAudioIdempotencyConflicts(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.VideoTaskRequest{}))
+
+	key := "video-audio-idempotency"
+	trueValue := true
+	falseValue := false
+	base := dto.VideoTaskCreateRequest{
+		Model: "seedance-2.0-fast-480p", Operation: "generation",
+		Input:  dto.VideoTaskInputRequest{Prompt: "cinematic sunrise"},
+		Output: dto.VideoTaskOutputRequest{GenerateAudio: &trueValue},
+	}
+	fingerprint := func(request dto.VideoTaskCreateRequest) string {
+		canonical, err := common.Marshal(request)
+		require.NoError(t, err)
+		return fmt.Sprintf("%x", sha256.Sum256(canonical))
+	}
+
+	task := &model.Task{
+		TaskID: "task_video_audio_idempotency", UserId: 81, Platform: "61",
+		Action: "videoGeneration", Status: model.TaskStatusQueued, SubmitTime: time.Now().Unix(),
+		Properties: model.Properties{OriginModelName: base.Model, AssetType: "video", Operation: "generation"},
+	}
+	require.NoError(t, db.Create(task).Error)
+	requestJSON, err := videoTaskRequestSnapshot(base)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(model.NewVideoTaskRequest(task, 81, &key, fingerprint(base), "", requestJSON)).Error)
+
+	tests := []struct {
+		name       string
+		request    dto.VideoTaskCreateRequest
+		statusCode int
+		code       string
+	}{
+		{name: "same explicit true replays", request: base, statusCode: http.StatusAccepted},
+		{name: "explicit false conflicts", request: func() dto.VideoTaskCreateRequest {
+			request := base
+			request.Output.GenerateAudio = &falseValue
+			return request
+		}(), statusCode: http.StatusConflict, code: "idempotency_key_conflict"},
+		{name: "omitted conflicts with explicit true", request: func() dto.VideoTaskCreateRequest {
+			request := base
+			request.Output.GenerateAudio = nil
+			return request
+		}(), statusCode: http.StatusConflict, code: "idempotency_key_conflict"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Set("id", 81)
+			assert.True(t, replayVideoTaskRequest(ctx, key, fingerprint(test.request)))
+			assert.Equal(t, test.statusCode, recorder.Code, recorder.Body.String())
+			if test.code != "" {
+				assert.Contains(t, recorder.Body.String(), `"code":"`+test.code+`"`)
+			} else {
+				assert.Equal(t, "true", recorder.Header().Get("Idempotent-Replayed"))
+			}
+		})
+	}
 }
 
 func TestValidateVideoTaskCreateRequestOperations(t *testing.T) {
@@ -155,6 +282,7 @@ func TestValidateVideoTaskImagesReferences(t *testing.T) {
 }
 
 func TestVideoTaskRequestSnapshotHashesReferenceURLs(t *testing.T) {
+	generateAudio := false
 	request := dto.VideoTaskCreateRequest{
 		Model: "seedance-2.0-720p", Operation: "generation",
 		Input: dto.VideoTaskInputRequest{
@@ -163,12 +291,14 @@ func TestVideoTaskRequestSnapshotHashesReferenceURLs(t *testing.T) {
 				URL: "https://media.example.com/clip.mp4?signature=secret", Name: "clip",
 			}},
 		},
+		Output: dto.VideoTaskOutputRequest{GenerateAudio: &generateAudio},
 	}
 	snapshot, err := videoTaskRequestSnapshot(request)
 	require.NoError(t, err)
 	assert.NotContains(t, string(snapshot), "signature")
 	assert.NotContains(t, string(snapshot), "secret")
 	assert.Contains(t, string(snapshot), `"url":"sha256:`)
+	assert.Contains(t, string(snapshot), `"generate_audio":false`)
 	assert.Equal(t, "https://media.example.com/clip.mp4?signature=secret", request.Input.ReferenceVideos[0].URL)
 }
 

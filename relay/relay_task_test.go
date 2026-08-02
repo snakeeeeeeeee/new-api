@@ -260,16 +260,15 @@ func TestRelayTaskSubmitAdobeVideoUsesExactMappedModelAndPerSecondWalletQuota(t 
 
 	duration := 4
 	aspectRatio := "16:9"
+	generateAudio := false
 	normalizedRequest := dto.VideoTaskCreateRequest{
 		Model:     "seedance-2.0-fast-480p",
 		Operation: "generation",
 		Input:     dto.VideoTaskInputRequest{Prompt: "ocean sunrise"},
 		Output: dto.VideoTaskOutputRequest{
-			Duration:    &duration,
-			AspectRatio: &aspectRatio,
-		},
-		ProviderOptions: map[string]map[string]any{
-			"adobe_video": {"generate_audio": false},
+			Duration:      &duration,
+			AspectRatio:   &aspectRatio,
+			GenerateAudio: &generateAudio,
 		},
 	}
 	recorder := httptest.NewRecorder()

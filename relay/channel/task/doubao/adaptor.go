@@ -122,7 +122,11 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		return service.TaskErrorWrapperLocal(fmt.Errorf("Seedance generation does not accept input.video"), "unsupported_video_input", http.StatusBadRequest)
 	}
 
-	payload := &requestPayload{Model: request.Model, Content: []ContentItem{}}
+	generateAudio := dto.BoolValue(true)
+	if request.Output.GenerateAudio != nil {
+		generateAudio = dto.BoolValue(*request.Output.GenerateAudio)
+	}
+	payload := &requestPayload{Model: request.Model, Content: []ContentItem{}, GenerateAudio: &generateAudio}
 	if request.Input.Prompt != "" {
 		payload.Content = append(payload.Content, ContentItem{Type: "text", Text: request.Input.Prompt})
 	}
@@ -164,7 +168,11 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		providerOptions = options
 	}
 	for key := range providerOptions {
-		switch key {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "generate_audio":
+			return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.%s is no longer supported; use output.generate_audio", key), "invalid_provider_options", http.StatusBadRequest)
+		case "reference_mode":
+			return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.%s is no longer supported; use input.reference_mode", key), "invalid_provider_options", http.StatusBadRequest)
 		case "model", "content", "duration", "resolution", "ratio":
 			return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.%s duplicates a public field", key), "invalid_provider_options", http.StatusBadRequest)
 		}

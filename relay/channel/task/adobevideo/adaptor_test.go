@@ -36,11 +36,9 @@ func TestPrepareNormalizedVideoRequestSharesValidatedPayloadWithBillingAndUpstre
 		Operation: "generation",
 		Input:     dto.VideoTaskInputRequest{Prompt: "  cinematic ocean sunrise  "},
 		Output: dto.VideoTaskOutputRequest{
-			Duration:    &duration,
-			AspectRatio: &aspectRatio,
-		},
-		ProviderOptions: map[string]map[string]any{
-			ProviderOptionsNamespace: {"generate_audio": false},
+			Duration:      &duration,
+			AspectRatio:   &aspectRatio,
+			GenerateAudio: common.GetPointer(false),
 		},
 	}
 	info := &relaycommon.RelayInfo{
@@ -111,6 +109,8 @@ func TestPrepareNormalizedVideoRequestMapsReferenceImagesInPublicOrder(t *testin
 	require.NoError(t, err)
 	var payload requestPayload
 	require.NoError(t, common.Unmarshal(data, &payload))
+	require.NotNil(t, payload.GenerateAudio)
+	assert.True(t, *payload.GenerateAudio)
 	assert.Equal(t, "media", payload.ReferenceMode)
 	require.Len(t, payload.ReferenceImages, 3)
 	assert.Equal(t, "https://example.com/subject.png", payload.ReferenceImages[0].URL)
@@ -151,7 +151,39 @@ func TestPrepareNormalizedVideoRequestUsesAdobeDefaultsWithoutInventingResolutio
 	require.NoError(t, common.Unmarshal(data, &payload))
 	assert.Equal(t, defaultAspectRatio, payload["aspect_ratio"])
 	assert.NotContains(t, payload, "resolution")
-	assert.NotContains(t, payload, "generate_audio")
+	assert.Equal(t, true, payload["generate_audio"])
+}
+
+func TestPrepareNormalizedVideoRequestMapsPublicGenerateAudio(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    *bool
+		expected bool
+	}{
+		{name: "omitted defaults true", expected: true},
+		{name: "explicit true", value: common.GetPointer(true), expected: true},
+		{name: "explicit false", value: common.GetPointer(false), expected: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			duration := 4
+			request := dto.VideoTaskCreateRequest{
+				Model: "seedance-2.0-fast-480p", Operation: "generation",
+				Input:  dto.VideoTaskInputRequest{Prompt: "cat"},
+				Output: dto.VideoTaskOutputRequest{Duration: &duration, GenerateAudio: test.value},
+			}
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "seedance_2.0_fast_480p"}}
+			c := adobeVideoTestContext()
+			require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(c, info, request))
+			body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(data, &payload))
+			assert.Equal(t, test.expected, payload["generate_audio"])
+		})
+	}
 }
 
 func TestPrepareNormalizedVideoRequestEnforcesPromptLimit(t *testing.T) {

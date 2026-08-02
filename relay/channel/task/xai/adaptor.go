@@ -107,6 +107,9 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	if info.TaskRelayInfo == nil {
 		info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
 	}
+	if request.Output.GenerateAudio != nil {
+		return xaiNormalizedVideoError("output.generate_audio is not supported by xAI")
+	}
 	for namespace := range request.ProviderOptions {
 		if !strings.EqualFold(strings.TrimSpace(namespace), ChannelName) {
 			return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.%s is not supported by xAI", namespace), "invalid_provider_options", http.StatusBadRequest)
@@ -211,7 +214,11 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 
 	if options := request.ProviderOptions[ChannelName]; options != nil {
 		for key, value := range options {
-			switch key {
+			switch strings.ToLower(strings.TrimSpace(key)) {
+			case "generate_audio":
+				return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.xai.generate_audio is no longer supported; output.generate_audio is not supported by xAI"), "invalid_provider_options", http.StatusBadRequest)
+			case "reference_mode":
+				return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.xai.reference_mode is no longer supported; use input.reference_mode"), "invalid_provider_options", http.StatusBadRequest)
 			case "model", "prompt", "image", "reference_images", "video", "duration", "aspect_ratio", "resolution":
 				return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options.xai.%s duplicates a public field", key), "invalid_provider_options", http.StatusBadRequest)
 			default:

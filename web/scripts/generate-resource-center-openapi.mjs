@@ -45,6 +45,7 @@ const adobeVideoModelCapabilities = {
         maximum_images: 2,
       },
     },
+    generate_audio_option: 'output.generate_audio',
   },
   'adobe-kling-3.0-omni-{720p|1080p}': {
     prompt_max_characters: 1200,
@@ -62,6 +63,7 @@ const adobeVideoModelCapabilities = {
         maximum_images: 3,
       },
     },
+    generate_audio_option: 'output.generate_audio',
   },
   'adobe-veo-3.1-standard-{720p|1080p}': {
     prompt_max_characters: 1200,
@@ -77,6 +79,7 @@ const adobeVideoModelCapabilities = {
         aspect_ratio: '16:9',
       },
     },
+    generate_audio_option: 'output.generate_audio',
   },
   'adobe-veo-3.1-fast-{720p|1080p}': {
     prompt_max_characters: 1200,
@@ -87,6 +90,7 @@ const adobeVideoModelCapabilities = {
         maximum_images: 2,
       },
     },
+    generate_audio_option: 'output.generate_audio',
   },
 };
 
@@ -118,7 +122,7 @@ const leonardoVideoModelCapabilities = Object.fromEntries(
         },
       },
       audio_reference: false,
-      generate_audio_option: 'provider_options.leonardo_video.generate_audio',
+      generate_audio_option: 'output.generate_audio',
     },
   ]),
 );
@@ -140,11 +144,7 @@ const videoTaskCreateExamples = {
       output: {
         duration: 3,
         aspect_ratio: '16:9',
-      },
-      provider_options: {
-        adobe_video: {
-          generate_audio: true,
-        },
+        generate_audio: true,
       },
     },
   },
@@ -175,11 +175,7 @@ const videoTaskCreateExamples = {
       output: {
         duration: 5,
         aspect_ratio: '9:16',
-      },
-      provider_options: {
-        adobe_video: {
-          generate_audio: false,
-        },
+        generate_audio: false,
       },
     },
   },
@@ -227,11 +223,7 @@ const videoTaskCreateExamples = {
       output: {
         duration: 4,
         aspect_ratio: '16:9',
-      },
-      provider_options: {
-        adobe_video: {
-          generate_audio: true,
-        },
+        generate_audio: true,
       },
     },
   },
@@ -248,11 +240,7 @@ const videoTaskCreateExamples = {
       output: {
         duration: 4,
         aspect_ratio: '16:9',
-      },
-      provider_options: {
-        leonardo_video: {
-          generate_audio: false,
-        },
+        generate_audio: false,
       },
     },
   },
@@ -279,11 +267,7 @@ const videoTaskCreateExamples = {
       output: {
         duration: 4,
         aspect_ratio: '16:9',
-      },
-      provider_options: {
-        leonardo_video: {
-          generate_audio: true,
-        },
+        generate_audio: true,
       },
     },
   },
@@ -1044,9 +1028,9 @@ const spec = {
         operationId: 'createVideoTask',
         summary: 'Create an asynchronous video task',
         description:
-          'Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. Adobe video prompts accept at most 1200 Unicode characters. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Self-Leonardo exposes five leonardo-seedance-2.0-* models, generation only, 4-15 seconds, six aspect ratios, and HTTP(S) media references limited to four images, three videos, and seven total items. Leonardo does not support frame, images, audio references, data URLs, base64, or provider file references; generate_audio remains available under provider_options.leonardo_video. HTTPS is recommended for reference integrity. Compatibility endpoints under /v1/videos remain unchanged.',
+          'Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. output.generate_audio is the provider-neutral generated-audio control and defaults to true on supported providers; provider_options.*.generate_audio and provider_options.*.reference_mode are rejected. Adobe video prompts accept at most 1200 Unicode characters. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Self-Leonardo exposes five leonardo-seedance-2.0-* models, generation only, 4-15 seconds, six aspect ratios, and HTTP(S) media references limited to four images, three videos, and seven total items. Leonardo does not support frame, images, audio references, data URLs, base64, or provider file references. HTTPS is recommended for reference integrity. Compatibility endpoints under /v1/videos remain unchanged.',
         'x-description-zh-CN':
-          '创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。Adobe 视频提示词最多 1200 个 Unicode 字符。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。Self-Leonardo 公开五个 leonardo-seedance-2.0-* 模型，仅支持 generation、4-15 秒、六种画幅，以及最多 4 图、3 视频、7 项总参考的 HTTP(S) media 模式。Leonardo 不支持 frame、images、音频参考、Data URL、Base64 或 provider file；generate_audio 仍可通过 provider_options.leonardo_video 控制，参考素材建议使用 HTTPS 以保证传输完整性。原有 /v1/videos 兼容接口保持不变。',
+          '创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。output.generate_audio 是供应商无关的生成音轨开关，支持该能力的渠道省略时默认 true；provider_options.*.generate_audio 和 provider_options.*.reference_mode 会被拒绝。Adobe 视频提示词最多 1200 个 Unicode 字符。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。Self-Leonardo 公开五个 leonardo-seedance-2.0-* 模型，仅支持 generation、4-15 秒、六种画幅，以及最多 4 图、3 视频、7 项总参考的 HTTP(S) media 模式。Leonardo 不支持 frame、images、音频参考、Data URL、Base64 或 provider file，参考素材建议使用 HTTPS 以保证传输完整性。原有 /v1/videos 兼容接口保持不变。',
         'x-supertoken-video-model-capabilities': {
           ...adobeVideoModelCapabilities,
           ...leonardoVideoModelCapabilities,
@@ -2018,6 +2002,11 @@ const spec = {
           },
           aspect_ratio: { type: 'string' },
           resolution: { type: 'string' },
+          generate_audio: {
+            type: 'boolean',
+            description:
+              'Whether supported providers should generate an output audio track. Defaults to true when omitted. This does not enable audio-reference inputs.',
+          },
         },
       },
       VideoTaskCreateRequest: {
@@ -2034,7 +2023,7 @@ const spec = {
           provider_options: {
             type: 'object',
             description:
-              'Provider-specific options keyed by provider namespace, for example provider_options.xai or provider_options.leonardo_video.generate_audio.',
+              'Truly provider-specific advanced options keyed by provider namespace. Generated-audio and reference-mode controls must use output.generate_audio and input.reference_mode.',
             additionalProperties: {
               type: 'object',
               additionalProperties: true,
@@ -2522,6 +2511,8 @@ const defaultPropertyDescriptions = {
   duration: 'Requested output or extension duration in seconds.',
   aspect_ratio: 'Requested provider-supported output aspect ratio.',
   resolution: 'Requested provider-supported output resolution.',
+  generate_audio:
+    'Whether a supported provider should generate an output audio track.',
   provider_options: 'Provider-specific options grouped by provider namespace.',
   videos: 'Ordered video outputs produced by the task.',
   uploads: 'Base64 uploads with an optional image or mask field designation.',
@@ -2751,6 +2742,7 @@ const defaultPropertyDescriptionsZhCN = {
   duration: '请求的输出时长或扩展片段时长，单位为秒。',
   aspect_ratio: '供应商支持的输出宽高比。',
   resolution: '供应商支持的输出分辨率。',
+  generate_audio: '支持该能力的供应商是否应生成成片音轨。',
   provider_options: '按供应商命名空间组织的专属参数。',
   videos: '任务生成的有序视频输出列表。',
   uploads: 'Base64 上传列表，可指定每项是 image 还是 mask。',
@@ -2969,6 +2961,10 @@ const extraDescriptionTranslationsZhCN = {
     'edit、extension 或 remix 操作使用的单个源视频。',
   'Requested output duration. For extension this is the new segment duration. Provider-specific bounds are validated by the selected adaptor.':
     '请求输出时长；extension 中表示新增片段时长，具体范围由所选适配器校验。',
+  'Whether supported providers should generate an output audio track. Defaults to true when omitted. This does not enable audio-reference inputs.':
+    '支持该能力的供应商是否应生成成片音轨；省略时默认 true。该字段不会启用音频参考输入。',
+  'Truly provider-specific advanced options keyed by provider namespace. Generated-audio and reference-mode controls must use output.generate_audio and input.reference_mode.':
+    '按供应商命名空间组织的真正专属高级选项；生成音轨和参考模式必须分别使用 output.generate_audio 与 input.reference_mode。',
   'Provider-specific options keyed by provider namespace, for example provider_options.xai.':
     '按供应商命名空间组织的专属选项，例如 provider_options.xai。',
   'Provider-specific options. Gemini uses the google namespace.':

@@ -35,10 +35,7 @@ func TestPrepareNormalizedVideoRequestUsesHiggsfieldOptionsAndMediaContract(t *t
 				{URL: "https://assets.example/music.mp3", Name: "music"},
 			},
 		},
-		Output: dto.VideoTaskOutputRequest{Duration: intPointer(4)},
-		ProviderOptions: map[string]map[string]any{
-			ProviderOptionsNamespace: {"generate_audio": false},
-		},
+		Output: dto.VideoTaskOutputRequest{Duration: intPointer(4), GenerateAudio: common.GetPointer(false)},
 	}
 	info := &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "seedance-2.0-480p"},
@@ -58,6 +55,37 @@ func TestPrepareNormalizedVideoRequestUsesHiggsfieldOptionsAndMediaContract(t *t
 	assert.Len(t, payload["reference_images"], 1)
 	assert.Len(t, payload["reference_videos"], 1)
 	assert.Len(t, payload["reference_audios"], 1)
+}
+
+func TestHiggsfieldGenerateAudioMapping(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    *bool
+		expected bool
+	}{
+		{name: "omitted defaults true", expected: true},
+		{name: "explicit true", value: common.GetPointer(true), expected: true},
+		{name: "explicit false", value: common.GetPointer(false), expected: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			request := dto.VideoTaskCreateRequest{
+				Model: "seedance-2.0-480p", Operation: "generation",
+				Input:  dto.VideoTaskInputRequest{Prompt: "cat"},
+				Output: dto.VideoTaskOutputRequest{Duration: intPointer(4), GenerateAudio: test.value},
+			}
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "seedance-2.0-480p"}}
+			require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(context, info, request))
+			body, err := (&TaskAdaptor{}).BuildRequestBody(context, info)
+			require.NoError(t, err)
+			raw, err := io.ReadAll(body)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(raw, &payload))
+			assert.Equal(t, test.expected, payload["generate_audio"])
+		})
+	}
 }
 
 func TestBuildRequestURLUsesHiggsfieldVideoLifecycle(t *testing.T) {
@@ -99,6 +127,24 @@ func TestPrepareNormalizedVideoRequestRejectsAdobeProviderOptions(t *testing.T) 
 
 	require.NotNil(t, taskErr)
 	assert.Equal(t, "invalid_provider_options", taskErr.Code)
+}
+
+func TestPrepareNormalizedVideoRequestRejectsLegacyHiggsfieldOptions(t *testing.T) {
+	for _, key := range []string{"generate_audio", "reference_mode"} {
+		t.Run(key, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			duration := 4
+			request := dto.VideoTaskCreateRequest{
+				Model: "seedance-2.0-480p", Operation: "generation",
+				Input:           dto.VideoTaskInputRequest{Prompt: "test"},
+				Output:          dto.VideoTaskOutputRequest{Duration: &duration},
+				ProviderOptions: map[string]map[string]any{ProviderOptionsNamespace: {key: false}},
+			}
+			taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(context, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}, request)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, "invalid_provider_options", taskErr.Code)
+		})
+	}
 }
 
 func TestSeedanceCapabilityAndBillingUseHiggsfieldProviderSKU(t *testing.T) {

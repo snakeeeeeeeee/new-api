@@ -91,20 +91,22 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		return requestError(fmt.Sprintf("aspect_ratio %q is not supported", aspectRatio), "invalid_video_aspect_ratio", http.StatusBadRequest)
 	}
 
-	var generateAudio *bool
+	generateAudio := common.GetPointer(true)
+	if request.Output.GenerateAudio != nil {
+		generateAudio = request.Output.GenerateAudio
+	}
 	for namespace, options := range request.ProviderOptions {
 		if strings.TrimSpace(namespace) != ProviderOptionsNamespace {
 			return requestError(fmt.Sprintf("provider_options.%s is not supported", namespace), "invalid_provider_options", http.StatusBadRequest)
 		}
-		for key, value := range options {
-			if key != "generate_audio" {
-				return requestError(fmt.Sprintf("provider_options.%s.%s is not supported", namespace, key), "invalid_provider_options", http.StatusBadRequest)
+		for key := range options {
+			if strings.EqualFold(strings.TrimSpace(key), "generate_audio") {
+				return requestError("provider_options.leonardo_video.generate_audio is no longer supported; use output.generate_audio", "invalid_provider_options", http.StatusBadRequest)
 			}
-			enabled, ok := value.(bool)
-			if !ok {
-				return requestError("provider_options.leonardo_video.generate_audio must be a boolean", "invalid_provider_options", http.StatusBadRequest)
+			if strings.EqualFold(strings.TrimSpace(key), "reference_mode") {
+				return requestError("provider_options.leonardo_video.reference_mode is no longer supported; use input.reference_mode", "invalid_provider_options", http.StatusBadRequest)
 			}
-			generateAudio = &enabled
+			return requestError(fmt.Sprintf("provider_options.%s.%s is not supported", namespace, key), "invalid_provider_options", http.StatusBadRequest)
 		}
 	}
 

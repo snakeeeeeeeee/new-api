@@ -138,7 +138,11 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		Prompt:        prompt,
 		Duration:      duration,
 		AspectRatio:   aspectRatio,
+		GenerateAudio: common.GetPointer(true),
 		ReferenceMode: "frame",
+	}
+	if request.Output.GenerateAudio != nil {
+		payload.GenerateAudio = request.Output.GenerateAudio
 	}
 	publicReferenceMode := strings.ToLower(strings.TrimSpace(request.Input.ReferenceMode))
 	if publicReferenceMode != "" {
@@ -154,39 +158,18 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 				"invalid_provider_options",
 			)
 		}
-		for key, value := range options {
-			switch key {
+		for key := range options {
+			switch strings.ToLower(strings.TrimSpace(key)) {
 			case "generate_audio":
-				enabled, ok := value.(bool)
-				if !ok {
-					return adobeVideoRequestError(
-						"provider_options.adobe_video.generate_audio must be a boolean",
-						"invalid_provider_options",
-					)
-				}
-				payload.GenerateAudio = &enabled
+				return adobeVideoRequestError(
+					"provider_options.adobe_video.generate_audio is no longer supported; use output.generate_audio",
+					"invalid_provider_options",
+				)
 			case "reference_mode":
-				if publicReferenceMode != "" {
-					return adobeVideoRequestError(
-						"provider_options.adobe_video.reference_mode conflicts with input.reference_mode",
-						"invalid_provider_options",
-					)
-				}
-				mode, ok := value.(string)
-				if !ok {
-					return adobeVideoRequestError(
-						"provider_options.adobe_video.reference_mode must be a string",
-						"invalid_provider_options",
-					)
-				}
-				mode = strings.ToLower(strings.TrimSpace(mode))
-				if !validReferenceMode(mode) {
-					return adobeVideoRequestError(
-						"provider_options.adobe_video.reference_mode must be frame, images, or media",
-						"invalid_provider_options",
-					)
-				}
-				payload.ReferenceMode = mode
+				return adobeVideoRequestError(
+					"provider_options.adobe_video.reference_mode is no longer supported; use input.reference_mode",
+					"invalid_provider_options",
+				)
 			case "model", "prompt", "duration", "aspect_ratio", "resolution", "image", "reference_images", "reference_videos", "reference_audios", "video":
 				return adobeVideoRequestError(
 					fmt.Sprintf("provider_options.adobe_video.%s duplicates a public or model-bound field", key),

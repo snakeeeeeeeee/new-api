@@ -67,7 +67,7 @@ func TestPrepareNormalizedSeedanceRequestSharesBillingAndUpstreamDuration(t *tes
 				{URL: "https://example.com/reference.png"},
 			},
 		},
-		Output: dto.VideoTaskOutputRequest{Duration: &duration, Resolution: &resolution},
+		Output: dto.VideoTaskOutputRequest{Duration: &duration, Resolution: &resolution, GenerateAudio: common.GetPointer(false)},
 		ProviderOptions: map[string]map[string]any{
 			"doubao": {"watermark": true},
 		},
@@ -91,10 +91,43 @@ func TestPrepareNormalizedSeedanceRequestSharesBillingAndUpstreamDuration(t *tes
 	require.Equal(t, float64(duration), payload["duration"])
 	require.Equal(t, "720p", payload["resolution"])
 	require.Equal(t, true, payload["watermark"])
+	require.Equal(t, false, payload["generate_audio"])
 	content := payload["content"].([]interface{})
 	require.Len(t, content, 3)
 	require.Equal(t, "first_frame", content[1].(map[string]interface{})["role"])
 	require.Equal(t, "reference_image", content[2].(map[string]interface{})["role"])
+}
+
+func TestPrepareNormalizedSeedanceMapsGenerateAudio(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    *bool
+		expected bool
+	}{
+		{name: "omitted defaults true", expected: true},
+		{name: "explicit true", value: common.GetPointer(true), expected: true},
+		{name: "explicit false", value: common.GetPointer(false), expected: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			duration := 4
+			request := dto.VideoTaskCreateRequest{
+				Model: "seedance", Operation: "generation",
+				Input:  dto.VideoTaskInputRequest{Prompt: "cat"},
+				Output: dto.VideoTaskOutputRequest{Duration: &duration, GenerateAudio: test.value},
+			}
+			c := doubaoTestContext("/v1/video/tasks", `{}`)
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}, ChannelMeta: &relaycommon.ChannelMeta{}}
+			require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(c, info, request))
+			body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(data, &payload))
+			require.Equal(t, test.expected, payload["generate_audio"])
+		})
+	}
 }
 
 func TestPrepareNormalizedSeedanceRejectsUnsupportedOperationsAndOverrides(t *testing.T) {
@@ -110,4 +143,11 @@ func TestPrepareNormalizedSeedanceRejectsUnsupportedOperationsAndOverrides(t *te
 	taskErr = adaptor.PrepareNormalizedVideoRequest(c, info, request)
 	require.NotNil(t, taskErr)
 	require.Equal(t, "invalid_provider_options", taskErr.Code)
+
+	for _, key := range []string{"generate_audio", "reference_mode"} {
+		request = dto.VideoTaskCreateRequest{Model: "seedance", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "cat"}, ProviderOptions: map[string]map[string]any{"doubao": {key: false}}}
+		taskErr = adaptor.PrepareNormalizedVideoRequest(c, info, request)
+		require.NotNil(t, taskErr)
+		require.Equal(t, "invalid_provider_options", taskErr.Code)
+	}
 }

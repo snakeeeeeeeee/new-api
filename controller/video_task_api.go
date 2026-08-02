@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -85,7 +87,15 @@ func PrepareVideoTaskRequest(c *gin.Context) {
 		abortVideoTaskAPIProblem(c, &videoTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: "Invalid JSON request body"})
 		return
 	}
+	if problem := validateVideoTaskGenerateAudioJSON(rawBody); problem != nil {
+		abortVideoTaskAPIProblem(c, problem)
+		return
+	}
 	normalizeVideoTaskCreateRequest(&request)
+	if problem := validateReservedVideoProviderOptions(&request); problem != nil {
+		abortVideoTaskAPIProblem(c, problem)
+		return
+	}
 	if param, message := validateVideoTaskCreateRequest(&request); message != "" {
 		abortVideoTaskAPIProblem(c, &videoTaskAPIProblem{status: http.StatusBadRequest, code: "invalid_request", message: message, param: param})
 		return
@@ -116,6 +126,54 @@ func PrepareVideoTaskRequest(c *gin.Context) {
 	c.Request.ContentLength = int64(len(canonical))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Next()
+}
+
+func validateVideoTaskGenerateAudioJSON(rawBody []byte) *videoTaskAPIProblem {
+	var envelope struct {
+		Output map[string]json.RawMessage `json:"output"`
+	}
+	if err := common.Unmarshal(rawBody, &envelope); err != nil {
+		return nil
+	}
+	raw, exists := envelope.Output["generate_audio"]
+	if exists && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return &videoTaskAPIProblem{
+			status: http.StatusBadRequest, code: "invalid_request",
+			message: "output.generate_audio must be a boolean", param: "output.generate_audio",
+		}
+	}
+	return nil
+}
+
+func validateReservedVideoProviderOptions(request *dto.VideoTaskCreateRequest) *videoTaskAPIProblem {
+	if request == nil || len(request.ProviderOptions) == 0 {
+		return nil
+	}
+	namespaces := make([]string, 0, len(request.ProviderOptions))
+	for namespace := range request.ProviderOptions {
+		namespaces = append(namespaces, namespace)
+	}
+	sort.Strings(namespaces)
+	replacements := map[string]string{
+		"generate_audio": "output.generate_audio",
+		"reference_mode": "input.reference_mode",
+	}
+	for _, namespace := range namespaces {
+		for key := range request.ProviderOptions[namespace] {
+			normalizedKey := strings.ToLower(strings.TrimSpace(key))
+			replacement, reserved := replacements[normalizedKey]
+			if !reserved {
+				continue
+			}
+			param := fmt.Sprintf("provider_options.%s.%s", namespace, key)
+			return &videoTaskAPIProblem{
+				status: http.StatusBadRequest, code: "invalid_provider_options",
+				message: fmt.Sprintf("%s is no longer supported; use %s", param, replacement),
+				param:   param,
+			}
+		}
+	}
+	return nil
 }
 
 func normalizeVideoTaskCreateRequest(request *dto.VideoTaskCreateRequest) {

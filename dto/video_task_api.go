@@ -18,9 +18,10 @@ type VideoTaskInputRequest struct {
 }
 
 type VideoTaskOutputRequest struct {
-	Duration    *int    `json:"duration,omitempty"`
-	AspectRatio *string `json:"aspect_ratio,omitempty"`
-	Resolution  *string `json:"resolution,omitempty"`
+	Duration      *int    `json:"duration,omitempty"`
+	AspectRatio   *string `json:"aspect_ratio,omitempty"`
+	Resolution    *string `json:"resolution,omitempty"`
+	GenerateAudio *bool   `json:"generate_audio,omitempty"`
 }
 
 type VideoTaskCreateRequest struct {

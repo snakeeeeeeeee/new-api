@@ -336,11 +336,23 @@ func TestPrepareNormalizedVideoRejectsUnsupportedCapabilities(t *testing.T) {
 	require.NotNil(t, taskErr)
 	assert.Equal(t, "invalid_provider_options", taskErr.Code)
 
+	legacyOption := dto.VideoTaskCreateRequest{Model: "grok-imagine-video-1.5", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "generate"}, ProviderOptions: map[string]map[string]any{"xai": {"generate_audio": true}}}
+	taskErr = adaptor.PrepareNormalizedVideoRequest(c, info, legacyOption)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_provider_options", taskErr.Code)
+
 	tests := []struct {
 		name    string
 		request dto.VideoTaskCreateRequest
 		code    string
 	}{
+		{
+			name: "generated audio unsupported",
+			request: dto.VideoTaskCreateRequest{Model: "grok-imagine-video", Operation: "generation", Input: dto.VideoTaskInputRequest{
+				Prompt: "generate",
+			}, Output: dto.VideoTaskOutputRequest{GenerateAudio: common.GetPointer(false)}},
+			code: "invalid_video_parameter",
+		},
 		{
 			name: "generation image and references",
 			request: dto.VideoTaskCreateRequest{Model: "grok-imagine-video", Operation: "generation", Input: dto.VideoTaskInputRequest{

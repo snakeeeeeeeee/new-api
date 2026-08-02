@@ -59,7 +59,7 @@ func TestPrepareAndBuildLeonardoRequestUsesOnlyUpstreamFields(t *testing.T) {
 	request.Input.Image = &dto.VideoTaskSource{URL: "http://example.com/first.png", Name: "first"}
 	request.Input.ReferenceImages = []dto.VideoTaskSource{{URL: "https://example.com/style.webp"}}
 	request.Input.ReferenceVideos = []dto.VideoTaskSource{{URL: "https://example.com/motion.mp4"}}
-	request.ProviderOptions = map[string]map[string]any{ProviderOptionsNamespace: {"generate_audio": false}}
+	request.Output.GenerateAudio = common.GetPointer(false)
 
 	info := leonardoInfo("seedance-2.0-fast-480p")
 	c := leonardoVideoTestContext()
@@ -96,6 +96,34 @@ func TestPrepareAndBuildLeonardoRequestUsesOnlyUpstreamFields(t *testing.T) {
 	assert.Equal(t, "https://example.com/motion.mp4", videos[0].(map[string]any)["url"])
 }
 
+func TestLeonardoGenerateAudioMapping(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    *bool
+		expected bool
+	}{
+		{name: "omitted defaults true", expected: true},
+		{name: "explicit true", value: common.GetPointer(true), expected: true},
+		{name: "explicit false", value: common.GetPointer(false), expected: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := leonardoRequest("leonardo-seedance-2.0-fast-480p", 4)
+			request.Output.GenerateAudio = test.value
+			info := leonardoInfo("seedance-2.0-fast-480p")
+			c := leonardoVideoTestContext()
+			require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(c, info, request))
+			body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(data, &payload))
+			assert.Equal(t, test.expected, payload["generate_audio"])
+		})
+	}
+}
+
 func TestLeonardoReferenceAndParameterLimits(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -120,6 +148,12 @@ func TestLeonardoReferenceAndParameterLimits(t *testing.T) {
 		{name: "input video", mutate: func(r *dto.VideoTaskCreateRequest) {
 			r.Input.Video = &dto.VideoTaskSource{URL: "https://example.com/a.mp4"}
 		}, code: "unsupported_video_input"},
+		{name: "legacy audio provider option", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.ProviderOptions = map[string]map[string]any{ProviderOptionsNamespace: {"generate_audio": false}}
+		}, code: "invalid_provider_options"},
+		{name: "legacy reference mode provider option", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.ProviderOptions = map[string]map[string]any{ProviderOptionsNamespace: {"reference_mode": "media"}}
+		}, code: "invalid_provider_options"},
 		{name: "data url", mutate: func(r *dto.VideoTaskCreateRequest) {
 			r.Input.ReferenceMode = "media"
 			r.Input.Image = &dto.VideoTaskSource{URL: "data:image/png;base64,AAAA"}

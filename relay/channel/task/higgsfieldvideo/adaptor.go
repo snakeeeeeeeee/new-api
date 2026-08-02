@@ -55,6 +55,22 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(
 		)
 	}
 	if hasHiggsfieldOptions {
+		for key := range options {
+			switch strings.ToLower(strings.TrimSpace(key)) {
+			case "generate_audio":
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("provider_options.%s.generate_audio is no longer supported; use output.generate_audio", ProviderOptionsNamespace),
+					"invalid_provider_options",
+					http.StatusBadRequest,
+				)
+			case "reference_mode":
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("provider_options.%s.reference_mode is no longer supported; use input.reference_mode", ProviderOptionsNamespace),
+					"invalid_provider_options",
+					http.StatusBadRequest,
+				)
+			}
+		}
 		request.ProviderOptions = cloneProviderOptions(request.ProviderOptions)
 		delete(request.ProviderOptions, ProviderOptionsNamespace)
 		request.ProviderOptions[adobevideo.ProviderOptionsNamespace] = options
