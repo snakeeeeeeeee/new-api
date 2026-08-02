@@ -348,6 +348,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	result := &relaycommon.TaskInfo{Code: 0}
 	if response.Progress > 0 {
 		result.Progress = fmt.Sprintf("%d%%", max(0, min(100, response.Progress)))
+		result.ProgressMetadataSet = true
+		result.ProgressKnown = true
+		result.ProgressSource = "upstream_percent"
 	}
 	taskID := firstNonEmpty(response.TaskID, response.ID)
 	switch strings.ToLower(strings.TrimSpace(response.Status)) {

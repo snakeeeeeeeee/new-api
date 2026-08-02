@@ -102,6 +102,46 @@ func TestBuildRequestURLUsesHiggsfieldVideoLifecycle(t *testing.T) {
 	assert.Equal(t, "https://higgsfield.example/v1/videos", requestURL)
 }
 
+func TestParseTaskResultNormalizesFractionalProgress(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		progress      string
+		progressKnown bool
+	}{
+		{
+			name:          "fractional upstream progress",
+			body:          `{"task_id":"provider-1","status":"in_progress","progress":0.479}`,
+			progress:      "47%",
+			progressKnown: true,
+		},
+		{
+			name:          "integer upstream progress",
+			body:          `{"task_id":"provider-1","status":"in_progress","progress":47}`,
+			progress:      "47%",
+			progressKnown: true,
+		},
+		{
+			name:          "explicit unknown progress remains unknown",
+			body:          `{"task_id":"provider-1","status":"in_progress","progress":0.47,"progress_known":false,"progress_source":"upstream_status"}`,
+			progress:      "47%",
+			progressKnown: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(test.body))
+			require.NoError(t, err)
+			assert.Equal(t, test.progress, result.Progress)
+			assert.True(t, result.ProgressMetadataSet)
+			assert.Equal(t, test.progressKnown, result.ProgressKnown)
+			if test.progressKnown {
+				assert.Equal(t, "upstream_percent", result.ProgressSource)
+			}
+		})
+	}
+}
+
 func TestPrepareNormalizedVideoRequestRejectsAdobeProviderOptions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())

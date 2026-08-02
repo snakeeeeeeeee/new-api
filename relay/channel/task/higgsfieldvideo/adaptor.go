@@ -3,9 +3,11 @@ package higgsfieldvideo
 import (
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/adobevideo"
@@ -84,6 +86,28 @@ func (a *TaskAdaptor) GetModelList() []string {
 
 func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
+}
+
+func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	var response map[string]any
+	if err := common.Unmarshal(respBody, &response); err != nil {
+		return nil, fmt.Errorf("unmarshal HiggsfieldVideo task result failed: %w", err)
+	}
+	if progress, ok := response["progress"].(float64); ok && progress > 0 {
+		if progress <= 1 {
+			progress *= 100
+		}
+		response["progress"] = int(math.Min(100, math.Trunc(progress)))
+		if _, exists := response["progress_known"]; !exists {
+			response["progress_known"] = true
+			response["progress_source"] = "upstream_percent"
+		}
+	}
+	normalized, err := common.Marshal(response)
+	if err != nil {
+		return nil, fmt.Errorf("normalize HiggsfieldVideo task result failed: %w", err)
+	}
+	return a.TaskAdaptor.ParseTaskResult(normalized)
 }
 
 func (a *TaskAdaptor) ValidateNormalizedVideoModel(
