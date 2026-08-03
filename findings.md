@@ -1534,6 +1534,20 @@
 - The winning timeout transaction can reuse `Task.UpdateWithStatusTx`; a stale timeout scanner gets `won=false`, creates no event, and leaves a concurrently completed task untouched.
 - Timeout finalization now produces the same provider-neutral public failure envelope as ordinary terminal polling because both paths call `CreateTaskWebhookEventTx` after persisting the terminal task inside one transaction.
 
+# Normalized Video Submit/Poll Race Findings (2026-08-04)
+
+- The remote Adobe2API row was created at 04:03:21, retained local ID `5507a80922024cfbbac82de849b92b70`, and reached the real `reference_image_privacy_error` terminal state at 04:03:58.
+- The corresponding new-api row was created at 04:03:20 and failed after about four seconds with `Video task not found`, before Adobe2API reached any terminal state.
+- `createDurableVideoTask` inserts the normalized task as pollable before `DoRequest` starts; `PersistTaskSubmitResult` writes the provider ID only after `DoResponse` completes.
+- `resolveTaskPollingUpstreamID` protects only ImageHandle when `PrivateData.UpstreamTaskID` is empty. Other tasks call `GetUpstreamTaskID`, which falls back to the public `task_...` ID.
+- A global polling tick during provider submission can therefore query `/v1/videos/task_...`, receive 404, mark the task terminal, and refund before the correct provider ID is persisted.
+- The existing 60-second 404 grace is limited to OpenAI Video compatibility metadata and does not cover normalized `/v1/video/tasks` rows.
+- Durable normalized video rows are already distinguishable without a schema migration through `Properties.AssetType == video` plus a non-empty `Properties.Operation`.
+- The safest minimal fix is readiness gating, not a longer retry alone: a normalized row with no provider ID remains locally submitting and is skipped by polling; existing timeout handling owns abandoned rows.
+- `PersistTaskSubmitResult` merges the provider ID under a row lock without requiring a specific non-terminal status, so changing the initial internal state to `SUBMITTED` does not break provider-ID persistence.
+- Explicit submit failures snapshot the current status and use `UpdateWithStatusTx`; they therefore retain their existing single-winner terminal transition when the initial state is `SUBMITTED`.
+- Both `SUBMITTED` and `QUEUED` project to public `queued`, so the internal readiness distinction is backward-compatible for `/v1/video/tasks` clients.
+
 
 - The local `/v1/models` response exposes five Adobe Seedance SKUs with the
   `adobe-seedance-*` prefix; the Seedance docs use bare names and omit fast/1080p.

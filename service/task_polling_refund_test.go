@@ -139,6 +139,37 @@ func TestResolveTaskPollingUpstreamIDPreservesSubmitGraceAndLegacyFallback(t *te
 			wantMissing:    false,
 		},
 		{
+			name: "normalized video missing private ID is never polled with its public ID",
+			task: &model.Task{
+				TaskID:     "task_public_video_waiting_for_provider",
+				Platform:   constant.TaskPlatform("60"),
+				SubmitTime: now - imageHandleMissingUpstreamIDGraceSeconds - 1,
+				Properties: model.Properties{
+					AssetType: constant.TaskAssetTypeVideo,
+					Operation: "generation",
+				},
+			},
+			wantUpstreamID: "",
+			wantMissing:    false,
+		},
+		{
+			name: "normalized video private ID is authoritative",
+			task: &model.Task{
+				TaskID:     "task_public_video_with_provider",
+				Platform:   constant.TaskPlatform("60"),
+				SubmitTime: now - 1,
+				Properties: model.Properties{
+					AssetType: constant.TaskAssetTypeVideo,
+					Operation: "generation",
+				},
+				PrivateData: model.TaskPrivateData{
+					UpstreamTaskID: "  provider_video_id  ",
+				},
+			},
+			wantUpstreamID: "provider_video_id",
+			wantMissing:    false,
+		},
+		{
 			name: "legacy non-image task keeps public task ID fallback",
 			task: &model.Task{
 				TaskID:     "legacy_upstream_task_id",

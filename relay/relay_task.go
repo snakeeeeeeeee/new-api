@@ -952,8 +952,8 @@ func createDurableVideoTask(c *gin.Context, info *relaycommon.RelayInfo, platfor
 	task := model.InitTask(platform, info)
 	task.Quota = quota
 	task.Action = info.Action
-	task.Status = model.TaskStatusQueued
-	task.Progress = taskcommon.ProgressQueued
+	task.Status = model.TaskStatusSubmitted
+	task.Progress = taskcommon.ProgressSubmitted
 	task.Properties.AssetType = constant.TaskAssetTypeVideo
 	task.Properties.Operation = request.Operation
 	task.PrivateData.BillingSource = info.BillingSource

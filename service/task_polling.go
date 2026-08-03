@@ -40,8 +40,14 @@ type BatchTaskPollingAdaptor interface {
 
 const (
 	imageHandleMissingUpstreamIDGraceSeconds int64 = 60
-	openAIVideoNotFoundGraceSeconds          int64 = 60
+	videoTaskNotFoundGraceSeconds            int64 = 60
 )
+
+func isDurableNormalizedVideoTask(task *model.Task) bool {
+	return task != nil &&
+		task.Properties.AssetType == constant.TaskAssetTypeVideo &&
+		strings.TrimSpace(task.Properties.Operation) != ""
+}
 
 func resolveTaskPollingUpstreamID(task *model.Task, now int64) (upstreamID string, missing bool) {
 	if task == nil {
@@ -50,6 +56,13 @@ func resolveTaskPollingUpstreamID(task *model.Task, now int64) (upstreamID strin
 	if isImageHandleTask(task) && strings.TrimSpace(task.PrivateData.UpstreamTaskID) == "" {
 		withinSubmitGrace := task.SubmitTime > 0 && now-task.SubmitTime < imageHandleMissingUpstreamIDGraceSeconds
 		return "", !withinSubmitGrace
+	}
+	if isDurableNormalizedVideoTask(task) {
+		upstreamID = strings.TrimSpace(task.PrivateData.UpstreamTaskID)
+		// The provider ID is persisted after the durable public row is created.
+		// Until then the timeout sweep owns abandoned submissions; polling must
+		// never fall back to the public task_... ID.
+		return upstreamID, false
 	}
 	upstreamID = strings.TrimSpace(task.GetUpstreamTaskID())
 	return upstreamID, upstreamID == ""
@@ -608,10 +621,12 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 }
 
 func isTransientTaskPollHTTPStatus(task *model.Task, statusCode int, now int64) bool {
-	if statusCode == http.StatusNotFound && task != nil &&
-		task.PrivateData.OpenAIVideoCompatibility != nil &&
-		task.PrivateData.OpenAIVideoCompatibility.Version == dto.OpenAIVideoCompatibilityVersion {
-		return task.SubmitTime > 0 && now-task.SubmitTime < openAIVideoNotFoundGraceSeconds
+	if statusCode == http.StatusNotFound && task != nil {
+		isOpenAIVideoCompatibility := task.PrivateData.OpenAIVideoCompatibility != nil &&
+			task.PrivateData.OpenAIVideoCompatibility.Version == dto.OpenAIVideoCompatibilityVersion
+		if isDurableNormalizedVideoTask(task) || isOpenAIVideoCompatibility {
+			return task.SubmitTime > 0 && now-task.SubmitTime < videoTaskNotFoundGraceSeconds
+		}
 	}
 	return statusCode == http.StatusRequestTimeout ||
 		statusCode == http.StatusTooManyRequests ||

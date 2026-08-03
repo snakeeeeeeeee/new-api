@@ -553,7 +553,7 @@ func setupRelayTaskTestDB(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	model.DB = db
-	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.ImageCredentialLease{}, &model.ImageTaskRequest{}, &model.ImageTaskDispatch{}, &model.Asset{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.Log{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}))
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.VideoTaskRequest{}, &model.ImageCredentialLease{}, &model.ImageTaskRequest{}, &model.ImageTaskDispatch{}, &model.Asset{}, &model.Channel{}, &model.User{}, &model.Token{}, &model.Log{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}))
 	t.Cleanup(func() {
 		model.DB = originalDB
 		common.UsingSQLite = originalUsingSQLite
@@ -566,6 +566,53 @@ func setupRelayTaskTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 	return db
+}
+
+func TestCreateDurableVideoTaskStartsSubmittedAndProjectsQueued(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	duration := 4
+	request := dto.VideoTaskCreateRequest{
+		Model:     "seedance-2.0-fast-480p",
+		Operation: "generation",
+		Input:     dto.VideoTaskInputRequest{Prompt: "ocean sunrise"},
+		Output:    dto.VideoTaskOutputRequest{Duration: &duration},
+	}
+	requestJSON, err := common.Marshal(request)
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set(relaycommon.VideoTaskPublicRequestContextKey, request)
+	c.Set(relaycommon.VideoTaskPublicRequestJSONContextKey, requestJSON)
+	c.Set(relaycommon.VideoTaskFingerprintContextKey, "normalized-video-submit-fingerprint")
+
+	info := &relaycommon.RelayInfo{
+		UserId:          41,
+		TokenId:         42,
+		UsingGroup:      "default",
+		OriginModelName: request.Model,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         61,
+			UpstreamModelName: "seedance-2.0-fast-480p",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{
+			Action:       constant.TaskActionVideoGeneration,
+			PublicTaskID: "task_waiting_for_provider_id",
+		},
+	}
+
+	task, existing, err := createDurableVideoTask(c, info, constant.TaskPlatform("61"), 1200)
+	require.NoError(t, err)
+	require.Nil(t, existing)
+	require.NotNil(t, task)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSubmitted), task.Status)
+	assert.Equal(t, taskcommon.ProgressSubmitted, task.Progress)
+	assert.Equal(t, "queued", service.BuildPublicVideoTaskFromRequest(task, &request).Status)
+
+	var persisted model.Task
+	require.NoError(t, db.First(&persisted, task.ID).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSubmitted), persisted.Status)
+	assert.Equal(t, taskcommon.ProgressSubmitted, persisted.Progress)
 }
 
 func TestRelayTaskSubmitImageHandlePreservesFixedModelPriceBeforeSubmit(t *testing.T) {

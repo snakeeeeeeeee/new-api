@@ -1290,3 +1290,16 @@
   over-limit references, unsupported images mode, and frame/video mixing error behavior.
 - Final `go test ./... -count=1`, Adobe2API's 36 Seedance/capability unit tests, OpenAPI
   drift check, frontend production build, VitePress build, and 24 JSON-example parses pass.
+
+## 2026-08-04 - Normalized video submit/poll race
+
+- Reconstructed the remote Adobe failure and confirmed Adobe2API returned the correct durable task ID and later stored the real privacy error.
+- Traced new-api's durable video row creation before provider submission and the later provider-ID persistence boundary.
+- Confirmed normalized video tasks lack the missing-ID polling guard already used by ImageHandle and that 404 grace currently applies only to OpenAI Video compatibility requests.
+- Locked the minimal cross-provider fix and started regression tests before implementation.
+- Added red regressions proving the incorrect public-ID fallback and missing normalized-video 404 grace.
+- Added normalized-video readiness gating: polling now waits indefinitely for `PrivateData.UpstreamTaskID`, while the existing timeout sweep owns abandoned submissions.
+- Durable normalized video tasks now begin internally as `SUBMITTED`; the public task projection remains `queued`.
+- Generalized the bounded 60-second 404 grace to all durable normalized video tasks while preserving OpenAI compatibility and legacy task behavior.
+- Focused tests, 20 race repetitions, and the complete model/service/relay/controller package tests pass.
+- Full `go test ./... -count=1` and `git diff --check` pass; no 2API protocol or database migration is required.

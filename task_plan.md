@@ -70,6 +70,55 @@ Complete
 
 ---
 
+# Task Plan: Normalized Video Submit/Poll Race (2026-08-04)
+
+## Goal
+Prevent normalized `/v1/video/tasks` rows from being polled with their public
+`task_...` ID before the provider task ID has been persisted, while preserving
+legacy task-ID fallback, idempotent billing, and terminal error projection.
+
+## Current Phase
+Complete
+
+### Phase 1: Contract and race audit
+- [x] Reconstruct the remote Adobe failure from persisted timestamps and IDs.
+- [x] Trace durable task creation, provider submission, ID persistence, polling, and refund ownership.
+**Status:** complete
+
+### Phase 2: Regression tests
+- [x] Prove normalized video tasks without an upstream ID are not pollable.
+- [x] Prove legacy tasks retain their historical public-ID fallback.
+- [x] Prove normalized video 404 responses receive a bounded grace period.
+**Status:** complete
+
+### Phase 3: Implementation
+- [x] Mark durable normalized video rows as locally submitting until provider acceptance.
+- [x] Gate polling on a persisted upstream ID and generalize the new-task 404 grace.
+- [x] Preserve explicit submit failure CAS/refund and existing public status compatibility.
+**Status:** complete
+
+### Phase 4: Verification
+- [x] Run focused relay/service/model tests and race repetitions.
+- [x] Run the complete Go suite and formatting/whitespace checks.
+**Status:** complete
+
+## Locked Decisions
+- This is a new-api fix; Adobe2API, Leonardo2API, and Higgsfield2API contracts do not change.
+- Normalized public video tasks must never use their public `task_...` ID for provider polling.
+- Historical non-normalized tasks keep `TaskID` fallback compatibility.
+- Missing provider IDs are retained until the existing task timeout owns terminalization; they are not resubmitted.
+- A valid provider ID is persisted before any provider status request is allowed.
+- Preserve all unrelated tracked and untracked workspace changes.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Focused regression tests failed before implementation because normalized tasks fell back to `task_...` and lacked generic 404 grace | 1 | Expected red phase; implement provider-ID readiness gating and shared video 404 grace. |
+| Initial status patch matched the earlier async-image initializer | 1 | Restore the image path immediately and apply the status change only inside `createDurableVideoTask`. |
+| Relay status assertion compared an untyped constant with `model.TaskStatus` | 1 | Cast the expected constant to `model.TaskStatus`; runtime behavior was already correct. |
+
+---
+
 # Task Plan: Async Task Error Boundaries (2026-08-03)
 
 ## Goal
