@@ -955,6 +955,8 @@ type TaskInfo struct {
 	ProgressSource      string        `json:"progress_source,omitempty"`
 	Stage               string        `json:"stage,omitempty"`
 	Sequence            int64         `json:"sequence,omitempty"`
+	UpstreamStatusSet   bool          `json:"-"`
+	UpstreamStatus      int           `json:"-"`
 	CompletionTokens    int           `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens         int           `json:"total_tokens,omitempty"`      // 用于按倍率计费
 	Usage               *dto.Usage    `json:"usage,omitempty"`             // 任务终态的完整用量，用于异步真实结算

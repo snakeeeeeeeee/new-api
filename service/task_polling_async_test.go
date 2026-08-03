@@ -61,6 +61,37 @@ func createAsyncTimeoutTask(t *testing.T, taskID string, platform constant.TaskP
 	return task
 }
 
+func setupTimeoutWebhookTables(t *testing.T) {
+	t.Helper()
+	require.NoError(t, model.DB.AutoMigrate(
+		&model.VideoTaskRequest{}, &model.Asset{},
+		&model.WebhookEndpoint{}, &model.WebhookEvent{}, &model.WebhookDelivery{},
+	))
+	t.Cleanup(func() {
+		model.DB.Exec("DELETE FROM webhook_deliveries")
+		model.DB.Exec("DELETE FROM webhook_events")
+		model.DB.Exec("DELETE FROM webhook_endpoints")
+		model.DB.Exec("DELETE FROM assets")
+		model.DB.Exec("DELETE FROM video_task_requests")
+	})
+}
+
+func seedTimeoutVideoWebhook(t *testing.T, task *model.Task) {
+	t.Helper()
+	require.NotNil(t, task)
+	requestJSON := []byte(`{"model":"adobe-kling-3.0-720p","operation":"generation","input":{"prompt":"timeout webhook test"}}`)
+	require.NoError(t, model.DB.Create(model.NewVideoTaskRequest(
+		task, task.UserId, nil, "timeout-webhook-fingerprint", "", requestJSON,
+	)).Error)
+	ownerID := task.UserId
+	require.NoError(t, model.DB.Create(&model.WebhookEndpoint{
+		EndpointID: model.NewWebhookEndpointID(), UserID: task.UserId, ConfigOwnerID: &ownerID,
+		Name: "Task events", URL: "https://webhook.example.test/events", Status: model.WebhookEndpointEnabled,
+		EventTypes: accountWebhookEventTypesJSON(), APIVersion: WebhookAPIVersion,
+		CreatedAt: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
+	}).Error)
+}
+
 func TestSweepTimedOutTasksUsesDefaultThirtyMinutesAndRefunds(t *testing.T) {
 	truncate(t)
 	resetAsyncTaskSettingForTest(t)
@@ -86,6 +117,88 @@ func TestSweepTimedOutTasksUsesDefaultThirtyMinutesAndRefunds(t *testing.T) {
 	var active model.Task
 	require.NoError(t, model.DB.Where("task_id = ?", "task_not_timeout_default").First(&active).Error)
 	assert.EqualValues(t, model.TaskStatusInProgress, active.Status)
+}
+
+func TestSweepTimedOutVideoTaskCreatesOneFailureWebhookAndRefund(t *testing.T) {
+	truncate(t)
+	setupTimeoutWebhookTables(t)
+	resetAsyncTaskSettingForTest(t)
+
+	const initialUserQuota, initialTokenQuota, preConsumed = 10000, 6000, 4000
+	seedUser(t, 1, initialUserQuota)
+	seedToken(t, 1, 1, "sk-timeout-webhook", initialTokenQuota)
+	seedChannel(t, 1)
+	task := createAsyncTimeoutTask(
+		t, "task_timeout_webhook", constant.TaskPlatform("59"),
+		constant.TaskActionVideoGeneration, model.TaskStatusInProgress, 31*time.Minute, preConsumed,
+	)
+	task.Properties = model.Properties{
+		OriginModelName: "adobe-kling-3.0-720p",
+		AssetType:       constant.TaskAssetTypeVideo,
+		Operation:       "generation",
+	}
+	require.NoError(t, model.DB.Model(task).Update("properties", task.Properties).Error)
+	seedTimeoutVideoWebhook(t, task)
+
+	sweepTimedOutTasks(context.Background())
+	sweepTimedOutTasks(context.Background())
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+	assert.Equal(t, "100%", reloaded.Progress)
+	assert.Contains(t, reloaded.FailReason, "30分钟")
+	assert.Equal(t, initialUserQuota+preConsumed, getUserQuota(t, 1))
+	assert.Equal(t, initialTokenQuota+preConsumed, getTokenRemainQuota(t, 1))
+	assert.Equal(t, int64(1), countLogs(t))
+
+	var events []model.WebhookEvent
+	require.NoError(t, model.DB.Where("object_id = ?", task.TaskID).Find(&events).Error)
+	require.Len(t, events, 1)
+	assert.Equal(t, WebhookEventVideoTaskFailed, events[0].EventType)
+	assert.Contains(t, events[0].Payload, `"status":"failed"`)
+	assert.Contains(t, events[0].Payload, `"message":"任务超时（30分钟）"`)
+	var deliveries []model.WebhookDelivery
+	require.NoError(t, model.DB.Where("event_record_id = ?", events[0].ID).Find(&deliveries).Error)
+	require.Len(t, deliveries, 1)
+	assert.Equal(t, model.WebhookDeliveryPending, deliveries[0].Status)
+}
+
+func TestCommitTimedOutTaskTransitionLosesCASWithoutWebhook(t *testing.T) {
+	truncate(t)
+	setupTimeoutWebhookTables(t)
+	resetAsyncTaskSettingForTest(t)
+	seedUser(t, 1, 10000)
+	seedToken(t, 1, 1, "sk-timeout-race", 6000)
+	seedChannel(t, 1)
+	task := createAsyncTimeoutTask(
+		t, "task_timeout_race", constant.TaskPlatform("59"),
+		constant.TaskActionVideoGeneration, model.TaskStatusInProgress, 31*time.Minute, 1000,
+	)
+	task.Properties = model.Properties{AssetType: constant.TaskAssetTypeVideo, Operation: "generation"}
+	require.NoError(t, model.DB.Model(task).Update("properties", task.Properties).Error)
+	seedTimeoutVideoWebhook(t, task)
+
+	oldStatus := task.Status
+	require.NoError(t, model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{
+		"status": model.TaskStatusSuccess, "progress": "100%", "finish_time": time.Now().Unix(),
+	}).Error)
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	task.FailReason = "任务超时（30分钟）"
+	task.FinishTime = time.Now().Unix()
+
+	won, err := commitTimedOutTaskTransition(task, oldStatus)
+	require.NoError(t, err)
+	assert.False(t, won)
+	var eventCount, deliveryCount int64
+	require.NoError(t, model.DB.Model(&model.WebhookEvent{}).Count(&eventCount).Error)
+	require.NoError(t, model.DB.Model(&model.WebhookDelivery{}).Count(&deliveryCount).Error)
+	assert.Zero(t, eventCount)
+	assert.Zero(t, deliveryCount)
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusSuccess, reloaded.Status)
 }
 
 func TestSweepTimedOutAsyncImageTaskFinalizesZeroPrechargeLog(t *testing.T) {

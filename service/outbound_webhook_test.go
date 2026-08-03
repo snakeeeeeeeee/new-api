@@ -388,6 +388,79 @@ func TestOutboundWebhookPayloadPreservesNonQuotaFailure(t *testing.T) {
 	assert.Equal(t, stored, payload)
 }
 
+func TestOutboundWebhookPayloadSanitizesStoredLegacyVideoFailure(t *testing.T) {
+	const stored = `{"id":"evt_legacy_video_timeout","type":"video.task.failed","data":{"object":{"id":"task_legacy_video_timeout","status":"failed","error":{"code":"video_task_failed","message":"video poll failed: 408 {\"error_code\":\"timeout_error\",\"message\":\"Gateway timeout from fal-ai-video at https://provider.example/tasks/secret\"}","retryable":false,"upstream_status":408,"provider_error_code":"timeout_error","request_id":"req_public_trace_1"}}}}`
+	event := &model.WebhookEvent{
+		EventType: WebhookEventVideoTaskFailed,
+		Payload:   stored,
+	}
+
+	payload, err := outboundWebhookPayload(event)
+	require.NoError(t, err)
+	assert.Contains(t, payload, `"code":"upstream_timeout"`)
+	assert.Contains(t, payload, `"message":"Generation status was temporarily unavailable for too long"`)
+	assert.Contains(t, payload, `"upstream_status":408`)
+	assert.Contains(t, payload, `"upstream_error_code":"timeout_error"`)
+	assert.Contains(t, payload, `"request_id":"req_public_trace_1"`)
+	assert.NotContains(t, payload, "fal-ai-video")
+	assert.NotContains(t, payload, "provider.example")
+	assert.NotContains(t, payload, "Gateway timeout")
+	assert.NotContains(t, payload, "provider_error_code")
+	assert.Equal(t, stored, event.Payload)
+}
+
+func TestOutboundWebhookPayloadPreservesPublicVideoRetryableFlag(t *testing.T) {
+	const stored = `{"id":"evt_current_video_retryable","type":"video.task.failed","data":{"object":{"id":"task_current_video_retryable","status":"failed","error":{"code":"upstream_unavailable","message":"Generation service remained unavailable for too long","retryable":true,"upstream_status":503}}}}`
+
+	payload, err := outboundWebhookPayload(&model.WebhookEvent{
+		EventType: WebhookEventVideoTaskFailed,
+		Payload:   stored,
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, payload, `"code":"upstream_unavailable"`)
+	assert.Contains(t, payload, `"retryable":true`)
+	assert.Contains(t, payload, `"upstream_status":503`)
+	assert.NotContains(t, payload, "provider")
+}
+
+func TestWebhookDeliverySanitizesStoredLegacyVideoFailureAtSendBoundary(t *testing.T) {
+	db := setupOutboundWebhookTestDB(t)
+	var deliveredBody string
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		deliveredBody = string(body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer receiver.Close()
+	putWebhookTestConfig(t, receiver.URL)
+
+	const stored = `{"id":"evt_legacy_video_delivery","type":"video.task.failed","data":{"object":{"id":"task_legacy_video_delivery","status":"failed","error":{"code":"video_task_failed","message":"video poll failed: 408 {\"error_code\":\"timeout_error\",\"message\":\"Gateway timeout from fal-ai-video at https://provider.example/tasks/secret\"}","upstream_status":408,"provider_error_code":"timeout_error"}}}}`
+	event := &model.WebhookEvent{
+		EventID: "evt_legacy_video_delivery", UserID: 501,
+		EventType: WebhookEventVideoTaskFailed, ObjectType: "video.task", ObjectID: "task_legacy_video_delivery",
+		APIVersion: WebhookAPIVersion, Payload: stored, CreatedAt: time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(event).Error)
+	var endpoint model.WebhookEndpoint
+	require.NoError(t, db.Where("user_id = ?", 501).First(&endpoint).Error)
+	require.NoError(t, db.Create(model.NewWebhookDelivery(event.ID, endpoint.ID)).Error)
+
+	processDueWebhookDeliveries(context.Background())
+
+	require.NotEmpty(t, deliveredBody)
+	assert.Contains(t, deliveredBody, `"code":"upstream_timeout"`)
+	assert.Contains(t, deliveredBody, `"upstream_status":408`)
+	assert.Contains(t, deliveredBody, `"upstream_error_code":"timeout_error"`)
+	assert.NotContains(t, deliveredBody, "fal-ai-video")
+	assert.NotContains(t, deliveredBody, "provider.example")
+	assert.NotContains(t, deliveredBody, "Gateway timeout")
+	var storedEvent model.WebhookEvent
+	require.NoError(t, db.First(&storedEvent, event.ID).Error)
+	assert.Equal(t, stored, storedEvent.Payload)
+	assert.Contains(t, storedEvent.Payload, "fal-ai-video")
+}
+
 func TestVideoTaskTerminalEventCreatesAssetsAndOneAccountDelivery(t *testing.T) {
 	db := setupOutboundWebhookTestDB(t)
 	putWebhookTestConfig(t, "http://127.0.0.1:18080/hook")
@@ -467,6 +540,46 @@ func TestVideoTaskFailureWebhookDoesNotRequireAsset(t *testing.T) {
 	var assetCount int64
 	require.NoError(t, db.Model(&model.Asset{}).Count(&assetCount).Error)
 	assert.Zero(t, assetCount)
+}
+
+func TestVideoTaskFailureWebhookUsesPublicErrorWhileTaskKeepsDiagnostic(t *testing.T) {
+	db := setupOutboundWebhookTestDB(t)
+	putWebhookTestConfig(t, "http://127.0.0.1:18080/hook")
+	task := &model.Task{
+		TaskID: "task_video_timeout", UserId: 501, ChannelId: 77,
+		Platform: constant.TaskPlatform("59"), Action: constant.TaskActionVideoGeneration,
+		Status: model.TaskStatusInProgress, Progress: "47%", SubmitTime: time.Now().Unix(),
+		Properties:  model.Properties{OriginModelName: "video-model", AssetType: constant.TaskAssetTypeVideo, Operation: "generation"},
+		PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{RequestId: "req_webhook_trace_1"}},
+	}
+	require.NoError(t, db.Create(task).Error)
+	requestJSON, err := common.Marshal(dto.VideoTaskCreateRequest{
+		Model: "video-model", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "generate"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(model.NewVideoTaskRequest(task, 501, nil, "fingerprint", "", requestJSON)).Error)
+	rawDiagnostic := []byte(`{"error_code":"timeout_error","message":"Gateway timeout from fal-ai-video"}`)
+
+	updated, _ := ApplyTaskResult(context.Background(), &mockAdaptor{}, task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusFailure,
+		Reason: `video poll failed: 408 {"error_code":"timeout_error","message":"Gateway timeout from fal-ai-video"}`,
+		Data:   rawDiagnostic,
+	})
+
+	require.True(t, updated)
+	var saved model.Task
+	require.NoError(t, db.First(&saved, task.ID).Error)
+	assert.Contains(t, string(saved.Data), "fal-ai-video")
+	var event model.WebhookEvent
+	require.NoError(t, db.First(&event).Error)
+	assert.Equal(t, WebhookEventVideoTaskFailed, event.EventType)
+	assert.Contains(t, event.Payload, `"code":"upstream_timeout"`)
+	assert.Contains(t, event.Payload, `"message":"Generation status was temporarily unavailable for too long"`)
+	assert.Contains(t, event.Payload, `"upstream_status":408`)
+	assert.Contains(t, event.Payload, `"upstream_error_code":"timeout_error"`)
+	assert.Contains(t, event.Payload, `"request_id":"req_webhook_trace_1"`)
+	assert.NotContains(t, event.Payload, "fal-ai-video")
+	assert.NotContains(t, event.Payload, "Gateway timeout")
 }
 
 func TestWebhookDeliveryRetriesNon2xxUntilSuccess(t *testing.T) {

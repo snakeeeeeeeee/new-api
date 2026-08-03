@@ -1234,6 +1234,38 @@
 
 ## 2026-07-31 - Video contract alignment
 
+## 2026-08-03 - Async task error boundaries
+
+- Reproduced the AdobeVideo `submitting` bug with an exact provider response: expected `SUBMITTED`, actual empty status.
+- Removed the temporary reproduction assertion without leaving tracked changes.
+- Verified an existing failed task returns its stored error through the public task endpoint and has a matching `video.task.failed` event payload.
+- Verified focused public projection and Webhook tests pass before implementation.
+- Started the two-layer error implementation: private redacted diagnostics plus provider-neutral public task/Webhook errors.
+- Completed the first data-flow audit. The implementation can reuse `tasks.data`, `TaskInfo.Data`, and the existing public projection/Webhook transaction without a database migration.
+- Identified existing reusable test infrastructure and the central error-snapshot sanitizer; no new persistence table or redaction subsystem is needed.
+- Updated the contract from user feedback: administrator-visible diagnostics keep original upstream error detail; public task/Webhook payloads remain normalized. Credentials and oversized binary data are still protected.
+- Phase 1 audit complete. Starting regression tests before implementation.
+- Added focused regressions for AdobeVideo state mapping, transient HTTP retention, unknown successful states, internal diagnostic preservation, and provider-neutral public errors. The red phase failed at the intended missing behaviors.
+- First focused build found one `any`/string compile mismatch in transient OpenAI error-code handling; corrected it without changing the protocol contract.
+- Focused behavior tests passed for new paths and exposed two legacy public-message expectations; added a narrow safe-reason compatibility rule and restored historical submission translations.
+- New-path focused tests now pass. Code review identified one remaining completeness item: persist transport HTTP status separately so structured public errors do not depend on parsing legacy text.
+- Added `last_upstream_status` to task private JSON, cleared by a valid 2xx poll and projected only for terminal public errors. Focused adaptor/service/Webhook tests pass.
+- Added send-boundary conversion for historical `video.task.failed` events. Stored administrator diagnostics remain unchanged while delivered Webhooks use the current provider-neutral error object.
+- Final review fixed the remaining unrecognized plain-text HTTP 200 path so it retains the current task state instead of persisting an empty status.
+- Focused package tests and `go test ./... -count=1` pass.
+- Rebuilt `new-api-local:dev` as image `sha256:8497b22732e2...`, recreated only `new-api-dev`, and confirmed the container is healthy at `http://127.0.0.1:3001`.
+- Queried an existing historical Adobe timeout through the live public task API: it returns `upstream_timeout`, HTTP 408, and a neutral message without provider detail.
+- Delivery-boundary integration coverage proves a stored historical Webhook keeps its raw provider diagnostic while the local HTTP receiver gets only the normalized error.
+- Phase 4 verification complete.
+- Started Phase 5 to close the new-api outer-timeout Webhook gap.
+- Confirmed the minimal transaction boundary: `UpdateWithStatusTx` plus `CreateTaskWebhookEventTx`; refund remains after the winning commit, matching the existing terminal result flow.
+- Added timeout Webhook regressions and observed the expected pre-implementation compile failure.
+- Implemented the guarded timeout transaction. Focused timeout tests pass for one event/one delivery/one refund and CAS-loss suppression.
+- Repeated focused timeout/Webhook tests ten times, then passed the service package and full `go test ./... -count=1` regression.
+- Rebuilt `new-api-local:dev` as `sha256:ddc4bef85eb2...`, recreated only `new-api-dev`, and confirmed it is healthy at `http://127.0.0.1:3001`.
+- Phase 5 complete.
+
+
 - Audited normalized video DTOs, Adobe/Higgsfield adaptors, billing order, public Assets,
   Webhook delivery, generated OpenAPI, and all Seedance/Kling/Veo documentation.
 - Confirmed local runtime exposes 13 Adobe video SKUs and all use per-second VideoPricing.

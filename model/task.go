@@ -114,6 +114,7 @@ type TaskPrivateData struct {
 	ProgressSource             string `json:"progress_source,omitempty"`
 	ProgressStage              string `json:"progress_stage,omitempty"`
 	ProgressSequence           int64  `json:"progress_sequence,omitempty"`
+	LastUpstreamStatus         int    `json:"last_upstream_status,omitempty"`
 	// 异步图片上下文。ImageRequest/ImageInputURLs/ImageMaskURL 用于任务审计和后续兜底；
 	// ImageHandleProviderTask/ExecuteEventID/ImageExecuteResponse 仅保留历史 internal execute 数据兼容。
 	ImageRequest            json.RawMessage `json:"image_request,omitempty"`
@@ -221,6 +222,7 @@ func (p TaskPrivateData) IsZero() bool {
 	return p.Key == "" &&
 		p.UpstreamTaskID == "" &&
 		p.ResultURL == "" &&
+		p.LastUpstreamStatus == 0 &&
 		len(p.ImageRequest) == 0 &&
 		len(p.ImageInputURLs) == 0 &&
 		p.ImageMaskURL == "" &&
@@ -577,6 +579,7 @@ type TaskSnapshot struct {
 	ProgressSource      string
 	ProgressStage       string
 	ProgressSequence    int64
+	LastUpstreamStatus  int
 	Data                json.RawMessage
 }
 
@@ -595,6 +598,7 @@ func (s TaskSnapshot) Equal(other TaskSnapshot) bool {
 		s.ProgressSource == other.ProgressSource &&
 		s.ProgressStage == other.ProgressStage &&
 		s.ProgressSequence == other.ProgressSequence &&
+		s.LastUpstreamStatus == other.LastUpstreamStatus &&
 		bytes.Equal(s.Data, other.Data)
 }
 
@@ -611,6 +615,7 @@ func (t *Task) Snapshot() TaskSnapshot {
 		ProgressSource:      t.PrivateData.ProgressSource,
 		ProgressStage:       t.PrivateData.ProgressStage,
 		ProgressSequence:    t.PrivateData.ProgressSequence,
+		LastUpstreamStatus:  t.PrivateData.LastUpstreamStatus,
 		Data:                t.Data,
 	}
 }

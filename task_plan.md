@@ -70,6 +70,65 @@ Complete
 
 ---
 
+# Task Plan: Async Task Error Boundaries (2026-08-03)
+
+## Goal
+Keep transient Adobe2API polling failures non-terminal, recognize the public
+`submitting` state, preserve original upstream diagnostics for administrators,
+and expose only structured provider-neutral errors through task queries and
+Webhooks.
+
+## Current Phase
+Complete
+
+### Phase 1: Contract audit
+- [x] Trace video polling, persistence, public task projection, and Webhook creation.
+- [x] Lock compatibility constraints for existing providers and historical task rows.
+**Status:** complete
+
+### Phase 2: Regression tests
+- [x] Cover `submitting`, 408/429/5xx polling, provider-neutral public errors, and matching Webhook payloads.
+- [x] Prove transient responses do not refund or create terminal Webhooks.
+**Status:** complete
+
+### Phase 3: Implementation
+- [x] Add the missing AdobeVideo status mapping and HTTP-aware polling behavior.
+- [x] Preserve administrator diagnostics privately while projecting structured public errors.
+**Status:** complete
+
+### Phase 4: Verification
+- [x] Run focused and full Go regression suites.
+- [x] Rebuild local Docker and verify task query plus Webhook behavior.
+**Status:** complete
+
+### Phase 5: Timeout terminal Webhooks
+- [x] Create timeout failure events and deliveries in the same transaction as the winning status CAS.
+- [x] Prove timeout scans do not duplicate Webhooks or refunds and cannot overwrite a concurrent terminal state.
+- [x] Run full regression and rebuild local Docker.
+**Status:** complete
+
+## Locked Decisions
+- Adobe2API continues to own retries for Adobe-originated failures; new-api owns failures while polling Adobe2API.
+- A confirmed upstream task must never be resubmitted by this change.
+- Public task responses and Webhooks must use the same provider-neutral error object.
+- Internal diagnostics retain the original upstream error body for administrators, while credential-bearing fields and oversized binary/Base64 payloads remain protected. No raw body is copied to public payloads.
+- Existing synchronous and non-Adobe task adaptors must preserve their behavior.
+- Timeout Webhook delivery remains asynchronous; the timeout scan never performs receiver network I/O.
+- Legacy tasks without a normalized public request keep their existing timeout behavior and do not gain an invalid public event.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Host Python lacked pytest/FastAPI during the preceding diagnosis | 2 | Reused the Adobe2API runtime image for the authoritative focused tests. |
+| First planning-file patch used stale findings context | 1 | Located the exact current lines and applied a narrower patch; no implementation file was changed. |
+| New regression suite failed before implementation | 1 | Expected red phase: AdobeVideo returned empty states and the public DTO lacked structured diagnostic fields. Proceed to the minimal implementation. |
+| Focused build passed `OpenAIError.Code` (`any`) to a string helper | 1 | Convert the existing polymorphic code to its string representation before transient-code classification. |
+| First behavior run masked the legacy safe reason `expired` and lost historical submission translations | 1 | Preserve short provider-neutral legacy reasons and the existing explicit submission translations; keep raw provider/URL/JSON detail internal. |
+| Final review found a non-JSON HTTP 200 body could leave an empty parsed status | 1 | Apply the same non-terminal retention fallback after all empty-status parsing paths and add a plain-text regression. |
+| Timeout Webhook regression initially failed to compile because the transaction helper did not exist | 1 | Expected red phase; add `commitTimedOutTaskTransition` and rerun the same behavioral tests successfully. |
+
+---
+
 # Task Plan: Adobe2API Seedance 2.0 Fast Integration (2026-07-29)
 
 ## Goal

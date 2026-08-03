@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -161,6 +162,40 @@ func TestBuildPublicVideoTaskMasksUnknownProviderErrorCodes(t *testing.T) {
 
 	require.NotNil(t, public.Error)
 	assert.Equal(t, "video_task_failed", public.Error.Code)
+	assert.Equal(t, "Video task failed", public.Error.Message)
+	assert.NotContains(t, public.Error.Message, "provider")
+}
+
+func TestBuildPublicVideoTaskProjectsStructuredProviderNeutralError(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_upstream_status_unavailable",
+		Status:     model.TaskStatusFailure,
+		FailReason: `video poll failed: 408 {"error_code":"timeout_error","message":"Gateway timeout from fal-ai-video"}`,
+		PrivateData: model.TaskPrivateData{
+			LastUpstreamStatus: http.StatusRequestTimeout,
+			BillingContext: &model.TaskBillingContext{
+				RequestId: "req_public_trace_1",
+			},
+		},
+	}
+	task.SetData(map[string]any{
+		"error_code": "timeout_error",
+		"message":    "Gateway timeout from fal-ai-video",
+	})
+
+	public := buildPublicVideoTask(task, nil, nil)
+
+	require.NotNil(t, public.Error)
+	assert.Equal(t, "upstream_timeout", public.Error.Code)
+	assert.Equal(t, "Generation status was temporarily unavailable for too long", public.Error.Message)
+	assert.False(t, public.Error.Retryable)
+	assert.Equal(t, http.StatusRequestTimeout, public.Error.UpstreamStatus)
+	assert.Equal(t, "timeout_error", public.Error.UpstreamErrorCode)
+	assert.Equal(t, "req_public_trace_1", public.Error.RequestID)
+	encoded, err := common.Marshal(public)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "fal-ai-video")
+	assert.NotContains(t, string(encoded), "Gateway timeout")
 }
 
 func TestBuildPublicVideoTaskSanitizesLegacySubmissionFailure(t *testing.T) {

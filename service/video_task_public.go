@@ -2,6 +2,7 @@ package service
 
 import (
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -146,15 +147,7 @@ func buildPublicVideoTask(task *model.Task, requestRecord *model.VideoTaskReques
 		}
 	}
 	if public.Status == "failed" {
-		message := publicVideoTaskErrorMessage(task.FailReason)
-		if message == "" {
-			message = "Video task failed"
-		}
-		public.Error = &dto.VideoTaskPublicError{
-			Code:      publicVideoTaskErrorCode(task),
-			Message:   message,
-			Retryable: publicVideoTaskErrorRetryable(task),
-		}
+		public.Error = buildPublicVideoTaskError(task)
 	}
 	return public
 }
@@ -169,9 +162,116 @@ func publicVideoProgressStage(task *model.Task) string {
 	return "queued"
 }
 
-func publicVideoTaskErrorMessage(reason string) string {
-	message := strings.TrimSpace(reason)
-	switch message {
+var legacyVideoHTTPStatusPattern = regexp.MustCompile(`(?i)(?:poll|submit)[^:\n]{0,40}failed:\s*([1-5][0-9]{2})\b`)
+
+type videoTaskErrorDiagnostic struct {
+	Code           string
+	UpstreamStatus int
+}
+
+func buildPublicVideoTaskError(task *model.Task) *dto.VideoTaskPublicError {
+	diagnostic := extractVideoTaskErrorDiagnostic(task)
+	code := publicVideoTaskErrorCode(diagnostic)
+	publicError := &dto.VideoTaskPublicError{
+		Code:              code,
+		Message:           publicVideoTaskErrorMessage(task, code),
+		Retryable:         publicVideoTaskErrorRetryable(task, code),
+		UpstreamStatus:    diagnostic.UpstreamStatus,
+		UpstreamErrorCode: publicVideoUpstreamErrorCode(diagnostic.Code),
+	}
+	if task != nil && task.PrivateData.BillingContext != nil {
+		publicError.RequestID = strings.TrimSpace(task.PrivateData.BillingContext.RequestId)
+	}
+	return publicError
+}
+
+func extractVideoTaskErrorDiagnostic(task *model.Task) videoTaskErrorDiagnostic {
+	if task == nil {
+		return videoTaskErrorDiagnostic{}
+	}
+	var response struct {
+		Code           string `json:"code"`
+		ErrorCode      string `json:"error_code"`
+		StatusCode     int    `json:"status_code"`
+		UpstreamStatus int    `json:"upstream_status"`
+		Error          *struct {
+			Code           string `json:"code"`
+			ErrorCode      string `json:"error_code"`
+			UpstreamStatus int    `json:"upstream_status"`
+		} `json:"error"`
+	}
+	if len(task.Data) > 0 {
+		_ = common.Unmarshal(task.Data, &response)
+	}
+	diagnostic := videoTaskErrorDiagnostic{
+		Code:           firstNonEmptyString(response.ErrorCode, response.Code),
+		UpstreamStatus: task.PrivateData.LastUpstreamStatus,
+	}
+	if response.UpstreamStatus > 0 {
+		diagnostic.UpstreamStatus = response.UpstreamStatus
+	} else if diagnostic.UpstreamStatus == 0 {
+		diagnostic.UpstreamStatus = response.StatusCode
+	}
+	if response.Error != nil {
+		diagnostic.Code = firstNonEmptyString(response.Error.Code, response.Error.ErrorCode, diagnostic.Code)
+		if response.Error.UpstreamStatus > 0 {
+			diagnostic.UpstreamStatus = response.Error.UpstreamStatus
+		}
+	}
+	if diagnostic.UpstreamStatus == 0 {
+		matches := legacyVideoHTTPStatusPattern.FindStringSubmatch(task.FailReason)
+		if len(matches) == 2 {
+			diagnostic.UpstreamStatus, _ = strconv.Atoi(matches[1])
+		}
+	}
+	return diagnostic
+}
+
+func publicVideoTaskErrorCode(diagnostic videoTaskErrorDiagnostic) string {
+	rawCode := strings.ToLower(strings.TrimSpace(diagnostic.Code))
+	switch rawCode {
+	case "content_moderated":
+		return "content_moderated"
+	case "invalid_reference_media_duration":
+		return "invalid_reference_media_duration"
+	case "reference_media_duration_exceeded":
+		return "reference_media_duration_exceeded"
+	case "cancelled_by_admin", "cancelled":
+		return "cancelled"
+	case "upstream_status_unavailable", "upstream_unavailable":
+		return "upstream_unavailable"
+	case "retry_exhausted", "model_overload":
+		return "upstream_unavailable"
+	case "timeout", "timeout_error", "request_timeout", "upstream_timeout":
+		return "upstream_timeout"
+	case "rate_limit", "rate_limited", "upstream_rate_limited":
+		return "upstream_rate_limited"
+	case "upstream_authentication_error", "authentication_error", "auth_invalid":
+		return "upstream_authentication_error"
+	case "video_task_failed":
+		// Keep evaluating the HTTP status below so legacy generic errors can
+		// still be projected to a more useful provider-neutral code.
+	}
+	switch diagnostic.UpstreamStatus {
+	case 401, 403:
+		return "upstream_authentication_error"
+	case 408:
+		return "upstream_timeout"
+	case 429:
+		return "upstream_rate_limited"
+	}
+	if diagnostic.UpstreamStatus >= 500 {
+		return "upstream_unavailable"
+	}
+	return "video_task_failed"
+}
+
+func publicVideoTaskErrorMessage(task *model.Task, code string) string {
+	reason := ""
+	if task != nil {
+		reason = strings.TrimSpace(task.FailReason)
+	}
+	switch reason {
 	case "Adobe submission result is unknown":
 		return "Submission result could not be confirmed"
 	case "Adobe submission connection ended after it may have been accepted":
@@ -182,49 +282,76 @@ func publicVideoTaskErrorMessage(reason string) string {
 		return "Video task failed"
 	case "AdobeVideo completed without a task reference":
 		return "Video task completed without a task reference"
-	default:
-		return message
 	}
+	switch code {
+	case "content_moderated", "invalid_reference_media_duration", "reference_media_duration_exceeded":
+		if reason != "" {
+			return reason
+		}
+	case "cancelled":
+		return "Video task was cancelled"
+	case "upstream_timeout":
+		return "Generation status was temporarily unavailable for too long"
+	case "upstream_rate_limited":
+		return "Generation service remained rate limited for too long"
+	case "upstream_unavailable":
+		return "Generation service remained unavailable for too long"
+	case "upstream_authentication_error":
+		return "Generation service authentication failed"
+	}
+	if strings.Contains(strings.ToLower(reason), "submission") &&
+		(strings.Contains(strings.ToLower(reason), "unknown") || strings.Contains(strings.ToLower(reason), "confirm")) {
+		return "Submission result could not be confirmed"
+	}
+	if safePublicVideoFailureReason(reason) {
+		return reason
+	}
+	return "Video task failed"
 }
 
-func publicVideoTaskErrorCode(task *model.Task) string {
-	const fallback = "video_task_failed"
-	if task == nil || len(task.Data) == 0 {
-		return fallback
+func safePublicVideoFailureReason(reason string) bool {
+	reason = strings.TrimSpace(reason)
+	if reason == "" || len(reason) > 240 {
+		return false
 	}
-	var response struct {
-		Error *struct {
-			Code string `json:"code"`
-		} `json:"error"`
+	lower := strings.ToLower(reason)
+	for _, marker := range []string{
+		"adobe", "provider", "fal-ai", "fal_ai", "seedance", "kling", "veo",
+		"leonardo", "higgsfield", "gemini", "google", "xai", "http://", "https://", "www.",
+		"authorization", "cookie", "access_token", "refresh_token",
+		"traceback", "stack trace", "{\"", "{'",
+	} {
+		if strings.Contains(lower, marker) {
+			return false
+		}
 	}
-	if err := common.Unmarshal(task.Data, &response); err != nil || response.Error == nil {
-		return fallback
-	}
-	switch strings.TrimSpace(response.Error.Code) {
+	return true
+}
+
+func publicVideoTaskErrorRetryable(task *model.Task, code string) bool {
+	switch code {
 	case "content_moderated":
-		return "content_moderated"
-	case "invalid_reference_media_duration":
-		return "invalid_reference_media_duration"
-	case "reference_media_duration_exceeded":
-		return "reference_media_duration_exceeded"
-	default:
-		return fallback
+		return true
+	case "upstream_rate_limited", "upstream_unavailable":
+		if task != nil {
+			return strings.Contains(strings.ToLower(task.FailReason), "submit")
+		}
 	}
+	return false
 }
 
-func publicVideoTaskErrorRetryable(task *model.Task) bool {
-	if task == nil || len(task.Data) == 0 {
-		return false
+func publicVideoUpstreamErrorCode(code string) string {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "timeout", "timeout_error", "request_timeout",
+		"rate_limit", "rate_limited", "model_overload",
+		"upstream_status_unavailable", "retry_exhausted",
+		"submission_unknown", "content_moderated",
+		"invalid_reference_media_duration", "reference_media_duration_exceeded",
+		"cancelled_by_admin", "upstream_authentication_error", "authentication_error", "auth_invalid":
+		return strings.ToLower(strings.TrimSpace(code))
+	default:
+		return ""
 	}
-	var response struct {
-		Error *struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	if err := common.Unmarshal(task.Data, &response); err != nil || response.Error == nil {
-		return false
-	}
-	return strings.TrimSpace(response.Error.Code) == "content_moderated"
 }
 
 func PublicVideoTaskStatus(status model.TaskStatus) string {

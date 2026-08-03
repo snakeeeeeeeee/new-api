@@ -1457,16 +1457,22 @@ func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 // ===========================================================================
 
 type mockAdaptor struct {
-	adjustReturn int
-	fetchResp    *http.Response
-	parseCalled  bool
+	adjustReturn      int
+	fetchResp         *http.Response
+	parseResult       *relaycommon.TaskInfo
+	parseErr          error
+	parseCalled       bool
+	singleParseCalled bool
 }
 
 func (m *mockAdaptor) Init(_ *relaycommon.RelayInfo) {}
 func (m *mockAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
 	return m.fetchResp, nil
 }
-func (m *mockAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) { return nil, nil }
+func (m *mockAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	m.singleParseCalled = true
+	return m.parseResult, m.parseErr
+}
 func (m *mockAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
 	return m.adjustReturn
 }
@@ -1508,6 +1514,120 @@ func TestUpdateVideoBatchTasksRejectsNon2xxResponse(t *testing.T) {
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	assert.EqualValues(t, model.TaskStatusQueued, reloaded.Status)
+}
+
+func TestUpdateVideoSingleTaskRetainsTransientHTTPFailures(t *testing.T) {
+	for _, statusCode := range []int{http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError} {
+		t.Run(fmt.Sprintf("status_%d", statusCode), func(t *testing.T) {
+			truncate(t)
+			task := makeTask(41+statusCode, 41+statusCode, 0, 0, BillingSourceWallet, 0)
+			task.TaskID = fmt.Sprintf("task_transient_%d", statusCode)
+			task.PrivateData.UpstreamTaskID = fmt.Sprintf("provider_transient_%d", statusCode)
+			task.Status = model.TaskStatusQueued
+			task.Progress = "20%"
+			require.NoError(t, model.DB.Create(task).Error)
+
+			body := `{"detail":"fal-ai-video temporary timeout","debug_url":"https://provider.example/debug?signature=raw","access_token":"provider-secret"}`
+			adaptor := &mockAdaptor{fetchResp: &http.Response{
+				StatusCode: statusCode,
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}}
+			baseURL := "http://adobe2api.test"
+			err := updateVideoSingleTask(context.Background(), adaptor, &model.Channel{
+				Id: 41 + statusCode, Type: constant.ChannelTypeAdobeVideo, Key: "provider-key", BaseURL: &baseURL,
+			}, task.PrivateData.UpstreamTaskID, map[string]*model.Task{task.PrivateData.UpstreamTaskID: task})
+
+			require.NoError(t, err)
+			assert.False(t, adaptor.singleParseCalled)
+			var reloaded model.Task
+			require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+			assert.EqualValues(t, model.TaskStatusQueued, reloaded.Status)
+			assert.Equal(t, "20%", reloaded.Progress)
+			assert.Empty(t, reloaded.FailReason)
+			assert.Equal(t, statusCode, reloaded.PrivateData.LastUpstreamStatus)
+			assert.Contains(t, string(reloaded.Data), "fal-ai-video temporary timeout")
+			assert.Contains(t, string(reloaded.Data), "https://provider.example/debug?signature=raw")
+			assert.NotContains(t, string(reloaded.Data), "provider-secret")
+			assert.Contains(t, string(reloaded.Data), `"access_token":"***"`)
+			assert.Equal(t, int64(0), countLogs(t))
+		})
+	}
+}
+
+func TestUpdateVideoSingleTaskRetainsUnknownSuccessfulStatus(t *testing.T) {
+	truncate(t)
+	task := makeTask(551, 551, 0, 0, BillingSourceWallet, 0)
+	task.TaskID = "task_unknown_poll_status"
+	task.PrivateData.UpstreamTaskID = "provider_unknown_poll_status"
+	task.Status = model.TaskStatusInProgress
+	task.Progress = "47%"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	body := `{"task_id":"provider_unknown_poll_status","status":"warming_up","message":"provider is preparing capacity"}`
+	adaptor := &mockAdaptor{
+		fetchResp:   &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))},
+		parseResult: &relaycommon.TaskInfo{},
+	}
+	baseURL := "http://adobe2api.test"
+	err := updateVideoSingleTask(context.Background(), adaptor, &model.Channel{
+		Id: 551, Type: constant.ChannelTypeAdobeVideo, Key: "provider-key", BaseURL: &baseURL,
+	}, task.PrivateData.UpstreamTaskID, map[string]*model.Task{task.PrivateData.UpstreamTaskID: task})
+
+	require.NoError(t, err)
+	assert.True(t, adaptor.singleParseCalled)
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusInProgress, reloaded.Status)
+	assert.Equal(t, "47%", reloaded.Progress)
+	assert.Empty(t, reloaded.FailReason)
+	assert.Zero(t, reloaded.PrivateData.LastUpstreamStatus)
+	assert.JSONEq(t, body, string(reloaded.Data))
+	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestUpdateVideoSingleTaskRetainsUnrecognizedSuccessfulBody(t *testing.T) {
+	truncate(t)
+	task := makeTask(552, 552, 0, 0, BillingSourceWallet, 0)
+	task.TaskID = "task_unrecognized_poll_body"
+	task.PrivateData.UpstreamTaskID = "provider_unrecognized_poll_body"
+	task.Status = model.TaskStatusInProgress
+	task.Progress = "53%"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	body := "upstream is temporarily warming capacity"
+	adaptor := &mockAdaptor{
+		fetchResp:   &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))},
+		parseResult: &relaycommon.TaskInfo{},
+	}
+	baseURL := "http://adobe2api.test"
+	err := updateVideoSingleTask(context.Background(), adaptor, &model.Channel{
+		Id: 552, Type: constant.ChannelTypeAdobeVideo, Key: "provider-key", BaseURL: &baseURL,
+	}, task.PrivateData.UpstreamTaskID, map[string]*model.Task{task.PrivateData.UpstreamTaskID: task})
+
+	require.NoError(t, err)
+	assert.True(t, adaptor.singleParseCalled)
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusInProgress, reloaded.Status)
+	assert.Equal(t, "53%", reloaded.Progress)
+	assert.Empty(t, reloaded.FailReason)
+	assert.Zero(t, reloaded.PrivateData.LastUpstreamStatus)
+	assert.Equal(t, body, string(reloaded.Data))
+	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestRedactVideoResponseBodyPreservesDiagnosticsAndMasksCredentials(t *testing.T) {
+	body := []byte(`{"error":{"code":"timeout_error","message":"fal-ai-video timed out"},"debug_url":"https://provider.example/debug?signature=raw","authorization":"Bearer provider-secret","nested":{"cookie":"session=secret"},"response":{"bytesBase64Encoded":"large-secret-payload"}}`)
+
+	protected := redactVideoResponseBody(body)
+
+	assert.Contains(t, string(protected), "fal-ai-video timed out")
+	assert.Contains(t, string(protected), "https://provider.example/debug?signature=raw")
+	assert.NotContains(t, string(protected), "provider-secret")
+	assert.NotContains(t, string(protected), "session=secret")
+	assert.NotContains(t, string(protected), "large-secret-payload")
+	assert.Contains(t, string(protected), `"authorization":"***"`)
+	assert.Contains(t, string(protected), `"cookie":"***"`)
 }
 
 // ===========================================================================

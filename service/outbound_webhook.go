@@ -636,10 +636,17 @@ func outboundWebhookPayload(event *model.WebhookEvent) (string, error) {
 	if event == nil {
 		return "", errors.New("webhook event is nil")
 	}
-	if event.EventType != WebhookEventImageTaskFailed {
+	switch event.EventType {
+	case WebhookEventImageTaskFailed:
+		return outboundImageFailureWebhookPayload(event)
+	case WebhookEventVideoTaskFailed:
+		return outboundVideoFailureWebhookPayload(event)
+	default:
 		return event.Payload, nil
 	}
+}
 
+func outboundImageFailureWebhookPayload(event *model.WebhookEvent) (string, error) {
 	var envelope map[string]any
 	if err := common.Unmarshal([]byte(event.Payload), &envelope); err != nil {
 		return "", fmt.Errorf("parse image task failure webhook payload: %w", err)
@@ -676,6 +683,58 @@ func outboundWebhookPayload(event *model.WebhookEvent) (string, error) {
 	return string(sanitized), nil
 }
 
+func outboundVideoFailureWebhookPayload(event *model.WebhookEvent) (string, error) {
+	var envelope map[string]any
+	if err := common.Unmarshal([]byte(event.Payload), &envelope); err != nil {
+		return "", fmt.Errorf("parse video task failure webhook payload: %w", err)
+	}
+	data, _ := envelope["data"].(map[string]any)
+	object, _ := data["object"].(map[string]any)
+	errorObject, _ := object["error"].(map[string]any)
+	if errorObject == nil {
+		return event.Payload, nil
+	}
+
+	upstreamStatus := firstNonZeroWebhookPayloadInt(
+		webhookPayloadInt(errorObject, "upstream_status"),
+		webhookPayloadInt(errorObject, "status_code"),
+	)
+	diagnosticCode := firstNonEmptyString(
+		webhookPayloadString(errorObject, "upstream_error_code"),
+		webhookPayloadString(errorObject, "provider_error_code"),
+		webhookPayloadString(errorObject, "error_code"),
+		webhookPayloadString(errorObject, "code"),
+	)
+	diagnosticData, err := common.Marshal(map[string]any{
+		"error_code":      diagnosticCode,
+		"upstream_status": upstreamStatus,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode video task failure diagnostic: %w", err)
+	}
+	pseudoTask := &model.Task{
+		Status:     model.TaskStatusFailure,
+		FailReason: webhookPayloadString(errorObject, "message"),
+		Data:       diagnosticData,
+		PrivateData: model.TaskPrivateData{
+			LastUpstreamStatus: upstreamStatus,
+		},
+	}
+	if requestID := webhookPayloadString(errorObject, "request_id"); requestID != "" {
+		pseudoTask.PrivateData.BillingContext = &model.TaskBillingContext{RequestId: requestID}
+	}
+	publicError := buildPublicVideoTaskError(pseudoTask)
+	if webhookPayloadBool(errorObject, "retryable") {
+		publicError.Retryable = true
+	}
+	object["error"] = publicError
+	sanitized, err := common.Marshal(envelope)
+	if err != nil {
+		return "", fmt.Errorf("encode video task failure webhook payload: %w", err)
+	}
+	return string(sanitized), nil
+}
+
 func webhookPayloadString(values map[string]any, key string) string {
 	value, _ := values[key].(string)
 	return value
@@ -684,6 +743,29 @@ func webhookPayloadString(values map[string]any, key string) string {
 func webhookPayloadBool(values map[string]any, key string) bool {
 	value, _ := values[key].(bool)
 	return value
+}
+
+func webhookPayloadInt(values map[string]any, key string) int {
+	switch value := values[key].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(value))
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func firstNonZeroWebhookPayloadInt(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func completeWebhookFailure(ctx context.Context, delivery *model.WebhookDelivery, httpStatus int, reason string, durationMS int64) {

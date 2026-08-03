@@ -68,9 +68,12 @@ type VideoTaskResult struct {
 }
 
 type VideoTaskPublicError struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	Retryable bool   `json:"retryable"`
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	Retryable         bool   `json:"retryable"`
+	UpstreamStatus    int    `json:"upstream_status,omitempty"`
+	UpstreamErrorCode string `json:"upstream_error_code,omitempty"`
+	RequestID         string `json:"request_id,omitempty"`
 }
 
 type VideoTaskPublic struct {

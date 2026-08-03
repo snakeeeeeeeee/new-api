@@ -1504,6 +1504,37 @@
 
 # Video Contract Alignment Findings (2026-07-31)
 
+# Async Task Error Boundary Findings (2026-08-03)
+
+- Adobe2API already retries Adobe polling 408/429/451/5xx and network errors, preserves poll state, and terminates only after the configurable continuous-unavailability budget.
+- Adobe2API submit retries are bounded separately and never resubmit `submission_unknown` tasks.
+- new-api's AdobeVideo adaptor does not map the valid `submitting` status, so parsing returns an empty status.
+- `updateVideoSingleTask` does not branch on HTTP status before parsing. An empty parsed status falls into `upstream returned unrecognized message`, which is applied as a terminal failure and can refund a task that Adobe2API later completes.
+- Terminal task transitions persist `FailReason` and atomically create a public task Webhook event. Task query and Webhook payloads share the same public task projection.
+- A real local historical failure proves current task queries and Webhooks expose provider implementation details verbatim and mark a polling 408 as non-retryable.
+- Querying `/v1/video/tasks/{id}` requires the account resource key (`ak_...`), while task creation uses the ordinary token (`sk-...`).
+- `tasks.data` is the existing internal diagnostic payload and is excluded from normalized public task objects except for explicit safe-field projection. This avoids a schema migration.
+- The current caller mutates `task.Data` before `ApplyTaskResult` takes its snapshot, so same-status polls can skip persisting a changed response. Passing the redacted body through `TaskInfo.Data` lets the state transition layer persist it atomically.
+- `updateVideoSingleTask` can preserve a transient response without inventing a new status by applying the task's current non-terminal status and current progress together with the diagnostic data.
+- Video public errors currently expose only code/message/retryable. Adding optional `upstream_status`, `upstream_error_code`, and `request_id` is backward-compatible JSON.
+- Image public errors already normalize callback details to code/message/retryable; provider-specific callback fields remain internal in `tasks.data` and are not part of the public DTO.
+- The user explicitly chose administrator-visible original upstream error bodies. Internal diagnostics therefore do not mask provider names, URLs, status text, or error detail; credential fields and oversized binary/Base64 payloads remain the narrow safety exception.
+- The existing video response redactor already removes large Base64 payloads. It remains suitable for ordinary success bodies; error diagnostics preserve original provider detail except credentials and database-size hazards.
+- Focused polling integration tests can reuse the package-level SQLite setup and `mockAdaptor` in `task_billing_test.go`, so transient HTTP behavior can be proven without live provider calls.
+- `TaskInfo.Data` is explicitly intended for a small raw task-result JSON. Moving sanitized poll bodies into this field fixes same-status persistence while preserving existing terminal CAS, billing, and Webhook behavior.
+- The HTTP-aware branch is intentionally in the common single-task polling boundary: every async provider benefits from retaining 408/429/5xx, while provider-specific status mapping remains inside each adaptor. Existing adaptors that reject unknown HTTP-200 statuses with an error keep their behavior.
+- Provider-neutral fallback text must preserve short safe legacy reasons such as `expired`, but suppress provider names, URLs, embedded JSON, credential markers, and long diagnostics.
+- The optional public `upstream_status` needs transport metadata that a raw JSON body may not contain. Persisting the last poll HTTP status in `TaskPrivateData` avoids wrapping or altering the administrator-visible response body and requires no column migration.
+- Historical failed-video Webhook rows can contain the old raw error object. Sanitizing them only in `outboundWebhookPayload` preserves administrator evidence at rest and prevents detail leakage on retries or delayed delivery.
+- Unknown HTTP 200 response handling needs a final empty-status fallback outside JSON decoding; otherwise a plain-text body can bypass the retention branch and persist an invalid empty task status.
+- Local interface verification against an existing failed Adobe task returns the expected public `upstream_timeout` object with HTTP 408 and no provider name, while internal task data remains available to administrators.
+- The global timeout sweep currently wins a guarded status CAS and refunds afterward, but unlike `ApplyTaskResult` it does not call `CreateTaskWebhookEventTx`; outer-timeout failures are therefore visible by query but silent to Webhook-only consumers.
+- `CreateTaskWebhookEventTx` already skips legacy rows without normalized image/video request records, and creates delivery rows only for enabled endpoints. Reusing it inside the timeout CAS transaction preserves existing compatibility without a schema change.
+- The outbound Webhook worker scans pending deliveries every second, so timeout finalization only adds local database writes and never waits on receiver I/O.
+- The winning timeout transaction can reuse `Task.UpdateWithStatusTx`; a stale timeout scanner gets `won=false`, creates no event, and leaves a concurrently completed task untouched.
+- Timeout finalization now produces the same provider-neutral public failure envelope as ordinary terminal polling because both paths call `CreateTaskWebhookEventTx` after persisting the terminal task inside one transaction.
+
+
 - The local `/v1/models` response exposes five Adobe Seedance SKUs with the
   `adobe-seedance-*` prefix; the Seedance docs use bare names and omit fast/1080p.
 - HiggsfieldVideo promotes AdobeVideo's `ResolveVideoBilling`, but Higgsfield provider

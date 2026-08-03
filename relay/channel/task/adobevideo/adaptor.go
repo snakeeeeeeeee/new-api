@@ -399,6 +399,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		result.Stage = response.Stage
 	}
 	switch strings.ToLower(strings.TrimSpace(response.Status)) {
+	case "submitting":
+		result.Status = model.TaskStatusSubmitted
 	case "queued", "pending":
 		result.Status = model.TaskStatusQueued
 	case "in_progress", "processing", "running":
@@ -425,6 +427,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "failed", "failure", "cancelled", "canceled":
 		result.Status = model.TaskStatusFailure
 		result.Reason = responseErrorMessage(response.Error)
+	case "submission_unknown":
+		result.Status = model.TaskStatusFailure
+		result.Reason = "Submission result could not be confirmed"
 	default:
 		if response.Error != nil {
 			result.Status = model.TaskStatusFailure

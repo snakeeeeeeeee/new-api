@@ -419,6 +419,12 @@ func TestDoResponseAndParseTaskLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusQueued, queued.Status)
 
+	submitting, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-1","status":"submitting","progress":0,"stage":"submitting"}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSubmitted, submitting.Status)
+	assert.True(t, submitting.ProgressMetadataSet)
+	assert.Equal(t, "submitting", submitting.Stage)
+
 	inProgress, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-1","status":"in_progress","progress":47,"progress_known":true,"progress_source":"upstream_percent","stage":"generating"}`))
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusInProgress, inProgress.Status)
@@ -455,6 +461,11 @@ func TestDoResponseAndParseTaskLifecycle(t *testing.T) {
 	assert.Equal(t, model.TaskStatusFailure, failedWithoutMessage.Status)
 	assert.Equal(t, "Video task failed", failedWithoutMessage.Reason)
 	assert.NotContains(t, failedWithoutMessage.Reason, "Adobe")
+
+	submissionUnknown, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-task-3","status":"submission_unknown"}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailure, submissionUnknown.Status)
+	assert.Equal(t, "Submission result could not be confirmed", submissionUnknown.Reason)
 }
 
 func TestFetchTaskAndResolveVideoContentUseStoredCredentialAndRange(t *testing.T) {

@@ -100,7 +100,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 			task.FailReason = reason
 		}
 
-		won, err := task.UpdateWithStatus(oldStatus)
+		won, err := commitTimedOutTaskTransition(task, oldStatus)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("sweepTimedOutTasks CAS update error for task %s: %v", task.TaskID, err))
 			continue
@@ -118,6 +118,25 @@ func sweepTimedOutTasks(ctx context.Context) {
 	if timedOutCount > 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("sweepTimedOutTasks: timed out %d tasks", timedOutCount))
 	}
+}
+
+func commitTimedOutTaskTransition(task *model.Task, oldStatus model.TaskStatus) (bool, error) {
+	if task == nil {
+		return false, errors.New("timeout task is nil")
+	}
+	var won bool
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		transitionWon, err := task.UpdateWithStatusTx(tx, oldStatus)
+		if err != nil {
+			return err
+		}
+		won = transitionWon
+		if !won {
+			return nil
+		}
+		return CreateTaskWebhookEventTx(tx, task)
+	})
+	return won, err
 }
 
 func CountTimeoutPendingTasks(now int64) int64 {
@@ -513,6 +532,28 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		"updateVideoSingleTask response received: task=%s status=%d bytes=%d",
 		taskId, resp.StatusCode, len(responseBody),
 	))
+	diagnosticBody := redactVideoResponseBody(responseBody)
+	if isTransientTaskPollHTTPStatus(resp.StatusCode) {
+		logger.LogWarn(ctx, fmt.Sprintf(
+			"Task %s poll returned transient HTTP %d; retaining status %s, response: %s",
+			taskId, resp.StatusCode, task.Status, string(diagnosticBody),
+		))
+		retained := retainedTaskPollResult(task, diagnosticBody, resp.StatusCode)
+		ApplyTaskResult(ctx, adaptor, task, retained)
+		return nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		message := taskPollErrorMessage(responseBody)
+		if message == "" {
+			message = fmt.Sprintf("task status request failed with HTTP %d", resp.StatusCode)
+		}
+		failed := relaycommon.FailTaskInfo(message)
+		failed.Data = diagnosticBody
+		failed.UpstreamStatusSet = true
+		failed.UpstreamStatus = resp.StatusCode
+		ApplyTaskResult(ctx, adaptor, task, failed)
+		return nil
+	}
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
@@ -528,39 +569,82 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		taskResult.Url = t.GetResultURL()
 		taskResult.Progress = t.Progress
 		taskResult.Reason = t.FailReason
-		task.Data = t.Data
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}
-
-	task.Data = redactVideoResponseBody(responseBody)
+	if taskResult == nil {
+		return fmt.Errorf("parseTaskResult returned no result for task %s", taskId)
+	}
+	taskResult.Data = diagnosticBody
 
 	logger.LogDebug(ctx, fmt.Sprintf("updateVideoSingleTask taskResult: %+v", taskResult))
 
 	if taskResult.Status == "" {
-		//taskResult = relaycommon.FailTaskInfo("upstream returned empty status")
 		errorResult := &dto.GeneralErrorResponse{}
 		if err = common.Unmarshal(responseBody, &errorResult); err == nil {
 			openaiError := errorResult.TryToOpenAIError()
 			if openaiError != nil {
-				// 返回规范的 OpenAI 错误格式，提取错误信息，判断错误是否为任务失败
-				if openaiError.Code == "429" {
-					// 429 错误通常表示请求过多或速率限制，暂时不认为是任务失败，保持原状态等待下一轮轮询
-					return nil
+				if taskPollErrorCodeIsTransient(fmt.Sprint(openaiError.Code)) {
+					taskResult = retainedTaskPollResult(task, diagnosticBody, 0)
+				} else {
+					taskResult = relaycommon.FailTaskInfo(firstNonEmptyTaskPollMessage(openaiError.Message, "Task failed"))
 				}
-
-				// 其他错误认为是任务失败，记录错误信息并更新任务状态
-				taskResult = relaycommon.FailTaskInfo("upstream returned error")
-			} else {
-				// unknown error format, log original response
-				logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", taskId, string(responseBody)))
-				taskResult = relaycommon.FailTaskInfo("upstream returned unrecognized message")
 			}
 		}
+		if taskResult.Status == "" {
+			logger.LogWarn(ctx, fmt.Sprintf("Task %s returned an unrecognized non-terminal status; retaining %s, response: %s", taskId, task.Status, string(diagnosticBody)))
+			taskResult = retainedTaskPollResult(task, diagnosticBody, 0)
+		}
 	}
+	taskResult.Data = diagnosticBody
+	taskResult.UpstreamStatusSet = true
+	taskResult.UpstreamStatus = 0
 
 	ApplyTaskResult(ctx, adaptor, task, taskResult)
 	return nil
+}
+
+func isTransientTaskPollHTTPStatus(statusCode int) bool {
+	return statusCode == http.StatusRequestTimeout ||
+		statusCode == http.StatusTooManyRequests ||
+		statusCode >= http.StatusInternalServerError
+}
+
+func retainedTaskPollResult(task *model.Task, diagnosticBody []byte, upstreamStatus int) *relaycommon.TaskInfo {
+	result := &relaycommon.TaskInfo{Data: diagnosticBody, UpstreamStatusSet: true, UpstreamStatus: upstreamStatus}
+	if task == nil {
+		result.Status = model.TaskStatusQueued
+		return result
+	}
+	result.Status = string(task.Status)
+	result.Progress = task.Progress
+	return result
+}
+
+func taskPollErrorMessage(body []byte) string {
+	var response dto.GeneralErrorResponse
+	if common.Unmarshal(body, &response) != nil {
+		return ""
+	}
+	return strings.TrimSpace(response.ToMessage())
+}
+
+func taskPollErrorCodeIsTransient(code string) bool {
+	switch strings.ToLower(strings.TrimSpace(code)) {
+	case "408", "429", "500", "502", "503", "504", "request_timeout", "timeout_error", "rate_limit", "rate_limited", "service_unavailable", "upstream_unavailable":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstNonEmptyTaskPollMessage(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) (updated bool, billed bool) {
@@ -584,6 +668,9 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 		if taskResult.Sequence > 0 {
 			task.PrivateData.ProgressSequence = taskResult.Sequence
 		}
+	}
+	if taskResult.UpstreamStatusSet {
+		task.PrivateData.LastUpstreamStatus = taskResult.UpstreamStatus
 	}
 
 	task.Status = model.TaskStatus(taskResult.Status)
@@ -706,33 +793,56 @@ func restoreTaskSnapshot(task *model.Task, snap model.TaskSnapshot) {
 	task.PrivateData.ProgressSource = snap.ProgressSource
 	task.PrivateData.ProgressStage = snap.ProgressStage
 	task.PrivateData.ProgressSequence = snap.ProgressSequence
+	task.PrivateData.LastUpstreamStatus = snap.LastUpstreamStatus
 	task.Data = snap.Data
 }
 
 func redactVideoResponseBody(body []byte) []byte {
 	var m map[string]any
 	if err := common.Unmarshal(body, &m); err != nil {
-		return body
+		protected := errorSnapshotSecretAssignmentPattern.ReplaceAllString(string(body), "${1}***")
+		return preserveBodyHeadTail([]byte(protected), 64<<10)
 	}
-	resp, _ := m["response"].(map[string]any)
-	if resp != nil {
-		delete(resp, "bytesBase64Encoded")
-		if v, ok := resp["video"].(string); ok {
-			resp["video"] = truncateBase64(v)
-		}
-		if vs, ok := resp["videos"].([]any); ok {
-			for i := range vs {
-				if vm, ok := vs[i].(map[string]any); ok {
-					delete(vm, "bytesBase64Encoded")
-				}
-			}
-		}
-	}
+	m = protectVideoDiagnosticMap(m)
 	b, err := common.Marshal(m)
 	if err != nil {
-		return body
+		return preserveBodyHeadTail(body, 64<<10)
 	}
-	return b
+	return preserveBodyHeadTail(b, 64<<10)
+}
+
+func protectVideoDiagnosticMap(source map[string]any) map[string]any {
+	protected := make(map[string]any, len(source))
+	for key, value := range source {
+		if strings.EqualFold(key, "bytesBase64Encoded") {
+			continue
+		}
+		protected[key] = protectVideoDiagnosticValue(value, key)
+	}
+	return protected
+}
+
+func protectVideoDiagnosticValue(value any, key string) any {
+	if isErrorSnapshotSecretKey(key) {
+		return "***"
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		return protectVideoDiagnosticMap(typed)
+	case []any:
+		protected := make([]any, len(typed))
+		for index, child := range typed {
+			protected[index] = protectVideoDiagnosticValue(child, key)
+		}
+		return protected
+	case string:
+		if strings.EqualFold(key, "video") || strings.Contains(strings.ToLower(key), "base64") {
+			return truncateBase64(typed)
+		}
+		return typed
+	default:
+		return value
+	}
 }
 
 func truncateBase64(s string) string {
