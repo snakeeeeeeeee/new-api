@@ -136,6 +136,54 @@ func TestCanUseImageHandleSyncForRequestAllowsEditUploads(t *testing.T) {
 	require.True(t, canUseImageHandleSyncForRequest(info, &multipartWithoutURL))
 }
 
+func TestCanUseImageHandleSyncForRequestForcesAdobeBase64(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	t.Cleanup(func() { *image_handle_setting.GetImageHandleSetting() = originalSetting })
+	image_handle_setting.GetImageHandleSetting().SyncImageEnabled = false
+
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeImagesEdits,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeOpenAI,
+			ChannelOtherSettings: dto.ChannelOtherSettings{
+				ImageHandleSyncMode:        "force_off",
+				ImageHandleExecutionDriver: dto.ImageHandleExecutionDriverAdobeAsyncImage,
+			},
+		},
+	}
+	require.True(t, canUseImageHandleSyncForRequest(info, &dto.ImageRequest{ResponseFormat: "b64_json"}))
+	require.False(t, canUseImageHandleSyncForRequest(info, &dto.ImageRequest{ResponseFormat: "url"}))
+}
+
+func TestBuildImageHandleSyncPayloadSeparatesClientAndAdobeUpstreamFormats(t *testing.T) {
+	originalSetting := *image_handle_setting.GetImageHandleSetting()
+	t.Cleanup(func() { *image_handle_setting.GetImageHandleSetting() = originalSetting })
+	image_handle_setting.GetImageHandleSetting().InternalBaseURL = "http://new-api.internal"
+	image_handle_setting.GetImageHandleSetting().InternalSecretID = "image_handle_1"
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	request := dto.ImageRequest{Prompt: "draw", ResponseFormat: "b64_json"}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "adobe-gpt-image-2-count",
+		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeOpenAI,
+			UpstreamModelName: "gpt-image-2",
+			ParamOverride:     map[string]interface{}{"response_format": "url"},
+		},
+	}
+	overridden, err := applyImageHandleSyncParamOverride(info, request)
+	require.NoError(t, err)
+	body, err := buildImageHandleSyncPayloadWithResultFormat(ctx, info, overridden, "task_1", "lease_1", "generation", imageHandleResultFormatBase64)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, "base64", payload["result_data_format"])
+	require.Equal(t, "url", imageHandleSyncPayloadParams(payload)["response_format"])
+}
+
 func TestCanUseImageHandleSyncForRequestForcesOnlyTargetGeminiModels(t *testing.T) {
 	originalSetting := *image_handle_setting.GetImageHandleSetting()
 	t.Cleanup(func() {

@@ -56,6 +56,40 @@ func TestBuildPublicVideoTaskExposesTruthfulProgressMetadata(t *testing.T) {
 	assert.Equal(t, "generating", public.Stage)
 }
 
+func TestBuildOpenAIVideoCompatibilityTaskProjectsOfficialFields(t *testing.T) {
+	db := setupPublicVideoTaskTestDB(t)
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID: "task_openai_video_projection", UserId: 7, Platform: "59",
+		Action: constant.TaskActionVideoGeneration, Status: model.TaskStatusSuccess,
+		Progress: "100%", SubmitTime: now - 5, FinishTime: now,
+		Properties: model.Properties{OriginModelName: "adobe-seedance-2.0-fast-480p", AssetType: constant.TaskAssetTypeVideo, Operation: "generation"},
+		PrivateData: model.TaskPrivateData{OpenAIVideoCompatibility: &dto.OpenAIVideoCompatibilityMetadata{
+			Version: dto.OpenAIVideoCompatibilityVersion, Seconds: 6, Size: "1280x720",
+		}},
+	}
+	require.NoError(t, db.Create(task).Error)
+	requestJSON, err := common.Marshal(dto.VideoTaskCreateRequest{
+		Model: task.Properties.OriginModelName, Operation: "generation",
+		Input: dto.VideoTaskInputRequest{Prompt: "animate"}, Metadata: map[string]any{"job": "demo"},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(model.NewVideoTaskRequest(task, 7, nil, "fingerprint", "", requestJSON)).Error)
+
+	video, err := BuildOpenAIVideoCompatibilityTask(task)
+	require.NoError(t, err)
+	assert.Equal(t, "video", video.Object)
+	assert.Equal(t, dto.VideoStatusCompleted, video.Status)
+	assert.Equal(t, "6", video.Seconds)
+	assert.Equal(t, "1280x720", video.Size)
+	assert.Equal(t, map[string]any{"job": "demo"}, video.Metadata)
+	assert.Equal(t, now, video.CompletedAt)
+
+	payload, err := common.Marshal(video)
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), "openai_video_compatibility")
+}
+
 func TestBuildPublicVideoTaskProjectsDirectAndProxiedOutputs(t *testing.T) {
 	db := setupPublicVideoTaskTestDB(t)
 	baseURL := "https://upstream.example/api"

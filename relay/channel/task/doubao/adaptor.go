@@ -97,6 +97,10 @@ type TaskAdaptor struct {
 	baseURL     string
 }
 
+func (a *TaskAdaptor) OpenAIVideoCompatibility() channel.OpenAIVideoCompatibility {
+	return channel.OpenAIVideoCompatibility{Generation: true}
+}
+
 const normalizedRequestContextKey = "doubao_video_request"
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {

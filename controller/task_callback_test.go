@@ -338,16 +338,21 @@ func TestResolveImageCredentialLeaseSyncLeaseDebugWithoutTaskRecord(t *testing.T
 	})
 
 	baseURL := "https://real.example/v1"
+	settings, err := common.Marshal(dto.ChannelOtherSettings{
+		ImageHandleExecutionDriver: dto.ImageHandleExecutionDriverAdobeAsyncImage,
+	})
+	require.NoError(t, err)
 	require.NoError(t, db.Create(&model.Channel{
-		Id:          787,
-		Type:        constant.ChannelTypeOpenAI,
-		Name:        "sync-openai-image",
-		Key:         "real-upstream-key",
-		BaseURL:     &baseURL,
-		Status:      common.ChannelStatusEnabled,
-		Models:      "gpt-image-2",
-		Group:       "default",
-		CreatedTime: time.Now().Unix(),
+		Id:            787,
+		Type:          constant.ChannelTypeOpenAI,
+		Name:          "sync-openai-image",
+		Key:           "real-upstream-key",
+		BaseURL:       &baseURL,
+		Status:        common.ChannelStatusEnabled,
+		Models:        "gpt-image-2",
+		Group:         "default",
+		CreatedTime:   time.Now().Unix(),
+		OtherSettings: string(settings),
 	}).Error)
 	require.NoError(t, db.Create(&model.ImageCredentialLease{
 		LeaseID:      "lease_sync_debug",
@@ -375,6 +380,7 @@ func TestResolveImageCredentialLeaseSyncLeaseDebugWithoutTaskRecord(t *testing.T
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &resolveResp))
 	assert.Equal(t, "openai_compatible", resolveResp.Provider)
 	assert.Equal(t, "openai_images", resolveResp.RequestFormat)
+	assert.Equal(t, dto.ImageHandleExecutionDriverAdobeAsyncImage, resolveResp.ExecutionDriver)
 	assert.Equal(t, "real-upstream-key", resolveResp.APIKey)
 }
 

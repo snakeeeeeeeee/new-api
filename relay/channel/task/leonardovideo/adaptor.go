@@ -34,6 +34,10 @@ type TaskAdaptor struct {
 	proxy   string
 }
 
+func (a *TaskAdaptor) OpenAIVideoCompatibility() channel.OpenAIVideoCompatibility {
+	return channel.OpenAIVideoCompatibility{Generation: true, ModelBoundResolution: true}
+}
+
 const submissionTimeout = 10 * time.Minute
 
 var (

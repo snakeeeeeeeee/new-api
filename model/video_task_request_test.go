@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,4 +128,48 @@ func TestPublicVideoTaskQueriesEnforceOwnershipAndCursor(t *testing.T) {
 	assert.False(t, hasMore)
 	require.Len(t, tasks, 1)
 	assert.Equal(t, first.TaskID, tasks[0].TaskID)
+
+	tasks, hasMore, err = ListPublicVideoTasks(1, VideoTaskListQuery{Order: "asc", Limit: 1})
+	require.NoError(t, err)
+	require.True(t, hasMore)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, first.TaskID, tasks[0].TaskID)
+	tasks, hasMore, err = ListPublicVideoTasks(1, VideoTaskListQuery{Order: "asc", Limit: 1, AfterTaskID: first.TaskID})
+	require.NoError(t, err)
+	assert.False(t, hasMore)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, second.TaskID, tasks[0].TaskID)
+}
+
+func TestTombstoneOpenAIVideoTaskRequiresOwnershipCompatibilityAndTerminalState(t *testing.T) {
+	setupVideoTaskRequestTestDB(t)
+	compatibility := &dto.OpenAIVideoCompatibilityMetadata{Version: dto.OpenAIVideoCompatibilityVersion}
+	running := createPublicVideoTaskFixture(t, 11, "task_running", "generation", "", nil)
+	running.PrivateData.OpenAIVideoCompatibility = compatibility
+	require.NoError(t, DB.Save(running).Error)
+
+	_, exists, deleted, err := TombstoneOpenAIVideoTask(11, running.TaskID, 100)
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.False(t, deleted)
+
+	running.Status = TaskStatusSuccess
+	require.NoError(t, DB.Save(running).Error)
+	deletedTask, exists, deleted, err := TombstoneOpenAIVideoTask(11, running.TaskID, 101)
+	require.NoError(t, err)
+	assert.True(t, exists)
+	assert.True(t, deleted)
+	require.NotNil(t, deletedTask.PrivateData.OpenAIVideoCompatibility)
+	assert.EqualValues(t, 101, deletedTask.PrivateData.OpenAIVideoCompatibility.DeletedAt)
+
+	_, exists, deleted, err = TombstoneOpenAIVideoTask(12, running.TaskID, 102)
+	require.NoError(t, err)
+	assert.False(t, exists)
+	assert.False(t, deleted)
+
+	var taskCount, requestCount int64
+	require.NoError(t, DB.Model(&Task{}).Where("task_id = ?", running.TaskID).Count(&taskCount).Error)
+	require.NoError(t, DB.Model(&VideoTaskRequest{}).Where("task_id = ?", running.TaskID).Count(&requestCount).Error)
+	assert.EqualValues(t, 1, taskCount)
+	assert.EqualValues(t, 1, requestCount)
 }

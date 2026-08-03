@@ -192,12 +192,21 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
 	}
 	adaptor.Init(info)
-	if normalizedRequest, err := relaycommon.GetVideoTaskPublicRequest(c); err == nil {
+	normalizedRequest, normalizedRequestErr := relaycommon.GetVideoTaskPublicRequest(c)
+	openAICompatibility, isOpenAICompatibility := relaycommon.GetOpenAIVideoCompatibility(c)
+	if normalizedRequestErr == nil {
 		normalizedAdaptor, ok := adaptor.(channel.NormalizedVideoTaskAdaptor)
 		if !ok {
 			return nil, service.TaskErrorWrapperLocal(fmt.Errorf("selected provider does not support normalized video tasks"), "unsupported_video_provider", http.StatusBadRequest)
 		}
-		if taskErr := normalizedAdaptor.PrepareNormalizedVideoRequest(c, info, normalizedRequest); taskErr != nil {
+		if isOpenAICompatibility {
+			compatibilityAdaptor, ok := adaptor.(channel.OpenAIVideoCompatibilityAdaptor)
+			if !ok || !compatibilityAdaptor.OpenAIVideoCompatibility().Supports(normalizedRequest.Operation) {
+				return nil, service.TaskErrorWrapperLocal(fmt.Errorf("selected provider does not support this OpenAI video operation"), "unsupported_video_capability", http.StatusBadRequest)
+			}
+			info.Action = normalizedVideoOperationAction(normalizedRequest.Operation)
+			info.OriginModelName = normalizedRequest.Model
+		} else if taskErr := normalizedAdaptor.PrepareNormalizedVideoRequest(c, info, normalizedRequest); taskErr != nil {
 			return nil, taskErr
 		}
 	} else if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
@@ -248,8 +257,19 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, taskErr
 		}
 	}
-	if _, normalized := c.Get(relaycommon.VideoTaskPublicRequestContextKey); normalized {
+	if normalizedRequestErr == nil {
 		normalizedAdaptor := adaptor.(channel.NormalizedVideoTaskAdaptor)
+		if isOpenAICompatibility {
+			compatibilityAdaptor := adaptor.(channel.OpenAIVideoCompatibilityAdaptor)
+			var taskErr *dto.TaskError
+			normalizedRequest, taskErr = applyOpenAIVideoCompatibilityRequest(c, info, compatibilityAdaptor, normalizedRequest, openAICompatibility)
+			if taskErr != nil {
+				return nil, taskErr
+			}
+			if taskErr = normalizedAdaptor.PrepareNormalizedVideoRequest(c, info, normalizedRequest); taskErr != nil {
+				return nil, taskErr
+			}
+		}
 		if taskErr := normalizedAdaptor.ValidateNormalizedVideoModel(c, info); taskErr != nil {
 			return nil, taskErr
 		}
@@ -421,14 +441,26 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 				info.Billing.Refund(c)
 				info.Billing = nil
 			}
-			publicTask, buildErr := service.BuildPublicVideoTask(existingTask)
+			var publicTask any
+			var buildErr error
+			if _, compatibility := relaycommon.GetOpenAIVideoCompatibility(c); compatibility {
+				publicTask, buildErr = service.BuildOpenAIVideoCompatibilityTask(existingTask)
+			} else {
+				publicTask, buildErr = service.BuildPublicVideoTask(existingTask)
+			}
 			if buildErr != nil {
 				return nil, service.TaskErrorWrapper(buildErr, "build_task_response_failed", http.StatusInternalServerError)
 			}
 			c.Header("Idempotent-Replayed", "true")
-			c.Header("Location", "/v1/video/tasks/"+existingTask.TaskID)
+			status := http.StatusAccepted
+			location := "/v1/video/tasks/" + existingTask.TaskID
+			if _, compatibility := relaycommon.GetOpenAIVideoCompatibility(c); compatibility {
+				status = http.StatusOK
+				location = "/v1/videos/" + existingTask.TaskID
+			}
+			c.Header("Location", location)
 			c.Header("Retry-After", "2")
-			c.JSON(http.StatusAccepted, publicTask)
+			c.JSON(status, publicTask)
 			return &TaskSubmitResult{Platform: platform, Quota: existingTask.Quota, ExistingTask: existingTask}, nil
 		}
 	}
@@ -476,10 +508,21 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	if createdTask != nil {
 		if request, err := relaycommon.GetVideoTaskPublicRequest(c); err == nil {
-			publicTask := service.BuildPublicVideoTaskFromRequest(createdTask, &request)
-			c.Header("Location", "/v1/video/tasks/"+createdTask.TaskID)
+			var publicTask any = service.BuildPublicVideoTaskFromRequest(createdTask, &request)
+			status := http.StatusAccepted
+			location := "/v1/video/tasks/" + createdTask.TaskID
+			if _, compatibility := relaycommon.GetOpenAIVideoCompatibility(c); compatibility {
+				publicTask, err = service.BuildOpenAIVideoCompatibilityTask(createdTask)
+				if err != nil {
+					return resolveTaskSubmitFailure(c, createdTask, createdLease,
+						service.TaskErrorWrapper(err, "build_task_response_failed", http.StatusInternalServerError))
+				}
+				status = http.StatusOK
+				location = "/v1/videos/" + createdTask.TaskID
+			}
+			c.Header("Location", location)
 			c.Header("Retry-After", "2")
-			c.JSON(http.StatusAccepted, publicTask)
+			c.JSON(status, publicTask)
 		}
 	}
 
@@ -502,6 +545,65 @@ func isNormalizedVideoTask(c *gin.Context) bool {
 	}
 	_, ok := c.Get(relaycommon.VideoTaskPublicRequestContextKey)
 	return ok
+}
+
+func normalizedVideoOperationAction(operation string) string {
+	switch operation {
+	case "edit":
+		return constant.TaskActionVideoEdit
+	case "extension":
+		return constant.TaskActionVideoExtension
+	case "remix":
+		return constant.TaskActionRemix
+	default:
+		return constant.TaskActionVideoGeneration
+	}
+}
+
+func applyOpenAIVideoCompatibilityRequest(
+	c *gin.Context,
+	info *relaycommon.RelayInfo,
+	adaptor channel.OpenAIVideoCompatibilityAdaptor,
+	request dto.VideoTaskCreateRequest,
+	compatibility dto.OpenAIVideoCompatibilityMetadata,
+) (dto.VideoTaskCreateRequest, *dto.TaskError) {
+	resolution := strings.ToLower(strings.TrimSpace(compatibility.ResolutionName))
+	capabilities := adaptor.OpenAIVideoCompatibility()
+	if capabilities.ModelBoundResolution {
+		request.Output.Resolution = nil
+		if resolution != "" {
+			mappedResolution := openAIVideoModelResolution(info.UpstreamModelName)
+			if mappedResolution == "" {
+				return request, service.TaskErrorWrapperLocal(
+					fmt.Errorf("resolution is selected by the exact mapped model SKU"),
+					"invalid_video_resolution", http.StatusBadRequest,
+				)
+			}
+			if resolution != mappedResolution {
+				return request, service.TaskErrorWrapperLocal(
+					fmt.Errorf("resolution_name %s conflicts with mapped model resolution %s", resolution, mappedResolution),
+					"invalid_video_resolution", http.StatusBadRequest,
+				)
+			}
+		}
+	} else if resolution != "" {
+		request.Output.Resolution = &resolution
+	}
+	c.Set(relaycommon.VideoTaskPublicRequestContextKey, request)
+	return request, nil
+}
+
+func openAIVideoModelResolution(modelName string) string {
+	parts := strings.FieldsFunc(strings.ToLower(strings.TrimSpace(modelName)), func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+	for index := len(parts) - 1; index >= 0; index-- {
+		switch parts[index] {
+		case "480p", "720p", "1080p":
+			return parts[index]
+		}
+	}
+	return ""
 }
 
 func applyAsyncImageUsagePrecharge(c *gin.Context, info *relaycommon.RelayInfo) {
@@ -857,6 +959,10 @@ func createDurableVideoTask(c *gin.Context, info *relaycommon.RelayInfo, platfor
 	task.PrivateData.BillingSource = info.BillingSource
 	task.PrivateData.SubscriptionId = info.SubscriptionId
 	task.PrivateData.TokenId = info.TokenId
+	if compatibility, ok := relaycommon.GetOpenAIVideoCompatibility(c); ok {
+		compatibilityCopy := compatibility
+		task.PrivateData.OpenAIVideoCompatibility = &compatibilityCopy
+	}
 	task.PrivateData.BillingContext = &model.TaskBillingContext{
 		ModelPrice:               info.PriceData.ModelPrice,
 		GroupRatio:               info.PriceData.GroupRatioInfo.GroupRatio,

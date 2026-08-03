@@ -276,6 +276,9 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			if req != nil {
 				modelRequest.Model = req.Model
 			}
+			if modelRequest.Model == "" {
+				modelRequest.Model = strings.TrimSpace(c.GetString(relaycommon.OpenAIVideoModelContextKey))
+			}
 		} else if c.Request.Method == http.MethodGet {
 			relayMode = relayconstant.RelayModeVideoFetchByID
 			shouldSelectChannel = false

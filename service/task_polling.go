@@ -38,7 +38,10 @@ type BatchTaskPollingAdaptor interface {
 	ParseBatchTaskResult(body []byte) (map[string]*relaycommon.TaskInfo, error)
 }
 
-const imageHandleMissingUpstreamIDGraceSeconds int64 = 60
+const (
+	imageHandleMissingUpstreamIDGraceSeconds int64 = 60
+	openAIVideoNotFoundGraceSeconds          int64 = 60
+)
 
 func resolveTaskPollingUpstreamID(task *model.Task, now int64) (upstreamID string, missing bool) {
 	if task == nil {
@@ -533,7 +536,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		taskId, resp.StatusCode, len(responseBody),
 	))
 	diagnosticBody := redactVideoResponseBody(responseBody)
-	if isTransientTaskPollHTTPStatus(resp.StatusCode) {
+	if isTransientTaskPollHTTPStatus(task, resp.StatusCode, time.Now().Unix()) {
 		logger.LogWarn(ctx, fmt.Sprintf(
 			"Task %s poll returned transient HTTP %d; retaining status %s, response: %s",
 			taskId, resp.StatusCode, task.Status, string(diagnosticBody),
@@ -604,7 +607,12 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	return nil
 }
 
-func isTransientTaskPollHTTPStatus(statusCode int) bool {
+func isTransientTaskPollHTTPStatus(task *model.Task, statusCode int, now int64) bool {
+	if statusCode == http.StatusNotFound && task != nil &&
+		task.PrivateData.OpenAIVideoCompatibility != nil &&
+		task.PrivateData.OpenAIVideoCompatibility.Version == dto.OpenAIVideoCompatibilityVersion {
+		return task.SubmitTime > 0 && now-task.SubmitTime < openAIVideoNotFoundGraceSeconds
+	}
 	return statusCode == http.StatusRequestTimeout ||
 		statusCode == http.StatusTooManyRequests ||
 		statusCode >= http.StatusInternalServerError

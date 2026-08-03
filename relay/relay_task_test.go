@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -99,6 +100,32 @@ func TestTaskModel2DtoExposesTruthfulProgressMetadata(t *testing.T) {
 	assert.False(t, legacy.ProgressKnown)
 	assert.Equal(t, "local_status", legacy.ProgressSource)
 	assert.Equal(t, "processing", legacy.Stage)
+}
+
+func TestApplyOpenAIVideoCompatibilityRequestValidatesMappedResolutionSKU(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	adaptor, ok := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAdobeVideo))).(channel.OpenAIVideoCompatibilityAdaptor)
+	require.True(t, ok)
+	originalResolution := "1080p"
+	request := dto.VideoTaskCreateRequest{Output: dto.VideoTaskOutputRequest{Resolution: &originalResolution}}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "adobe-seedance-2.0-fast-480p"}}
+
+	normalized, taskErr := applyOpenAIVideoCompatibilityRequest(c, info, adaptor, request, dto.OpenAIVideoCompatibilityMetadata{ResolutionName: "480p"})
+	require.Nil(t, taskErr)
+	assert.Nil(t, normalized.Output.Resolution, "model-bound providers must not receive a duplicate resolution field")
+
+	_, taskErr = applyOpenAIVideoCompatibilityRequest(c, info, adaptor, request, dto.OpenAIVideoCompatibilityMetadata{ResolutionName: "720p"})
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Equal(t, "invalid_video_resolution", taskErr.Code)
+
+	xaiAdaptor, ok := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeXai))).(channel.OpenAIVideoCompatibilityAdaptor)
+	require.True(t, ok)
+	normalized, taskErr = applyOpenAIVideoCompatibilityRequest(c, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "grok-imagine-video"}}, xaiAdaptor, dto.VideoTaskCreateRequest{}, dto.OpenAIVideoCompatibilityMetadata{ResolutionName: "720p"})
+	require.Nil(t, taskErr)
+	require.NotNil(t, normalized.Output.Resolution)
+	assert.Equal(t, "720p", *normalized.Output.Resolution)
 }
 
 func TestImageCredentialLeaseTTLUsesAsyncTaskTimeoutOnlyForAdobeDriver(t *testing.T) {

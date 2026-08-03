@@ -124,10 +124,11 @@ type TaskPrivateData struct {
 	ExecuteEventID          string          `json:"execute_event_id,omitempty"`
 	ImageExecuteResponse    json.RawMessage `json:"image_execute_response,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
-	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
-	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
-	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
-	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	BillingSource            string                                `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
+	SubscriptionId           int                                   `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
+	TokenId                  int                                   `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
+	BillingContext           *TaskBillingContext                   `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	OpenAIVideoCompatibility *dto.OpenAIVideoCompatibilityMetadata `json:"openai_video_compatibility,omitempty"`
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
@@ -232,7 +233,8 @@ func (p TaskPrivateData) IsZero() bool {
 		p.BillingSource == "" &&
 		p.SubscriptionId == 0 &&
 		p.TokenId == 0 &&
-		p.BillingContext == nil
+		p.BillingContext == nil &&
+		p.OpenAIVideoCompatibility == nil
 }
 
 // SyncTaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段
@@ -736,7 +738,11 @@ func mergeMonotonicTaskPrivateData(incoming *TaskPrivateData, stored TaskPrivate
 	}
 	if incoming.BillingContext == nil {
 		incoming.BillingContext = stored.BillingContext
-		return
+	}
+	if incoming.OpenAIVideoCompatibility == nil {
+		incoming.OpenAIVideoCompatibility = stored.OpenAIVideoCompatibility
+	} else if stored.OpenAIVideoCompatibility != nil && incoming.OpenAIVideoCompatibility.DeletedAt == 0 {
+		incoming.OpenAIVideoCompatibility.DeletedAt = stored.OpenAIVideoCompatibility.DeletedAt
 	}
 	if stored.BillingContext == nil {
 		return

@@ -87,6 +87,34 @@ type NormalizedVideoTaskAdaptor interface {
 	ValidateNormalizedVideoModel(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 }
 
+type OpenAIVideoCompatibility struct {
+	Generation           bool
+	Edit                 bool
+	Extension            bool
+	Remix                bool
+	ModelBoundResolution bool
+}
+
+func (c OpenAIVideoCompatibility) Supports(operation string) bool {
+	switch operation {
+	case "generation":
+		return c.Generation
+	case "edit":
+		return c.Edit
+	case "extension":
+		return c.Extension
+	case "remix":
+		return c.Remix
+	default:
+		return false
+	}
+}
+
+type OpenAIVideoCompatibilityAdaptor interface {
+	NormalizedVideoTaskAdaptor
+	OpenAIVideoCompatibility() OpenAIVideoCompatibility
+}
+
 type VideoBillingEstimate struct {
 	Seconds int
 	Basis   string

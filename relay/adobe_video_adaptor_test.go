@@ -59,3 +59,38 @@ func TestLeonardoVideoTaskAdaptorRegistration(t *testing.T) {
 	_, content := adaptor.(channel.VideoContentResolver)
 	assert.True(t, content)
 }
+
+func TestOpenAIVideoCompatibilityAdaptorMatrix(t *testing.T) {
+	tests := []struct {
+		name            string
+		channelType     int
+		generation      bool
+		edit            bool
+		extension       bool
+		remix           bool
+		modelResolution bool
+	}{
+		{name: "adobe", channelType: constant.ChannelTypeAdobeVideo, generation: true, modelResolution: true},
+		{name: "doubao", channelType: constant.ChannelTypeDoubaoVideo, generation: true},
+		{name: "volcengine", channelType: constant.ChannelTypeVolcEngine, generation: true},
+		{name: "xai", channelType: constant.ChannelTypeXai, generation: true, edit: true, extension: true},
+		{name: "higgsfield", channelType: constant.ChannelTypeHiggsfieldVideo, generation: true, modelResolution: true},
+		{name: "leonardo", channelType: constant.ChannelTypeLeonardoVideo, generation: true, modelResolution: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(test.channelType)))
+			compatibilityAdaptor, ok := adaptor.(channel.OpenAIVideoCompatibilityAdaptor)
+			require.True(t, ok)
+			capabilities := compatibilityAdaptor.OpenAIVideoCompatibility()
+			assert.Equal(t, test.generation, capabilities.Generation)
+			assert.Equal(t, test.edit, capabilities.Edit)
+			assert.Equal(t, test.extension, capabilities.Extension)
+			assert.Equal(t, test.remix, capabilities.Remix)
+			assert.Equal(t, test.modelResolution, capabilities.ModelBoundResolution)
+		})
+	}
+
+	_, ok := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling))).(channel.OpenAIVideoCompatibilityAdaptor)
+	assert.False(t, ok)
+}

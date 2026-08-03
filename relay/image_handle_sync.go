@@ -198,6 +198,9 @@ func canUseImageHandleSyncForRequest(info *relaycommon.RelayInfo, request *dto.I
 	if info == nil || request == nil {
 		return false
 	}
+	if isAdobeImageHandleBase64Request(info, request) {
+		return true
+	}
 	if imageHandleSyncIsGeminiRequest(info, request) {
 		return true
 	}
@@ -208,6 +211,17 @@ func canUseImageHandleSyncForRequest(info *relaycommon.RelayInfo, request *dto.I
 		return false
 	}
 	return true
+}
+
+func isAdobeImageHandleBase64Request(info *relaycommon.RelayInfo, request *dto.ImageRequest) bool {
+	if info == nil || request == nil || info.ChannelMeta == nil {
+		return false
+	}
+	if info.RelayMode != relayconstant.RelayModeImagesGenerations && info.RelayMode != relayconstant.RelayModeImagesEdits {
+		return false
+	}
+	return dto.NormalizeImageHandleExecutionDriver(info.ChannelOtherSettings.ImageHandleExecutionDriver) == dto.ImageHandleExecutionDriverAdobeAsyncImage &&
+		strings.EqualFold(strings.TrimSpace(request.ResponseFormat), "b64_json")
 }
 
 func imageHandleSyncChannelSupported(channelType int) bool {
@@ -351,8 +365,13 @@ func imageHandleSyncRawValuePresent(raw json.RawMessage) bool {
 func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (*dto.Usage, *types.NewAPIError) {
 	common.SetContextKey(c, constant.ContextKeyExecutionMode, "image_handle_sync")
 	if err := service.ValidateImageHandleExecutorConfig(); err != nil {
+		if isAdobeImageHandleBase64Request(info, &request) {
+			return nil, imageHandleSyncErrorResponse("image_handle_not_configured", "Adobe base64 image results require the image-handle service", http.StatusServiceUnavailable)
+		}
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
+	clientRequest := request
+	clientResultFormat := imageHandleSyncResultDataFormat(clientRequest)
 	clientTaskID := model.GenerateTaskID()
 	common.SetContextKey(c, constant.ContextKeyImageHandleSyncClientTaskID, clientTaskID)
 	action := constant.TaskActionImageGeneration
@@ -365,7 +384,7 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 	if err != nil {
 		return nil, newAPIErrorFromParamOverride(err)
 	}
-	task := initImageHandleSyncTask(info, request, clientTaskID, action)
+	task := initImageHandleSyncTask(info, clientRequest, clientTaskID, action)
 	lease := model.NewImageCredentialLease(task, operation, info.UpstreamModelName, 1800)
 	lease.TaskRecordID = 0
 	common.SetContextKey(c, constant.ContextKeyImageHandleSyncCredentialLeaseID, lease.LeaseID)
@@ -382,7 +401,7 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 		request = normalizedRequest
 	}
 
-	body, err := buildImageHandleSyncPayload(c, info, request, clientTaskID, lease.LeaseID, operation)
+	body, err := buildImageHandleSyncPayloadWithResultFormat(c, info, request, clientTaskID, lease.LeaseID, operation, clientResultFormat)
 	if err != nil {
 		_ = model.MarkImageCredentialLeaseFailed(lease.LeaseID)
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -420,7 +439,7 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 		_ = model.MarkImageCredentialLeaseFailed(lease.LeaseID)
 		return nil, imageHandleSyncErrorResponse("image_handle_sync_not_completed", "image-handle sync did not complete", http.StatusGatewayTimeout)
 	}
-	imageResp := imageHandleSyncToOpenAIResponse(syncResp, info, request)
+	imageResp := imageHandleSyncToOpenAIResponse(syncResp, info, clientRequest)
 	if len(imageResp.Data) == 0 {
 		_ = model.MarkImageCredentialLeaseFailed(lease.LeaseID)
 		return nil, imageHandleSyncErrorResponse("image_handle_empty_result", "image-handle sync returned empty result", http.StatusBadGateway)
@@ -441,7 +460,7 @@ func relayImageHandleSync(c *gin.Context, info *relaycommon.RelayInfo, request d
 		usage = &dto.Usage{UsageSource: "image_handle_sync"}
 	}
 	task.PrivateData.UpstreamTaskID = firstNonEmpty(syncResp.ProviderTaskID, syncResp.TaskID)
-	resultFormat := imageHandleSyncResultDataFormat(request)
+	resultFormat := clientResultFormat
 	if resultFormat == imageHandleResultFormatURL && strings.TrimSpace(imageResp.Data[0].Url) != "" {
 		task.PrivateData.ResultURL = imageResp.Data[0].Url
 	}
@@ -496,6 +515,10 @@ func applyImageHandleSyncParamOverride(info *relaycommon.RelayInfo, request dto.
 }
 
 func buildImageHandleSyncPayload(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest, clientTaskID string, leaseID string, operation string) ([]byte, error) {
+	return buildImageHandleSyncPayloadWithResultFormat(c, info, request, clientTaskID, leaseID, operation, imageHandleSyncResultDataFormat(request))
+}
+
+func buildImageHandleSyncPayloadWithResultFormat(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest, clientTaskID string, leaseID string, operation string, resultDataFormat string) ([]byte, error) {
 	metadata := map[string]interface{}{
 		"tenant_id":      fmt.Sprintf("user_%d", info.UserId),
 		"channel_id":     fmt.Sprintf("channel_%d", info.ChannelId),
@@ -516,7 +539,7 @@ func buildImageHandleSyncPayload(c *gin.Context, info *relaycommon.RelayInfo, re
 		ClientTaskID:     clientTaskID,
 		Model:            firstNonEmpty(info.OriginModelName, request.Model),
 		Operation:        operation,
-		ResultDataFormat: imageHandleSyncResultDataFormat(request),
+		ResultDataFormat: resultDataFormat,
 		Input:            imageHandleSyncInput{Text: request.Prompt, Images: images, Mask: mask},
 		Parameters:       parameters,
 		ProviderOptions:  imageHandleSyncProviderOptions(request, info.OriginModelName, info.UpstreamModelName),

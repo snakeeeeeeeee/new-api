@@ -1068,6 +1068,10 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 		writeVideoTaskAPIError(c, taskErr.StatusCode, taskErr.Code, taskErr.Message, "")
 		return
 	}
+	if _, compatibility := relaycommon.GetOpenAIVideoCompatibility(c); compatibility {
+		writeVideoTaskAPIError(c, taskErr.StatusCode, taskErr.Code, taskErr.Message, "")
+		return
+	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}

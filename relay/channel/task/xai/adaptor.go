@@ -59,6 +59,10 @@ type TaskAdaptor struct {
 	baseURL string
 }
 
+func (a *TaskAdaptor) OpenAIVideoCompatibility() channel.OpenAIVideoCompatibility {
+	return channel.OpenAIVideoCompatibility{Generation: true, Edit: true, Extension: true}
+}
+
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	if info == nil || info.ChannelMeta == nil {
 		return

@@ -170,7 +170,7 @@ func ResolveImageCredentialLease(c *gin.Context) {
 	baseURL := resolveChannelBaseURL(channel)
 	provider := "openai_compatible"
 	requestFormat := "openai_images"
-	executionDriver := dto.ImageHandleExecutionDriverLegacySync
+	executionDriver := dto.NormalizeImageHandleExecutionDriver(channel.GetOtherSettings().ImageHandleExecutionDriver)
 	if task != nil {
 		executionDriver = dto.NormalizeImageHandleExecutionDriver(task.PrivateData.ImageHandleExecutionDriver)
 	}

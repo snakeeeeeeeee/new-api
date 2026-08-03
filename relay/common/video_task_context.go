@@ -12,6 +12,8 @@ const (
 	VideoTaskPublicRequestJSONContextKey = "video_task_public_request_json"
 	VideoTaskFingerprintContextKey       = "video_task_request_fingerprint"
 	VideoTaskIdempotencyKeyContextKey    = "video_task_idempotency_key"
+	OpenAIVideoCompatibilityContextKey   = "openai_video_compatibility"
+	OpenAIVideoModelContextKey           = "openai_video_model"
 )
 
 func GetVideoTaskPublicRequest(c *gin.Context) (dto.VideoTaskCreateRequest, error) {
@@ -27,4 +29,16 @@ func GetVideoTaskPublicRequest(c *gin.Context) (dto.VideoTaskCreateRequest, erro
 		return dto.VideoTaskCreateRequest{}, fmt.Errorf("normalized video task request is invalid")
 	}
 	return request, nil
+}
+
+func GetOpenAIVideoCompatibility(c *gin.Context) (dto.OpenAIVideoCompatibilityMetadata, bool) {
+	if c == nil {
+		return dto.OpenAIVideoCompatibilityMetadata{}, false
+	}
+	value, exists := c.Get(OpenAIVideoCompatibilityContextKey)
+	if !exists {
+		return dto.OpenAIVideoCompatibilityMetadata{}, false
+	}
+	metadata, ok := value.(dto.OpenAIVideoCompatibilityMetadata)
+	return metadata, ok && metadata.Version != ""
 }

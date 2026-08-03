@@ -471,16 +471,28 @@ func replayVideoTaskRequest(c *gin.Context, idempotencyKey, fingerprint string) 
 		c.Abort()
 		return true
 	}
-	publicTask, err := service.BuildPublicVideoTask(task)
-	if err != nil {
+	var publicTask any
+	var buildErr error
+	if _, compatibility := relaycommon.GetOpenAIVideoCompatibility(c); compatibility {
+		publicTask, buildErr = service.BuildOpenAIVideoCompatibilityTask(task)
+	} else {
+		publicTask, buildErr = service.BuildPublicVideoTask(task)
+	}
+	if buildErr != nil {
 		writeVideoTaskAPIError(c, http.StatusInternalServerError, "server_error", "Failed to replay task", "")
 		c.Abort()
 		return true
 	}
 	c.Header("Idempotent-Replayed", "true")
-	c.Header("Location", "/v1/video/tasks/"+task.TaskID)
+	status := http.StatusAccepted
+	location := "/v1/video/tasks/" + task.TaskID
+	if _, compatibility := relaycommon.GetOpenAIVideoCompatibility(c); compatibility {
+		status = http.StatusOK
+		location = "/v1/videos/" + task.TaskID
+	}
+	c.Header("Location", location)
 	c.Header("Retry-After", "2")
-	c.JSON(http.StatusAccepted, publicTask)
+	c.JSON(status, publicTask)
 	c.Abort()
 	return true
 }

@@ -35,6 +35,10 @@ type TaskAdaptor struct {
 	adobevideo.TaskAdaptor
 }
 
+func (a *TaskAdaptor) OpenAIVideoCompatibility() channel.OpenAIVideoCompatibility {
+	return channel.OpenAIVideoCompatibility{Generation: true, ModelBoundResolution: true}
+}
+
 var (
 	_ channel.TaskAdaptor                = (*TaskAdaptor)(nil)
 	_ channel.NormalizedVideoTaskAdaptor = (*TaskAdaptor)(nil)

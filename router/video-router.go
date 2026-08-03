@@ -24,7 +24,7 @@ func SetVideoRouter(router *gin.Engine) {
 	videoProxyRouter.Use(middleware.RouteTag("relay"))
 	videoProxyRouter.Use(middleware.TokenOrUserAuth())
 	{
-		videoProxyRouter.GET("/videos/:task_id/content", controller.VideoProxy)
+		videoProxyRouter.GET("/videos/:task_id/content", controller.OpenAIVideoContent)
 		videoProxyRouter.GET("/assets/:asset_id/content", controller.VideoAssetContent)
 	}
 
@@ -62,11 +62,35 @@ func SetVideoRouter(router *gin.Engine) {
 	{
 		videoCreateRouter.POST("/video/tasks", controller.PrepareVideoTaskRequest, controller.RelayTask)
 		videoCreateRouter.POST("/video/generations", controller.RelayTask)
-		videoCreateRouter.POST("/videos/:video_id/remix", controller.RelayTask)
 		videoCreateRouter.POST("/videos/generations", controller.RelayTask)
-		videoCreateRouter.POST("/videos/edits", controller.RelayTask)
-		videoCreateRouter.POST("/videos/extensions", controller.RelayTask)
-		videoCreateRouter.POST("/videos", controller.RelayTask)
+	}
+
+	openAIVideoCreateRouter := router.Group("/v1")
+	openAIVideoCreateRouter.Use(middleware.RouteTag("relay"))
+	openAIVideoCreateRouter.Use(middleware.TokenAuth())
+	openAIVideoCreateHandlers := []gin.HandlerFunc{
+		controller.CaptureOpenAIVideoRequest,
+		middleware.Distribute(),
+		controller.PrepareOpenAIVideoCompatibility,
+		controller.RelayTask,
+	}
+	{
+		openAIVideoCreateRouter.POST("/videos", openAIVideoCreateHandlers...)
+		openAIVideoCreateRouter.POST("/videos/edits", openAIVideoCreateHandlers...)
+		openAIVideoCreateRouter.POST("/videos/extensions", openAIVideoCreateHandlers...)
+		openAIVideoCreateRouter.POST("/videos/:video_id/remix", openAIVideoCreateHandlers...)
+	}
+
+	openAIVideoResourceRouter := router.Group("/v1")
+	openAIVideoResourceRouter.Use(middleware.RouteTag("relay"))
+	openAIVideoResourceRouter.Use(middleware.AssetOrTokenAuth())
+	{
+		openAIVideoResourceRouter.GET("/videos", controller.ListOpenAIVideos)
+		openAIVideoResourceRouter.GET("/videos/:task_id", controller.GetOpenAIVideo)
+		openAIVideoResourceRouter.DELETE("/videos/:task_id", controller.DeleteOpenAIVideo)
+		openAIVideoResourceRouter.POST("/videos/characters", controller.OpenAIVideoCharacterCapability)
+		openAIVideoResourceRouter.GET("/videos/characters/:character_id", controller.OpenAIVideoCharacterCapability)
+		openAIVideoResourceRouter.DELETE("/videos/characters/:character_id", controller.OpenAIVideoCharacterCapability)
 	}
 
 	videoQueryRouter := router.Group("/v1")
@@ -74,7 +98,6 @@ func SetVideoRouter(router *gin.Engine) {
 	videoQueryRouter.Use(middleware.AssetOrTokenAuth(), middleware.Distribute())
 	{
 		videoQueryRouter.GET("/video/generations/:task_id", controller.RelayTaskFetch)
-		videoQueryRouter.GET("/videos/:task_id", controller.RelayTaskFetch)
 	}
 
 	// openai compatible API video routes

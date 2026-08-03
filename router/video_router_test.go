@@ -19,10 +19,17 @@ func TestXaiCompatibleVideoRoutesRegistered(t *testing.T) {
 	}
 
 	assert.True(t, routes[http.MethodPost+" /v1/videos/generations"])
+	assert.True(t, routes[http.MethodPost+" /v1/videos"])
+	assert.True(t, routes[http.MethodGet+" /v1/videos"])
 	assert.True(t, routes[http.MethodPost+" /v1/videos/edits"])
 	assert.True(t, routes[http.MethodPost+" /v1/videos/extensions"])
+	assert.True(t, routes[http.MethodPost+" /v1/videos/:video_id/remix"])
 	assert.True(t, routes[http.MethodGet+" /v1/videos/:task_id"])
+	assert.True(t, routes[http.MethodDelete+" /v1/videos/:task_id"])
 	assert.True(t, routes[http.MethodGet+" /v1/videos/:task_id/content"])
+	assert.True(t, routes[http.MethodPost+" /v1/videos/characters"])
+	assert.True(t, routes[http.MethodGet+" /v1/videos/characters/:character_id"])
+	assert.True(t, routes[http.MethodDelete+" /v1/videos/characters/:character_id"])
 	assert.True(t, routes[http.MethodPost+" /v1/video/tasks"])
 	assert.True(t, routes[http.MethodGet+" /v1/video/tasks"])
 	assert.True(t, routes[http.MethodGet+" /v1/video/tasks/:task_id"])

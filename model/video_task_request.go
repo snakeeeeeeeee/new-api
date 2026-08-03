@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type VideoTaskRequest struct {
@@ -50,6 +51,7 @@ type VideoTaskListQuery struct {
 	CreatedAfter      int64
 	CreatedBefore     int64
 	AfterTaskID       string
+	Order             string
 	Limit             int
 }
 
@@ -99,10 +101,18 @@ func ListPublicVideoTasks(userID int, params VideoTaskListQuery) ([]*Task, bool,
 		if err := DB.Where("user_id = ? AND task_id = ?", userID, after).First(&cursor).Error; err != nil {
 			return nil, false, err
 		}
-		query = query.Where("tasks.id < ?", cursor.TaskRecordID)
+		if strings.EqualFold(strings.TrimSpace(params.Order), "asc") {
+			query = query.Where("tasks.id > ?", cursor.TaskRecordID)
+		} else {
+			query = query.Where("tasks.id < ?", cursor.TaskRecordID)
+		}
+	}
+	order := "tasks.id DESC"
+	if strings.EqualFold(strings.TrimSpace(params.Order), "asc") {
+		order = "tasks.id ASC"
 	}
 	var tasks []*Task
-	if err := query.Order("tasks.id DESC").Limit(limit + 1).Find(&tasks).Error; err != nil {
+	if err := query.Order(order).Limit(limit + 1).Find(&tasks).Error; err != nil {
 		return nil, false, err
 	}
 	hasMore := len(tasks) > limit
@@ -110,6 +120,42 @@ func ListPublicVideoTasks(userID int, params VideoTaskListQuery) ([]*Task, bool,
 		tasks = tasks[:limit]
 	}
 	return tasks, hasMore, nil
+}
+
+func TombstoneOpenAIVideoTask(userID int, taskID string, deletedAt int64) (*Task, bool, bool, error) {
+	var task Task
+	exists := false
+	deleted := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		query := visibleTaskQuery(tx.Model(&Task{})).
+			Joins("JOIN video_task_requests ON video_task_requests.task_record_id = tasks.id").
+			Where("tasks.user_id = ? AND tasks.task_id = ?", userID, strings.TrimSpace(taskID))
+		if err := query.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return nil
+			}
+			return err
+		}
+		exists = true
+		compatibility := task.PrivateData.OpenAIVideoCompatibility
+		if compatibility == nil || (task.Status != TaskStatusSuccess && task.Status != TaskStatusFailure) {
+			return nil
+		}
+		if compatibility.DeletedAt == 0 {
+			cloned := *compatibility
+			cloned.DeletedAt = deletedAt
+			task.PrivateData.OpenAIVideoCompatibility = &cloned
+			if err := tx.Model(&Task{}).Where("id = ?", task.ID).Updates(map[string]any{
+				"private_data": task.PrivateData,
+				"updated_at":   deletedAt,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		deleted = true
+		return nil
+	})
+	return &task, exists, deleted, err
 }
 
 func GetPublicVideoTasksByIDs(userID int, taskIDs []string) ([]*Task, error) {
