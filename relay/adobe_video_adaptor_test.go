@@ -51,6 +51,7 @@ func TestLeonardoVideoTaskAdaptorRegistration(t *testing.T) {
 	assert.Equal(t, []string{
 		"seedance-2.0-fast-480p", "seedance-2.0-fast-720p",
 		"seedance-2.0-480p", "seedance-2.0-720p", "seedance-2.0-1080p",
+		"minimax-h3-1440p",
 	}, adaptor.GetModelList())
 	_, normalized := adaptor.(channel.NormalizedVideoTaskAdaptor)
 	assert.True(t, normalized)

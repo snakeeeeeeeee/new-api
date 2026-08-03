@@ -15,6 +15,7 @@ var ModelList = []string{
 	"seedance-2.0-480p",
 	"seedance-2.0-720p",
 	"seedance-2.0-1080p",
+	"minimax-h3-1440p",
 }
 
 var supportedModels = map[string]struct{}{
@@ -23,6 +24,7 @@ var supportedModels = map[string]struct{}{
 	"seedance-2.0-480p":      {},
 	"seedance-2.0-720p":      {},
 	"seedance-2.0-1080p":     {},
+	"minimax-h3-1440p":       {},
 }
 
 var supportedAspectRatios = map[string]struct{}{
@@ -45,6 +47,7 @@ type normalizedRequest struct {
 	Duration        int
 	AspectRatio     string
 	GenerateAudio   *bool
+	ReferenceMode   string
 	ReferenceImages []referenceMedia
 	ReferenceVideos []referenceMedia
 }
@@ -56,7 +59,8 @@ type upstreamRequest struct {
 	AspectRatio     string           `json:"aspect_ratio"`
 	GenerateAudio   *bool            `json:"generate_audio,omitempty"`
 	Public          bool             `json:"public"`
-	Seed            int              `json:"seed"`
+	Seed            *int             `json:"seed,omitempty"`
+	ReferenceMode   string           `json:"reference_mode,omitempty"`
 	ImageReferences []referenceMedia `json:"image_references,omitempty"`
 	VideoReferences []referenceMedia `json:"video_references,omitempty"`
 }

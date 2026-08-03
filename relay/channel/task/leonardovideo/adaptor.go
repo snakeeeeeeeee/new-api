@@ -80,9 +80,15 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	if request.Output.Duration == nil {
 		return requestError("duration is required", "video_duration_required", http.StatusBadRequest)
 	}
+	modelName := providerModel(info)
+	isH3 := isMiniMaxH3Model(modelName) || isMiniMaxH3Model(request.Model)
 	duration := *request.Output.Duration
-	if duration < 4 || duration > 15 {
-		return requestError("duration must be an integer between 4 and 15 seconds", "invalid_video_duration", http.StatusBadRequest)
+	minimumDuration := 4
+	if isH3 {
+		minimumDuration = 5
+	}
+	if duration < minimumDuration || duration > 15 {
+		return requestError(fmt.Sprintf("duration must be an integer between %d and 15 seconds", minimumDuration), "invalid_video_duration", http.StatusBadRequest)
 	}
 	if request.Output.Resolution != nil {
 		return requestError("resolution is selected by the exact model mapping", "invalid_video_parameter", http.StatusBadRequest)
@@ -119,24 +125,48 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		images = append(images, *request.Input.Image)
 	}
 	images = append(images, request.Input.ReferenceImages...)
-	if len(images) > 4 {
-		return requestError("at most 4 image references are supported", "reference_image_limit_exceeded", http.StatusBadRequest)
-	}
-	if len(request.Input.ReferenceVideos) > 3 {
-		return requestError("at most 3 video references are supported", "reference_video_limit_exceeded", http.StatusBadRequest)
-	}
-	if len(images)+len(request.Input.ReferenceVideos) > 7 {
-		return requestError("at most 7 image and video references are supported", "reference_limit_exceeded", http.StatusBadRequest)
-	}
 	if len(request.Input.ReferenceAudios) > 0 {
 		return requestError("audio references are not supported", "unsupported_reference_audio", http.StatusBadRequest)
 	}
 	mode := strings.ToLower(strings.TrimSpace(request.Input.ReferenceMode))
-	if mode != "" && mode != "media" {
-		return requestError("reference_mode must be media when provided", "unsupported_reference_mode", http.StatusBadRequest)
-	}
-	if mode == "" && (len(images) > 0 || len(request.Input.ReferenceVideos) > 0) {
-		return requestError("reference_mode must be media when references are provided", "unsupported_reference_mode", http.StatusBadRequest)
+	if isH3 {
+		if len(request.Input.ReferenceVideos) > 0 {
+			return requestError("MiniMax H3 does not support video references", "unsupported_reference_video", http.StatusBadRequest)
+		}
+		if len(images) > 5 {
+			return requestError("at most 5 image references are supported", "reference_image_limit_exceeded", http.StatusBadRequest)
+		}
+		if mode != "" && mode != "frame" && mode != "images" {
+			return requestError("reference_mode must be frame or images for MiniMax H3", "unsupported_reference_mode", http.StatusBadRequest)
+		}
+		if len(images) > 0 && mode == "" {
+			return requestError("reference_mode must be frame or images when H3 references are provided", "unsupported_reference_mode", http.StatusBadRequest)
+		}
+		if mode == "frame" && len(images) == 0 {
+			return requestError("MiniMax H3 frame mode requires a start frame", "invalid_video_parameter", http.StatusBadRequest)
+		}
+		if mode == "frame" && len(images) > 2 {
+			return requestError("MiniMax H3 frame mode accepts at most 2 images", "reference_image_limit_exceeded", http.StatusBadRequest)
+		}
+		if mode == "images" && len(images) == 0 {
+			return requestError("MiniMax H3 images mode requires at least 1 image", "invalid_video_parameter", http.StatusBadRequest)
+		}
+	} else {
+		if len(images) > 4 {
+			return requestError("at most 4 image references are supported", "reference_image_limit_exceeded", http.StatusBadRequest)
+		}
+		if len(request.Input.ReferenceVideos) > 3 {
+			return requestError("at most 3 video references are supported", "reference_video_limit_exceeded", http.StatusBadRequest)
+		}
+		if len(images)+len(request.Input.ReferenceVideos) > 7 {
+			return requestError("at most 7 image and video references are supported", "reference_limit_exceeded", http.StatusBadRequest)
+		}
+		if mode != "" && mode != "media" {
+			return requestError("reference_mode must be media when provided", "unsupported_reference_mode", http.StatusBadRequest)
+		}
+		if mode == "" && (len(images) > 0 || len(request.Input.ReferenceVideos) > 0) {
+			return requestError("reference_mode must be media when references are provided", "unsupported_reference_mode", http.StatusBadRequest)
+		}
 	}
 
 	names := make(map[string]struct{}, len(images)+len(request.Input.ReferenceVideos))
@@ -172,7 +202,7 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		return referenceMedia{URL: value, Name: name}, nil
 	}
 
-	payload := &normalizedRequest{Prompt: prompt, Duration: duration, AspectRatio: aspectRatio, GenerateAudio: generateAudio}
+	payload := &normalizedRequest{Prompt: prompt, Duration: duration, AspectRatio: aspectRatio, GenerateAudio: generateAudio, ReferenceMode: mode}
 	for _, source := range images {
 		item, taskErr := normalize(source, "image")
 		if taskErr != nil {
@@ -203,8 +233,12 @@ func (a *TaskAdaptor) ValidateNormalizedVideoModel(c *gin.Context, info *relayco
 	if err != nil {
 		return requestError(err.Error(), "invalid_request", http.StatusBadRequest)
 	}
-	if payload.Duration < 4 || payload.Duration > 15 {
-		return requestError("duration must be an integer between 4 and 15 seconds", "invalid_video_duration", http.StatusBadRequest)
+	minimumDuration := 4
+	if modelName == "minimax-h3-1440p" {
+		minimumDuration = 5
+	}
+	if payload.Duration < minimumDuration || payload.Duration > 15 {
+		return requestError(fmt.Sprintf("duration must be an integer between %d and 15 seconds", minimumDuration), "invalid_video_duration", http.StatusBadRequest)
 	}
 	if _, ok := supportedAspectRatios[payload.AspectRatio]; !ok {
 		return requestError(fmt.Sprintf("aspect_ratio %q is not supported", payload.AspectRatio), "invalid_video_aspect_ratio", http.StatusBadRequest)
@@ -253,11 +287,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	copy(images, payload.ReferenceImages)
 	videos := make([]referenceMedia, len(payload.ReferenceVideos))
 	copy(videos, payload.ReferenceVideos)
-	body, err := common.Marshal(upstreamRequest{
+	requestPayload := upstreamRequest{
 		Model: modelName, Prompt: payload.Prompt, Duration: payload.Duration,
 		AspectRatio: payload.AspectRatio, GenerateAudio: payload.GenerateAudio,
-		Public: false, Seed: -1, ImageReferences: images, VideoReferences: videos,
-	})
+		Public: false, ImageReferences: images, VideoReferences: videos,
+	}
+	if modelName == "minimax-h3-1440p" {
+		requestPayload.ReferenceMode = payload.ReferenceMode
+	} else {
+		seed := -1
+		requestPayload.Seed = &seed
+	}
+	body, err := common.Marshal(requestPayload)
 	if err != nil {
 		return nil, err
 	}
@@ -467,6 +508,15 @@ func providerModel(info *relaycommon.RelayInfo) string {
 	return ""
 }
 
+func isMiniMaxH3Model(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "minimax-h3-1440p", "leonardo-minimax-h3-1440p":
+		return true
+	default:
+		return false
+	}
+}
+
 func requestError(message, code string, status int) *dto.TaskError {
 	return service.TaskErrorWrapperLocal(fmt.Errorf("%s", message), code, status)
 }
@@ -479,7 +529,7 @@ func responseErrorMessage(response *responseError) string {
 	message := strings.TrimSpace(response.Message)
 	if message != "" {
 		switch code {
-		case "content_moderated", "invalid_reference_media_duration", "reference_media_duration_exceeded":
+		case "content_moderated", "invalid_reference_media_duration", "reference_media_duration_exceeded", "private_generation_unavailable":
 			return message
 		}
 	}

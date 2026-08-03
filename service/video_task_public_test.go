@@ -275,3 +275,24 @@ func TestBuildPublicVideoTaskProjectsModerationAsRetryable(t *testing.T) {
 	assert.Equal(t, task.FailReason, public.Error.Message)
 	assert.True(t, public.Error.Retryable)
 }
+
+func TestBuildPublicVideoTaskProjectsPrivateEntitlementError(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_private_generation_unavailable",
+		Status:     model.TaskStatusFailure,
+		FailReason: "Private generation is unavailable for the selected account",
+	}
+	task.SetData(map[string]any{
+		"error": map[string]any{
+			"code":    "private_generation_unavailable",
+			"message": task.FailReason,
+		},
+	})
+
+	public := buildPublicVideoTask(task, nil, nil)
+
+	require.NotNil(t, public.Error)
+	assert.Equal(t, "private_generation_unavailable", public.Error.Code)
+	assert.Equal(t, task.FailReason, public.Error.Message)
+	assert.False(t, public.Error.Retryable)
+}

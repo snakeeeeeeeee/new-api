@@ -74,6 +74,8 @@ func TestLeonardoVideoDiscoveryFiltersToSupportedSKUs(t *testing.T) {
             {"id":"seedance-2.0-720p"},
             {"id":"seedance-2.0-1080p"},
             {"id":"seedance-2.0-2160p"},
+			{"id":"minimax-h3"},
+			{"id":"minimax-h3-1440p"},
             {"id":"future-model"}
         ]}`))
 	}))
@@ -86,6 +88,7 @@ func TestLeonardoVideoDiscoveryFiltersToSupportedSKUs(t *testing.T) {
 	assert.Equal(t, []string{
 		"seedance-2.0-fast-480p", "seedance-2.0-fast-720p",
 		"seedance-2.0-480p", "seedance-2.0-720p", "seedance-2.0-1080p",
+		"minimax-h3-1440p",
 	}, models)
 }
 

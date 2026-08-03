@@ -236,6 +236,8 @@ func publicVideoTaskErrorCode(diagnostic videoTaskErrorDiagnostic) string {
 		return "invalid_reference_media_duration"
 	case "reference_media_duration_exceeded":
 		return "reference_media_duration_exceeded"
+	case "private_generation_unavailable":
+		return "private_generation_unavailable"
 	case "cancelled_by_admin", "cancelled":
 		return "cancelled"
 	case "upstream_status_unavailable", "upstream_unavailable":
@@ -284,7 +286,7 @@ func publicVideoTaskErrorMessage(task *model.Task, code string) string {
 		return "Video task completed without a task reference"
 	}
 	switch code {
-	case "content_moderated", "invalid_reference_media_duration", "reference_media_duration_exceeded":
+	case "content_moderated", "invalid_reference_media_duration", "reference_media_duration_exceeded", "private_generation_unavailable":
 		if reason != "" {
 			return reason
 		}
@@ -347,6 +349,7 @@ func publicVideoUpstreamErrorCode(code string) string {
 		"upstream_status_unavailable", "retry_exhausted",
 		"submission_unknown", "content_moderated",
 		"invalid_reference_media_duration", "reference_media_duration_exceeded",
+		"private_generation_unavailable",
 		"cancelled_by_admin", "upstream_authentication_error", "authentication_error", "auth_invalid":
 		return strings.ToLower(strings.TrimSpace(code))
 	default:

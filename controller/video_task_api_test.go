@@ -266,13 +266,20 @@ func TestValidateVideoTaskImagesReferences(t *testing.T) {
 	assert.Empty(t, param)
 	assert.Empty(t, message)
 
-	request.Input.ReferenceImages = append(
-		request.Input.ReferenceImages,
+	request.Input.ReferenceImages = append(request.Input.ReferenceImages,
 		dto.VideoTaskSource{URL: "https://example.com/d.png"},
+		dto.VideoTaskSource{URL: "https://example.com/e.png"},
+	)
+	param, message = validateVideoTaskCreateRequest(&request)
+	assert.Empty(t, param)
+	assert.Empty(t, message)
+
+	request.Input.ReferenceImages = append(request.Input.ReferenceImages,
+		dto.VideoTaskSource{URL: "https://example.com/f.png"},
 	)
 	param, message = validateVideoTaskCreateRequest(&request)
 	assert.Equal(t, "input.reference_images", param)
-	assert.Contains(t, message, "at most 3")
+	assert.Contains(t, message, "at most 5")
 
 	request.Input.ReferenceImages = request.Input.ReferenceImages[:3]
 	request.Input.ReferenceAudios = []dto.VideoTaskSource{{URL: "https://example.com/a.mp3"}}

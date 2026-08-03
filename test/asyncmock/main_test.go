@@ -380,6 +380,65 @@ func TestLeonardoVideoPayloadContractAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestLeonardoMiniMaxH3PayloadContract(t *testing.T) {
+	state := newServerState()
+	server := httptest.NewServer(state.handler())
+	defer server.Close()
+
+	audio := true
+	public := false
+	payload := videoTaskRequest{
+		Model: "minimax-h3-1440p", Prompt: "transition between frames", Duration: 5,
+		AspectRatio: "16:9", GenerateAudio: &audio, Public: &public, ReferenceMode: "frame",
+		ImageReferences: []videoReferenceMedia{
+			{URL: "https://media.example.com/start.png"},
+			{URL: "http://media.example.com/end.png"},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/v1/videos", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer mock-key")
+	request.Header.Set("Idempotency-Key", "h3-frame-1")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusAccepted)
+	}
+	metrics := state.snapshot()
+	if metrics.LastVideoSubmit == nil || metrics.LastVideoSubmit.Seed != nil ||
+		metrics.LastVideoSubmit.ReferenceMode != "frame" ||
+		len(metrics.LastVideoSubmit.ImageReferences) != 2 {
+		t.Fatalf("unexpected H3 payload: %+v", metrics.LastVideoSubmit)
+	}
+
+	payload.ImageReferences = nil
+	body, err = json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err = http.NewRequest(http.MethodPost, server.URL+"/v1/videos", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty frame status = %d, want %d", response.StatusCode, http.StatusBadRequest)
+	}
+}
+
 func TestLeonardoMockSupportsModerationFailure(t *testing.T) {
 	state := newServerState()
 	terminal := "failed"

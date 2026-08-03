@@ -30,6 +30,7 @@ var defaultVendorRules = []defaultVendorRule{
 	{pattern: "glm-", vendor: "智谱"},
 	{pattern: "qwen", vendor: "阿里巴巴"},
 	{pattern: "deepseek", vendor: "DeepSeek"},
+	{pattern: "minimax", vendor: "MiniMax"},
 	{pattern: "abab", vendor: "MiniMax"},
 	{pattern: "ernie", vendor: "百度"},
 	{pattern: "spark", vendor: "讯飞"},

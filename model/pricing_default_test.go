@@ -17,6 +17,7 @@ func TestDefaultVendorRulesClassifyWrappedVideoModels(t *testing.T) {
 		{model: "adobe-seedance-2.0-fast-720p", vendor: "即梦"},
 		{model: "adobe-kling-3.0-720p", vendor: "快手"},
 		{model: "adobe-kling-o3-1080p", vendor: "快手"},
+		{model: "leonardo-minimax-h3-1440p", vendor: "MiniMax"},
 	}
 
 	for _, test := range tests {

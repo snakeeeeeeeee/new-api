@@ -2,6 +2,7 @@ package leonardovideo
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -46,8 +47,102 @@ func TestLeonardoModelListAndRegistrationContract(t *testing.T) {
 	assert.Equal(t, []string{
 		"seedance-2.0-fast-480p", "seedance-2.0-fast-720p",
 		"seedance-2.0-480p", "seedance-2.0-720p", "seedance-2.0-1080p",
+		"minimax-h3-1440p",
 	}, (&TaskAdaptor{}).GetModelList())
 	assert.NotContains(t, ModelList, "seedance-2.0-2160p")
+}
+
+func TestLeonardoMiniMaxH3FramePayload(t *testing.T) {
+	duration := 5
+	ratio := "21:9"
+	request := leonardoRequest("leonardo-minimax-h3-1440p", duration)
+	request.Output.AspectRatio = &ratio
+	request.Input.ReferenceMode = "frame"
+	request.Input.Image = &dto.VideoTaskSource{URL: "https://example.com/start.png", Name: "start"}
+	request.Input.ReferenceImages = []dto.VideoTaskSource{{URL: "http://example.com/end.png", Name: "end"}}
+
+	info := leonardoInfo("leonardo-minimax-h3-1440p")
+	c := leonardoVideoTestContext()
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, request))
+	info.UpstreamModelName = "minimax-h3-1440p"
+	require.Nil(t, adaptor.ValidateNormalizedVideoModel(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "minimax-h3-1440p", payload["model"])
+	assert.Equal(t, "frame", payload["reference_mode"])
+	assert.Equal(t, false, payload["public"])
+	assert.Equal(t, true, payload["generate_audio"])
+	assert.NotContains(t, payload, "seed")
+	assert.NotContains(t, payload, "resolution")
+	assert.Len(t, payload["image_references"], 2)
+	assert.NotContains(t, payload, "video_references")
+}
+
+func TestLeonardoMiniMaxH3ReferenceRules(t *testing.T) {
+	makeImages := func(count int) []dto.VideoTaskSource {
+		images := make([]dto.VideoTaskSource, count)
+		for index := range images {
+			images[index] = dto.VideoTaskSource{URL: fmt.Sprintf("https://example.com/%d.png", index)}
+		}
+		return images
+	}
+	tests := []struct {
+		name   string
+		mode   string
+		images int
+		videos int
+		code   string
+	}{
+		{name: "frame start", mode: "frame", images: 1},
+		{name: "frame start and end", mode: "frame", images: 2},
+		{name: "five image references", mode: "images", images: 5},
+		{name: "missing mode", images: 1, code: "unsupported_reference_mode"},
+		{name: "empty frame mode", mode: "frame", code: "invalid_video_parameter"},
+		{name: "too many frame images", mode: "frame", images: 3, code: "reference_image_limit_exceeded"},
+		{name: "empty images mode", mode: "images", code: "invalid_video_parameter"},
+		{name: "too many images", mode: "images", images: 6, code: "reference_image_limit_exceeded"},
+		{name: "video reference", mode: "frame", images: 1, videos: 1, code: "unsupported_reference_video"},
+		{name: "media mode", mode: "media", images: 1, code: "unsupported_reference_mode"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := leonardoRequest("leonardo-minimax-h3-1440p", 5)
+			request.Input.ReferenceMode = test.mode
+			request.Input.ReferenceImages = makeImages(test.images)
+			if test.videos > 0 {
+				request.Input.ReferenceVideos = []dto.VideoTaskSource{{URL: "https://example.com/video.mp4"}}
+			}
+			taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
+				leonardoVideoTestContext(), leonardoInfo("minimax-h3-1440p"), request,
+			)
+			if test.code == "" {
+				require.Nil(t, taskErr)
+				return
+			}
+			require.NotNil(t, taskErr)
+			assert.Equal(t, test.code, taskErr.Code)
+		})
+	}
+}
+
+func TestLeonardoMiniMaxH3DurationStartsAtFiveSeconds(t *testing.T) {
+	for duration, valid := range map[int]bool{4: false, 5: true, 15: true, 16: false} {
+		request := leonardoRequest("leonardo-minimax-h3-1440p", duration)
+		taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
+			leonardoVideoTestContext(), leonardoInfo("minimax-h3-1440p"), request,
+		)
+		if valid {
+			require.Nil(t, taskErr)
+		} else {
+			require.NotNil(t, taskErr)
+			assert.Equal(t, "invalid_video_duration", taskErr.Code)
+		}
+	}
 }
 
 func TestPrepareAndBuildLeonardoRequestUsesOnlyUpstreamFields(t *testing.T) {
@@ -278,6 +373,9 @@ func TestLeonardoTaskLifecycleAndErrorMasking(t *testing.T) {
 	internal, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-1","status":"failed","error":{"code":"upstream_failed","message":"field publicJsonSchemaRegistry not found"}}`))
 	require.NoError(t, err)
 	assert.Equal(t, "Video task failed", internal.Reason)
+	privateUnavailable, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-1","status":"failed","error":{"code":"private_generation_unavailable","message":"Private generation is unavailable for the selected account"}}`))
+	require.NoError(t, err)
+	assert.Equal(t, "Private generation is unavailable for the selected account", privateUnavailable.Reason)
 	authFailure, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-1","status":"failed","error":{"code":"auth_invalid","message":"account cookie expired"}}`))
 	require.NoError(t, err)
 	assert.Equal(t, "Video task failed", authFailure.Reason)

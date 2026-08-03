@@ -449,16 +449,32 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 	}
 	leonardo := payload.Public != nil || payload.Seed != nil || fields["image_references"] != nil || fields["video_references"] != nil
 	if leonardo {
-		for _, legacyField := range []string{"reference_mode", "reference_images", "reference_videos", "reference_audios"} {
+		h3 := payload.Model == "minimax-h3-1440p"
+		legacyFields := []string{"reference_images", "reference_videos", "reference_audios"}
+		if !h3 {
+			legacyFields = append(legacyFields, "reference_mode")
+		}
+		for _, legacyField := range legacyFields {
 			if fields[legacyField] != nil {
 				writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "Leonardo mock received a legacy reference field"}})
 				return
 			}
 		}
-		if payload.Public == nil || *payload.Public || payload.Seed == nil || *payload.Seed != -1 ||
-			len(payload.ImageReferences) > 4 || len(payload.VideoReferences) > 3 ||
-			len(payload.ImageReferences)+len(payload.VideoReferences) > 7 ||
-			!validVideoReferences("media", payload.ImageReferences, payload.VideoReferences, nil) {
+		validLeonardo := payload.Public != nil && !*payload.Public
+		if h3 {
+			mode := strings.ToLower(strings.TrimSpace(payload.ReferenceMode))
+			validLeonardo = validLeonardo && payload.Seed == nil && len(payload.VideoReferences) == 0 &&
+				len(payload.ImageReferences) <= 5 &&
+				((mode == "" && len(payload.ImageReferences) == 0) ||
+					(mode == "frame" && len(payload.ImageReferences) >= 1 && len(payload.ImageReferences) <= 2) ||
+					(mode == "images" && len(payload.ImageReferences) >= 1))
+		} else {
+			validLeonardo = validLeonardo && payload.Seed != nil && *payload.Seed == -1 &&
+				len(payload.ImageReferences) <= 4 && len(payload.VideoReferences) <= 3 &&
+				len(payload.ImageReferences)+len(payload.VideoReferences) <= 7 &&
+				validVideoReferences("media", payload.ImageReferences, payload.VideoReferences, nil)
+		}
+		if !validLeonardo {
 			writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid Leonardo video request"}})
 			return
 		}
@@ -469,7 +485,9 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 		}
 	}
 	if strings.TrimSpace(payload.Model) == "" || strings.TrimSpace(payload.Prompt) == "" ||
-		payload.Duration < 4 || payload.Duration > 15 || !validVideoAspectRatio(payload.AspectRatio) ||
+		payload.Duration < 4 || payload.Duration > 15 ||
+		(payload.Model == "minimax-h3-1440p" && payload.Duration < 5) ||
+		!validVideoAspectRatio(payload.AspectRatio) ||
 		(!leonardo && !validVideoReferences(
 			payload.ReferenceMode,
 			payload.ReferenceImages,

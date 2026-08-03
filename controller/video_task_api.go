@@ -290,8 +290,8 @@ func validateVideoTaskCreateRequest(request *dto.VideoTaskCreateRequest) (string
 			return "input.reference_mode", "frame mode accepts image references only"
 		}
 	case "images":
-		if imageCount > 3 {
-			return "input.reference_images", "images mode supports at most 3 reference images"
+		if imageCount > 5 {
+			return "input.reference_images", "images mode supports at most 5 reference images"
 		}
 		if len(request.Input.ReferenceVideos) > 0 || len(request.Input.ReferenceAudios) > 0 {
 			return "input.reference_mode", "images mode accepts image references only"
