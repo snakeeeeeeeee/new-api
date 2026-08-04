@@ -927,7 +927,7 @@ func DeleteOpenAIVideo(c *gin.Context) {
 
 func OpenAIVideoContent(c *gin.Context) {
 	taskID := strings.TrimSpace(c.Param("task_id"))
-	task, exists, err := model.GetByTaskId(c.GetInt("id"), taskID)
+	task, exists, err := getVideoProxyTask(c, c.GetInt("id"), taskID)
 	if err != nil {
 		writeVideoTaskAPIError(c, http.StatusInternalServerError, "server_error", "Failed to load video", "")
 		return

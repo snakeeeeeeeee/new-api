@@ -266,6 +266,34 @@ func TestGetVideoProxyTaskAdminCanReadAnyUserTask(t *testing.T) {
 	assert.Equal(t, 2, task.UserId)
 }
 
+func TestOpenAIVideoContentAdminCanResolveOtherUserTask(t *testing.T) {
+	db := setupInviteCodeControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_other_content",
+		UserId:    2,
+		Action:    constant.TaskActionVideoGeneration,
+		Status:    model.TaskStatusInProgress,
+		CreatedAt: time.Now().Unix(),
+		UpdatedAt: time.Now().Unix(),
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v1/videos/task_other_content/content?variant=thumbnail",
+		nil,
+	)
+	ctx.Params = gin.Params{{Key: "task_id", Value: "task_other_content"}}
+	ctx.Set("role", common.RoleAdminUser)
+	ctx.Set("id", 1)
+
+	OpenAIVideoContent(ctx)
+
+	assert.Equal(t, http.StatusConflict, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "video_not_completed")
+}
+
 func TestGetVideoProxyTaskCommonUserCannotReadOtherUserTask(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	require.NoError(t, db.Create(&model.Task{

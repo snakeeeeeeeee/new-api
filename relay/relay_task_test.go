@@ -30,7 +30,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestTaskModel2DtoReturnsPublicProxyPathForSuccessfulVideoTasks(t *testing.T) {
+func TestTaskModel2DtoPreservesSuccessfulVideoResultURL(t *testing.T) {
 	for _, action := range constant.TaskActionsByAssetType(constant.TaskAssetTypeVideo) {
 		t.Run(action, func(t *testing.T) {
 			task := &model.Task{
@@ -38,14 +38,26 @@ func TestTaskModel2DtoReturnsPublicProxyPathForSuccessfulVideoTasks(t *testing.T
 				Action: action,
 				Status: model.TaskStatusSuccess,
 				PrivateData: model.TaskPrivateData{
-					ResultURL: "/v1/videos/upstream-uuid/content",
+					ResultURL: "https://cdn.example.com/video.mp4",
 				},
 			}
 
-			assert.Equal(t, taskcommon.BuildProxyPath(task.TaskID), TaskModel2Dto(task).ResultURL)
-			assert.Equal(t, "/v1/videos/upstream-uuid/content", task.GetResultURL())
+			assert.Equal(t, task.GetResultURL(), TaskModel2Dto(task).ResultURL)
 		})
 	}
+}
+
+func TestTaskModel2DtoPreservesVideoProxyFallback(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_proxy_fallback",
+		Action: constant.TaskActionVideoGeneration,
+		Status: model.TaskStatusSuccess,
+		PrivateData: model.TaskPrivateData{
+			ResultURL: taskcommon.BuildProxyPath("task_proxy_fallback"),
+		},
+	}
+
+	assert.Equal(t, task.GetResultURL(), TaskModel2Dto(task).ResultURL)
 }
 
 func TestTaskModel2DtoPreservesSuccessfulNonVideoResultURL(t *testing.T) {

@@ -1693,9 +1693,6 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	resultURL := ""
 	if task.Status == model.TaskStatusSuccess {
 		resultURL = task.GetResultURL()
-		if constant.TaskActionAssetType(task.Action) == constant.TaskAssetTypeVideo {
-			resultURL = taskcommon.BuildProxyPath(task.TaskID)
-		}
 	}
 	progress := task.Progress
 	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
