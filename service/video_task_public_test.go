@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -179,7 +180,7 @@ func TestBuildPublicVideoTaskPreservesKnownReferenceDurationErrors(t *testing.T)
 	}
 }
 
-func TestBuildPublicVideoTaskMasksUnknownProviderErrorCodes(t *testing.T) {
+func TestBuildPublicVideoTaskSanitizesUnknownProviderErrorCodes(t *testing.T) {
 	task := &model.Task{
 		TaskID:     "task_private_provider_error",
 		Status:     model.TaskStatusFailure,
@@ -196,8 +197,180 @@ func TestBuildPublicVideoTaskMasksUnknownProviderErrorCodes(t *testing.T) {
 
 	require.NotNil(t, public.Error)
 	assert.Equal(t, "video_task_failed", public.Error.Code)
+	assert.Equal(t, "generation service rejected the request", public.Error.Message)
+	assert.NotContains(t, strings.ToLower(public.Error.Message), "provider")
+}
+
+func TestBuildPublicVideoTaskPreservesUnknownSafeMessage(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_unknown_safe_error",
+		Status:     model.TaskStatusFailure,
+		FailReason: "originalFilename is required for audio uploads",
+	}
+	task.SetData(map[string]any{
+		"error": map[string]any{
+			"code":    "upstream_failed",
+			"message": task.FailReason,
+		},
+	})
+
+	public := buildPublicVideoTask(task, nil, nil)
+
+	require.NotNil(t, public.Error)
+	assert.Equal(t, "video_task_failed", public.Error.Code)
+	assert.Equal(t, task.FailReason, public.Error.Message)
+}
+
+func TestBuildPublicVideoTaskMasksUnknownMessageContainingSecrets(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_unknown_secret_error", Status: model.TaskStatusFailure,
+		FailReason: "upload failed with Authorization: Bearer provider-secret at https://provider.example/upload?X-Amz-Signature=raw",
+	}
+	task.SetData(map[string]any{
+		"error": map[string]any{"code": "upstream_failed", "message": task.FailReason},
+	})
+
+	public := buildPublicVideoTask(task, nil, nil)
+
+	require.NotNil(t, public.Error)
 	assert.Equal(t, "Video task failed", public.Error.Message)
-	assert.NotContains(t, public.Error.Message, "provider")
+	encoded, err := common.Marshal(public.Error)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "provider-secret")
+	assert.NotContains(t, string(encoded), "X-Amz")
+	assert.NotContains(t, string(encoded), "provider.example")
+}
+
+func TestBuildPublicVideoTaskTransformsProviderCreditFailure(t *testing.T) {
+	const reason = "Account 0a6a4490-e535-4796-8fd4-f14153baacea has 1546 available credits but needs 4536"
+	task := &model.Task{TaskID: "task_provider_capacity", Status: model.TaskStatusFailure, FailReason: reason}
+	task.SetData(map[string]any{
+		"error": map[string]any{"code": "insufficient_credits", "message": reason},
+	})
+
+	public := buildPublicVideoTask(task, nil, nil)
+
+	require.NotNil(t, public.Error)
+	assert.Equal(t, "upstream_capacity_unavailable", public.Error.Code)
+	assert.Equal(t, "Generation capacity is temporarily unavailable for this request. Try again later or reduce the duration or resolution.", public.Error.Message)
+	assert.True(t, public.Error.Retryable)
+	encoded, err := common.Marshal(public.Error)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "0a6a4490")
+	assert.NotContains(t, string(encoded), "1546")
+	assert.NotContains(t, string(encoded), "4536")
+}
+
+func TestBuildAdminVideoTaskDiagnosticPreservesSanitizedProviderDetail(t *testing.T) {
+	const reason = "Account 0a6a4490-e535-4796-8fd4-f14153baacea has 1546 available credits but needs 4536"
+	task := &model.Task{
+		TaskID: "task_admin_diagnostic", Action: constant.TaskActionVideoGeneration,
+		Status: model.TaskStatusFailure, FailReason: reason,
+		PrivateData: model.TaskPrivateData{LastUpstreamStatus: http.StatusOK},
+	}
+	task.SetData(map[string]any{
+		"error": map[string]any{
+			"code": "insufficient_credits", "message": reason,
+			"authorization": "Bearer provider-secret",
+		},
+	})
+
+	diagnostic := BuildAdminVideoTaskDiagnostic(task)
+
+	require.NotNil(t, diagnostic)
+	assert.Equal(t, "insufficient_credits", diagnostic.Code)
+	assert.Equal(t, http.StatusOK, diagnostic.UpstreamStatus)
+	assert.Contains(t, diagnostic.Message, "Account [redacted]")
+	assert.Contains(t, diagnostic.Message, "1546 available credits")
+	assert.Contains(t, diagnostic.Message, "needs 4536")
+	assert.NotContains(t, diagnostic.Message, "0a6a4490")
+	assert.NotContains(t, diagnostic.Message, "provider-secret")
+}
+
+func TestBuildAdminVideoTaskDiagnosticMasksEmbeddedCredentialsAndEmail(t *testing.T) {
+	const reason = "upload failed for operator@example.com using Bearer abcdefghijklmnop and eyJabcdefghijk.abcdefghijk.abcdefghijk"
+	task := &model.Task{
+		TaskID: "task_admin_secret", Action: constant.TaskActionVideoGeneration,
+		Status: model.TaskStatusFailure, FailReason: reason,
+	}
+	task.SetData(map[string]any{
+		"error": map[string]any{"code": "upstream_failed", "message": reason},
+	})
+
+	diagnostic := BuildAdminVideoTaskDiagnostic(task)
+
+	require.NotNil(t, diagnostic)
+	assert.Contains(t, diagnostic.Message, "[redacted email]")
+	assert.Contains(t, diagnostic.Message, "Bearer ***")
+	assert.NotContains(t, diagnostic.Message, "operator@example.com")
+	assert.NotContains(t, diagnostic.Message, "abcdefghijklmnop")
+	assert.NotContains(t, diagnostic.Message, "eyJabcdefghijk")
+}
+
+func TestBuildAdminVideoTaskDiagnosticExtractsNonstandardErrorShapes(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    map[string]any
+		code    string
+		message string
+		status  int
+	}{
+		{
+			name: "nested detail",
+			data: map[string]any{"detail": map[string]any{"error_code": "audio_upload_failed", "error_message": "audio container is invalid", "http_status": "422"}},
+			code: "audio_upload_failed", message: "audio container is invalid", status: 422,
+		},
+		{
+			name:    "string error",
+			data:    map[string]any{"error": "plain upstream failure"},
+			message: "plain upstream failure",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			task := &model.Task{TaskID: "task_" + test.name, Action: constant.TaskActionVideoGeneration, Status: model.TaskStatusFailure}
+			task.SetData(test.data)
+
+			diagnostic := BuildAdminVideoTaskDiagnostic(task)
+
+			require.NotNil(t, diagnostic)
+			assert.Equal(t, test.code, diagnostic.Code)
+			assert.Equal(t, test.message, diagnostic.Message)
+			assert.Equal(t, test.status, diagnostic.UpstreamStatus)
+		})
+	}
+}
+
+func TestBuildAdminVideoTaskDiagnosticTruncatesUnicodeByRune(t *testing.T) {
+	reason := strings.Repeat("错", 2100)
+	task := &model.Task{TaskID: "task_long_unicode", Action: constant.TaskActionVideoGeneration, Status: model.TaskStatusFailure, FailReason: reason}
+
+	diagnostic := BuildAdminVideoTaskDiagnostic(task)
+
+	require.NotNil(t, diagnostic)
+	assert.Equal(t, 2000, utf8.RuneCountInString(diagnostic.Message))
+	assert.True(t, utf8.ValidString(diagnostic.Message))
+}
+
+func TestBuildPublicVideoTaskUsesNestedDiagnosticWhenFailReasonIsGeneric(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_nested_public_error", Action: constant.TaskActionVideoGeneration,
+		Status: model.TaskStatusFailure, FailReason: "Video task failed",
+	}
+	task.SetData(map[string]any{
+		"detail": map[string]any{
+			"error_code":    "audio_upload_failed",
+			"error_message": "audio container is invalid",
+			"http_status":   422,
+		},
+	})
+
+	public := buildPublicVideoTask(task, nil, nil)
+
+	require.NotNil(t, public.Error)
+	assert.Equal(t, "video_task_failed", public.Error.Code)
+	assert.Equal(t, "audio container is invalid", public.Error.Message)
+	assert.Equal(t, 422, public.Error.UpstreamStatus)
 }
 
 func TestBuildPublicVideoTaskProjectsStructuredProviderNeutralError(t *testing.T) {

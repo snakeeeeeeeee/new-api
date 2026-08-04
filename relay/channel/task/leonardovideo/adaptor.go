@@ -559,18 +559,10 @@ func requestError(message, code string, status int) *dto.TaskError {
 }
 
 func responseErrorMessage(response *responseError) string {
-	if response == nil {
+	if response == nil || strings.TrimSpace(response.Message) == "" {
 		return "Video task failed"
 	}
-	code := strings.TrimSpace(response.Code)
-	message := strings.TrimSpace(response.Message)
-	if message != "" {
-		switch code {
-		case "content_moderated", "invalid_reference_media_duration", "reference_media_duration_exceeded", "private_generation_unavailable":
-			return message
-		}
-	}
-	return "Video task failed"
+	return strings.TrimSpace(response.Message)
 }
 
 func validCDNURL(value string) string {

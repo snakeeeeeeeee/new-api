@@ -1,10 +1,12 @@
 package service
 
 import (
+	"encoding/json"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -163,18 +165,25 @@ func publicVideoProgressStage(task *model.Task) string {
 }
 
 var legacyVideoHTTPStatusPattern = regexp.MustCompile(`(?i)(?:poll|submit)[^:\n]{0,40}failed:\s*([1-5][0-9]{2})\b`)
+var providerCreditFailurePattern = regexp.MustCompile(`(?i)(?:insufficient|available\s+credits?|available\s+tokens?).*(?:credits?|tokens?|needs?|required)|(?:credits?|tokens?).*(?:insufficient|needs?|required)`)
+var internalAccountIdentifierPattern = regexp.MustCompile(`(?i)\b(account|user)\s+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+var providerNamePattern = regexp.MustCompile(`(?i)\b(?:provider|adobe(?:video|2api)?|leonardo(?:2api)?|higgsfield(?:2api)?|fal[-_]?ai|google|gemini|xai)\b`)
+var bearerCredentialPattern = regexp.MustCompile(`(?i)\bbearer\s+[a-z0-9._~+/=-]{8,}`)
+var jwtCredentialPattern = regexp.MustCompile(`\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}(?:\.[a-zA-Z0-9_-]{8,})?\b`)
+var emailAddressPattern = regexp.MustCompile(`(?i)\b[a-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+\b`)
 
 type videoTaskErrorDiagnostic struct {
 	Code           string
+	Message        string
 	UpstreamStatus int
 }
 
 func buildPublicVideoTaskError(task *model.Task) *dto.VideoTaskPublicError {
 	diagnostic := extractVideoTaskErrorDiagnostic(task)
-	code := publicVideoTaskErrorCode(diagnostic)
+	code := publicVideoTaskErrorCode(task, diagnostic)
 	publicError := &dto.VideoTaskPublicError{
 		Code:              code,
-		Message:           publicVideoTaskErrorMessage(task, code),
+		Message:           publicVideoTaskErrorMessage(task, diagnostic, code),
 		Retryable:         publicVideoTaskErrorRetryable(task, code),
 		UpstreamStatus:    diagnostic.UpstreamStatus,
 		UpstreamErrorCode: publicVideoUpstreamErrorCode(diagnostic.Code),
@@ -185,6 +194,37 @@ func buildPublicVideoTaskError(task *model.Task) *dto.VideoTaskPublicError {
 	return publicError
 }
 
+func BuildPublicVideoTaskError(task *model.Task) *dto.VideoTaskPublicError {
+	return buildPublicVideoTaskError(task)
+}
+
+func BuildAdminVideoTaskDiagnostic(task *model.Task) *dto.TaskUpstreamErrorDiagnostic {
+	if !isVideoTaskRecord(task) || task.Status != model.TaskStatusFailure {
+		return nil
+	}
+	diagnostic := extractVideoTaskErrorDiagnostic(task)
+	message := diagnostic.Message
+	if message == "" {
+		message = task.FailReason
+	}
+	message = sanitizeAdminVideoFailureReason(message)
+	code := sanitizeAdminVideoFailureCode(diagnostic.Code)
+	if code == "" && message == "" && diagnostic.UpstreamStatus == 0 {
+		return nil
+	}
+	return &dto.TaskUpstreamErrorDiagnostic{
+		Code: code, Message: message, UpstreamStatus: diagnostic.UpstreamStatus,
+	}
+}
+
+func isVideoTaskRecord(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	return task.Properties.AssetType == constant.TaskAssetTypeVideo ||
+		constant.TaskActionAssetType(task.Action) == constant.TaskAssetTypeVideo
+}
+
 func extractVideoTaskErrorDiagnostic(task *model.Task) videoTaskErrorDiagnostic {
 	if task == nil {
 		return videoTaskErrorDiagnostic{}
@@ -192,11 +232,13 @@ func extractVideoTaskErrorDiagnostic(task *model.Task) videoTaskErrorDiagnostic 
 	var response struct {
 		Code           string `json:"code"`
 		ErrorCode      string `json:"error_code"`
+		Message        string `json:"message"`
 		StatusCode     int    `json:"status_code"`
 		UpstreamStatus int    `json:"upstream_status"`
 		Error          *struct {
 			Code           string `json:"code"`
 			ErrorCode      string `json:"error_code"`
+			Message        string `json:"message"`
 			UpstreamStatus int    `json:"upstream_status"`
 		} `json:"error"`
 	}
@@ -205,6 +247,7 @@ func extractVideoTaskErrorDiagnostic(task *model.Task) videoTaskErrorDiagnostic 
 	}
 	diagnostic := videoTaskErrorDiagnostic{
 		Code:           firstNonEmptyString(response.ErrorCode, response.Code),
+		Message:        strings.TrimSpace(response.Message),
 		UpstreamStatus: task.PrivateData.LastUpstreamStatus,
 	}
 	if response.UpstreamStatus > 0 {
@@ -214,9 +257,21 @@ func extractVideoTaskErrorDiagnostic(task *model.Task) videoTaskErrorDiagnostic 
 	}
 	if response.Error != nil {
 		diagnostic.Code = firstNonEmptyString(response.Error.Code, response.Error.ErrorCode, diagnostic.Code)
+		diagnostic.Message = firstNonEmptyString(response.Error.Message, diagnostic.Message)
 		if response.Error.UpstreamStatus > 0 {
 			diagnostic.UpstreamStatus = response.Error.UpstreamStatus
 		}
+	}
+	if diagnostic.Code == "" || diagnostic.Message == "" || diagnostic.UpstreamStatus == 0 {
+		generic := extractGenericVideoErrorDiagnostic(task.Data, 0)
+		diagnostic.Code = firstNonEmptyString(diagnostic.Code, generic.Code)
+		diagnostic.Message = firstNonEmptyString(diagnostic.Message, generic.Message)
+		if diagnostic.UpstreamStatus == 0 {
+			diagnostic.UpstreamStatus = generic.UpstreamStatus
+		}
+	}
+	if diagnostic.Message == "" {
+		diagnostic.Message = strings.TrimSpace(task.FailReason)
 	}
 	if diagnostic.UpstreamStatus == 0 {
 		matches := legacyVideoHTTPStatusPattern.FindStringSubmatch(task.FailReason)
@@ -227,8 +282,11 @@ func extractVideoTaskErrorDiagnostic(task *model.Task) videoTaskErrorDiagnostic 
 	return diagnostic
 }
 
-func publicVideoTaskErrorCode(diagnostic videoTaskErrorDiagnostic) string {
+func publicVideoTaskErrorCode(task *model.Task, diagnostic videoTaskErrorDiagnostic) string {
 	rawCode := strings.ToLower(strings.TrimSpace(diagnostic.Code))
+	if providerCreditFailure(rawCode, diagnostic.Message, task) {
+		return "upstream_capacity_unavailable"
+	}
 	switch rawCode {
 	case "content_moderated":
 		return "content_moderated"
@@ -268,9 +326,9 @@ func publicVideoTaskErrorCode(diagnostic videoTaskErrorDiagnostic) string {
 	return "video_task_failed"
 }
 
-func publicVideoTaskErrorMessage(task *model.Task, code string) string {
-	reason := ""
-	if task != nil {
+func publicVideoTaskErrorMessage(task *model.Task, diagnostic videoTaskErrorDiagnostic, code string) string {
+	reason := strings.TrimSpace(diagnostic.Message)
+	if reason == "" && task != nil {
 		reason = strings.TrimSpace(task.FailReason)
 	}
 	switch reason {
@@ -287,8 +345,8 @@ func publicVideoTaskErrorMessage(task *model.Task, code string) string {
 	}
 	switch code {
 	case "content_moderated", "invalid_reference_media_duration", "reference_media_duration_exceeded", "private_generation_unavailable":
-		if reason != "" {
-			return reason
+		if safe := sanitizePublicVideoFailureReason(reason); safe != "" {
+			return safe
 		}
 	case "cancelled":
 		return "Video task was cancelled"
@@ -300,39 +358,184 @@ func publicVideoTaskErrorMessage(task *model.Task, code string) string {
 		return "Generation service remained unavailable for too long"
 	case "upstream_authentication_error":
 		return "Generation service authentication failed"
+	case "upstream_capacity_unavailable":
+		return "Generation capacity is temporarily unavailable for this request. Try again later or reduce the duration or resolution."
 	}
 	if strings.Contains(strings.ToLower(reason), "submission") &&
 		(strings.Contains(strings.ToLower(reason), "unknown") || strings.Contains(strings.ToLower(reason), "confirm")) {
 		return "Submission result could not be confirmed"
 	}
-	if safePublicVideoFailureReason(reason) {
-		return reason
+	if safe := sanitizePublicVideoFailureReason(reason); safe != "" {
+		return safe
 	}
 	return "Video task failed"
 }
 
-func safePublicVideoFailureReason(reason string) bool {
+func sanitizePublicVideoFailureReason(reason string) string {
 	reason = strings.TrimSpace(reason)
-	if reason == "" || len(reason) > 240 {
-		return false
+	if reason == "" || len(reason) > 500 {
+		return ""
 	}
 	lower := strings.ToLower(reason)
 	for _, marker := range []string{
-		"adobe", "provider", "fal-ai", "fal_ai", "seedance", "kling", "veo",
-		"leonardo", "higgsfield", "gemini", "google", "xai", "http://", "https://", "www.",
-		"authorization", "cookie", "access_token", "refresh_token",
-		"traceback", "stack trace", "{\"", "{'",
+		"authorization", "cookie", "access_token", "refresh_token", "bearer ",
+		"password", "client_secret", "x-amz-", "signature=", "traceback", "stack trace", "{\"", "{'",
 	} {
 		if strings.Contains(lower, marker) {
-			return false
+			return ""
 		}
 	}
-	return true
+	reason = emailAddressPattern.ReplaceAllString(reason, "[redacted email]")
+	reason = sanitizeErrorSnapshotText(reason)
+	reason = internalAccountIdentifierPattern.ReplaceAllString(reason, "$1 [redacted]")
+	reason = providerNamePattern.ReplaceAllString(reason, "generation service")
+	reason = strings.Join(strings.Fields(reason), " ")
+	if reason == "" || strings.Contains(reason, "***.***") {
+		return ""
+	}
+	return reason
+}
+
+func sanitizeAdminVideoFailureReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return ""
+	}
+	reason = bearerCredentialPattern.ReplaceAllString(reason, "Bearer ***")
+	reason = jwtCredentialPattern.ReplaceAllString(reason, "***")
+	reason = emailAddressPattern.ReplaceAllString(reason, "[redacted email]")
+	reason = sanitizeErrorSnapshotText(reason)
+	reason = internalAccountIdentifierPattern.ReplaceAllString(reason, "$1 [redacted]")
+	reason = strings.Join(strings.Fields(reason), " ")
+	if utf8.RuneCountInString(reason) > 2000 {
+		return string([]rune(reason)[:2000])
+	}
+	return reason
+}
+
+func extractGenericVideoErrorDiagnostic(data []byte, depth int) videoTaskErrorDiagnostic {
+	if len(data) == 0 || depth > 6 {
+		return videoTaskErrorDiagnostic{}
+	}
+	var value any
+	if common.Unmarshal(data, &value) != nil {
+		return videoTaskErrorDiagnostic{}
+	}
+	return extractGenericVideoErrorValue(value, depth)
+}
+
+func extractGenericVideoErrorValue(value any, depth int) videoTaskErrorDiagnostic {
+	if depth > 6 {
+		return videoTaskErrorDiagnostic{}
+	}
+	mapping, ok := value.(map[string]any)
+	if !ok {
+		if text, textOK := value.(string); textOK {
+			return videoTaskErrorDiagnostic{Message: strings.TrimSpace(text)}
+		}
+		return videoTaskErrorDiagnostic{}
+	}
+	result := videoTaskErrorDiagnostic{}
+	for _, key := range []string{"error", "detail", "failure", "response"} {
+		if child, exists := mapValueFold(mapping, key); exists {
+			result = mergeVideoErrorDiagnostic(result, extractGenericVideoErrorValue(child, depth+1))
+		}
+	}
+	for _, key := range []string{"error_code", "provider_error_code", "upstream_error_code", "code"} {
+		if child, exists := mapValueFold(mapping, key); exists {
+			if text, textOK := child.(string); textOK {
+				result.Code = firstNonEmptyString(result.Code, text)
+			}
+		}
+	}
+	for _, key := range []string{"error_message", "provider_error_message", "message", "status_reason", "statusReason", "failure_reason", "failureReason", "reason"} {
+		if child, exists := mapValueFold(mapping, key); exists {
+			if text, textOK := child.(string); textOK {
+				result.Message = firstNonEmptyString(result.Message, text)
+			}
+		}
+	}
+	for _, key := range []string{"upstream_status", "status_code", "http_status"} {
+		if child, exists := mapValueFold(mapping, key); exists {
+			if status := diagnosticStatusCode(child); status > 0 {
+				result.UpstreamStatus = status
+				break
+			}
+		}
+	}
+	return result
+}
+
+func mergeVideoErrorDiagnostic(primary, fallback videoTaskErrorDiagnostic) videoTaskErrorDiagnostic {
+	primary.Code = firstNonEmptyString(primary.Code, fallback.Code)
+	primary.Message = firstNonEmptyString(primary.Message, fallback.Message)
+	if primary.UpstreamStatus == 0 {
+		primary.UpstreamStatus = fallback.UpstreamStatus
+	}
+	return primary
+}
+
+func mapValueFold(mapping map[string]any, wanted string) (any, bool) {
+	for key, value := range mapping {
+		if strings.EqualFold(strings.TrimSpace(key), wanted) {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func diagnosticStatusCode(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, _ := strconv.Atoi(typed.String())
+		return parsed
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func sanitizeAdminVideoFailureCode(code string) string {
+	code = strings.TrimSpace(code)
+	if code == "" || len(code) > 120 {
+		return ""
+	}
+	for _, char := range code {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || strings.ContainsRune("._:-", char) {
+			continue
+		}
+		return ""
+	}
+	return code
+}
+
+func providerCreditFailure(rawCode, message string, task *model.Task) bool {
+	for _, value := range []string{rawCode, message, func() string {
+		if task == nil {
+			return ""
+		}
+		return task.FailReason
+	}()} {
+		lower := strings.ToLower(strings.TrimSpace(value))
+		if lower == "insufficient_credits" || lower == "insufficient_tokens" || providerCreditFailurePattern.MatchString(lower) {
+			return true
+		}
+	}
+	return false
 }
 
 func publicVideoTaskErrorRetryable(task *model.Task, code string) bool {
 	switch code {
-	case "content_moderated":
+	case "content_moderated", "upstream_capacity_unavailable":
 		return true
 	case "upstream_rate_limited", "upstream_unavailable":
 		if task != nil {

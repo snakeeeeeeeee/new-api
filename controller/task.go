@@ -204,7 +204,7 @@ func UpdateTaskBlockStatus(c *gin.Context) {
 		action = "屏蔽"
 	}
 	model.RecordLog(task.UserId, model.LogTypeManage, "管理员"+action+"任务记录，管理员ID："+strconv.Itoa(c.GetInt("id"))+"，任务ID："+task.TaskID)
-	common.ApiSuccess(c, relay.TaskModel2Dto(task))
+	common.ApiSuccess(c, taskToDto(task, true))
 }
 
 func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
@@ -229,11 +229,34 @@ func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
 				task.Username = user.Username
 			}
 		}
-		item := relay.TaskModel2Dto(task)
+		item := taskToDto(task, fillUser)
 		if !fillUser {
 			item.ChannelId = 0
 		}
 		result[i] = item
 	}
 	return result
+}
+
+func taskToDto(task *model.Task, administrator bool) *dto.TaskDto {
+	if task == nil {
+		return nil
+	}
+	item := relay.TaskModel2Dto(task)
+	if task.Status != model.TaskStatusFailure ||
+		(task.Properties.AssetType != constant.TaskAssetTypeVideo &&
+			constant.TaskActionAssetType(task.Action) != constant.TaskAssetTypeVideo) {
+		return item
+	}
+	item.Data = nil
+	if administrator {
+		item.UpstreamError = service.BuildAdminVideoTaskDiagnostic(task)
+		if item.UpstreamError != nil && item.UpstreamError.Message != "" {
+			item.FailReason = item.UpstreamError.Message
+		}
+		return item
+	}
+	item.UpstreamError = nil
+	item.FailReason = service.BuildPublicVideoTaskError(task).Message
+	return item
 }

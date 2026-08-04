@@ -38,26 +38,33 @@ type TaskDto struct {
 	// DisplayPlatform is the user-facing provider platform. For image-handle
 	// executor tasks this is the locked real channel type, while Platform remains
 	// the executor protocol used by polling and callbacks.
-	DisplayPlatform string          `json:"display_platform,omitempty"`
-	UserId          int             `json:"user_id"`
-	Group           string          `json:"group"`
-	ChannelId       int             `json:"channel_id"`
-	Quota           int             `json:"quota"`
-	Action          string          `json:"action"`
-	Status          string          `json:"status"`
-	FailReason      string          `json:"fail_reason"`
-	ResultURL       string          `json:"result_url,omitempty"` // 任务结果 URL（视频地址等）
-	SubmitTime      int64           `json:"submit_time"`
-	StartTime       int64           `json:"start_time"`
-	FinishTime      int64           `json:"finish_time"`
-	Progress        string          `json:"progress"`
-	ProgressKnown   bool            `json:"progress_known"`
-	ProgressSource  string          `json:"progress_source,omitempty"`
-	Stage           string          `json:"stage,omitempty"`
-	IsBlocked       bool            `json:"is_blocked"`
-	Properties      any             `json:"properties"`
-	Username        string          `json:"username,omitempty"`
-	Data            json.RawMessage `json:"data"`
+	DisplayPlatform string                       `json:"display_platform,omitempty"`
+	UserId          int                          `json:"user_id"`
+	Group           string                       `json:"group"`
+	ChannelId       int                          `json:"channel_id"`
+	Quota           int                          `json:"quota"`
+	Action          string                       `json:"action"`
+	Status          string                       `json:"status"`
+	FailReason      string                       `json:"fail_reason"`
+	ResultURL       string                       `json:"result_url,omitempty"` // 任务结果 URL（视频地址等）
+	SubmitTime      int64                        `json:"submit_time"`
+	StartTime       int64                        `json:"start_time"`
+	FinishTime      int64                        `json:"finish_time"`
+	Progress        string                       `json:"progress"`
+	ProgressKnown   bool                         `json:"progress_known"`
+	ProgressSource  string                       `json:"progress_source,omitempty"`
+	Stage           string                       `json:"stage,omitempty"`
+	IsBlocked       bool                         `json:"is_blocked"`
+	Properties      any                          `json:"properties"`
+	Username        string                       `json:"username,omitempty"`
+	Data            json.RawMessage              `json:"data"`
+	UpstreamError   *TaskUpstreamErrorDiagnostic `json:"upstream_error,omitempty"`
+}
+
+type TaskUpstreamErrorDiagnostic struct {
+	Code           string `json:"code,omitempty"`
+	Message        string `json:"message,omitempty"`
+	UpstreamStatus int    `json:"upstream_status,omitempty"`
 }
 
 type FetchReq struct {

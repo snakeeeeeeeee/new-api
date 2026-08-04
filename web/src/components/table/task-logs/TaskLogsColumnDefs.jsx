@@ -210,6 +210,18 @@ const buildImageResultUrl = (record) => {
   return '';
 };
 
+const taskFailureDetail = (record, fallback, isAdminUser) => {
+  const diagnostic = isAdminUser ? record?.upstream_error : null;
+  const displayText = diagnostic?.message || fallback || '';
+  if (!diagnostic) {
+    return { displayText, modalText: displayText };
+  }
+  return {
+    displayText: displayText || diagnostic.code || '',
+    modalText: JSON.stringify({ upstream_error: diagnostic }, null, 2),
+  };
+};
+
 const renderPlatform = (platform, t) => {
   let option = CHANNEL_OPTIONS.find(
     (opt) => String(opt.value) === String(platform),
@@ -559,7 +571,8 @@ export const getTaskLogsColumns = ({
           );
         }
 
-        if (!text) {
+        const detail = taskFailureDetail(record, text, isAdminUser);
+        if (!detail.displayText) {
           return t('无');
         }
         return (
@@ -567,10 +580,10 @@ export const getTaskLogsColumns = ({
             ellipsis={{ showTooltip: true }}
             style={{ width: 100 }}
             onClick={() => {
-              openContentModal(text);
+              openContentModal(detail.modalText);
             }}
           >
-            {text}
+            {detail.displayText}
           </Typography.Text>
         );
       },

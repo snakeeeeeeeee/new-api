@@ -424,6 +424,23 @@ func TestOutboundWebhookPayloadPreservesPublicVideoRetryableFlag(t *testing.T) {
 	assert.NotContains(t, payload, "provider")
 }
 
+func TestOutboundWebhookPayloadTransformsProviderCreditFailure(t *testing.T) {
+	const stored = `{"id":"evt_video_capacity","type":"video.task.failed","data":{"object":{"id":"task_video_capacity","status":"failed","error":{"code":"video_task_failed","message":"Account 0a6a4490-e535-4796-8fd4-f14153baacea has 1546 available credits but needs 4536","retryable":false,"provider_error_code":"insufficient_credits"}}}}`
+
+	payload, err := outboundWebhookPayload(&model.WebhookEvent{
+		EventType: WebhookEventVideoTaskFailed,
+		Payload:   stored,
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, payload, `"code":"upstream_capacity_unavailable"`)
+	assert.Contains(t, payload, `"retryable":true`)
+	assert.Contains(t, payload, "Generation capacity is temporarily unavailable")
+	assert.NotContains(t, payload, "0a6a4490")
+	assert.NotContains(t, payload, "1546")
+	assert.NotContains(t, payload, "4536")
+}
+
 func TestWebhookDeliverySanitizesStoredLegacyVideoFailureAtSendBoundary(t *testing.T) {
 	db := setupOutboundWebhookTestDB(t)
 	var deliveredBody string
