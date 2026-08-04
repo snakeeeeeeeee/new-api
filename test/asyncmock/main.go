@@ -81,6 +81,7 @@ type videoTaskRequest struct {
 	ReferenceAudios []videoReferenceMedia `json:"reference_audios,omitempty"`
 	ImageReferences []videoReferenceMedia `json:"image_references,omitempty"`
 	VideoReferences []videoReferenceMedia `json:"video_references,omitempty"`
+	AudioReferences []videoReferenceMedia `json:"audio_references,omitempty"`
 }
 
 type videoReferenceMedia struct {
@@ -447,7 +448,7 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid video JSON"}})
 		return
 	}
-	leonardo := payload.Public != nil || payload.Seed != nil || fields["image_references"] != nil || fields["video_references"] != nil
+	leonardo := payload.Public != nil || payload.Seed != nil || fields["image_references"] != nil || fields["video_references"] != nil || fields["audio_references"] != nil
 	if leonardo {
 		h3 := payload.Model == "minimax-h3-1440p"
 		legacyFields := []string{"reference_images", "reference_videos", "reference_audios"}
@@ -464,15 +465,19 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 		if h3 {
 			mode := strings.ToLower(strings.TrimSpace(payload.ReferenceMode))
 			validLeonardo = validLeonardo && payload.Seed == nil && len(payload.VideoReferences) == 0 &&
-				len(payload.ImageReferences) <= 5 &&
-				((mode == "" && len(payload.ImageReferences) == 0) ||
-					(mode == "frame" && len(payload.ImageReferences) >= 1 && len(payload.ImageReferences) <= 2) ||
-					(mode == "images" && len(payload.ImageReferences) >= 1))
+				(payload.GenerateAudio == nil || *payload.GenerateAudio) &&
+				len(payload.ImageReferences) <= 5 && len(payload.AudioReferences) <= 3 &&
+				((mode == "" && len(payload.ImageReferences) == 0 && len(payload.AudioReferences) == 0) ||
+					(mode == "frame" && len(payload.ImageReferences) >= 1 && len(payload.ImageReferences) <= 2 && len(payload.AudioReferences) == 0) ||
+					(mode == "images" && len(payload.ImageReferences) >= 1 && len(payload.AudioReferences) == 0) ||
+					(mode == "media" && len(payload.ImageReferences) >= 1 && len(payload.AudioReferences) >= 1)) &&
+				validVideoReferencesForLeonardo(payload.ImageReferences, nil, payload.AudioReferences)
 		} else {
 			validLeonardo = validLeonardo && payload.Seed != nil && *payload.Seed == -1 &&
-				len(payload.ImageReferences) <= 4 && len(payload.VideoReferences) <= 3 &&
+				len(payload.ImageReferences) <= 4 && len(payload.VideoReferences) <= 3 && len(payload.AudioReferences) <= 1 &&
 				len(payload.ImageReferences)+len(payload.VideoReferences) <= 7 &&
-				validVideoReferences("media", payload.ImageReferences, payload.VideoReferences, nil)
+				(len(payload.AudioReferences) == 0 || len(payload.ImageReferences)+len(payload.VideoReferences) > 0) &&
+				validVideoReferencesForLeonardo(payload.ImageReferences, payload.VideoReferences, payload.AudioReferences)
 		}
 		if !validLeonardo {
 			writeJSON(writer, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid Leonardo video request"}})
@@ -690,6 +695,33 @@ func validVideoReferences(
 		sourceURL := strings.ToLower(strings.TrimSpace(reference.URL))
 		if !strings.HasPrefix(sourceURL, "http://") &&
 			!strings.HasPrefix(sourceURL, "https://") {
+			return false
+		}
+		name := strings.TrimSpace(reference.Name)
+		if name == "" {
+			continue
+		}
+		if _, exists := names[name]; exists {
+			return false
+		}
+		names[name] = struct{}{}
+	}
+	return true
+}
+
+func validVideoReferencesForLeonardo(
+	images []videoReferenceMedia,
+	videos []videoReferenceMedia,
+	audios []videoReferenceMedia,
+) bool {
+	names := make(map[string]struct{}, len(images)+len(videos)+len(audios))
+	references := make([]videoReferenceMedia, 0, len(images)+len(videos)+len(audios))
+	references = append(references, images...)
+	references = append(references, videos...)
+	references = append(references, audios...)
+	for _, reference := range references {
+		sourceURL := strings.ToLower(strings.TrimSpace(reference.URL))
+		if !strings.HasPrefix(sourceURL, "http://") && !strings.HasPrefix(sourceURL, "https://") {
 			return false
 		}
 		name := strings.TrimSpace(reference.Name)

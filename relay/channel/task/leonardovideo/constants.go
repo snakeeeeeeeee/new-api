@@ -50,6 +50,7 @@ type normalizedRequest struct {
 	ReferenceMode   string
 	ReferenceImages []referenceMedia
 	ReferenceVideos []referenceMedia
+	ReferenceAudios []referenceMedia
 }
 
 type upstreamRequest struct {
@@ -63,6 +64,7 @@ type upstreamRequest struct {
 	ReferenceMode   string           `json:"reference_mode,omitempty"`
 	ImageReferences []referenceMedia `json:"image_references,omitempty"`
 	VideoReferences []referenceMedia `json:"video_references,omitempty"`
+	AudioReferences []referenceMedia `json:"audio_references,omitempty"`
 }
 
 type responseError struct {

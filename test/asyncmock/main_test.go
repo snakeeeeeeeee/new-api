@@ -331,6 +331,9 @@ func TestLeonardoVideoPayloadContractAndIdempotency(t *testing.T) {
 			{URL: "https://media.example.com/2.mp4"},
 			{URL: "https://media.example.com/3.mp4"},
 		},
+		AudioReferences: []videoReferenceMedia{
+			{URL: "https://media.example.com/reference.wav", Name: "sound"},
+		},
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -373,7 +376,7 @@ func TestLeonardoVideoPayloadContractAndIdempotency(t *testing.T) {
 	}
 	if metrics.LastVideoSubmit == nil || metrics.LastVideoSubmit.Public == nil || *metrics.LastVideoSubmit.Public ||
 		metrics.LastVideoSubmit.Seed == nil || *metrics.LastVideoSubmit.Seed != -1 ||
-		len(metrics.LastVideoSubmit.ImageReferences) != 4 || len(metrics.LastVideoSubmit.VideoReferences) != 3 ||
+		len(metrics.LastVideoSubmit.ImageReferences) != 4 || len(metrics.LastVideoSubmit.VideoReferences) != 3 || len(metrics.LastVideoSubmit.AudioReferences) != 1 ||
 		metrics.LastVideoSubmit.ReferenceMode != "" || len(metrics.LastVideoSubmit.ReferenceImages) != 0 ||
 		len(metrics.LastVideoSubmit.ReferenceVideos) != 0 || len(metrics.LastVideoSubmit.ReferenceAudios) != 0 {
 		t.Fatalf("unexpected Leonardo payload: %+v", metrics.LastVideoSubmit)
@@ -436,6 +439,36 @@ func TestLeonardoMiniMaxH3PayloadContract(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("empty frame status = %d, want %d", response.StatusCode, http.StatusBadRequest)
+	}
+
+	payload.ReferenceMode = "media"
+	payload.ImageReferences = []videoReferenceMedia{{URL: "https://media.example.com/subject.png"}}
+	payload.AudioReferences = []videoReferenceMedia{
+		{URL: "https://media.example.com/one.wav"},
+		{URL: "http://media.example.com/two.mp3"},
+		{URL: "https://media.example.com/three.wav"},
+	}
+	body, err = json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err = http.NewRequest(http.MethodPost, server.URL+"/v1/videos", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Idempotency-Key", "h3-media-1")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("H3 media status = %d, want %d", response.StatusCode, http.StatusAccepted)
+	}
+	metrics = state.snapshot()
+	if metrics.LastVideoSubmit == nil || metrics.LastVideoSubmit.ReferenceMode != "media" ||
+		len(metrics.LastVideoSubmit.ImageReferences) != 1 || len(metrics.LastVideoSubmit.AudioReferences) != 3 {
+		t.Fatalf("unexpected H3 media payload: %+v", metrics.LastVideoSubmit)
 	}
 }
 

@@ -96,18 +96,24 @@ func TestLeonardoMiniMaxH3ReferenceRules(t *testing.T) {
 		mode   string
 		images int
 		videos int
+		audios int
 		code   string
 	}{
 		{name: "frame start", mode: "frame", images: 1},
 		{name: "frame start and end", mode: "frame", images: 2},
 		{name: "five image references", mode: "images", images: 5},
+		{name: "media images and audio", mode: "media", images: 5, audios: 3},
 		{name: "missing mode", images: 1, code: "unsupported_reference_mode"},
 		{name: "empty frame mode", mode: "frame", code: "invalid_video_parameter"},
 		{name: "too many frame images", mode: "frame", images: 3, code: "reference_image_limit_exceeded"},
+		{name: "frame audio", mode: "frame", images: 1, audios: 1, code: "unsupported_reference_audio"},
 		{name: "empty images mode", mode: "images", code: "invalid_video_parameter"},
 		{name: "too many images", mode: "images", images: 6, code: "reference_image_limit_exceeded"},
+		{name: "images audio", mode: "images", images: 1, audios: 1, code: "unsupported_reference_audio"},
 		{name: "video reference", mode: "frame", images: 1, videos: 1, code: "unsupported_reference_video"},
-		{name: "media mode", mode: "media", images: 1, code: "unsupported_reference_mode"},
+		{name: "media without audio", mode: "media", images: 1, code: "invalid_video_parameter"},
+		{name: "media without image", mode: "media", audios: 1, code: "invalid_video_parameter"},
+		{name: "too many audios", mode: "media", images: 1, audios: 4, code: "reference_audio_limit_exceeded"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,6 +122,9 @@ func TestLeonardoMiniMaxH3ReferenceRules(t *testing.T) {
 			request.Input.ReferenceImages = makeImages(test.images)
 			if test.videos > 0 {
 				request.Input.ReferenceVideos = []dto.VideoTaskSource{{URL: "https://example.com/video.mp4"}}
+			}
+			if test.audios > 0 {
+				request.Input.ReferenceAudios = makeImages(test.audios)
 			}
 			taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
 				leonardoVideoTestContext(), leonardoInfo("minimax-h3-1440p"), request,
@@ -154,6 +163,7 @@ func TestPrepareAndBuildLeonardoRequestUsesOnlyUpstreamFields(t *testing.T) {
 	request.Input.Image = &dto.VideoTaskSource{URL: "http://example.com/first.png", Name: "first"}
 	request.Input.ReferenceImages = []dto.VideoTaskSource{{URL: "https://example.com/style.webp"}}
 	request.Input.ReferenceVideos = []dto.VideoTaskSource{{URL: "https://example.com/motion.mp4"}}
+	request.Input.ReferenceAudios = []dto.VideoTaskSource{{URL: "http://example.com/sound.wav", Name: "sound"}}
 	request.Output.GenerateAudio = common.GetPointer(false)
 
 	info := leonardoInfo("seedance-2.0-fast-480p")
@@ -189,6 +199,9 @@ func TestPrepareAndBuildLeonardoRequestUsesOnlyUpstreamFields(t *testing.T) {
 	assert.Equal(t, "https://example.com/style.webp", images[1].(map[string]any)["url"])
 	videos := payload["video_references"].([]any)
 	assert.Equal(t, "https://example.com/motion.mp4", videos[0].(map[string]any)["url"])
+	audios := payload["audio_references"].([]any)
+	assert.Equal(t, "http://example.com/sound.wav", audios[0].(map[string]any)["url"])
+	assert.Equal(t, "sound", audios[0].(map[string]any)["name"])
 }
 
 func TestLeonardoGenerateAudioMapping(t *testing.T) {
@@ -236,10 +249,10 @@ func TestLeonardoReferenceAndParameterLimits(t *testing.T) {
 		{name: "missing mode with references", mutate: func(r *dto.VideoTaskCreateRequest) {
 			r.Input.Image = &dto.VideoTaskSource{URL: "https://example.com/a.png"}
 		}, code: "unsupported_reference_mode"},
-		{name: "audio reference", mutate: func(r *dto.VideoTaskCreateRequest) {
+		{name: "audio without visual reference", mutate: func(r *dto.VideoTaskCreateRequest) {
 			r.Input.ReferenceMode = "media"
 			r.Input.ReferenceAudios = []dto.VideoTaskSource{{URL: "https://example.com/a.mp3"}}
-		}, code: "unsupported_reference_audio"},
+		}, code: "invalid_video_parameter"},
 		{name: "input video", mutate: func(r *dto.VideoTaskCreateRequest) {
 			r.Input.Video = &dto.VideoTaskSource{URL: "https://example.com/a.mp4"}
 		}, code: "unsupported_video_input"},
@@ -264,6 +277,16 @@ func TestLeonardoReferenceAndParameterLimits(t *testing.T) {
 		{name: "provider file", mutate: func(r *dto.VideoTaskCreateRequest) {
 			r.Input.ReferenceMode = "media"
 			r.Input.Image = &dto.VideoTaskSource{Provider: "files", FileID: "file_1"}
+		}, code: "unsupported_file_provider"},
+		{name: "audio data url", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.Input.ReferenceMode = "media"
+			r.Input.Image = &dto.VideoTaskSource{URL: "https://example.com/a.png"}
+			r.Input.ReferenceAudios = []dto.VideoTaskSource{{URL: "data:audio/mpeg;base64,AAAA"}}
+		}, code: "invalid_video_parameter"},
+		{name: "audio provider file", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.Input.ReferenceMode = "media"
+			r.Input.Image = &dto.VideoTaskSource{URL: "https://example.com/a.png"}
+			r.Input.ReferenceAudios = []dto.VideoTaskSource{{Provider: "files", FileID: "audio_1"}}
 		}, code: "unsupported_file_provider"},
 	}
 	for _, test := range tests {
@@ -297,6 +320,7 @@ func TestLeonardoReferenceCountBoundaries(t *testing.T) {
 	valid := base()
 	valid.Input.ReferenceImages = makeSources(4, "image")
 	valid.Input.ReferenceVideos = makeSources(3, "video")
+	valid.Input.ReferenceAudios = makeSources(1, "audio")
 	require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), leonardoInfo("seedance-2.0-480p"), valid))
 
 	tooManyImages := base()
@@ -310,6 +334,35 @@ func TestLeonardoReferenceCountBoundaries(t *testing.T) {
 	err = (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), leonardoInfo("seedance-2.0-480p"), tooManyVideos)
 	require.NotNil(t, err)
 	assert.Equal(t, "reference_video_limit_exceeded", err.Code)
+
+	tooManyAudios := base()
+	tooManyAudios.Input.ReferenceImages = makeSources(1, "image")
+	tooManyAudios.Input.ReferenceAudios = makeSources(2, "audio")
+	err = (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), leonardoInfo("seedance-2.0-480p"), tooManyAudios)
+	require.NotNil(t, err)
+	assert.Equal(t, "reference_audio_limit_exceeded", err.Code)
+}
+
+func TestLeonardoMiniMaxH3RejectsDisabledNativeAudioBeforeBilling(t *testing.T) {
+	request := leonardoRequest("leonardo-minimax-h3-1440p", 5)
+	request.Output.GenerateAudio = common.GetPointer(false)
+	taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
+		leonardoVideoTestContext(), leonardoInfo("minimax-h3-1440p"), request,
+	)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_video_parameter", taskErr.Code)
+}
+
+func TestLeonardoReferenceNamesAreUniqueAcrossMediaTypes(t *testing.T) {
+	request := leonardoRequest("leonardo-seedance-2.0-fast-480p", 4)
+	request.Input.ReferenceMode = "media"
+	request.Input.Image = &dto.VideoTaskSource{URL: "https://example.com/image.png", Name: "subject"}
+	request.Input.ReferenceAudios = []dto.VideoTaskSource{{URL: "https://example.com/audio.mp3", Name: "subject"}}
+	taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
+		leonardoVideoTestContext(), leonardoInfo("seedance-2.0-fast-480p"), request,
+	)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_video_parameter", taskErr.Code)
 }
 
 func TestLeonardoModelAndAspectValidation(t *testing.T) {
