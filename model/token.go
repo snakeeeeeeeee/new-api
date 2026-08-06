@@ -461,6 +461,10 @@ func refreshTokenCacheById(id int) {
 	}
 }
 
+func RefreshTokenCacheById(id int) {
+	refreshTokenCacheById(id)
+}
+
 func increaseTokenQuota(id int, quota int) (err error) {
 	err = DB.Model(&Token{}).Where("id = ?", id).Updates(
 		map[string]interface{}{

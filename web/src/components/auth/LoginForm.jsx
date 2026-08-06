@@ -66,6 +66,10 @@ import LinuxDoIcon from '../common/logo/LinuxDoIcon';
 import TwoFAVerification from './TwoFAVerification';
 import { useTranslation } from 'react-i18next';
 import { SiDiscord } from 'react-icons/si';
+import {
+  getPostLoginPath,
+  rememberAuthReturnTo,
+} from '../../helpers/authReturn';
 
 const LoginForm = () => {
   let navigate = useNavigate();
@@ -112,6 +116,10 @@ const LoginForm = () => {
   const githubTimeoutRef = useRef(null);
   const githubButtonText = t(githubButtonTextKeyByState[githubButtonState]);
   const [customOAuthLoading, setCustomOAuthLoading] = useState({});
+
+  useEffect(() => {
+    rememberAuthReturnTo();
+  }, []);
 
   const logo = getLogo();
   const systemName = getSystemName();
@@ -194,11 +202,12 @@ const LoginForm = () => {
       );
       const { success, message, data } = res.data;
       if (success) {
+        const postLoginPath = getPostLoginPath('/');
         userDispatch({ type: 'login', payload: data });
         localStorage.setItem('user', JSON.stringify(data));
         setUserData(data);
         updateAPI();
-        navigate('/');
+        navigate(postLoginPath);
         showSuccess('登录成功！');
         setShowWeChatLoginModal(false);
       } else {
@@ -244,6 +253,7 @@ const LoginForm = () => {
             return;
           }
 
+          const postLoginPath = getPostLoginPath('/console');
           userDispatch({ type: 'login', payload: data });
           setUserData(data);
           updateAPI();
@@ -255,7 +265,7 @@ const LoginForm = () => {
               centered: true,
             });
           }
-          navigate('/console');
+          navigate(postLoginPath);
         } else {
           showError(message);
         }
@@ -295,12 +305,13 @@ const LoginForm = () => {
       const res = await API.get(`/api/oauth/telegram/login`, { params });
       const { success, message, data } = res.data;
       if (success) {
+        const postLoginPath = getPostLoginPath('/');
         userDispatch({ type: 'login', payload: data });
         localStorage.setItem('user', JSON.stringify(data));
         showSuccess('登录成功！');
         setUserData(data);
         updateAPI();
-        navigate('/');
+        navigate(postLoginPath);
       } else {
         showError(message);
       }
@@ -452,11 +463,12 @@ const LoginForm = () => {
       );
       const finish = finishRes.data;
       if (finish.success) {
+        const postLoginPath = getPostLoginPath('/console');
         userDispatch({ type: 'login', payload: finish.data });
         setUserData(finish.data);
         updateAPI();
         showSuccess('登录成功！');
-        navigate('/console');
+        navigate(postLoginPath);
       } else {
         showError(finish.message || 'Passkey 登录失败，请重试');
       }
@@ -487,11 +499,12 @@ const LoginForm = () => {
 
   // 2FA验证成功处理
   const handle2FASuccess = (data) => {
+    const postLoginPath = getPostLoginPath('/console');
     userDispatch({ type: 'login', payload: data });
     setUserData(data);
     updateAPI();
     showSuccess('登录成功！');
-    navigate('/console');
+    navigate(postLoginPath);
   };
 
   // 返回登录页面
@@ -958,8 +971,7 @@ const LoginForm = () => {
         style={{ top: '50%', left: '-120px' }}
       />
       <div className='w-full max-w-sm mt-[60px]'>
-        {showEmailLogin ||
-        !hasOAuthLoginOptions
+        {showEmailLogin || !hasOAuthLoginOptions
           ? renderEmailLoginForm()
           : renderOAuthOptions()}
         {renderWeChatLoginModal()}

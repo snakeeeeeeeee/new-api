@@ -27,6 +27,7 @@ const (
 	AdminMenuRedemption     = "redemption"
 	AdminMenuUser           = "user"
 	AdminMenuSetting        = "setting"
+	AdminMenuCanvasConfig   = "canvas_config"
 )
 
 var defaultAdminMenuPermissionKeys = []string{
@@ -48,9 +49,14 @@ var defaultAdminMenuPermissionKeys = []string{
 	AdminMenuUser,
 }
 
+var grantableAdminMenuPermissionKeys = append(
+	append([]string{}, defaultAdminMenuPermissionKeys...),
+	AdminMenuCanvasConfig,
+)
+
 var grantableAdminMenuPermissionSet = func() map[string]bool {
-	set := make(map[string]bool, len(defaultAdminMenuPermissionKeys))
-	for _, key := range defaultAdminMenuPermissionKeys {
+	set := make(map[string]bool, len(grantableAdminMenuPermissionKeys))
+	for _, key := range grantableAdminMenuPermissionKeys {
 		set[key] = true
 	}
 	return set
@@ -70,8 +76,14 @@ func DefaultAdminMenuPermissionKeys() []string {
 	return keys
 }
 
+func GrantableAdminMenuPermissionKeys() []string {
+	keys := make([]string, len(grantableAdminMenuPermissionKeys))
+	copy(keys, grantableAdminMenuPermissionKeys)
+	return keys
+}
+
 func RootAdminMenuPermissionKeys() []string {
-	keys := DefaultAdminMenuPermissionKeys()
+	keys := GrantableAdminMenuPermissionKeys()
 	keys = append(keys, AdminMenuSetting)
 	return keys
 }
@@ -107,12 +119,12 @@ func NormalizeAdminMenuPermissionKeys(menuKeys []string) ([]string, []string) {
 }
 
 func adminMenuPermissionOrder(menuKey string) int {
-	for idx, key := range defaultAdminMenuPermissionKeys {
+	for idx, key := range grantableAdminMenuPermissionKeys {
 		if key == menuKey {
 			return idx
 		}
 	}
-	return len(defaultAdminMenuPermissionKeys)
+	return len(grantableAdminMenuPermissionKeys)
 }
 
 func GetAdminMenuPermissionKeys(userId int, role int) ([]string, error) {

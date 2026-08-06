@@ -53,6 +53,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     enabled: true,
     channel: true,
     aggregate_group: true,
+    canvas_config: true,
     invite_code: true,
     invite_stats: true,
     log_dashboard: true,

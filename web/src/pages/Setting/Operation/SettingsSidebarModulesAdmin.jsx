@@ -64,6 +64,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       enabled: true,
       channel: true,
       aggregate_group: true,
+      canvas_config: true,
       invite_code: true,
       invite_stats: true,
       log_dashboard: true,
@@ -214,6 +215,7 @@ export default function SettingsSidebarModulesAdmin(props) {
             enabled: true,
             channel: true,
             aggregate_group: true,
+            canvas_config: true,
             invite_code: true,
             invite_stats: true,
             log_dashboard: true,
@@ -294,6 +296,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'aggregate_group',
           title: t('聚合分组'),
           description: t('聚合分组与真实分组链路'),
+        },
+        {
+          key: 'canvas_config',
+          title: t('Canvas 配置'),
+          description: t('Canvas 自动授权分组与回调配置'),
         },
         { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
         {

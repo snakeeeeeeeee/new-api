@@ -49,6 +49,8 @@ import ModelDeploymentPage from './pages/ModelDeployment';
 import Playground from './pages/Playground';
 import Subscription from './pages/Subscription';
 import AggregateGroupPage from './pages/AggregateGroup';
+import CanvasConfigPage from './pages/CanvasConfig';
+import CanvasAuthorizePage from './pages/CanvasAuthorize';
 import LogDashboardPage from './pages/LogDashboard';
 import UsageStatsPage from './pages/UsageStats';
 import RequestDumpPage from './pages/RequestDump';
@@ -117,6 +119,7 @@ function App() {
           }
         />
         <Route path='/forbidden' element={<Forbidden />} />
+        <Route path='/canvas/authorize' element={<CanvasAuthorizePage />} />
         <Route
           path='/console/models'
           element={
@@ -146,6 +149,14 @@ function App() {
           element={
             <AdminRoute menu='aggregate_group'>
               <AggregateGroupPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/canvas-config'
+          element={
+            <AdminRoute menu='canvas_config'>
+              <CanvasConfigPage />
             </AdminRoute>
           }
         />

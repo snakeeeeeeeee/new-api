@@ -18,13 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Button,
-  Modal,
-  Spin,
-  Switch,
-  Typography,
-} from '@douyinfe/semi-ui';
+import { Button, Modal, Spin, Switch, Typography } from '@douyinfe/semi-ui';
 import { ShieldCheck } from 'lucide-react';
 import { API, showError, showSuccess } from '../../../../helpers';
 
@@ -36,6 +30,7 @@ const MENU_SECTIONS = [
     items: [
       ['channel', '渠道管理', 'API 渠道配置与检测'],
       ['aggregate_group', '聚合分组', '聚合分组与真实分组链路'],
+      ['canvas_config', 'Canvas 配置', 'Canvas 自动授权分组与回调配置'],
       ['models', '模型管理', '模型元数据与供应商配置'],
       ['deployment', '模型部署', '模型部署和实例管理'],
     ],
@@ -106,7 +101,9 @@ const AdminMenuPermissionsModal = ({ visible, onCancel, user, t }) => {
   };
 
   const selectAll = () => {
-    setSelectedKeys(MENU_SECTIONS.flatMap((section) => section.items.map(([key]) => key)));
+    setSelectedKeys(
+      MENU_SECTIONS.flatMap((section) => section.items.map(([key]) => key)),
+    );
   };
 
   const clearAll = () => {

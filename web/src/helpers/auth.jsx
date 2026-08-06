@@ -21,11 +21,9 @@ import React, { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { history } from './history';
 import { API } from './api';
-import {
-  hasAdminMenuPermission,
-  mergeUserPermissionData,
-} from './utils';
+import { hasAdminMenuPermission, mergeUserPermissionData } from './utils';
 import Loading from '../components/common/ui/Loading';
+import { getPostLoginPath } from './authReturn';
 
 export function authHeader() {
   // return authorization header with jwt token
@@ -42,7 +40,7 @@ export const AuthRedirect = ({ children }) => {
   const user = localStorage.getItem('user');
 
   if (user) {
-    return <Navigate to='/console' replace />;
+    return <Navigate to={getPostLoginPath('/console')} replace />;
   }
 
   return children;

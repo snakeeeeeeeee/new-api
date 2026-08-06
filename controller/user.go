@@ -1124,7 +1124,7 @@ func GetAdminMenuPermissions(c *gin.Context) {
 		"menu_keys":      keys,
 		"permissions":    permissionMap,
 		"default_keys":   model.DefaultAdminMenuPermissionKeys(),
-		"grantable_keys": model.DefaultAdminMenuPermissionKeys(),
+		"grantable_keys": model.GrantableAdminMenuPermissionKeys(),
 	})
 }
 

@@ -34,6 +34,7 @@ const routerMap = {
   home: '/',
   channel: '/console/channel',
   aggregate_group: '/console/aggregate-group',
+  canvas_config: '/console/canvas-config',
   request_dump: '/console/request-dump',
   violation: '/console/violation',
   compatibility: '/console/compatibility',
@@ -174,6 +175,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('聚合分组'),
         itemKey: 'aggregate_group',
         to: '/aggregate-group',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('Canvas 配置'),
+        itemKey: 'canvas_config',
+        to: '/canvas-config',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {

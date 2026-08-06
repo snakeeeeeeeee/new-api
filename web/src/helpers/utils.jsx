@@ -52,6 +52,7 @@ export function getAdminMenuPermissionsFromUser(user) {
     return {
       channel: true,
       aggregate_group: true,
+      canvas_config: true,
       invite_code: true,
       invite_stats: true,
       log_dashboard: true,

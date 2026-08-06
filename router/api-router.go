@@ -47,6 +47,18 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/oauth/:provider", middleware.CriticalRateLimit(), controller.HandleOAuth)
 		apiRouter.GET("/ratio_config", middleware.CriticalRateLimit(), controller.GetRatioConfig)
 
+		canvasRoute := apiRouter.Group("/canvas")
+		{
+			canvasRoute.GET("/authorization/context", middleware.UserAuth(), controller.GetCanvasAuthorizationContext)
+			canvasRoute.POST("/authorization/code", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.CreateCanvasAuthorizationCode)
+			canvasRoute.POST("/oauth/token", middleware.CORS(), middleware.CriticalRateLimit(), controller.ExchangeCanvasAuthorizationCode)
+			canvasAdminRoute := canvasRoute.Group("/admin")
+			canvasAdminRoute.Use(middleware.AdminAuth())
+			canvasAdminRoute.Use(middleware.AdminMenuAuth("canvas_config"))
+			canvasAdminRoute.GET("/config", controller.GetCanvasAdminConfig)
+			canvasAdminRoute.PUT("/config", controller.UpdateCanvasAdminConfig)
+		}
+
 		apiRouter.POST("/stripe/webhook", controller.StripeWebhook)
 		apiRouter.POST("/creem/webhook", controller.CreemWebhook)
 		apiRouter.POST("/waffo/webhook", controller.WaffoWebhook)

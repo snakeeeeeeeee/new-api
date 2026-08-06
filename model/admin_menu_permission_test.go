@@ -54,12 +54,16 @@ func TestAdminMenuPermissionRootHasAllWithoutRows(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, perms[AdminMenuSetting])
 	require.True(t, perms[AdminMenuChannel])
+	require.True(t, perms[AdminMenuCanvasConfig])
 }
 
 func TestAdminMenuPermissionAdminRequiresExplicitRows(t *testing.T) {
 	setupAdminMenuPermissionModelTestDB(t)
 
 	ok, err := UserHasAdminMenuPermission(2, common.RoleAdminUser, AdminMenuChannel)
+	require.NoError(t, err)
+	require.False(t, ok)
+	ok, err = UserHasAdminMenuPermission(2, common.RoleAdminUser, AdminMenuCanvasConfig)
 	require.NoError(t, err)
 	require.False(t, ok)
 
@@ -71,6 +75,11 @@ func TestAdminMenuPermissionAdminRequiresExplicitRows(t *testing.T) {
 	ok, err = UserHasAdminMenuPermission(2, common.RoleAdminUser, AdminMenuModels)
 	require.NoError(t, err)
 	require.False(t, ok)
+
+	require.NoError(t, SetAdminMenuPermissions(2, []string{AdminMenuChannel, AdminMenuCanvasConfig}))
+	ok, err = UserHasAdminMenuPermission(2, common.RoleAdminUser, AdminMenuCanvasConfig)
+	require.NoError(t, err)
+	require.True(t, ok)
 }
 
 func TestBackfillAdminMenuPermissionsOnlyExistingAdmins(t *testing.T) {
@@ -84,6 +93,7 @@ func TestBackfillAdminMenuPermissionsOnlyExistingAdmins(t *testing.T) {
 	adminKeys, err := GetAdminMenuPermissionKeys(2, common.RoleAdminUser)
 	require.NoError(t, err)
 	require.ElementsMatch(t, DefaultAdminMenuPermissionKeys(), adminKeys)
+	require.NotContains(t, adminKeys, AdminMenuCanvasConfig)
 
 	var commonCount int64
 	require.NoError(t, db.Model(&AdminMenuPermission{}).Where("user_id = ?", 1).Count(&commonCount).Error)

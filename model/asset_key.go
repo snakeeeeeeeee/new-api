@@ -121,6 +121,19 @@ func CreateAssetKey(userID int, name string, expiredAt int64, allowIPs string) (
 }
 
 func CreateAssetKeyWithScopes(userID int, name string, expiredAt int64, allowIPs string, scopes []string) (*AssetKey, error) {
+	var assetKey *AssetKey
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		assetKey, err = CreateAssetKeyWithScopesTx(tx, userID, name, expiredAt, allowIPs, scopes)
+		return err
+	})
+	return assetKey, err
+}
+
+func CreateAssetKeyWithScopesTx(tx *gorm.DB, userID int, name string, expiredAt int64, allowIPs string, scopes []string) (*AssetKey, error) {
+	if tx == nil {
+		return nil, errors.New("database transaction is nil")
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "resource-center"
@@ -140,50 +153,47 @@ func CreateAssetKeyWithScopes(userID int, name string, expiredAt int64, allowIPs
 	if err != nil {
 		return nil, err
 	}
+	var user User
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&user, userID).Error; err != nil {
+		return nil, err
+	}
 	var assetKey AssetKey
-	err = DB.Transaction(func(tx *gorm.DB) error {
-		var user User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&user, userID).Error; err != nil {
-			return err
+	err = tx.Where("user_id = ?", userID).Order("id DESC").First(&assetKey).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		assetKey = AssetKey{
+			UserID: userID, Name: name, Key: keyValue, Status: AssetKeyStatusEnabled,
+			Scopes: normalizedScopes, AllowIPs: strings.TrimSpace(allowIPs), ExpiredAt: expiredAt,
+			CreatedAt: now, UpdatedAt: now,
 		}
-		err := tx.Where("user_id = ?", userID).Order("id DESC").First(&assetKey).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			assetKey = AssetKey{
-				UserID: userID, Name: name, Key: keyValue, Status: AssetKeyStatusEnabled,
-				Scopes: normalizedScopes, AllowIPs: strings.TrimSpace(allowIPs), ExpiredAt: expiredAt,
-				CreatedAt: now, UpdatedAt: now,
-			}
-			return tx.Create(&assetKey).Error
+		if err := tx.Create(&assetKey).Error; err != nil {
+			return nil, err
 		}
-		if err != nil {
-			return err
-		}
-		updates := map[string]any{
-			"name": name, "key": keyValue, "status": AssetKeyStatusEnabled,
-			"scopes": normalizedScopes, "allow_ips": strings.TrimSpace(allowIPs), "expired_at": expiredAt,
-			"last_used_at": 0, "updated_at": now,
-		}
-		if err := tx.Model(&assetKey).Updates(updates).Error; err != nil {
-			return err
-		}
-		if err := tx.Model(&AssetKey{}).
-			Where("user_id = ? AND id <> ? AND status <> ?", userID, assetKey.ID, AssetKeyStatusDisabled).
-			Update("status", AssetKeyStatusDisabled).Error; err != nil {
-			return err
-		}
-		assetKey.Name = name
-		assetKey.Key = keyValue
-		assetKey.Status = AssetKeyStatusEnabled
-		assetKey.Scopes = normalizedScopes
-		assetKey.AllowIPs = strings.TrimSpace(allowIPs)
-		assetKey.ExpiredAt = expiredAt
-		assetKey.LastUsedAt = 0
-		assetKey.UpdatedAt = now
-		return nil
-	})
+		return &assetKey, nil
+	}
 	if err != nil {
 		return nil, err
 	}
+	updates := map[string]any{
+		"name": name, "key": keyValue, "status": AssetKeyStatusEnabled,
+		"scopes": normalizedScopes, "allow_ips": strings.TrimSpace(allowIPs), "expired_at": expiredAt,
+		"last_used_at": 0, "updated_at": now,
+	}
+	if err := tx.Model(&assetKey).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	if err := tx.Model(&AssetKey{}).
+		Where("user_id = ? AND id <> ? AND status <> ?", userID, assetKey.ID, AssetKeyStatusDisabled).
+		Update("status", AssetKeyStatusDisabled).Error; err != nil {
+		return nil, err
+	}
+	assetKey.Name = name
+	assetKey.Key = keyValue
+	assetKey.Status = AssetKeyStatusEnabled
+	assetKey.Scopes = normalizedScopes
+	assetKey.AllowIPs = strings.TrimSpace(allowIPs)
+	assetKey.ExpiredAt = expiredAt
+	assetKey.LastUsedAt = 0
+	assetKey.UpdatedAt = now
 	return &assetKey, nil
 }
 
@@ -197,12 +207,19 @@ func GetUserAssetKeys(userID int, startIdx int, num int) ([]*AssetKey, error) {
 }
 
 func GetActiveUserAssetKey(userID int) (*AssetKey, bool, error) {
+	return GetActiveUserAssetKeyTx(DB, userID)
+}
+
+func GetActiveUserAssetKeyTx(tx *gorm.DB, userID int) (*AssetKey, bool, error) {
+	if tx == nil {
+		return nil, false, errors.New("database transaction is nil")
+	}
 	if userID == 0 {
 		return nil, false, errors.New("user_id is empty")
 	}
 	var key AssetKey
 	now := time.Now().Unix()
-	err := DB.Where(
+	err := tx.Where(
 		"user_id = ? AND status = ? AND (expired_at = ? OR expired_at = ? OR expired_at >= ?)",
 		userID, AssetKeyStatusEnabled, -1, 0, now,
 	).Order("id DESC").First(&key).Error
