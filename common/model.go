@@ -12,7 +12,10 @@ var (
 	ImageGenerationModels = []string{
 		"dall-e-3",
 		"dall-e-2",
-		"gpt-image-1",
+		"gpt-image-",
+		"grok-imagine-image",
+		"grok-2-image",
+		"nano-banana",
 		"prefix:imagen-",
 		"flux-",
 		"flux.1-",
@@ -37,6 +40,10 @@ func IsOpenAIResponseOnlyModel(modelName string) bool {
 
 func IsImageGenerationModel(modelName string) bool {
 	modelName = strings.ToLower(modelName)
+	if strings.HasPrefix(modelName, "gemini-") &&
+		(strings.Contains(modelName, "-image") || strings.Contains(modelName, "image-generation")) {
+		return true
+	}
 	for _, m := range ImageGenerationModels {
 		if strings.Contains(modelName, m) {
 			return true

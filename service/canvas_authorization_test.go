@@ -200,6 +200,41 @@ func TestCanvasConfigDisabledMayRemainIncomplete(t *testing.T) {
 	require.ErrorContains(t, err, "必须配置")
 }
 
+func TestCanvasImageGroupRecognizesCurrentModelsWithoutEndpointMetadata(t *testing.T) {
+	setupCanvasAuthorizationTest(t)
+	aggregateGroup := model.AggregateGroup{
+		Name: "image-generation", DisplayName: "通用生图分组", Status: model.AggregateGroupStatusEnabled, GroupRatio: 1,
+	}
+	require.NoError(t, aggregateGroup.InsertWithTargets([]model.AggregateGroupTarget{
+		{RealGroup: "image-gpt", OrderIndex: 0},
+		{RealGroup: "image-gemini", OrderIndex: 1},
+	}))
+	require.NoError(t, model.DB.Create([]model.Ability{
+		{Group: "image-gpt", Model: "gpt-image-2", ChannelId: 9101, Enabled: true},
+		{Group: "image-gpt", Model: "adobe-gpt-image-2-count", ChannelId: 9101, Enabled: true},
+		{Group: "image-gemini", Model: "gemini-3.1-flash-image", ChannelId: 9101, Enabled: true},
+		{Group: "image-gemini", Model: "gemini-3-pro-image-count", ChannelId: 9101, Enabled: true},
+	}).Error)
+	model.RefreshPricing()
+
+	adminConfig, err := GetCanvasAdminConfig()
+	require.NoError(t, err)
+	var option *CanvasGroupOption
+	for index := range adminConfig.Groups {
+		if adminConfig.Groups[index].Name == "image-generation" {
+			option = &adminConfig.Groups[index]
+			break
+		}
+	}
+	require.NotNil(t, option)
+	require.ElementsMatch(t, []string{
+		"adobe-gpt-image-2-count",
+		"gemini-3-pro-image-count",
+		"gemini-3.1-flash-image",
+		"gpt-image-2",
+	}, option.ImageModels)
+}
+
 func TestCanvasAuthorizationFirstRepeatAndCredentialRepair(t *testing.T) {
 	setupCanvasAuthorizationTest(t)
 	seedCanvasUser(t, 9201)
