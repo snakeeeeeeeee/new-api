@@ -49,6 +49,31 @@ func TestProjectLeonardoSubmitHTTPErrorPreservesTrustedValidation(t *testing.T) 
 	assert.Equal(t, http.StatusBadRequest, projected.StatusCode)
 }
 
+func TestProjectLeonardoSubmitHTTPErrorPreservesNormalizationFailure(t *testing.T) {
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeLeonardoVideo}}
+	body := []byte(`{"detail":{"code":"reference_media_normalization_failed","message":"unable to normalize video reference duration"}}`)
+
+	projected := projectTaskSubmitHTTPError(info, http.StatusBadRequest, body)
+
+	require.NotNil(t, projected)
+	assert.Equal(t, "reference_media_normalization_failed", projected.Code)
+	assert.Equal(t, "unable to normalize video reference duration", projected.Message)
+	assert.Equal(t, http.StatusBadRequest, projected.StatusCode)
+}
+
+func TestProjectAdobeSubmitHTTPErrorPreservesTrustedDurationValidation(t *testing.T) {
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeAdobeVideo}}
+	body := []byte(`{"detail":{"code":"reference_media_duration_exceeded","message":"reference video exceeds the 15 second limit","kind":"video","actual_duration_ms":15400}}`)
+
+	projected := projectTaskSubmitHTTPError(info, http.StatusBadRequest, body)
+
+	require.NotNil(t, projected)
+	assert.Equal(t, "reference_media_duration_exceeded", projected.Code)
+	assert.Equal(t, "reference video exceeds the 15 second limit", projected.Message)
+	assert.Equal(t, http.StatusBadRequest, projected.StatusCode)
+	assert.True(t, projected.LocalError)
+}
+
 func TestProjectLeonardoSubmitHTTPErrorMasksUntrustedResponses(t *testing.T) {
 	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeLeonardoVideo}}
 	for _, test := range []struct {

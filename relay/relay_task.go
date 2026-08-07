@@ -1064,13 +1064,18 @@ func sanitizeLeonardoSubmitError(info *relaycommon.RelayInfo, taskErr *dto.TaskE
 }
 
 func projectTaskSubmitHTTPError(info *relaycommon.RelayInfo, statusCode int, body []byte) *dto.TaskError {
-	if info == nil || info.ChannelType != constant.ChannelTypeLeonardoVideo {
+	if info == nil || (info.ChannelType != constant.ChannelTypeLeonardoVideo && info.ChannelType != constant.ChannelTypeAdobeVideo) {
 		return service.TaskErrorWrapper(
 			fmt.Errorf("%s", string(body)), "fail_to_fetch_task", statusCode,
 		)
 	}
-	code, message, ok := trustedLeonardoValidationError(statusCode, body)
+	code, message, ok := trustedVideoValidationError(statusCode, body)
 	if !ok {
+		if info.ChannelType == constant.ChannelTypeAdobeVideo {
+			return service.TaskErrorWrapper(
+				fmt.Errorf("%s", string(body)), "fail_to_fetch_task", statusCode,
+			)
+		}
 		return sanitizeLeonardoSubmitError(info, service.TaskErrorWrapperLocal(
 			errors.New("untrusted Leonardo submission response"),
 			"fail_to_fetch_task",
@@ -1080,7 +1085,7 @@ func projectTaskSubmitHTTPError(info *relaycommon.RelayInfo, statusCode int, bod
 	return service.TaskErrorWrapperLocal(errors.New(message), code, statusCode)
 }
 
-func trustedLeonardoValidationError(statusCode int, body []byte) (string, string, bool) {
+func trustedVideoValidationError(statusCode int, body []byte) (string, string, bool) {
 	switch statusCode {
 	case http.StatusBadRequest, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
 	default:
@@ -1109,7 +1114,7 @@ func trustedLeonardoValidationError(statusCode int, body []byte) (string, string
 	code := strings.TrimSpace(value.Code)
 	message := strings.TrimSpace(value.Message)
 	switch code {
-	case "invalid_request", "invalid_reference_media_duration", "reference_media_duration_exceeded":
+	case "invalid_request", "invalid_reference_media_duration", "reference_media_duration_exceeded", "reference_media_normalization_failed":
 	default:
 		return "", "", false
 	}

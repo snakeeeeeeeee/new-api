@@ -157,6 +157,7 @@ func TestBuildPublicVideoTaskPreservesKnownReferenceDurationErrors(t *testing.T)
 	for _, code := range []string{
 		"invalid_reference_media_duration",
 		"reference_media_duration_exceeded",
+		"reference_media_normalization_failed",
 	} {
 		t.Run(code, func(t *testing.T) {
 			task := &model.Task{
