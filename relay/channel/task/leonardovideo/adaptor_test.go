@@ -47,9 +47,14 @@ func TestLeonardoModelListAndRegistrationContract(t *testing.T) {
 	assert.Equal(t, []string{
 		"seedance-2.0-fast-480p", "seedance-2.0-fast-720p",
 		"seedance-2.0-480p", "seedance-2.0-720p", "seedance-2.0-1080p",
+		"seedance-2.5-480p", "seedance-2.5-720p",
 		"minimax-h3-1440p",
 	}, (&TaskAdaptor{}).GetModelList())
 	assert.NotContains(t, ModelList, "seedance-2.0-2160p")
+	assert.True(t, isSupportedProviderModel("seedance-3.0-ultra-1440p"))
+	assert.False(t, isSupportedProviderModel("seedance-2.0-2160p"))
+	assert.False(t, isSupportedProviderModel("seedance-2.5-1080p"))
+	assert.False(t, isSupportedProviderModel("leonardo-seedance-3.0-720p"))
 }
 
 func TestLeonardoMiniMaxH3FramePayload(t *testing.T) {
@@ -152,6 +157,119 @@ func TestLeonardoMiniMaxH3DurationStartsAtFiveSeconds(t *testing.T) {
 			assert.Equal(t, "invalid_video_duration", taskErr.Code)
 		}
 	}
+}
+
+func TestLeonardoSeedance25DurationAndFramePayload(t *testing.T) {
+	for duration, valid := range map[int]bool{3: false, 4: true, 15: true, 30: true, 31: false} {
+		request := leonardoRequest("leonardo-seedance-2.5-720p", duration)
+		info := leonardoInfo("seedance-2.5-720p")
+		c := leonardoVideoTestContext()
+		taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(c, info, request)
+		if !valid {
+			require.NotNil(t, taskErr)
+			assert.Equal(t, "invalid_video_duration", taskErr.Code)
+			continue
+		}
+		require.Nil(t, taskErr)
+		require.Nil(t, (&TaskAdaptor{}).ValidateNormalizedVideoModel(c, info))
+	}
+
+	duration := 30
+	ratio := "9:16"
+	request := leonardoRequest("leonardo-seedance-2.5-720p", duration)
+	request.Output.AspectRatio = &ratio
+	request.Input.ReferenceMode = "frame"
+	request.Input.Image = &dto.VideoTaskSource{URL: "https://example.com/start.png", Name: "start"}
+	request.Input.ReferenceImages = []dto.VideoTaskSource{{URL: "https://example.com/end.png", Name: "end"}}
+	info := leonardoInfo("seedance-2.5-720p")
+	c := leonardoVideoTestContext()
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, request))
+	require.Nil(t, adaptor.ValidateNormalizedVideoModel(c, info))
+	estimate, taskErr := adaptor.ResolveVideoBilling(c, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, duration, estimate.Seconds)
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "seedance-2.5-720p", payload["model"])
+	assert.Equal(t, "frame", payload["reference_mode"])
+	assert.EqualValues(t, -1, payload["seed"])
+	assert.Len(t, payload["image_references"], 2)
+}
+
+func TestLeonardoSeedance25FrameReferenceRules(t *testing.T) {
+	makeImages := func(count int) []dto.VideoTaskSource {
+		images := make([]dto.VideoTaskSource, count)
+		for index := range images {
+			images[index] = dto.VideoTaskSource{URL: fmt.Sprintf("https://example.com/%d.png", index)}
+		}
+		return images
+	}
+	tests := []struct {
+		name   string
+		images int
+		videos int
+		audios int
+		code   string
+	}{
+		{name: "start frame", images: 1},
+		{name: "start and end frames", images: 2},
+		{name: "missing frame", code: "invalid_video_parameter"},
+		{name: "too many frames", images: 3, code: "reference_image_limit_exceeded"},
+		{name: "video is unsupported", images: 1, videos: 1, code: "unsupported_reference_video"},
+		{name: "audio is unsupported", images: 1, audios: 1, code: "unsupported_reference_audio"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := leonardoRequest("leonardo-seedance-2.5-480p", 4)
+			request.Input.ReferenceMode = "frame"
+			request.Input.ReferenceImages = makeImages(test.images)
+			if test.videos > 0 {
+				request.Input.ReferenceVideos = []dto.VideoTaskSource{{URL: "https://example.com/video.mp4"}}
+			}
+			if test.audios > 0 {
+				request.Input.ReferenceAudios = []dto.VideoTaskSource{{URL: "https://example.com/audio.wav"}}
+			}
+			taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
+				leonardoVideoTestContext(), leonardoInfo("seedance-2.5-480p"), request,
+			)
+			if test.code == "" {
+				require.Nil(t, taskErr)
+				return
+			}
+			require.NotNil(t, taskErr)
+			assert.Equal(t, test.code, taskErr.Code)
+		})
+	}
+}
+
+func TestLeonardoFutureSeedanceMappingUsesDefaultContract(t *testing.T) {
+	duration := 15
+	request := leonardoRequest("leonardo-seedance-3.0-ultra-1440p", duration)
+	request.Input.ReferenceMode = "media"
+	request.Input.ReferenceImages = []dto.VideoTaskSource{{URL: "https://example.com/reference.png"}}
+	info := leonardoInfo("seedance-3.0-ultra-1440p")
+	c := leonardoVideoTestContext()
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, request))
+	require.Nil(t, adaptor.ValidateNormalizedVideoModel(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "seedance-3.0-ultra-1440p", payload["model"])
+	assert.Len(t, payload["image_references"], 1)
+
+	request = leonardoRequest("leonardo-seedance-3.0-ultra-1440p", 16)
+	taskErr := adaptor.PrepareNormalizedVideoRequest(leonardoVideoTestContext(), info, request)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_video_duration", taskErr.Code)
 }
 
 func TestPrepareAndBuildLeonardoRequestUsesOnlyUpstreamFields(t *testing.T) {

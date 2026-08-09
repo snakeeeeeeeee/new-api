@@ -82,13 +82,18 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	}
 	modelName := providerModel(info)
 	isH3 := isMiniMaxH3Model(modelName) || isMiniMaxH3Model(request.Model)
+	isSeedance25 := isSeedance25Model(modelName) || isSeedance25Model(request.Model)
 	duration := *request.Output.Duration
 	minimumDuration := 4
+	maximumDuration := 15
 	if isH3 {
 		minimumDuration = 5
 	}
-	if duration < minimumDuration || duration > 15 {
-		return requestError(fmt.Sprintf("duration must be an integer between %d and 15 seconds", minimumDuration), "invalid_video_duration", http.StatusBadRequest)
+	if isSeedance25 {
+		maximumDuration = 30
+	}
+	if duration < minimumDuration || duration > maximumDuration {
+		return requestError(fmt.Sprintf("duration must be an integer between %d and %d seconds", minimumDuration, maximumDuration), "invalid_video_duration", http.StatusBadRequest)
 	}
 	if request.Output.Resolution != nil {
 		return requestError("resolution is selected by the exact model mapping", "invalid_video_parameter", http.StatusBadRequest)
@@ -169,6 +174,19 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 			if len(images) == 0 || len(audios) == 0 {
 				return requestError("MiniMax H3 media mode requires image and audio references", "invalid_video_parameter", http.StatusBadRequest)
 			}
+		}
+	} else if isSeedance25 && mode == "frame" {
+		if len(images) == 0 {
+			return requestError("Seedance 2.5 frame mode requires a start frame", "invalid_video_parameter", http.StatusBadRequest)
+		}
+		if len(images) > 2 {
+			return requestError("Seedance 2.5 frame mode accepts at most 2 images", "reference_image_limit_exceeded", http.StatusBadRequest)
+		}
+		if len(videos) > 0 {
+			return requestError("Seedance 2.5 frame mode does not support video references", "unsupported_reference_video", http.StatusBadRequest)
+		}
+		if len(audios) > 0 {
+			return requestError("Seedance 2.5 frame mode does not support audio references", "unsupported_reference_audio", http.StatusBadRequest)
 		}
 	} else {
 		if len(images) > 4 {
@@ -258,7 +276,7 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 
 func (a *TaskAdaptor) ValidateNormalizedVideoModel(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	modelName := providerModel(info)
-	if _, ok := supportedModels[modelName]; !ok {
+	if !isSupportedProviderModel(modelName) {
 		return requestError(fmt.Sprintf("unsupported video model mapping %q", modelName), "unsupported_video_model", http.StatusBadRequest)
 	}
 	payload, err := normalizedPayload(c)
@@ -266,11 +284,15 @@ func (a *TaskAdaptor) ValidateNormalizedVideoModel(c *gin.Context, info *relayco
 		return requestError(err.Error(), "invalid_request", http.StatusBadRequest)
 	}
 	minimumDuration := 4
+	maximumDuration := 15
 	if modelName == "minimax-h3-1440p" {
 		minimumDuration = 5
 	}
-	if payload.Duration < minimumDuration || payload.Duration > 15 {
-		return requestError(fmt.Sprintf("duration must be an integer between %d and 15 seconds", minimumDuration), "invalid_video_duration", http.StatusBadRequest)
+	if isSeedance25Model(modelName) {
+		maximumDuration = 30
+	}
+	if payload.Duration < minimumDuration || payload.Duration > maximumDuration {
+		return requestError(fmt.Sprintf("duration must be an integer between %d and %d seconds", minimumDuration, maximumDuration), "invalid_video_duration", http.StatusBadRequest)
 	}
 	if modelName == "minimax-h3-1440p" && payload.GenerateAudio != nil && !*payload.GenerateAudio {
 		return requestError("MiniMax H3 always generates native audio", "invalid_video_parameter", http.StatusBadRequest)
@@ -315,7 +337,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	modelName := providerModel(info)
-	if _, ok := supportedModels[modelName]; !ok {
+	if !isSupportedProviderModel(modelName) {
 		return nil, fmt.Errorf("unsupported Leonardo video provider model %q", modelName)
 	}
 	images := make([]referenceMedia, len(payload.ReferenceImages))
@@ -332,6 +354,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if modelName == "minimax-h3-1440p" {
 		requestPayload.ReferenceMode = payload.ReferenceMode
 	} else {
+		if isSeedance25Model(modelName) {
+			requestPayload.ReferenceMode = payload.ReferenceMode
+		}
 		seed := -1
 		requestPayload.Seed = &seed
 	}
@@ -548,6 +573,32 @@ func providerModel(info *relaycommon.RelayInfo) string {
 func isMiniMaxH3Model(value string) bool {
 	switch strings.TrimSpace(value) {
 	case "minimax-h3-1440p", "leonardo-minimax-h3-1440p":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupportedProviderModel(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "minimax-h3-1440p" {
+		return true
+	}
+	parts := seedanceModelPattern.FindStringSubmatch(value)
+	if len(parts) != 3 {
+		return false
+	}
+	if resolutions, known := knownSeedanceResolutions[parts[1]]; known {
+		_, supported := resolutions[parts[2]]
+		return supported
+	}
+	return true
+}
+
+func isSeedance25Model(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "seedance-2.5-480p", "seedance-2.5-720p",
+		"leonardo-seedance-2.5-480p", "leonardo-seedance-2.5-720p":
 		return true
 	default:
 		return false

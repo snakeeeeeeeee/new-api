@@ -1,5 +1,7 @@
 package leonardovideo
 
+import "regexp"
+
 const (
 	ChannelName              = "leonardo-video"
 	ProviderOptionsNamespace = "leonardo_video"
@@ -15,16 +17,17 @@ var ModelList = []string{
 	"seedance-2.0-480p",
 	"seedance-2.0-720p",
 	"seedance-2.0-1080p",
+	"seedance-2.5-480p",
+	"seedance-2.5-720p",
 	"minimax-h3-1440p",
 }
 
-var supportedModels = map[string]struct{}{
-	"seedance-2.0-fast-480p": {},
-	"seedance-2.0-fast-720p": {},
-	"seedance-2.0-480p":      {},
-	"seedance-2.0-720p":      {},
-	"seedance-2.0-1080p":     {},
-	"minimax-h3-1440p":       {},
+var seedanceModelPattern = regexp.MustCompile(`^seedance-([a-z0-9]+(?:[.-][a-z0-9]+)*)-([1-9][0-9]*p)$`)
+
+var knownSeedanceResolutions = map[string]map[string]struct{}{
+	"2.0-fast": {"480p": {}, "720p": {}},
+	"2.0":      {"480p": {}, "720p": {}, "1080p": {}},
+	"2.5":      {"480p": {}, "720p": {}},
 }
 
 var supportedAspectRatios = map[string]struct{}{

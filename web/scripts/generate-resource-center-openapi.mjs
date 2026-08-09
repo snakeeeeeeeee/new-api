@@ -132,6 +132,43 @@ const leonardoVideoModelCapabilities = {
       },
     ]),
   ),
+  ...Object.fromEntries(
+    ['leonardo-seedance-2.5-480p', 'leonardo-seedance-2.5-720p'].map(
+      (model) => [
+        model,
+        {
+          operations: ['generation'],
+          prompt_max_characters: 1200,
+          durations: {
+            minimum: 4,
+            maximum: 30,
+            integer_seconds: true,
+          },
+          aspect_ratios: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
+          reference_modes: {
+            frame: {
+              minimum_images: 1,
+              maximum_images: 2,
+            },
+            media: {
+              maximum_images: 4,
+              maximum_videos: 3,
+              maximum_audios: 1,
+              audio_requires_image_or_video: true,
+            },
+          },
+          audio_reference: {
+            formats: ['MP3', 'WAV'],
+            maximum_file_size_mb: 15,
+            minimum_duration_seconds: 2,
+            maximum_total_duration_seconds: 15,
+            duration_is_server_detected: true,
+          },
+          generate_audio_option: 'output.generate_audio',
+        },
+      ],
+    ),
+  ),
   'leonardo-minimax-h3-1440p': {
     operations: ['generation'],
     prompt_max_characters: 1200,
@@ -314,6 +351,31 @@ const videoTaskCreateExamples = {
       },
       output: {
         duration: 4,
+        aspect_ratio: '16:9',
+        generate_audio: true,
+      },
+    },
+  },
+  leonardoSeedance25Frame: {
+    summary: 'Leonardo Seedance 2.5 start and end frame generation',
+    description:
+      'Seedance 2.5 accepts 4-30 seconds and uses frame for one start image plus an optional end image.',
+    value: {
+      model: 'leonardo-seedance-2.5-720p',
+      operation: 'generation',
+      input: {
+        prompt:
+          'Move continuously from sunrise to a clear night sky while preserving the landscape',
+        reference_mode: 'frame',
+        image: {
+          url: 'https://media.example.com/seedance-2.5/start.png',
+        },
+        reference_images: [
+          { url: 'https://media.example.com/seedance-2.5/end.png' },
+        ],
+      },
+      output: {
+        duration: 30,
         aspect_ratio: '16:9',
         generate_audio: true,
       },
@@ -1117,9 +1179,9 @@ const spec = {
         operationId: 'createVideoTask',
         summary: 'Create an asynchronous video task',
         description:
-          'Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. output.generate_audio is the provider-neutral generated-audio control and defaults to true on supported providers; provider_options.*.generate_audio and provider_options.*.reference_mode are rejected. Adobe video prompts accept at most 1200 Unicode characters. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. The five leonardo-seedance-* models support 4-15 second media references with up to four images, three videos, and one audio clip; audio requires an image or video. leonardo-minimax-h3-1440p is fixed at 1440p, supports 5-15 seconds and six aspect ratios, accepts frame, images, or image-plus-audio media references, rejects video references, and always generates native audio. Leonardo-prefixed models accept HTTP(S) reference URLs and reject data URLs, base64, and provider files. Reference-audio duration is detected by the downstream service. Compatibility endpoints under /v1/videos remain unchanged.',
+          'Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. output.generate_audio is the provider-neutral generated-audio control and defaults to true on supported providers; provider_options.*.generate_audio and provider_options.*.reference_mode are rejected. Adobe video prompts accept at most 1200 Unicode characters. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Leonardo Seedance 2.0 models support 4-15 second media references with up to four images, three videos, and one audio clip. Leonardo Seedance 2.5 supports 4-30 seconds plus frame mode with one start image and an optional end image; its media limits match Seedance 2.0. Seedance reference audio requires an image or video. leonardo-minimax-h3-1440p is fixed at 1440p, supports 5-15 seconds and six aspect ratios, accepts frame, images, or image-plus-audio media references, rejects video references, and always generates native audio. Leonardo-prefixed models accept HTTP(S) reference URLs and reject data URLs, base64, and provider files. Reference-audio duration is detected by the downstream service. Compatibility endpoints under /v1/videos remain unchanged.',
         'x-description-zh-CN':
-          '创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。output.generate_audio 是供应商无关的生成音轨开关，支持该能力的渠道省略时默认 true；provider_options.*.generate_audio 和 provider_options.*.reference_mode 会被拒绝。Adobe 视频提示词最多 1200 个 Unicode 字符。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。五个 leonardo-seedance-* 模型支持 4-15 秒 media 参考，最多 4 图、3 视频、1 音频，音频必须搭配图片或视频。leonardo-minimax-h3-1440p 固定 1440p、支持 5-15 秒和六种画幅，支持 frame、images 或图片加音频的 media 模式，不支持视频参考，且始终生成原生音轨。leonardo-* 模型接受 HTTP(S) 参考 URL，拒绝 Data URL、Base64 和 provider file。参考音频时长由下游服务检测。原有 /v1/videos 兼容接口保持不变。',
+          '创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。output.generate_audio 是供应商无关的生成音轨开关，支持该能力的渠道省略时默认 true；provider_options.*.generate_audio 和 provider_options.*.reference_mode 会被拒绝。Adobe 视频提示词最多 1200 个 Unicode 字符。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。Leonardo Seedance 2.0 支持 4-15 秒 media 参考，最多 4 图、3 视频、1 音频。Leonardo Seedance 2.5 支持 4-30 秒，并额外支持一张首帧加可选尾帧的 frame 模式；其 media 限制与 2.0 相同。Seedance 音频必须搭配图片或视频。leonardo-minimax-h3-1440p 固定 1440p、支持 5-15 秒和六种画幅，支持 frame、images 或图片加音频的 media 模式，不支持视频参考，且始终生成原生音轨。leonardo-* 模型接受 HTTP(S) 参考 URL，拒绝 Data URL、Base64 和 provider file。参考音频时长由下游服务检测。原有 /v1/videos 兼容接口保持不变。',
         'x-supertoken-video-model-capabilities': {
           ...adobeVideoModelCapabilities,
           ...leonardoVideoModelCapabilities,
@@ -2651,7 +2713,7 @@ const schemaDescriptions = {
   VideoTaskInputVideoSource:
     'One source video for edit, extension, or remix, represented by an HTTP(S)/data URL or a provider-managed file reference.',
   VideoTaskInput:
-    'Prompt plus provider-neutral URL-only reference images, videos, and audios. Non-generation operations require a separate input.video source. leonardo-seedance-* accepts media references with one optional audio clip; leonardo-minimax-h3-1440p accepts frame, images, or image-plus-audio media references.',
+    'Prompt plus provider-neutral URL-only reference images, videos, and audios. Non-generation operations require a separate input.video source. leonardo-seedance-* accepts media references with one optional audio clip; Seedance 2.5 additionally accepts frame with one or two ordered images. leonardo-minimax-h3-1440p accepts frame, images, or image-plus-audio media references.',
   VideoTaskOutput: 'Optional provider-neutral video output controls.',
   VideoTaskCreateRequest:
     'Normalized video generation, edit, extension, or remix request. Supported operations are model-specific.',
@@ -2731,7 +2793,7 @@ const schemaPropertyOverrides = {
     reference_images:
       'Ordered image references. input.image counts toward the mode-specific image limit.',
     reference_mode:
-      'frame accepts ordered start/end images; images accepts ordinary image references; media accepts grouped image/video/audio references where supported. leonardo-seedance-* media supports up to 4 images, 3 videos, and 1 audio. leonardo-minimax-h3-1440p uses frame with at most 2 images, images with at most 5 images, or media with 1-5 images plus 1-3 audios.',
+      'frame accepts ordered start/end images; images accepts ordinary image references; media accepts grouped image/video/audio references where supported. leonardo-seedance-* media supports up to 4 images, 3 videos, and 1 audio; Seedance 2.5 frame requires 1-2 images. leonardo-minimax-h3-1440p uses frame with at most 2 images, images with at most 5 images, or media with 1-5 images plus 1-3 audios.',
     reference_videos:
       'Up to three URL-only video references in media mode where supported; MiniMax H3 rejects video references.',
     reference_audios:
