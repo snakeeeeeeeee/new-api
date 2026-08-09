@@ -383,6 +383,101 @@ func TestLeonardoVideoPayloadContractAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestLeonardoSeedance25PayloadContract(t *testing.T) {
+	state := newServerState()
+	server := httptest.NewServer(state.handler())
+	defer server.Close()
+
+	public := false
+	seed := -1
+	textPayload := videoTaskRequest{
+		Model: "seedance-2.5-720p", Prompt: "a continuous cinematic scene", Duration: 30,
+		AspectRatio: "9:16", GenerateAudio: boolPointer(false), Public: &public, Seed: &seed,
+	}
+	assertVideoSubmitStatus(t, server.URL, textPayload, http.StatusAccepted)
+	metrics := state.snapshot()
+	if metrics.LastVideoSubmit == nil || metrics.LastVideoSubmit.Model != "seedance-2.5-720p" ||
+		metrics.LastVideoSubmit.Duration != 30 || metrics.LastVideoSubmit.ReferenceMode != "" ||
+		metrics.LastVideoSubmit.Seed == nil || *metrics.LastVideoSubmit.Seed != -1 {
+		t.Fatalf("unexpected Seedance 2.5 text payload: %+v", metrics.LastVideoSubmit)
+	}
+
+	framePayload := videoTaskRequest{
+		Model: "seedance-2.5-480p", Prompt: "transition between ordered frames", Duration: 4,
+		AspectRatio: "16:9", GenerateAudio: boolPointer(true), Public: &public, Seed: &seed,
+		ReferenceMode: "frame",
+		ImageReferences: []videoReferenceMedia{
+			{URL: "https://media.example.com/start.png", Name: "start"},
+			{URL: "https://media.example.com/end.png", Name: "end"},
+		},
+	}
+	assertVideoSubmitStatus(t, server.URL, framePayload, http.StatusAccepted)
+	metrics = state.snapshot()
+	if metrics.LastVideoSubmit == nil || metrics.LastVideoSubmit.ReferenceMode != "frame" ||
+		len(metrics.LastVideoSubmit.ImageReferences) != 2 || len(metrics.LastVideoSubmit.VideoReferences) != 0 ||
+		len(metrics.LastVideoSubmit.AudioReferences) != 0 {
+		t.Fatalf("unexpected Seedance 2.5 frame payload: %+v", metrics.LastVideoSubmit)
+	}
+}
+
+func TestLeonardoSeedance25RejectsInvalidDurationAndFrameMedia(t *testing.T) {
+	public := false
+	seed := -1
+	tests := []videoTaskRequest{
+		{
+			Model: "seedance-2.5-720p", Prompt: "too long", Duration: 31,
+			AspectRatio: "16:9", Public: &public, Seed: &seed,
+		},
+		{
+			Model: "seedance-2.5-720p", Prompt: "missing frame", Duration: 4,
+			AspectRatio: "16:9", Public: &public, Seed: &seed, ReferenceMode: "frame",
+		},
+		{
+			Model: "seedance-2.5-720p", Prompt: "frame with video", Duration: 4,
+			AspectRatio: "16:9", Public: &public, Seed: &seed, ReferenceMode: "frame",
+			ImageReferences: []videoReferenceMedia{{URL: "https://media.example.com/start.png"}},
+			VideoReferences: []videoReferenceMedia{{URL: "https://media.example.com/motion.mp4"}},
+		},
+		{
+			Model: "seedance-2.5-720p", Prompt: "frame with audio", Duration: 4,
+			AspectRatio: "16:9", Public: &public, Seed: &seed, ReferenceMode: "frame",
+			ImageReferences: []videoReferenceMedia{{URL: "https://media.example.com/start.png"}},
+			AudioReferences: []videoReferenceMedia{{URL: "https://media.example.com/reference.wav"}},
+		},
+	}
+
+	for _, payload := range tests {
+		state := newServerState()
+		server := httptest.NewServer(state.handler())
+		assertVideoSubmitStatus(t, server.URL, payload, http.StatusBadRequest)
+		server.Close()
+		if metrics := state.snapshot(); metrics.VideoRequests.SubmitAttempts != 0 || metrics.VideoRequests.Submit != 0 {
+			t.Fatalf("invalid payload reached submission: payload=%+v metrics=%+v", payload, metrics.VideoRequests)
+		}
+	}
+}
+
+func assertVideoSubmitStatus(t *testing.T, baseURL string, payload videoTaskRequest, want int) {
+	t.Helper()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := http.Post(baseURL+"/v1/videos", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != want {
+		responseBody, _ := io.ReadAll(response.Body)
+		t.Fatalf("submit status = %d, want %d: %s", response.StatusCode, want, responseBody)
+	}
+}
+
+func boolPointer(value bool) *bool {
+	return &value
+}
+
 func TestLeonardoMiniMaxH3PayloadContract(t *testing.T) {
 	state := newServerState()
 	server := httptest.NewServer(state.handler())

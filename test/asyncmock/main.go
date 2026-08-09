@@ -451,8 +451,9 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 	leonardo := payload.Public != nil || payload.Seed != nil || fields["image_references"] != nil || fields["video_references"] != nil || fields["audio_references"] != nil
 	if leonardo {
 		h3 := payload.Model == "minimax-h3-1440p"
+		seedance25 := isLeonardoSeedance25Model(payload.Model)
 		legacyFields := []string{"reference_images", "reference_videos", "reference_audios"}
-		if !h3 {
+		if !h3 && !seedance25 {
 			legacyFields = append(legacyFields, "reference_mode")
 		}
 		for _, legacyField := range legacyFields {
@@ -472,6 +473,17 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 					(mode == "images" && len(payload.ImageReferences) >= 1 && len(payload.AudioReferences) == 0) ||
 					(mode == "media" && len(payload.ImageReferences) >= 1 && len(payload.AudioReferences) >= 1)) &&
 				validVideoReferencesForLeonardo(payload.ImageReferences, nil, payload.AudioReferences)
+		} else if seedance25 {
+			mode := strings.ToLower(strings.TrimSpace(payload.ReferenceMode))
+			validLeonardo = validLeonardo && payload.Seed != nil && *payload.Seed == -1 &&
+				len(payload.ImageReferences) <= 4 && len(payload.VideoReferences) <= 3 && len(payload.AudioReferences) <= 1 &&
+				len(payload.ImageReferences)+len(payload.VideoReferences) <= 7 &&
+				(len(payload.AudioReferences) == 0 || len(payload.ImageReferences)+len(payload.VideoReferences) > 0) &&
+				((mode == "" && len(payload.ImageReferences) == 0 && len(payload.VideoReferences) == 0 && len(payload.AudioReferences) == 0) ||
+					mode == "media" ||
+					(mode == "frame" && len(payload.ImageReferences) >= 1 && len(payload.ImageReferences) <= 2 &&
+						len(payload.VideoReferences) == 0 && len(payload.AudioReferences) == 0)) &&
+				validVideoReferencesForLeonardo(payload.ImageReferences, payload.VideoReferences, payload.AudioReferences)
 		} else {
 			validLeonardo = validLeonardo && payload.Seed != nil && *payload.Seed == -1 &&
 				len(payload.ImageReferences) <= 4 && len(payload.VideoReferences) <= 3 && len(payload.AudioReferences) <= 1 &&
@@ -489,8 +501,12 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 			payload.ReferenceMode = "frame"
 		}
 	}
+	maximumDuration := 15
+	if isLeonardoSeedance25Model(payload.Model) {
+		maximumDuration = 30
+	}
 	if strings.TrimSpace(payload.Model) == "" || strings.TrimSpace(payload.Prompt) == "" ||
-		payload.Duration < 4 || payload.Duration > 15 ||
+		payload.Duration < 4 || payload.Duration > maximumDuration ||
 		(payload.Model == "minimax-h3-1440p" && payload.Duration < 5) ||
 		!validVideoAspectRatio(payload.AspectRatio) ||
 		(!leonardo && !validVideoReferences(
@@ -553,6 +569,15 @@ func (s *serverState) handleVideoSubmit(writer http.ResponseWriter, request *htt
 		return
 	}
 	writeJSON(writer, config.VideoSubmitStatus, videoTaskResponse(taskID, payload, "queued", 0, nil))
+}
+
+func isLeonardoSeedance25Model(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "seedance-2.5-480p", "seedance-2.5-720p":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *serverState) handleVideoTask(writer http.ResponseWriter, request *http.Request) {
