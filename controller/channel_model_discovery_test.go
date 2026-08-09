@@ -62,7 +62,7 @@ func TestSelfHostedVideoChannelsDiscoverStandardModelList(t *testing.T) {
 	}
 }
 
-func TestLeonardoVideoDiscoveryFiltersToSupportedSKUs(t *testing.T) {
+func TestLeonardoVideoDiscoveryReturnsUpstreamModelList(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/models", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
@@ -72,8 +72,10 @@ func TestLeonardoVideoDiscoveryFiltersToSupportedSKUs(t *testing.T) {
             {"id":"seedance-2.0-fast-720p"},
             {"id":"seedance-2.0-480p"},
             {"id":"seedance-2.0-720p"},
-            {"id":"seedance-2.0-1080p"},
-            {"id":"seedance-2.0-2160p"},
+	            {"id":"seedance-2.0-1080p"},
+	            {"id":"seedance-2.0-2160p"},
+			{"id":"seedance-2.5-480p"},
+			{"id":"seedance-2.5-720p"},
 			{"id":"minimax-h3"},
 			{"id":"minimax-h3-1440p"},
             {"id":"future-model"}
@@ -86,9 +88,13 @@ func TestLeonardoVideoDiscoveryFiltersToSupportedSKUs(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{
+		"seedance-2.0",
 		"seedance-2.0-fast-480p", "seedance-2.0-fast-720p",
 		"seedance-2.0-480p", "seedance-2.0-720p", "seedance-2.0-1080p",
+		"seedance-2.0-2160p", "seedance-2.5-480p", "seedance-2.5-720p",
+		"minimax-h3",
 		"minimax-h3-1440p",
+		"future-model",
 	}, models)
 }
 

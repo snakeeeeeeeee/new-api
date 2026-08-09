@@ -16,7 +16,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
-	"github.com/QuantumNous/new-api/relay/channel/task/leonardovideo"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -378,12 +377,6 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		}
 		return item.ID
 	})
-	if channel.Type == constant.ChannelTypeLeonardoVideo {
-		// Leonardo exposes canonical and future SKUs as well. Keep discovery
-		// limited to the five explicitly supported public mappings.
-		return intersectModelNames(ids, leonardovideo.ModelList), nil
-	}
-
 	return normalizeModelNames(ids), nil
 }
 
