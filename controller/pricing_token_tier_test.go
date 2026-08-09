@@ -31,9 +31,10 @@ const videoPricingCloneTestConfig = `{
   "version": 1,
   "profiles": {
     "clone-video": {
-      "name": "clone video",
-      "billing_mode": "per_second",
-      "unit_price": 0.03
+	      "name": "clone video",
+	      "billing_mode": "per_second",
+	      "unit_price": 0.03,
+	      "reference_video_unit_price": 0.02
     }
   },
   "model_bindings": {
@@ -127,6 +128,7 @@ func TestClonePricingItemsAppliesVideoPricingPolicyAndRestoresLegacyPriceAfterUn
 	require.Equal(t, types.VideoPricingBillingType, assertVideo.BillingType)
 	require.NotNil(t, assertVideo.VideoPricing)
 	require.Equal(t, 0.03, assertVideo.ModelPrice)
+	require.Equal(t, 0.02, assertVideo.VideoPricing.ReferenceVideoUnitPrice)
 	require.False(t, assertVideo.VideoPricing.SubscriptionEnabled)
 
 	policyOnly := bound[1]

@@ -18,9 +18,24 @@ func videoPricingLogContent(snapshot *types.VideoPricingSnapshot) string {
 	if snapshot == nil {
 		return ""
 	}
+	effectiveUnitPrice := snapshot.EffectiveUnitPrice
+	if effectiveUnitPrice == 0 && snapshot.UnitPrice > 0 {
+		effectiveUnitPrice = snapshot.UnitPrice
+	}
+	if snapshot.ReferenceVideoApplied {
+		return fmt.Sprintf(
+			"按秒（视频）：$%.6f/秒（基础 $%.6f + 参考视频附加 $%.6f） x %d 秒 x 分组倍率 %g = %s",
+			effectiveUnitPrice,
+			snapshot.UnitPrice,
+			snapshot.ReferenceVideoUnitPrice,
+			snapshot.Seconds,
+			snapshot.GroupRatio,
+			formatQuotaUSD(snapshot.FinalQuota),
+		)
+	}
 	return fmt.Sprintf(
 		"按秒（视频）：$%.6f/秒 x %d 秒 x 分组倍率 %g = %s",
-		snapshot.UnitPrice,
+		effectiveUnitPrice,
 		snapshot.Seconds,
 		snapshot.GroupRatio,
 		formatQuotaUSD(snapshot.FinalQuota),

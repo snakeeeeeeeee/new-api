@@ -136,80 +136,20 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	videos := request.Input.ReferenceVideos
 	audios := request.Input.ReferenceAudios
 	mode := strings.ToLower(strings.TrimSpace(request.Input.ReferenceMode))
-	if isH3 {
-		if len(videos) > 0 {
-			return requestError("MiniMax H3 does not support video references", "unsupported_reference_video", http.StatusBadRequest)
-		}
-		if len(images) > 5 {
-			return requestError("at most 5 image references are supported", "reference_image_limit_exceeded", http.StatusBadRequest)
-		}
-		if len(audios) > 3 {
-			return requestError("at most 3 audio references are supported", "reference_audio_limit_exceeded", http.StatusBadRequest)
-		}
-		if mode != "" && mode != "frame" && mode != "images" && mode != "media" {
-			return requestError("reference_mode must be frame, images, or media for MiniMax H3", "unsupported_reference_mode", http.StatusBadRequest)
-		}
-		if (len(images) > 0 || len(audios) > 0) && mode == "" {
-			return requestError("reference_mode is required when H3 references are provided", "unsupported_reference_mode", http.StatusBadRequest)
-		}
-		switch mode {
-		case "frame":
-			if len(audios) > 0 {
-				return requestError("MiniMax H3 frame mode does not support audio references", "unsupported_reference_audio", http.StatusBadRequest)
-			}
-			if len(images) == 0 {
-				return requestError("MiniMax H3 frame mode requires a start frame", "invalid_video_parameter", http.StatusBadRequest)
-			}
-			if len(images) > 2 {
-				return requestError("MiniMax H3 frame mode accepts at most 2 images", "reference_image_limit_exceeded", http.StatusBadRequest)
-			}
-		case "images":
-			if len(audios) > 0 {
-				return requestError("MiniMax H3 images mode does not support audio references", "unsupported_reference_audio", http.StatusBadRequest)
-			}
-			if len(images) == 0 {
-				return requestError("MiniMax H3 images mode requires at least 1 image", "invalid_video_parameter", http.StatusBadRequest)
-			}
-		case "media":
-			if len(images) == 0 || len(audios) == 0 {
-				return requestError("MiniMax H3 media mode requires image and audio references", "invalid_video_parameter", http.StatusBadRequest)
-			}
-		}
-	} else if isSeedance25 && mode == "frame" {
-		if len(images) == 0 {
-			return requestError("Seedance 2.5 frame mode requires a start frame", "invalid_video_parameter", http.StatusBadRequest)
-		}
-		if len(images) > 2 {
-			return requestError("Seedance 2.5 frame mode accepts at most 2 images", "reference_image_limit_exceeded", http.StatusBadRequest)
-		}
-		if len(videos) > 0 {
-			return requestError("Seedance 2.5 frame mode does not support video references", "unsupported_reference_video", http.StatusBadRequest)
-		}
-		if len(audios) > 0 {
-			return requestError("Seedance 2.5 frame mode does not support audio references", "unsupported_reference_audio", http.StatusBadRequest)
-		}
-	} else {
-		if len(images) > 4 {
-			return requestError("at most 4 image references are supported", "reference_image_limit_exceeded", http.StatusBadRequest)
-		}
-		if len(videos) > 3 {
-			return requestError("at most 3 video references are supported", "reference_video_limit_exceeded", http.StatusBadRequest)
-		}
-		if len(audios) > 1 {
-			return requestError("at most 1 audio reference is supported", "reference_audio_limit_exceeded", http.StatusBadRequest)
-		}
-		if len(images)+len(videos) > 7 {
-			return requestError("at most 7 image and video references are supported", "reference_limit_exceeded", http.StatusBadRequest)
-		}
-		if len(audios) > 0 && len(images) == 0 && len(videos) == 0 {
-			return requestError("Seedance audio references require at least one image or video reference", "invalid_video_parameter", http.StatusBadRequest)
-		}
-		if mode != "" && mode != "media" {
-			return requestError("reference_mode must be media when provided", "unsupported_reference_mode", http.StatusBadRequest)
-		}
-		if mode == "" && (len(images) > 0 || len(videos) > 0 || len(audios) > 0) {
-			return requestError("reference_mode must be media when references are provided", "unsupported_reference_mode", http.StatusBadRequest)
-		}
+	if mode != "" && mode != "frame" && mode != "images" && mode != "media" {
+		return requestError("reference_mode must be frame, images, or media", "unsupported_reference_mode", http.StatusBadRequest)
+	}
+	if len(images) > dto.VideoTaskMaxReferenceImages {
+		return requestError(fmt.Sprintf("at most %d image references are accepted", dto.VideoTaskMaxReferenceImages), "reference_image_limit_exceeded", http.StatusBadRequest)
+	}
+	if len(videos) > dto.VideoTaskMaxReferenceVideos {
+		return requestError(fmt.Sprintf("at most %d video references are accepted", dto.VideoTaskMaxReferenceVideos), "reference_video_limit_exceeded", http.StatusBadRequest)
+	}
+	if len(audios) > dto.VideoTaskMaxReferenceAudios {
+		return requestError(fmt.Sprintf("at most %d audio references are accepted", dto.VideoTaskMaxReferenceAudios), "reference_audio_limit_exceeded", http.StatusBadRequest)
+	}
+	if len(images)+len(videos)+len(audios) > dto.VideoTaskMaxReferences {
+		return requestError(fmt.Sprintf("at most %d total references are accepted", dto.VideoTaskMaxReferences), "reference_limit_exceeded", http.StatusBadRequest)
 	}
 
 	names := make(map[string]struct{}, len(images)+len(videos)+len(audios))
@@ -349,14 +289,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	requestPayload := upstreamRequest{
 		Model: modelName, Prompt: payload.Prompt, Duration: payload.Duration,
 		AspectRatio: payload.AspectRatio, GenerateAudio: payload.GenerateAudio,
-		Public: false, ImageReferences: images, VideoReferences: videos, AudioReferences: audios,
+		Public: false, ReferenceMode: payload.ReferenceMode,
+		ImageReferences: images, VideoReferences: videos, AudioReferences: audios,
 	}
-	if modelName == "minimax-h3-1440p" {
-		requestPayload.ReferenceMode = payload.ReferenceMode
-	} else {
-		if isSeedance25Model(modelName) {
-			requestPayload.ReferenceMode = payload.ReferenceMode
-		}
+	if modelName != "minimax-h3-1440p" {
 		seed := -1
 		requestPayload.Seed = &seed
 	}

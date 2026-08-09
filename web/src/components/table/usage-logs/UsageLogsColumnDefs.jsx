@@ -496,6 +496,10 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   const videoPricing = getVideoPricingLogSummary(other);
   if (videoPricing) {
     const unitPrice = Number(videoPricing.unit_price);
+    const baseUnitPrice = Number(videoPricing.base_unit_price);
+    const referenceVideoUnitPrice = Number(
+      videoPricing.reference_video_unit_price,
+    );
     const total = Number(videoPricing.total);
     const reportedDurationMs = Number(videoPricing.reported_duration_ms);
     const groupText = getUsageLogGroupSummary(
@@ -516,9 +520,15 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
           tone: 'primary',
         },
         {
-          text: `${Number.isFinite(unitPrice) ? `$${unitPrice.toFixed(6)}` : '-'} / ${t('秒')} × ${videoPricing.seconds ?? '-'} × ${videoPricing.group_ratio} = ${Number.isFinite(total) ? `$${total.toFixed(6)}` : '-'}`,
+          text: `${videoPricing.reference_video_applied && Number.isFinite(baseUnitPrice) && Number.isFinite(referenceVideoUnitPrice) ? `($${baseUnitPrice.toFixed(6)} + $${referenceVideoUnitPrice.toFixed(6)})` : Number.isFinite(unitPrice) ? `$${unitPrice.toFixed(6)}` : '-'} / ${t('秒')} × ${videoPricing.seconds ?? '-'} × ${videoPricing.group_ratio} = ${Number.isFinite(total) ? `$${total.toFixed(6)}` : '-'}`,
           tone: 'secondary',
         },
+        videoPricing.reference_video_applied
+          ? {
+              text: t('已应用参考视频附加价'),
+              tone: 'secondary',
+            }
+          : null,
         {
           text: `${t('资金策略')}：${videoPricing.subscription_enabled ? t('允许订阅扣费') : t('仅钱包余额')}`,
           tone: 'secondary',

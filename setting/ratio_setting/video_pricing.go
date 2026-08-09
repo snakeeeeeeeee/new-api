@@ -55,6 +55,9 @@ func normalizeVideoPricingProfile(profileID string, profile types.VideoPricingPr
 	if math.IsNaN(profile.UnitPrice) || math.IsInf(profile.UnitPrice, 0) || profile.UnitPrice < 0 {
 		return profile, fmt.Errorf("视频计价模板 %s 的 unit_price 必须是有限的非负数", profileID)
 	}
+	if math.IsNaN(profile.ReferenceVideoUnitPrice) || math.IsInf(profile.ReferenceVideoUnitPrice, 0) || profile.ReferenceVideoUnitPrice < 0 {
+		return profile, fmt.Errorf("视频计价模板 %s 的 reference_video_unit_price 必须是有限的非负数", profileID)
+	}
 	return profile, nil
 }
 
@@ -193,6 +196,7 @@ func publicVideoPricing(profileID string, profile types.VideoPricingProfile, bin
 		public.BillingMode = profile.BillingMode
 		public.Unit = types.VideoPricingUnitSecond
 		public.UnitPrice = profile.UnitPrice
+		public.ReferenceVideoUnitPrice = profile.ReferenceVideoUnitPrice
 	}
 	return public
 }

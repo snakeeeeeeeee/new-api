@@ -82,6 +82,15 @@ export const normalizeVideoPricing = (raw) => {
           rawPrice === undefined || rawPrice === null || rawPrice === ''
             ? Number.NaN
             : Number(rawPrice);
+        const rawReferenceVideoUnitPrice =
+          normalized.reference_video_unit_price;
+        const referenceVideoUnitPrice =
+          rawReferenceVideoUnitPrice === undefined ||
+          rawReferenceVideoUnitPrice === ''
+            ? 0
+            : rawReferenceVideoUnitPrice === null
+              ? Number.NaN
+              : Number(rawReferenceVideoUnitPrice);
         return [
           asTrimmedString(id),
           {
@@ -90,6 +99,9 @@ export const normalizeVideoPricing = (raw) => {
               normalized.billing_mode,
             ).toLowerCase(),
             unit_price: Number.isFinite(unitPrice) ? unitPrice : Number.NaN,
+            reference_video_unit_price: Number.isFinite(referenceVideoUnitPrice)
+              ? referenceVideoUnitPrice
+              : Number.NaN,
           },
         ];
       })
@@ -224,26 +236,82 @@ export const calculateVideoPricingPreview = ({
   profile,
   seconds,
   groupRatio = 1,
+  hasReferenceVideo = false,
 }) => {
   const duration = Number(seconds);
   const ratio = Number(groupRatio);
-  const unitPrice = Number(profile?.unit_price);
+  const baseUnitPrice = Number(profile?.unit_price);
+  const referenceVideoUnitPrice = Number(
+    profile?.reference_video_unit_price ?? 0,
+  );
+  const referenceVideoApplied = hasReferenceVideo === true;
+  const unitPrice =
+    baseUnitPrice + (referenceVideoApplied ? referenceVideoUnitPrice : 0);
   if (
     !Number.isInteger(duration) ||
     duration <= 0 ||
     !Number.isFinite(ratio) ||
     ratio < 0 ||
-    !Number.isFinite(unitPrice) ||
-    unitPrice < 0
+    !Number.isFinite(baseUnitPrice) ||
+    baseUnitPrice < 0 ||
+    !Number.isFinite(referenceVideoUnitPrice) ||
+    referenceVideoUnitPrice < 0
   ) {
     return null;
   }
   return {
     seconds: duration,
+    base_unit_price: baseUnitPrice,
+    reference_video_unit_price: referenceVideoUnitPrice,
+    reference_video_applied: referenceVideoApplied,
     unit_price: unitPrice,
     subtotal: unitPrice * duration,
     group_ratio: ratio,
     total: unitPrice * duration * ratio,
+  };
+};
+
+export const getVideoPricingDisplay = ({
+  videoPricing,
+  basePrice,
+  groupRatio = 1,
+  displayPrice,
+  t = fallbackTranslate,
+}) => {
+  const baseUnitPrice = Number(videoPricing?.unit_price);
+  const referenceVideoUnitPrice = Number(
+    videoPricing?.reference_video_unit_price ?? 0,
+  );
+  const ratio = Number(groupRatio);
+  const hasReferenceVideoSurcharge =
+    Number.isFinite(baseUnitPrice) &&
+    baseUnitPrice >= 0 &&
+    Number.isFinite(referenceVideoUnitPrice) &&
+    referenceVideoUnitPrice > 0 &&
+    Number.isFinite(ratio) &&
+    ratio >= 0 &&
+    typeof displayPrice === 'function';
+
+  if (!hasReferenceVideoSurcharge) {
+    return {
+      hasReferenceVideoSurcharge: false,
+      basePrice,
+      referenceVideoPrice: null,
+      effectivePrice: null,
+      formula: null,
+    };
+  }
+
+  const referenceVideoPrice = displayPrice(referenceVideoUnitPrice * ratio);
+  const effectivePrice = displayPrice(
+    (baseUnitPrice + referenceVideoUnitPrice) * ratio,
+  );
+  return {
+    hasReferenceVideoSurcharge: true,
+    basePrice,
+    referenceVideoPrice,
+    effectivePrice,
+    formula: `(${t('基础价格')} ${basePrice} / ${t('秒')} + ${t('参考视频附加价')} ${referenceVideoPrice} / ${t('秒')}) = ${effectivePrice} / ${t('秒')}`,
   };
 };
 
@@ -264,6 +332,16 @@ export const validateVideoPricing = (raw, t = fallbackTranslate) => {
     }
     if (!Number.isFinite(profile.unit_price) || profile.unit_price < 0) {
       errors.push(t('{{prefix}} 的每秒单价必须是有限的非负数', { prefix }));
+    }
+    if (
+      !Number.isFinite(profile.reference_video_unit_price) ||
+      profile.reference_video_unit_price < 0
+    ) {
+      errors.push(
+        t('{{prefix}} 的参考视频附加价必须是有限的非负数', {
+          prefix,
+        }),
+      );
     }
   });
 
@@ -290,9 +368,21 @@ export const getVideoPricingLogSummary = (other) => {
     snapshot.effective_seconds,
     snapshot.requested_seconds,
   );
-  const unitPrice = firstFiniteNumber(
+  const baseUnitPrice = firstFiniteNumber(
     snapshot.unit_price,
     snapshot.unit_price_usd,
+  );
+  const referenceVideoUnitPrice = firstFiniteNumber(
+    snapshot.reference_video_unit_price,
+    0,
+  );
+  const referenceVideoApplied = snapshot.reference_video_applied === true;
+  const unitPrice = firstFiniteNumber(
+    snapshot.effective_unit_price,
+    baseUnitPrice !== null
+      ? baseUnitPrice +
+          (referenceVideoApplied ? (referenceVideoUnitPrice ?? 0) : 0)
+      : null,
   );
   const groupRatio = firstFiniteNumber(
     snapshot.group_ratio,
@@ -319,6 +409,9 @@ export const getVideoPricingLogSummary = (other) => {
     basis: asTrimmedString(snapshot.basis),
     seconds,
     unit_price: unitPrice,
+    base_unit_price: baseUnitPrice,
+    reference_video_unit_price: referenceVideoUnitPrice,
+    reference_video_applied: referenceVideoApplied,
     subtotal,
     group_ratio: groupRatio ?? 1,
     total,

@@ -39,6 +39,7 @@ import {
   calculateModelPrice,
   formatPriceInfo,
   getLobeHubIcon,
+  getVideoPricingDisplay,
   resolvePricingBillingType,
 } from '../../../../../helpers';
 import PricingCardSkeleton from './PricingCardSkeleton';
@@ -297,6 +298,13 @@ const PricingCardView = ({
             quotaDisplayType: siteDisplayType,
           });
           const billingType = resolvePricingBillingType(model);
+          const videoPricingDisplay = getVideoPricingDisplay({
+            videoPricing: model.video_pricing,
+            basePrice: priceData.price,
+            groupRatio: priceData.usedGroupRatio,
+            displayPrice,
+            t,
+          });
 
           return (
             <Card
@@ -316,8 +324,13 @@ const PricingCardView = ({
                       </h3>
                       <div className='flex flex-col gap-1 text-xs mt-1'>
                         {billingType === 'per_video_second' ? (
-                          <span style={{ color: 'var(--semi-color-text-1)' }}>
-                            {priceData.price} / {t('秒')}
+                          <span
+                            className='whitespace-normal break-words leading-relaxed'
+                            style={{ color: 'var(--semi-color-text-1)' }}
+                          >
+                            {videoPricingDisplay.hasReferenceVideoSurcharge
+                              ? videoPricingDisplay.formula
+                              : `${priceData.price} / ${t('秒')}`}
                           </span>
                         ) : model.image_pricing ? (
                           <span style={{ color: 'var(--semi-color-text-1)' }}>

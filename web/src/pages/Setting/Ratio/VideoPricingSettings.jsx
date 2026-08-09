@@ -113,6 +113,8 @@ export default function VideoPricingSettings({ options, refresh }) {
   const [savingAction, setSavingAction] = useState('');
   const [previewSeconds, setPreviewSeconds] = useState(5);
   const [previewGroupRatio, setPreviewGroupRatio] = useState(1);
+  const [previewHasReferenceVideo, setPreviewHasReferenceVideo] =
+    useState(false);
 
   useEffect(() => {
     const nextConfig = normalizeVideoPricing(options.VideoPricing);
@@ -192,9 +194,15 @@ export default function VideoPricingSettings({ options, refresh }) {
             profile: selectedProfile,
             seconds: previewSeconds,
             groupRatio: previewGroupRatio,
+            hasReferenceVideo: previewHasReferenceVideo,
           })
         : null,
-    [previewGroupRatio, previewSeconds, selectedProfile],
+    [
+      previewGroupRatio,
+      previewHasReferenceVideo,
+      previewSeconds,
+      selectedProfile,
+    ],
   );
 
   const persistConfig = async (
@@ -270,6 +278,7 @@ export default function VideoPricingSettings({ options, refresh }) {
           name,
           billing_mode: VIDEO_PRICING_MODE,
           unit_price: 0,
+          reference_video_unit_price: 0,
         },
       },
     };
@@ -521,7 +530,7 @@ export default function VideoPricingSettings({ options, refresh }) {
           <Title heading={5}>{t('视频按秒计价')}</Title>
           <Text type='tertiary'>
             {t(
-              '按请求的有效视频时长计费；分辨率由公开模型名称区分，不叠加分辨率倍率。',
+              '按请求的有效视频时长计费；input.reference_videos 非空时，每秒附加一次参考视频价格。',
             )}
           </Text>
         </div>
@@ -688,7 +697,7 @@ export default function VideoPricingSettings({ options, refresh }) {
                     {t('保存修改')}
                   </Button>
                 </div>
-                <div className='grid grid-cols-1 md:grid-cols-3 gap-3'>
+                <div className='grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3'>
                   <div>
                     <Text strong>{t('模板名称')}</Text>
                     <Input
@@ -704,7 +713,7 @@ export default function VideoPricingSettings({ options, refresh }) {
                     </div>
                   </div>
                   <div>
-                    <Text strong>{t('每秒美元价')}</Text>
+                    <Text strong>{t('基础每秒美元价')}</Text>
                     <InputNumber
                       className='mt-2 w-full'
                       min={0}
@@ -718,6 +727,27 @@ export default function VideoPricingSettings({ options, refresh }) {
                       onChange={(value) => updateProfile({ unit_price: value })}
                     />
                   </div>
+                  <div>
+                    <Text strong>{t('参考视频附加价（美元/秒）')}</Text>
+                    <InputNumber
+                      className='mt-2 w-full'
+                      min={0}
+                      precision={8}
+                      value={
+                        Number.isFinite(
+                          selectedProfile.reference_video_unit_price,
+                        )
+                          ? selectedProfile.reference_video_unit_price
+                          : null
+                      }
+                      prefix={<DollarSign size={13} />}
+                      onChange={(value) =>
+                        updateProfile({
+                          reference_video_unit_price: value,
+                        })
+                      }
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -726,7 +756,7 @@ export default function VideoPricingSettings({ options, refresh }) {
                 style={{ borderColor: 'var(--semi-color-border)' }}
               >
                 <Text strong>{t('实时费用预览')}</Text>
-                <div className='grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3'>
+                <div className='grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3'>
                   <div>
                     <Text type='tertiary'>{t('有效时长（秒）')}</Text>
                     <InputNumber
@@ -747,6 +777,19 @@ export default function VideoPricingSettings({ options, refresh }) {
                       onChange={setPreviewGroupRatio}
                     />
                   </div>
+                  <div>
+                    <Text type='tertiary'>{t('包含参考视频')}</Text>
+                    <div
+                      className='mt-1 min-h-8 flex items-center px-3 rounded-md'
+                      style={{ background: 'var(--semi-color-fill-0)' }}
+                    >
+                      <Switch
+                        aria-label={t('包含参考视频')}
+                        checked={previewHasReferenceVideo}
+                        onChange={setPreviewHasReferenceVideo}
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div
                   className='mt-3 px-3 py-2 rounded-md text-sm'
@@ -754,8 +797,15 @@ export default function VideoPricingSettings({ options, refresh }) {
                 >
                   {preview ? (
                     <span>
-                      {formatUSD(preview.unit_price)} × {preview.seconds}{' '}
-                      {t('秒')} × {preview.group_ratio} ={' '}
+                      {preview.reference_video_applied ? (
+                        <>
+                          ({formatUSD(preview.base_unit_price)} +{' '}
+                          {formatUSD(preview.reference_video_unit_price)})
+                        </>
+                      ) : (
+                        formatUSD(preview.unit_price)
+                      )}{' '}
+                      × {preview.seconds} {t('秒')} × {preview.group_ratio} ={' '}
                       <strong>{formatUSD(preview.total)}</strong>
                     </span>
                   ) : (

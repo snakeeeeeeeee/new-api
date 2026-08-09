@@ -1,5 +1,12 @@
 package dto
 
+const (
+	VideoTaskMaxReferenceImages = 30
+	VideoTaskMaxReferenceVideos = 10
+	VideoTaskMaxReferenceAudios = 10
+	VideoTaskMaxReferences      = 50
+)
+
 type VideoTaskSource struct {
 	URL      string `json:"url,omitempty"`
 	Provider string `json:"provider,omitempty"`

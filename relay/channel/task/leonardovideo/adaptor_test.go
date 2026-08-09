@@ -88,7 +88,7 @@ func TestLeonardoMiniMaxH3FramePayload(t *testing.T) {
 	assert.NotContains(t, payload, "video_references")
 }
 
-func TestLeonardoMiniMaxH3ReferenceRules(t *testing.T) {
+func TestLeonardoMiniMaxH3ReferenceRulesAreDelegatedUpstream(t *testing.T) {
 	makeImages := func(count int) []dto.VideoTaskSource {
 		images := make([]dto.VideoTaskSource, count)
 		for index := range images {
@@ -102,44 +102,26 @@ func TestLeonardoMiniMaxH3ReferenceRules(t *testing.T) {
 		images int
 		videos int
 		audios int
-		code   string
 	}{
-		{name: "frame start", mode: "frame", images: 1},
-		{name: "frame start and end", mode: "frame", images: 2},
-		{name: "five image references", mode: "images", images: 5},
-		{name: "media images and audio", mode: "media", images: 5, audios: 3},
-		{name: "missing mode", images: 1, code: "unsupported_reference_mode"},
-		{name: "empty frame mode", mode: "frame", code: "invalid_video_parameter"},
-		{name: "too many frame images", mode: "frame", images: 3, code: "reference_image_limit_exceeded"},
-		{name: "frame audio", mode: "frame", images: 1, audios: 1, code: "unsupported_reference_audio"},
-		{name: "empty images mode", mode: "images", code: "invalid_video_parameter"},
-		{name: "too many images", mode: "images", images: 6, code: "reference_image_limit_exceeded"},
-		{name: "images audio", mode: "images", images: 1, audios: 1, code: "unsupported_reference_audio"},
-		{name: "video reference", mode: "frame", images: 1, videos: 1, code: "unsupported_reference_video"},
-		{name: "media without audio", mode: "media", images: 1, code: "invalid_video_parameter"},
-		{name: "media without image", mode: "media", audios: 1, code: "invalid_video_parameter"},
-		{name: "too many audios", mode: "media", images: 1, audios: 4, code: "reference_audio_limit_exceeded"},
+		{name: "missing mode with image", images: 1},
+		{name: "empty frame mode", mode: "frame"},
+		{name: "frame combination", mode: "frame", images: 3, videos: 1, audios: 1},
+		{name: "empty images mode", mode: "images"},
+		{name: "images combination", mode: "images", images: 6, audios: 1},
+		{name: "media without audio", mode: "media", images: 1},
+		{name: "media without image", mode: "media", audios: 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := leonardoRequest("leonardo-minimax-h3-1440p", 5)
 			request.Input.ReferenceMode = test.mode
 			request.Input.ReferenceImages = makeImages(test.images)
-			if test.videos > 0 {
-				request.Input.ReferenceVideos = []dto.VideoTaskSource{{URL: "https://example.com/video.mp4"}}
-			}
-			if test.audios > 0 {
-				request.Input.ReferenceAudios = makeImages(test.audios)
-			}
+			request.Input.ReferenceVideos = makeImages(test.videos)
+			request.Input.ReferenceAudios = makeImages(test.audios)
 			taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
 				leonardoVideoTestContext(), leonardoInfo("minimax-h3-1440p"), request,
 			)
-			if test.code == "" {
-				require.Nil(t, taskErr)
-				return
-			}
-			require.NotNil(t, taskErr)
-			assert.Equal(t, test.code, taskErr.Code)
+			require.Nil(t, taskErr)
 		})
 	}
 }
@@ -201,7 +183,7 @@ func TestLeonardoSeedance25DurationAndFramePayload(t *testing.T) {
 	assert.Len(t, payload["image_references"], 2)
 }
 
-func TestLeonardoSeedance25FrameReferenceRules(t *testing.T) {
+func TestLeonardoSeedance25FrameRulesAreDelegatedUpstream(t *testing.T) {
 	makeImages := func(count int) []dto.VideoTaskSource {
 		images := make([]dto.VideoTaskSource, count)
 		for index := range images {
@@ -214,14 +196,13 @@ func TestLeonardoSeedance25FrameReferenceRules(t *testing.T) {
 		images int
 		videos int
 		audios int
-		code   string
 	}{
 		{name: "start frame", images: 1},
 		{name: "start and end frames", images: 2},
-		{name: "missing frame", code: "invalid_video_parameter"},
-		{name: "too many frames", images: 3, code: "reference_image_limit_exceeded"},
-		{name: "video is unsupported", images: 1, videos: 1, code: "unsupported_reference_video"},
-		{name: "audio is unsupported", images: 1, audios: 1, code: "unsupported_reference_audio"},
+		{name: "missing frame"},
+		{name: "model specific image count", images: 3},
+		{name: "model specific video combination", images: 1, videos: 1},
+		{name: "model specific audio combination", images: 1, audios: 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -237,12 +218,7 @@ func TestLeonardoSeedance25FrameReferenceRules(t *testing.T) {
 			taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
 				leonardoVideoTestContext(), leonardoInfo("seedance-2.5-480p"), request,
 			)
-			if test.code == "" {
-				require.Nil(t, taskErr)
-				return
-			}
-			require.NotNil(t, taskErr)
-			assert.Equal(t, test.code, taskErr.Code)
+			require.Nil(t, taskErr)
 		})
 	}
 }
@@ -264,6 +240,7 @@ func TestLeonardoFutureSeedanceMappingUsesDefaultContract(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(data, &payload))
 	assert.Equal(t, "seedance-3.0-ultra-1440p", payload["model"])
+	assert.Equal(t, "media", payload["reference_mode"])
 	assert.Len(t, payload["image_references"], 1)
 
 	request = leonardoRequest("leonardo-seedance-3.0-ultra-1440p", 16)
@@ -307,7 +284,7 @@ func TestPrepareAndBuildLeonardoRequestUsesOnlyUpstreamFields(t *testing.T) {
 	assert.Equal(t, false, payload["generate_audio"])
 	assert.Equal(t, false, payload["public"])
 	assert.EqualValues(t, -1, payload["seed"])
-	assert.NotContains(t, payload, "reference_mode")
+	assert.Equal(t, "media", payload["reference_mode"])
 	assert.NotContains(t, payload, "reference_images")
 	assert.NotContains(t, payload, "reference_videos")
 	assert.NotContains(t, payload, "reference_audios")
@@ -360,17 +337,9 @@ func TestLeonardoReferenceAndParameterLimits(t *testing.T) {
 		{name: "duration above maximum", mutate: func(r *dto.VideoTaskCreateRequest) { d := 16; r.Output.Duration = &d }, code: "invalid_video_duration"},
 		{name: "resolution is model bound", mutate: func(r *dto.VideoTaskCreateRequest) { v := "480p"; r.Output.Resolution = &v }, code: "invalid_video_parameter"},
 		{name: "edit is unsupported", mutate: func(r *dto.VideoTaskCreateRequest) { r.Operation = "edit" }, code: "unsupported_video_operation"},
-		{name: "frame mode is unsupported", mutate: func(r *dto.VideoTaskCreateRequest) {
-			r.Input.ReferenceMode = "frame"
-			r.Input.Image = &dto.VideoTaskSource{URL: "https://example.com/a.png"}
+		{name: "invalid reference mode", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.Input.ReferenceMode = "storyboard"
 		}, code: "unsupported_reference_mode"},
-		{name: "missing mode with references", mutate: func(r *dto.VideoTaskCreateRequest) {
-			r.Input.Image = &dto.VideoTaskSource{URL: "https://example.com/a.png"}
-		}, code: "unsupported_reference_mode"},
-		{name: "audio without visual reference", mutate: func(r *dto.VideoTaskCreateRequest) {
-			r.Input.ReferenceMode = "media"
-			r.Input.ReferenceAudios = []dto.VideoTaskSource{{URL: "https://example.com/a.mp3"}}
-		}, code: "invalid_video_parameter"},
 		{name: "input video", mutate: func(r *dto.VideoTaskCreateRequest) {
 			r.Input.Video = &dto.VideoTaskSource{URL: "https://example.com/a.mp4"}
 		}, code: "unsupported_video_input"},
@@ -423,7 +392,7 @@ func TestLeonardoReferenceCountBoundaries(t *testing.T) {
 	makeSources := func(count int, prefix string) []dto.VideoTaskSource {
 		result := make([]dto.VideoTaskSource, count)
 		for i := range result {
-			result[i] = dto.VideoTaskSource{URL: "https://example.com/" + prefix + "." + string(rune('a'+i))}
+			result[i] = dto.VideoTaskSource{URL: fmt.Sprintf("https://example.com/%s-%d", prefix, i)}
 		}
 		return result
 	}
@@ -435,27 +404,37 @@ func TestLeonardoReferenceCountBoundaries(t *testing.T) {
 			Output: dto.VideoTaskOutputRequest{Duration: &duration},
 		}
 	}
-	valid := base()
-	valid.Input.ReferenceImages = makeSources(4, "image")
-	valid.Input.ReferenceVideos = makeSources(3, "video")
-	valid.Input.ReferenceAudios = makeSources(1, "audio")
-	require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), leonardoInfo("seedance-2.0-480p"), valid))
+	for _, modelName := range []string{"seedance-2.0-480p", "seedance-2.5-480p", "minimax-h3-1440p"} {
+		modelName := modelName
+		t.Run(modelName+" shares broad envelope", func(t *testing.T) {
+			request := base()
+			if isMiniMaxH3Model(modelName) {
+				duration := 5
+				request.Output.Duration = &duration
+			}
+			request.Input.ReferenceImages = makeSources(dto.VideoTaskMaxReferenceImages, "image")
+			request.Input.ReferenceVideos = makeSources(dto.VideoTaskMaxReferenceVideos, "video")
+			request.Input.ReferenceAudios = makeSources(dto.VideoTaskMaxReferenceAudios, "audio")
+			require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
+				leonardoVideoTestContext(), leonardoInfo(modelName), request,
+			))
+		})
+	}
 
 	tooManyImages := base()
-	tooManyImages.Input.ReferenceImages = makeSources(5, "image")
+	tooManyImages.Input.ReferenceImages = makeSources(dto.VideoTaskMaxReferenceImages+1, "image")
 	err := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), leonardoInfo("seedance-2.0-480p"), tooManyImages)
 	require.NotNil(t, err)
 	assert.Equal(t, "reference_image_limit_exceeded", err.Code)
 
 	tooManyVideos := base()
-	tooManyVideos.Input.ReferenceVideos = makeSources(4, "video")
+	tooManyVideos.Input.ReferenceVideos = makeSources(dto.VideoTaskMaxReferenceVideos+1, "video")
 	err = (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), leonardoInfo("seedance-2.0-480p"), tooManyVideos)
 	require.NotNil(t, err)
 	assert.Equal(t, "reference_video_limit_exceeded", err.Code)
 
 	tooManyAudios := base()
-	tooManyAudios.Input.ReferenceImages = makeSources(1, "image")
-	tooManyAudios.Input.ReferenceAudios = makeSources(2, "audio")
+	tooManyAudios.Input.ReferenceAudios = makeSources(dto.VideoTaskMaxReferenceAudios+1, "audio")
 	err = (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), leonardoInfo("seedance-2.0-480p"), tooManyAudios)
 	require.NotNil(t, err)
 	assert.Equal(t, "reference_audio_limit_exceeded", err.Code)

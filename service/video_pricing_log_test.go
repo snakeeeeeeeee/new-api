@@ -23,17 +23,20 @@ func TestVideoPricingConsumptionLogPersistsSnapshotAndAuditOnlyDuration(t *testi
 	seedChannel(t, channelID)
 
 	snapshot := &types.VideoPricingSnapshot{
-		PublicModel:         "seedance-1.5-pro-720p",
-		ProfileID:           "seedance-720p",
-		ProfileHash:         "frozen-video-profile",
-		BillingMode:         types.VideoPricingModePerSecond,
-		UnitPrice:           0.03,
-		Seconds:             6,
-		Basis:               types.VideoPricingBasisGeneration,
-		Subtotal:            0.18,
-		GroupRatio:          1.5,
-		FinalQuota:          finalQuota,
-		SubscriptionEnabled: false,
+		PublicModel:             "seedance-1.5-pro-720p",
+		ProfileID:               "seedance-720p",
+		ProfileHash:             "frozen-video-profile",
+		BillingMode:             types.VideoPricingModePerSecond,
+		UnitPrice:               0.03,
+		ReferenceVideoUnitPrice: 0.02,
+		ReferenceVideoApplied:   true,
+		EffectiveUnitPrice:      0.05,
+		Seconds:                 6,
+		Basis:                   types.VideoPricingBasisGeneration,
+		Subtotal:                0.18,
+		GroupRatio:              1.5,
+		FinalQuota:              finalQuota,
+		SubscriptionEnabled:     false,
 	}
 	ctx := testGinContext()
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/video/tasks", nil)
@@ -63,11 +66,15 @@ func TestVideoPricingConsumptionLogPersistsSnapshotAndAuditOnlyDuration(t *testi
 	require.NoError(t, model.LOG_DB.First(&before, consumeLogID).Error)
 	require.Equal(t, finalQuota, before.Quota)
 	require.Contains(t, before.Content, "按秒（视频）")
+	require.Contains(t, before.Content, "基础 $0.030000 + 参考视频附加 $0.020000")
 	require.NotContains(t, before.Content, "按次计费")
 	beforeOther, err := common.StrToMap(before.Other)
 	require.NoError(t, err)
 	require.Equal(t, types.VideoPricingBillingType, beforeOther["billing_type"])
 	require.NotNil(t, beforeOther["video_pricing_snapshot"])
+	pricingSnapshot := beforeOther["video_pricing_snapshot"].(map[string]interface{})
+	require.Equal(t, true, pricingSnapshot["reference_video_applied"])
+	require.Equal(t, 0.05, pricingSnapshot["effective_unit_price"])
 	require.Nil(t, beforeOther["video_execution_audit"])
 
 	task := &model.Task{

@@ -249,6 +249,55 @@ func TestValidateVideoTaskMediaReferences(t *testing.T) {
 	assert.Contains(t, message, "unique")
 }
 
+func TestValidateVideoTaskMediaReferenceSafetyEnvelope(t *testing.T) {
+	makeSources := func(count int, kind string) []dto.VideoTaskSource {
+		sources := make([]dto.VideoTaskSource, count)
+		for index := range sources {
+			sources[index] = dto.VideoTaskSource{URL: fmt.Sprintf("https://example.com/%s-%d", kind, index)}
+		}
+		return sources
+	}
+	base := func() dto.VideoTaskCreateRequest {
+		return dto.VideoTaskCreateRequest{
+			Model: "video-model", Operation: "generation",
+			Input: dto.VideoTaskInputRequest{Prompt: "combine references", ReferenceMode: "media"},
+		}
+	}
+
+	valid := base()
+	valid.Input.ReferenceImages = makeSources(dto.VideoTaskMaxReferenceImages, "image")
+	valid.Input.ReferenceVideos = makeSources(dto.VideoTaskMaxReferenceVideos, "video")
+	valid.Input.ReferenceAudios = makeSources(dto.VideoTaskMaxReferenceAudios, "audio")
+	param, message := validateVideoTaskCreateRequest(&valid)
+	assert.Empty(t, param)
+	assert.Empty(t, message)
+
+	tests := []struct {
+		name      string
+		mutate    func(*dto.VideoTaskCreateRequest)
+		wantParam string
+	}{
+		{name: "too many images", mutate: func(request *dto.VideoTaskCreateRequest) {
+			request.Input.ReferenceImages = makeSources(dto.VideoTaskMaxReferenceImages+1, "image")
+		}, wantParam: "input.reference_images"},
+		{name: "too many videos", mutate: func(request *dto.VideoTaskCreateRequest) {
+			request.Input.ReferenceVideos = makeSources(dto.VideoTaskMaxReferenceVideos+1, "video")
+		}, wantParam: "input.reference_videos"},
+		{name: "too many audios", mutate: func(request *dto.VideoTaskCreateRequest) {
+			request.Input.ReferenceAudios = makeSources(dto.VideoTaskMaxReferenceAudios+1, "audio")
+		}, wantParam: "input.reference_audios"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := base()
+			test.mutate(&request)
+			param, message := validateVideoTaskCreateRequest(&request)
+			assert.Equal(t, test.wantParam, param)
+			assert.NotEmpty(t, message)
+		})
+	}
+}
+
 func TestValidateVideoTaskImagesReferences(t *testing.T) {
 	request := dto.VideoTaskCreateRequest{
 		Model: "adobe-kling-3.0-omni-720p", Operation: "generation",

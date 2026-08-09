@@ -10,7 +10,7 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-func ResolveVideoPricing(publicModel string, seconds int, basis string, groupRatio float64) (*types.VideoPricingSnapshot, bool, error) {
+func ResolveVideoPricing(publicModel string, seconds int, basis string, groupRatio float64, hasReferenceVideo bool) (*types.VideoPricingSnapshot, bool, error) {
 	profile, binding, profileHash, bound := ratio_setting.GetVideoPricingForModel(publicModel)
 	if !bound {
 		return nil, false, nil
@@ -24,23 +24,31 @@ func ResolveVideoPricing(publicModel string, seconds int, basis string, groupRat
 		return nil, true, fmt.Errorf("模型 %s 不支持视频计费依据 %s", publicModel, basis)
 	}
 
-	subtotal := decimal.NewFromFloat(profile.UnitPrice).Mul(decimal.NewFromInt(int64(seconds)))
+	referenceVideoApplied := hasReferenceVideo && profile.ReferenceVideoUnitPrice > 0
+	effectiveUnitPrice := decimal.NewFromFloat(profile.UnitPrice)
+	if referenceVideoApplied {
+		effectiveUnitPrice = effectiveUnitPrice.Add(decimal.NewFromFloat(profile.ReferenceVideoUnitPrice))
+	}
+	subtotal := effectiveUnitPrice.Mul(decimal.NewFromInt(int64(seconds)))
 	quota := subtotal.
 		Mul(decimal.NewFromFloat(groupRatio)).
 		Mul(decimal.NewFromFloat(common.QuotaPerUnit))
 	subtotalFloat, _ := subtotal.Float64()
 	return &types.VideoPricingSnapshot{
-		PublicModel:         publicModel,
-		ProfileID:           binding.Profile,
-		ProfileHash:         profileHash,
-		BillingMode:         profile.BillingMode,
-		UnitPrice:           profile.UnitPrice,
-		Seconds:             seconds,
-		Basis:               basis,
-		Subtotal:            subtotalFloat,
-		GroupRatio:          groupRatio,
-		FinalQuota:          common.QuotaFromDecimalRound(quota),
-		SubscriptionEnabled: binding.SubscriptionEnabled,
+		PublicModel:             publicModel,
+		ProfileID:               binding.Profile,
+		ProfileHash:             profileHash,
+		BillingMode:             profile.BillingMode,
+		UnitPrice:               profile.UnitPrice,
+		ReferenceVideoUnitPrice: profile.ReferenceVideoUnitPrice,
+		ReferenceVideoApplied:   referenceVideoApplied,
+		EffectiveUnitPrice:      effectiveUnitPrice.InexactFloat64(),
+		Seconds:                 seconds,
+		Basis:                   basis,
+		Subtotal:                subtotalFloat,
+		GroupRatio:              groupRatio,
+		FinalQuota:              common.QuotaFromDecimalRound(quota),
+		SubscriptionEnabled:     binding.SubscriptionEnabled,
 	}, true, nil
 }
 

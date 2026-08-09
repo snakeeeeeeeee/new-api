@@ -297,17 +297,17 @@ func validateVideoTaskCreateRequest(request *dto.VideoTaskCreateRequest) (string
 			return "input.reference_mode", "images mode accepts image references only"
 		}
 	case "media":
-		if imageCount > 9 {
-			return "input.reference_images", "media mode supports at most 9 reference images"
+		if imageCount > dto.VideoTaskMaxReferenceImages {
+			return "input.reference_images", fmt.Sprintf("media mode supports at most %d reference images", dto.VideoTaskMaxReferenceImages)
 		}
-		if len(request.Input.ReferenceVideos) > 3 {
-			return "input.reference_videos", "media mode supports at most 3 reference videos"
+		if len(request.Input.ReferenceVideos) > dto.VideoTaskMaxReferenceVideos {
+			return "input.reference_videos", fmt.Sprintf("media mode supports at most %d reference videos", dto.VideoTaskMaxReferenceVideos)
 		}
-		if len(request.Input.ReferenceAudios) > 3 {
-			return "input.reference_audios", "media mode supports at most 3 reference audio files"
+		if len(request.Input.ReferenceAudios) > dto.VideoTaskMaxReferenceAudios {
+			return "input.reference_audios", fmt.Sprintf("media mode supports at most %d reference audio files", dto.VideoTaskMaxReferenceAudios)
 		}
-		if imageCount+len(request.Input.ReferenceVideos)+len(request.Input.ReferenceAudios) > 12 {
-			return "input", "media mode supports at most 12 total references"
+		if imageCount+len(request.Input.ReferenceVideos)+len(request.Input.ReferenceAudios) > dto.VideoTaskMaxReferences {
+			return "input", fmt.Sprintf("media mode supports at most %d total references", dto.VideoTaskMaxReferences)
 		}
 	}
 	names := make(map[string]struct{})

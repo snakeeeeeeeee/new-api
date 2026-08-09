@@ -197,9 +197,10 @@ type VideoPricingConfig struct {
 }
 
 type VideoPricingProfile struct {
-	Name        string  `json:"name"`
-	BillingMode string  `json:"billing_mode"`
-	UnitPrice   float64 `json:"unit_price"`
+	Name                    string  `json:"name"`
+	BillingMode             string  `json:"billing_mode"`
+	UnitPrice               float64 `json:"unit_price"`
+	ReferenceVideoUnitPrice float64 `json:"reference_video_unit_price"`
 }
 
 func (p *VideoPricingProfile) UnmarshalJSON(data []byte) error {
@@ -217,6 +218,9 @@ func (p *VideoPricingProfile) UnmarshalJSON(data []byte) error {
 	if !exists || common.GetJsonType(rawUnitPrice) == "null" {
 		return fmt.Errorf("unit_price must be a number")
 	}
+	if rawReferenceVideoUnitPrice, exists := fields["reference_video_unit_price"]; exists && common.GetJsonType(rawReferenceVideoUnitPrice) == "null" {
+		return fmt.Errorf("reference_video_unit_price must be a number")
+	}
 	*p = VideoPricingProfile(decoded)
 	return nil
 }
@@ -229,28 +233,32 @@ type VideoPricingBinding struct {
 // PublicVideoPricing is the safe pricing and funding-policy view exposed by
 // /api/pricing. Profile fields are omitted for policy-only bindings.
 type PublicVideoPricing struct {
-	ProfileID           string  `json:"profile_id,omitempty"`
-	Name                string  `json:"name,omitempty"`
-	BillingMode         string  `json:"billing_mode,omitempty"`
-	Unit                string  `json:"unit,omitempty"`
-	UnitPrice           float64 `json:"unit_price,omitempty"`
-	SubscriptionEnabled bool    `json:"subscription_enabled"`
+	ProfileID               string  `json:"profile_id,omitempty"`
+	Name                    string  `json:"name,omitempty"`
+	BillingMode             string  `json:"billing_mode,omitempty"`
+	Unit                    string  `json:"unit,omitempty"`
+	UnitPrice               float64 `json:"unit_price,omitempty"`
+	ReferenceVideoUnitPrice float64 `json:"reference_video_unit_price,omitempty"`
+	SubscriptionEnabled     bool    `json:"subscription_enabled"`
 }
 
 // VideoPricingSnapshot freezes the exact request-time billing inputs for an
 // asynchronous video task so later configuration changes cannot reprice it.
 type VideoPricingSnapshot struct {
-	PublicModel         string  `json:"public_model"`
-	ProfileID           string  `json:"profile_id"`
-	ProfileHash         string  `json:"profile_hash"`
-	BillingMode         string  `json:"billing_mode"`
-	UnitPrice           float64 `json:"unit_price"`
-	Seconds             int     `json:"seconds"`
-	Basis               string  `json:"basis"`
-	Subtotal            float64 `json:"subtotal"`
-	GroupRatio          float64 `json:"group_ratio"`
-	FinalQuota          int     `json:"final_quota"`
-	SubscriptionEnabled bool    `json:"subscription_enabled"`
+	PublicModel             string  `json:"public_model"`
+	ProfileID               string  `json:"profile_id"`
+	ProfileHash             string  `json:"profile_hash"`
+	BillingMode             string  `json:"billing_mode"`
+	UnitPrice               float64 `json:"unit_price"`
+	ReferenceVideoUnitPrice float64 `json:"reference_video_unit_price"`
+	ReferenceVideoApplied   bool    `json:"reference_video_applied"`
+	EffectiveUnitPrice      float64 `json:"effective_unit_price"`
+	Seconds                 int     `json:"seconds"`
+	Basis                   string  `json:"basis"`
+	Subtotal                float64 `json:"subtotal"`
+	GroupRatio              float64 `json:"group_ratio"`
+	FinalQuota              int     `json:"final_quota"`
+	SubscriptionEnabled     bool    `json:"subscription_enabled"`
 }
 
 const (

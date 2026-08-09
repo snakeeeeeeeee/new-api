@@ -1,4 +1,94 @@
+# Leonardo normalization error projection (2026-08-08)
+
+- Added the Leonardo normalization failure code to public video task projection and focused tests.
+- `go test ./relay ./service` and `git diff --check` passed. The rebuilt `new-api-dev` container is
+  healthy and `/api/status` returns HTTP 200 on port 3001.
+
+---
+
+# Reference-video Per-second Surcharge Progress (2026-08-10)
+
+- Confirmed scope with the user: only non-empty `input.reference_videos`, charged once per request.
+- Loaded the brainstorming, file-planning, UI/UX, and browser workflows; preserved all unrelated worktree and historical planning changes.
+- Traced the existing profile, pricing resolver, immutable task snapshot, normalized request DTO, and provider billing-estimator boundary.
+- Added backend surcharge configuration, central post-validation `input.reference_videos` detection, effective-rate snapshots, explicit consumption-log text, public pricing metadata, and regression coverage.
+- Focused `setting/ratio_setting`, `relay/helper`, `relay`, `service`, and `controller` tests pass; frontend, Docker dev, and external pricing research remain pending.
+- Added the responsive admin surcharge input and preview switch, backward-compatible log summary, table/card/detail marketplace pricing text, and seven-locale translations.
+- All 18 focused pricing helper tests, changed-file ESLint, locale JSON parsing, and whitespace checks pass after changing JavaScript floating-point assertions to approximate comparisons.
+- Complete `go test ./... -count=1`, the production frontend build, i18n status, and scoped Prettier checks pass; only the repository's existing Browserslist and large-chunk warnings remain.
+- Confirmed the pre-rebuild Docker application and async mock are healthy on ports 3001/18081; PostgreSQL and Redis are running and will not be recreated.
+- Rebuilt and recreated only `new-api-dev` from image `sha256:dfdec4add0c...`; the application, PostgreSQL, Redis, and async mock remain healthy.
+- Docker E2E passed three four-second requests: no reference charged `60000`, one reference charged `100000`, and two references also charged `100000`. Persisted task/log snapshots and human-readable log content match the configured `$0.03/s + $0.02/s` formula.
+- `/api/pricing` returns the configured `reference_video_unit_price`; browser marketplace/admin/log rendering checks and external Jimeng/provider research remain in progress before exact fixture cleanup.
+- Opened the rebuilt public model marketplace in the in-app browser; focused configured-model and responsive checks are in progress.
+- Filtered the configured Leonardo model and confirmed its card view renders the localized, converted reference-video surcharge next to the base per-second price.
+- Confirmed the same surcharge description in marketplace table and model-detail group views; protected-page browser QA can continue under the existing local session.
+- Began responsive QA; the in-app browser clamps the requested 375px viewport to 560 CSS pixels, where document-level overflow is absent. Further card/settings checks will use the observed width and retain this limitation.
+- Implemented the requested `(base + reference surcharge) = effective per-second price` desktop formula through a shared helper, added zero-surcharge coverage, passed helper/ESLint/Prettier/build checks, rebuilt image `sha256:575b0d4f4ecd...`, and confirmed matching card/table/detail output.
+- Stopped mobile QA per the user's follow-up; admin-setting, usage-log, zero-surcharge desktop regression, research, and cleanup remain.
+- Completed desktop administrator settings QA: the configured surcharge input renders correctly and the reference-video preview produces `($0.03 + $0.02) × 5 = $0.25`.
+- Completed desktop usage-log QA for all three Docker tasks; base-only and applied-surcharge formulas match the persisted quota snapshots.
+- Temporarily set the surcharge to zero and confirmed marketplace card, table, and detail views all retain the original single-price presentation, then restored the positive QA value.
+- Hardened zero/absent configuration so `reference_video_applied` remains false when the configured surcharge is zero; the focused backend package suite passes with a new regression test.
+- Confirmed from official Volcengine LAS documentation that input-video Seedance billing is duration/resolution dependent rather than a fixed add-on. Confirmed LibTV's official homepage markets reference-video generation as a distinct per-second price, while its public pages do not disclose a literal base-plus-surcharge algorithm.
+- Deleted all exact Docker QA Task, Asset, request, log, and Webhook records; restored the user/token/channel counters, original `$0.01/second` VideoPricing, and absent `vip` keys; removed the disposable administrator; and reset mock metrics.
+- Built final image `sha256:508c1cb8e5a...`, recreated only `new-api-dev`, and confirmed the container is healthy, `/api/status` returns 200, startup logs have no error/panic/fatal lines, and the final desktop marketplace uses its original single-rate text.
+- Final `go test ./... -count=1`, focused frontend helper tests, changed-file ESLint/Prettier, i18n status, and `git diff --check` all pass.
+
+---
+
 # Multi-provider Async Video Final Progress (2026-07-23)
+
+# Video Error Diagnostics Progress (2026-08-05)
+
+## Phase 1: Contract and current-path audit
+- **Status:** complete
+- Loaded repository instructions and the required brainstorming/file-planning workflows.
+- Confirmed Leonardo2API returns a structured error while the Leonardo new-api adaptor masks unknown codes.
+- Confirmed polling persists a bounded redacted upstream response in `task.Data` and Webhooks reuse the central public projection.
+- Locked administrator/public separation and unknown-safe-message behavior with the user.
+- Confirmed the implementation can reuse `task.Data`, `VideoTaskPublicError`, the administrator list boundary, and the existing Webhook public builder without a migration.
+
+## Phase 2: Regression tests
+- **Status:** complete
+- Added coverage for adaptor preservation, central sanitization, capacity errors, administrator DTOs, and Webhook parity.
+- The focused suite fails only on the intentionally missing administrator diagnostic builder and DTO boundary helper.
+
+## Phase 3: Backend implementation
+- **Status:** complete
+- Implementing the missing diagnostics, projection, and DTO separation against the red tests.
+- Focused red tests now pass after adding the central diagnostic builder, public capacity conversion, DTO boundary helper, and Leonardo message preservation.
+- Review identified follow-up hardening for known-code messages and embedded credentials before declaring backend complete.
+- Added hardening for known-code messages, bare Bearer/JWT values, email addresses, provider names, account UUIDs, and provider-credit capacity projection.
+- Full Leonardo adaptor, service, and controller package tests pass.
+
+## Phase 4: Frontend implementation
+- **Status:** complete
+- Administrator task details now prefer `upstream_error.message` and open a structured diagnostic object; ordinary users continue to see only `fail_reason`.
+- Scoped Prettier validation passes.
+
+## Phase 5: Verification
+- **Status:** complete
+- Latest generic nested/string error extraction is formatted.
+- Focused `service`, `controller`, and Leonardo adaptor tests pass after the final extractor and UTF-8 truncation hardening.
+- Complete `go test ./... -count=1`, frontend production build, scoped Prettier, and Git whitespace checks pass; unrelated untracked content remains untouched.
+
+## Test Results
+| Test | Expected | Actual | Status |
+| --- | --- | --- | --- |
+| Complete Go regression | Unknown safe error visible publicly; sensitive detail admin-only | All packages pass | pass |
+| Focused backend packages | Adaptor/service/controller regressions pass | All pass | pass |
+| Scoped frontend Prettier | Changed task-log file formatted | Pass | pass |
+| Final focused backend packages | Generic nested/string extraction and Unicode truncation pass | All pass | pass |
+
+## Error Log
+| Date | Error | Attempt | Resolution |
+| --- | --- | --- | --- |
+| 2026-08-05 | Session catchup contained unrelated interrupted probe context | 1 | Confirmed no tracked diff and created a separate current task section. |
+| 2026-08-05 | Combined planning patch used stale headings | 1 | Patch changed nothing; reapplied with exact current headings. |
+| 2026-08-05 | Focused red test could not find the planned diagnostic/DTO helpers | 1 | Expected; implementation phase started. |
+
+---
 
 - Completed the normalized `/v1/video/tasks` create/list/get/batch contract, durable request/idempotency storage, provider-neutral public DTO, structured multi-output Assets, and split Token/`ak_` authentication.
 - Completed xAI generation/edit/extension conversion, provider namespace validation, explicit-zero preservation, upstream-model pass-through, and the official 1080p restriction to 1.5 single-image generation.
@@ -1303,3 +1393,70 @@
 - Generalized the bounded 60-second 404 grace to all durable normalized video tasks while preserving OpenAI compatibility and legacy task behavior.
 - Focused tests, 20 race repetitions, and the complete model/service/relay/controller package tests pass.
 - Full `go test ./... -count=1` and `git diff --check` pass; no 2API protocol or database migration is required.
+
+
+---
+
+## Infinite Canvas Authorization Progress
+
+- **Status:** complete
+- 已锁定管理员配置、PKCE 授权、CanvasGrant、一次性授权码和重复授权修复行为。
+- 开始实现跨数据库 GORM 模型、事务性凭证服务、API 路由和两个 React 页面。
+- 首次动态补丁格式错误且未修改文件，已修正后成功记录。
+- 将保留仓库现有规划文件与所有无关未跟踪诊断产物。
+- 已完成迁移、聚合分组、Option、Token 与 AssetKey 结构盘点，进入数据模型和授权服务编辑。
+- 后端实现方案已收口：Option 专用配置、GORM 授权模型、service 事务兑换、现有聚合模型展开和显式 Token 缓存刷新。
+- new-api service/controller/model 定向测试通过；管理配置页、授权确认页和登录返回链路已接入，待补专项测试与浏览器验收。
+- 首次大前端补丁因 LoginForm import 上下文不匹配而整体失败；拆分页面新增与精确登录补丁后完成，未产生部分修改。
+- 已完成管理员配置校验、PKCE 授权码签发/兑换、事务性 Grant 与三类凭证创建修复，以及所有本地/第三方登录分支的安全 return_to。
+- Canvas 专项服务测试、`go test ./service ./controller ./model`、菜单权限测试、前端 `bun run build` 和 `git diff --check` 均通过。
+- 剩余工作为 i18n 状态检查、本地 Docker 联合调试、桌面/窄屏页面验收和真实图片/视频请求。
+- `bun run i18n:status` 通过；本地环境已有健康的 PostgreSQL、Redis 与旧版 new-api-dev 容器，后续只重建应用容器以加载本次代码。
+- 未登录授权页可正确进入带安全 return-to 的登录页；密码登录实测暴露 `AuthRedirect` 的二次导航竞态，首次提前捕获仍被覆盖，现改为授权页抵达前幂等保留目标，待重建后复测。
+- 请求日志确认登录 POST 成功后 context 仍因缺少 `New-Api-User` 返回 401；授权页已补齐现有双重认证头，并避免 401 重定向期间以空 context 渲染，待重建复测。
+- 第四次 Docker 重建后，未登录 -> 密码登录 -> 原授权 URL 返回链通过；管理员配置页已用测试图片分组、现有视频分组和精确 localhost 回调保存启用状态。
+- 已完成 Canvas 配置页 1440px 与 390px 视觉检查；截图采集层会重复拼接视口，但首个视口和 DOM 均确认本功能无重叠或文字溢出。
+- 首次授权、授权码重放拒绝、重复复用、Token 禁用修复/删除重建、Resource Key 轮换、缺分组零副作用均通过本地 PostgreSQL Docker 联调。
+- 自动授权凭证已分别完成一次真实图片和视频任务创建、轮询、Resource Key 查询和结果下载；PNG 与 MP4 内容检查通过。
+- 修复 `/api/canvas/oauth/token` 实际 POST 缺少 CORS 响应头，并增加路由级回归；Chrome 完整弹窗授权、自动回填、刷新持久化和取消不覆盖均通过。
+- 最终 `go test ./service ./controller ./model ./middleware ./router`、new-api 前端生产构建、`bun run i18n:status` 和 Git 空白检查通过。
+- 一次性用户、Canvas Grant/Token/Resource Key/授权码、临时 ModelRatio 和临时模型元数据已按精确 ID/标记清理；Canvas 授权恢复为停用并保留分组和回调，`new-api-dev` 健康。
+# Leonardo Seedance 2.5 Runtime Progress (2026-08-09)
+
+- Reproduced the production failure from the exact adaptor guard and locked the implementation boundary.
+- Full validation and mock-only verification are pending; no paid upstream request will be made.
+- Audited adaptor tests and OpenAPI generation sources; implementation touches the Leonardo adaptor, its focused tests, the generator, and generated OpenAPI only.
+- Added red regression coverage for model registration, 4-30 second duration, frame payload mapping, and invalid frame media combinations; failures match the production root cause.
+- Implemented exact 480p/720p runtime support, separate 2.5 duration/frame validation, and upstream `reference_mode` forwarding. Focused adaptor tests now pass.
+- Added Seedance 2.5 capability entries and a frame example to the OpenAPI source; generation and drift checks pass.
+- Focused relay/controller/adaptor tests, generator-source Prettier, OpenAPI drift check, frontend production build, and whitespace checks pass after updating the shared registration contract.
+- Local `new-api-dev`, `async-test-mock`, and Leonardo2API containers are healthy; Docker rebuild and full Go rerun remain.
+- Full `go test ./... -count=1` passes. Docker image `sha256:191d0b165a0c...` was built, only `new-api-dev` was recreated, and it is healthy on port 3001.
+- First zero-paid API probe stopped before channel selection because the old local `vip` group is deprecated. Exit cleanup restored channel models/mapping, ability count, mock metrics, and all captured quota counters exactly.
+- Second probe passed model validation and billing, then mock rejected the 30-second payload. The exact failed task/idempotency residue was deleted and quota/channel state was restored; root cause is isolated to stale async-test-mock validation.
+- Updated async-test-mock to accept Seedance 2.5 duration up to 30 seconds and forward-valid `reference_mode`, with tests for text, ordered frame images, 31 seconds, and invalid frame video/audio combinations.
+- Focused packages, full `go test ./... -count=1`, OpenAPI drift, generator Prettier, frontend production build, and whitespace checks pass.
+- Rebuilt async-test-mock as image `sha256:adc5c63af583...`; direct 30-second container probe returned 202 with the expected payload snapshot.
+- The first two query attempts correctly returned 401 because one used a create Token and the other used a soft-deleted Resource Key. Both attempts cleaned all temporary database state.
+- Final new-api mock-channel probe returned 202 and completed as `succeeded` on channel 128 with one Asset and one upstream submit; all temporary rows, pricing, abilities, and quota mutations were restored, metrics reset, and both containers are healthy.
+
+---
+
+## 2026-08-10 - Broad Leonardo reference admission
+
+- Audited the public controller, normalized DTO, Leonardo adaptor, billing order, and trusted
+  Leonardo2API validation projection.
+- User confirmed the revised boundary: new-api keeps simple common checks and a broad safety envelope;
+  Leonardo2API owns concrete model counts, combinations, and reference durations.
+- No production code has been changed yet; contract tests are next.
+- Added controller and Leonardo adaptor regressions for the shared 30/10/10/50 envelope,
+  model-agnostic admission, and forwarding `reference_mode` for every Leonardo model.
+- The red run failed only on the intentionally missing shared envelope constants; implementation started.
+- Added shared DTO limits, widened the common media envelope, removed Leonardo model-specific reference
+  combinations, and now forward `reference_mode` for every Leonardo provider model.
+- Focused controller, Leonardo adaptor, and relay tests pass; OpenAPI generation/check and formatting pass.
+- Updated Resource Center contract text and translations after finding stale public 9/3/3/12 limits.
+- Final verification passed: `go test ./... -count=1`, OpenAPI generation/check, i18n status,
+  frontend production build, and `git diff --check`.
+- No Leonardo2API files, paid Generate calls, Docker services, database state, or unrelated untracked
+  files were changed for this task.

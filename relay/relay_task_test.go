@@ -276,7 +276,7 @@ func TestRelayTaskSubmitAdobeVideoUsesExactMappedModelAndPerSecondWalletQuota(t 
 	})
 	require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(`{
 		"version":1,
-		"profiles":{"seedance-fast-480p":{"name":"Seedance Fast 480p","billing_mode":"per_second","unit_price":0.03}},
+			"profiles":{"seedance-fast-480p":{"name":"Seedance Fast 480p","billing_mode":"per_second","unit_price":0.03,"reference_video_unit_price":0.02}},
 		"model_bindings":{"seedance-2.0-fast-480p":{"profile":"seedance-fast-480p","subscription_enabled":false}}
 	}`))
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1.5}`))
@@ -303,7 +303,11 @@ func TestRelayTaskSubmitAdobeVideoUsesExactMappedModelAndPerSecondWalletQuota(t 
 	normalizedRequest := dto.VideoTaskCreateRequest{
 		Model:     "seedance-2.0-fast-480p",
 		Operation: "generation",
-		Input:     dto.VideoTaskInputRequest{Prompt: "ocean sunrise"},
+		Input: dto.VideoTaskInputRequest{
+			Prompt:          "ocean sunrise",
+			ReferenceMode:   "media",
+			ReferenceVideos: []dto.VideoTaskSource{{URL: "https://example.com/reference-1.mp4"}, {URL: "https://example.com/reference-2.mp4"}},
+		},
 		Output: dto.VideoTaskOutputRequest{
 			Duration:      &duration,
 			AspectRatio:   &aspectRatio,
@@ -339,8 +343,11 @@ func TestRelayTaskSubmitAdobeVideoUsesExactMappedModelAndPerSecondWalletQuota(t 
 	assert.Equal(t, "seedance_2.0_fast_480p", info.UpstreamModelName)
 	assert.Equal(t, 4, info.PriceData.VideoPricing.Seconds)
 	assert.Equal(t, 0.03, info.PriceData.VideoPricing.UnitPrice)
+	assert.Equal(t, 0.02, info.PriceData.VideoPricing.ReferenceVideoUnitPrice)
+	assert.True(t, info.PriceData.VideoPricing.ReferenceVideoApplied)
+	assert.Equal(t, 0.05, info.PriceData.VideoPricing.EffectiveUnitPrice)
 	assert.Equal(t, 1.5, info.PriceData.VideoPricing.GroupRatio)
-	assert.Equal(t, 90000, info.PriceData.Quota)
+	assert.Equal(t, 150000, info.PriceData.Quota)
 	assert.Equal(t, info.PriceData.VideoPricing.FinalQuota, info.PriceData.Quota)
 	assert.Empty(t, info.PriceData.OtherRatios)
 	assert.Equal(t, "wallet_only", info.BillingPreferenceOverride)

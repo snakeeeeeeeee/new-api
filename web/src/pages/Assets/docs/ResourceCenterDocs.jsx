@@ -1250,7 +1250,7 @@ function AsyncVideoDocs({ t }) {
       <DocumentationSection
         title={`${t('多媒体参考生成')} · POST /v1/video/tasks`}
         description={t(
-          '视频任务只接受绝对 HTTP(S) URL；media 模式支持最多 9 图、3 视频、3 音频且总计不超过 12 项。',
+          '视频任务只接受绝对 HTTP(S) URL；media 模式的网关安全上限为 30 图、10 视频、10 音频且总计不超过 50 项，具体模型限制由下游服务校验。',
         )}
       >
         <CodeExample title={t('请求示例')}>
@@ -1258,7 +1258,7 @@ function AsyncVideoDocs({ t }) {
         </CodeExample>
         <Text type='tertiary'>
           {t(
-            '参考视频和参考音频由供应商按真实内容探测，单项时长不得超过 15 秒。',
+            '参考视频和参考音频由供应商按真实内容探测，具体格式、时长及组合限制以模型校验结果为准。',
           )}
         </Text>
         <Text type='tertiary'>

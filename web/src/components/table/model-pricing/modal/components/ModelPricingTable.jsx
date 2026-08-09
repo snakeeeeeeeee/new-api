@@ -24,6 +24,7 @@ import {
   calculateModelPrice,
   formatRatioLabel,
   getModelPriceItems,
+  getVideoPricingDisplay,
   resolvePricingBillingType,
 } from '../../../../../helpers';
 
@@ -140,6 +141,13 @@ const ModelPricingTable = ({
         resolvePricingBillingType(modelData) === 'per_image_parameter';
       const isVideoPricing =
         resolvePricingBillingType(modelData) === 'per_video_second';
+      const videoPricingDisplay = getVideoPricingDisplay({
+        videoPricing: modelData?.video_pricing,
+        basePrice: priceData.price,
+        groupRatio: priceData.usedGroupRatio,
+        displayPrice,
+        t,
+      });
 
       return {
         key: group,
@@ -163,6 +171,7 @@ const ModelPricingTable = ({
         tierPrices,
         imageTierPrices,
         videoPrice: isVideoPricing ? priceData.price : null,
+        videoPricingDisplay,
         videoPricing: modelData?.video_pricing || null,
       };
     });
@@ -227,9 +236,15 @@ const ModelPricingTable = ({
           ))}
           {record.videoPrice !== null ? (
             <div className='space-y-2'>
-              <div className='font-semibold text-orange-600'>
-                {record.videoPrice} / {t('秒')}
-              </div>
+              {record.videoPricingDisplay.hasReferenceVideoSurcharge ? (
+                <div className='font-semibold text-orange-600 whitespace-normal break-words leading-relaxed'>
+                  {record.videoPricingDisplay.formula}
+                </div>
+              ) : (
+                <div className='font-semibold text-orange-600'>
+                  {record.videoPrice} / {t('秒')}
+                </div>
+              )}
               <div className='flex items-center gap-2 flex-wrap'>
                 <Tag color='blue' size='small'>
                   {record.videoPricing?.name || t('按秒计费')}

@@ -335,7 +335,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, taskErr
 		}
 		groupRatioInfo := helper.HandleGroupRatio(c, info)
-		snapshot, _, resolveErr := helper.ResolveVideoPricing(modelName, estimate.Seconds, estimate.Basis, groupRatioInfo.GroupRatio)
+		hasReferenceVideo := normalizedRequestErr == nil && len(normalizedRequest.Input.ReferenceVideos) > 0
+		snapshot, _, resolveErr := helper.ResolveVideoPricing(modelName, estimate.Seconds, estimate.Basis, groupRatioInfo.GroupRatio, hasReferenceVideo)
 		if resolveErr != nil {
 			return nil, service.TaskErrorWrapperLocal(resolveErr, "invalid_video_duration", http.StatusBadRequest)
 		}

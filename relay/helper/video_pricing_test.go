@@ -12,7 +12,7 @@ import (
 const videoPricingResolverConfig = `{
   "version": 1,
   "profiles": {
-    "video-720p": {"name":"Video 720p","billing_mode":"per_second","unit_price":0.03}
+	    "video-720p": {"name":"Video 720p","billing_mode":"per_second","unit_price":0.03,"reference_video_unit_price":0.02}
   },
   "model_bindings": {
     "video-model-720p": {"profile":"video-720p","subscription_enabled":false},
@@ -32,13 +32,16 @@ func setupVideoPricingResolverTest(t *testing.T) {
 func TestResolveVideoPricingCalculatesPerSecondQuota(t *testing.T) {
 	setupVideoPricingResolverTest(t)
 
-	snapshot, bound, err := ResolveVideoPricing("video-model-720p", 8, types.VideoPricingBasisGeneration, 1.5)
+	snapshot, bound, err := ResolveVideoPricing("video-model-720p", 8, types.VideoPricingBasisGeneration, 1.5, false)
 	require.NoError(t, err)
 	require.True(t, bound)
 	require.Equal(t, "video-model-720p", snapshot.PublicModel)
 	require.Equal(t, "video-720p", snapshot.ProfileID)
 	require.NotEmpty(t, snapshot.ProfileHash)
 	require.Equal(t, 0.03, snapshot.UnitPrice)
+	require.Equal(t, 0.02, snapshot.ReferenceVideoUnitPrice)
+	require.False(t, snapshot.ReferenceVideoApplied)
+	require.Equal(t, 0.03, snapshot.EffectiveUnitPrice)
 	require.Equal(t, 8, snapshot.Seconds)
 	require.Equal(t, types.VideoPricingBasisGeneration, snapshot.Basis)
 	require.InDelta(t, 0.24, snapshot.Subtotal, 1e-12)
@@ -52,25 +55,63 @@ func TestResolveVideoPricingCalculatesPerSecondQuota(t *testing.T) {
 	require.NotNil(t, priceData.VideoPricing)
 }
 
+func TestResolveVideoPricingAddsReferenceVideoUnitPriceOnce(t *testing.T) {
+	setupVideoPricingResolverTest(t)
+
+	snapshot, bound, err := ResolveVideoPricing("video-model-720p", 8, types.VideoPricingBasisGeneration, 1.5, true)
+	require.NoError(t, err)
+	require.True(t, bound)
+	require.True(t, snapshot.ReferenceVideoApplied)
+	require.Equal(t, 0.03, snapshot.UnitPrice)
+	require.Equal(t, 0.02, snapshot.ReferenceVideoUnitPrice)
+	require.Equal(t, 0.05, snapshot.EffectiveUnitPrice)
+	require.InDelta(t, 0.4, snapshot.Subtotal, 1e-12)
+	require.Equal(t, common.QuotaFromFloat(0.05*8*1.5*common.QuotaPerUnit), snapshot.FinalQuota)
+}
+
+func TestResolveVideoPricingLeavesLegacyBehaviorWhenReferenceVideoUnitPriceIsZero(t *testing.T) {
+	original := ratio_setting.VideoPricing2JSONString()
+	require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(`{
+		"version": 1,
+		"profiles": {
+			"video-720p": {"name":"Video 720p","billing_mode":"per_second","unit_price":0.03}
+		},
+		"model_bindings": {
+			"video-model-720p": {"profile":"video-720p","subscription_enabled":false}
+		}
+	}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(original))
+	})
+
+	snapshot, bound, err := ResolveVideoPricing("video-model-720p", 8, types.VideoPricingBasisGeneration, 1.5, true)
+	require.NoError(t, err)
+	require.True(t, bound)
+	require.False(t, snapshot.ReferenceVideoApplied)
+	require.Equal(t, 0.03, snapshot.EffectiveUnitPrice)
+	require.InDelta(t, 0.24, snapshot.Subtotal, 1e-12)
+	require.Equal(t, common.QuotaFromFloat(0.03*8*1.5*common.QuotaPerUnit), snapshot.FinalQuota)
+}
+
 func TestResolveVideoPricingRejectsInvalidQuantityAndPolicyOnlyBinding(t *testing.T) {
 	setupVideoPricingResolverTest(t)
 
-	_, bound, err := ResolveVideoPricing("video-model-720p", 0, types.VideoPricingBasisGeneration, 1)
+	_, bound, err := ResolveVideoPricing("video-model-720p", 0, types.VideoPricingBasisGeneration, 1, false)
 	require.True(t, bound)
 	require.Error(t, err)
 
-	_, bound, err = ResolveVideoPricing("video-model-720p", 5, "actual_output", 1)
+	_, bound, err = ResolveVideoPricing("video-model-720p", 5, "actual_output", 1, false)
 	require.True(t, bound)
 	require.Error(t, err)
 
-	_, bound, err = ResolveVideoPricing("legacy-video-model", 5, types.VideoPricingBasisGeneration, 1)
+	_, bound, err = ResolveVideoPricing("legacy-video-model", 5, types.VideoPricingBasisGeneration, 1, false)
 	require.False(t, bound)
 	require.NoError(t, err)
 }
 
 func TestResolvedVideoPricingSnapshotDoesNotChangeWithConfig(t *testing.T) {
 	setupVideoPricingResolverTest(t)
-	snapshot, bound, err := ResolveVideoPricing("video-model-720p", 5, types.VideoPricingBasisGeneration, 1)
+	snapshot, bound, err := ResolveVideoPricing("video-model-720p", 5, types.VideoPricingBasisGeneration, 1, false)
 	require.NoError(t, err)
 	require.True(t, bound)
 

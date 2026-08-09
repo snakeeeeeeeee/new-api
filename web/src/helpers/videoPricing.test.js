@@ -24,6 +24,7 @@ import {
   calculateVideoPricingPreview,
   copyVideoPricingProfile,
   deleteVideoPricingProfile,
+  getVideoPricingDisplay,
   getVideoPricingLogSummary,
   getVideoPricingProfileModels,
   normalizeVideoPricing,
@@ -39,6 +40,7 @@ const config = {
       name: 'Seedance 720p',
       billing_mode: 'per_second',
       unit_price: 0.03,
+      reference_video_unit_price: 0.02,
     },
   },
   model_bindings: {
@@ -61,11 +63,38 @@ describe('video pricing helpers', () => {
       }),
     ).toEqual({
       seconds: 6,
+      base_unit_price: 0.03,
+      reference_video_unit_price: 0.02,
+      reference_video_applied: false,
       unit_price: 0.03,
       subtotal: 0.18,
       group_ratio: 1.5,
       total: 0.27,
     });
+    const referencePreview = calculateVideoPricingPreview({
+      profile: normalized.profiles['seedance-720p'],
+      seconds: 6,
+      groupRatio: 1.5,
+      hasReferenceVideo: true,
+    });
+    expect(referencePreview).toEqual(
+      expect.objectContaining({
+        seconds: 6,
+        base_unit_price: 0.03,
+        reference_video_unit_price: 0.02,
+        reference_video_applied: true,
+        unit_price: 0.05,
+        group_ratio: 1.5,
+      }),
+    );
+    expect(referencePreview.subtotal).toBeCloseTo(0.3, 12);
+    expect(referencePreview.total).toBeCloseTo(0.45, 12);
+    const legacy = structuredClone(config);
+    delete legacy.profiles['seedance-720p'].reference_video_unit_price;
+    expect(
+      normalizeVideoPricing(legacy).profiles['seedance-720p']
+        .reference_video_unit_price,
+    ).toBe(0);
   });
 
   test('keeps exact model names and defaults subscription eligibility to false', () => {
@@ -76,6 +105,42 @@ describe('video pricing helpers', () => {
     );
     expect(bound.model_bindings['Video-720p'].subscription_enabled).toBe(false);
     expect(bound.model_bindings['video-720p']).toBeDefined();
+  });
+
+  test('formats the effective reference-video rate and leaves zero surcharge unchanged', () => {
+    const displayPrice = (value) => `¥${value.toFixed(3)}`;
+    const priced = getVideoPricingDisplay({
+      videoPricing: config.profiles['seedance-720p'],
+      basePrice: '¥0.015',
+      groupRatio: 0.5,
+      displayPrice,
+    });
+    expect(priced).toEqual({
+      hasReferenceVideoSurcharge: true,
+      basePrice: '¥0.015',
+      referenceVideoPrice: '¥0.010',
+      effectivePrice: '¥0.025',
+      formula:
+        '(基础价格 ¥0.015 / 秒 + 参考视频附加价 ¥0.010 / 秒) = ¥0.025 / 秒',
+    });
+
+    expect(
+      getVideoPricingDisplay({
+        videoPricing: {
+          ...config.profiles['seedance-720p'],
+          reference_video_unit_price: 0,
+        },
+        basePrice: '¥0.015',
+        groupRatio: 0.5,
+        displayPrice,
+      }),
+    ).toEqual({
+      hasReferenceVideoSurcharge: false,
+      basePrice: '¥0.015',
+      referenceVideoPrice: null,
+      effectivePrice: null,
+      formula: null,
+    });
   });
 
   test('supports policy-only bindings and validates invalid policy bindings', () => {
@@ -157,45 +222,53 @@ describe('video pricing helpers', () => {
       name: 'Bad',
       billing_mode: 'per_request',
       unit_price: 1,
+      reference_video_unit_price: 0,
     };
+    invalid.profiles['seedance-720p'].reference_video_unit_price = -1;
     invalid.model_bindings.orphan = {
       profile: 'missing',
       subscription_enabled: false,
     };
     const errors = validateVideoPricing(invalid);
     expect(errors.some((error) => error.includes('每秒单价'))).toBe(true);
+    expect(errors.some((error) => error.includes('参考视频附加价'))).toBe(true);
     expect(errors.some((error) => error.includes('per_second'))).toBe(true);
     expect(errors.some((error) => error.includes('orphan'))).toBe(true);
   });
 
   test('reads immutable pricing and execution audit fields', () => {
-    expect(
-      getVideoPricingLogSummary({
-        video_pricing_snapshot: {
-          public_model: 'seedance-1.5-pro-720p',
-          profile_id: 'seedance-720p',
-          billing_mode: 'video_per_second',
-          unit_price: 0.03,
-          seconds: 6,
-          basis: 'generation_output',
-          subtotal: 0.18,
-          group_ratio: 1.5,
-          final_quota: 270000,
-          subscription_enabled: false,
-        },
-        video_execution_audit: {
-          reported_duration_ms: 5800,
-          matches_request: false,
-        },
-      }),
-    ).toEqual(
+    const summary = getVideoPricingLogSummary({
+      video_pricing_snapshot: {
+        public_model: 'seedance-1.5-pro-720p',
+        profile_id: 'seedance-720p',
+        billing_mode: 'video_per_second',
+        unit_price: 0.03,
+        reference_video_unit_price: 0.02,
+        reference_video_applied: true,
+        effective_unit_price: 0.05,
+        seconds: 6,
+        basis: 'generation_output',
+        subtotal: 0.3,
+        group_ratio: 1.5,
+        final_quota: 270000,
+        subscription_enabled: false,
+      },
+      video_execution_audit: {
+        reported_duration_ms: 5800,
+        matches_request: false,
+      },
+    });
+    expect(summary).toEqual(
       expect.objectContaining({
         seconds: 6,
-        unit_price: 0.03,
-        total: 0.27,
+        unit_price: 0.05,
+        base_unit_price: 0.03,
+        reference_video_unit_price: 0.02,
+        reference_video_applied: true,
         reported_duration_ms: 5800,
         matches_request: false,
       }),
     );
+    expect(summary.total).toBeCloseTo(0.45, 12);
   });
 });

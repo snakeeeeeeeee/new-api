@@ -26,6 +26,7 @@ import {
   calculateModelPrice,
   getModelPriceItems,
   getLobeHubIcon,
+  getVideoPricingDisplay,
   resolvePricingBillingType,
 } from '../../../../../helpers';
 import {
@@ -253,15 +254,24 @@ export const getPricingTableColumns = ({
       const billingType = resolvePricingBillingType(record);
       const isImagePricing = billingType === 'per_image_parameter';
       const isVideoPricing = billingType === 'per_video_second';
+      const videoPricingDisplay = getVideoPricingDisplay({
+        videoPricing: record.video_pricing,
+        basePrice: priceData.price,
+        groupRatio: priceData.usedGroupRatio,
+        displayPrice,
+        t,
+      });
       const priceItems = isVideoPricing
-        ? [
-            {
-              key: 'video-second',
-              label: t('每秒价格'),
-              value: priceData.price,
-              suffix: ` / ${t('秒')}`,
-            },
-          ]
+        ? videoPricingDisplay.hasReferenceVideoSurcharge
+          ? []
+          : [
+              {
+                key: 'video-second',
+                label: t('每秒价格'),
+                value: priceData.price,
+                suffix: ` / ${t('秒')}`,
+              },
+            ]
         : isImagePricing
           ? [
               {
@@ -277,6 +287,11 @@ export const getPricingTableColumns = ({
 
       return (
         <div className='space-y-1'>
+          {isVideoPricing && videoPricingDisplay.hasReferenceVideoSurcharge ? (
+            <div className='text-gray-700 whitespace-normal break-words leading-relaxed'>
+              {videoPricingDisplay.formula}
+            </div>
+          ) : null}
           {priceItems.map((item) => (
             <div key={item.key} className='text-gray-700'>
               {item.label} {item.value}

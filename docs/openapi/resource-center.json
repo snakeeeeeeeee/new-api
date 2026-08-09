@@ -1244,8 +1244,8 @@
         ],
         "operationId": "createVideoTask",
         "summary": "Create an asynchronous video task",
-        "description": "Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. output.generate_audio is the provider-neutral generated-audio control and defaults to true on supported providers; provider_options.*.generate_audio and provider_options.*.reference_mode are rejected. Adobe video prompts accept at most 1200 Unicode characters. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Leonardo Seedance 2.0 models support 4-15 second media references with up to four images, three videos, and one audio clip. Leonardo Seedance 2.5 supports 4-30 seconds plus frame mode with one start image and an optional end image; its media limits match Seedance 2.0. Seedance reference audio requires an image or video. leonardo-minimax-h3-1440p is fixed at 1440p, supports 5-15 seconds and six aspect ratios, accepts frame, images, or image-plus-audio media references, rejects video references, and always generates native audio. Leonardo-prefixed models accept HTTP(S) reference URLs and reject data URLs, base64, and provider files. Reference-audio duration is detected by the downstream service. Compatibility endpoints under /v1/videos remain unchanged.",
-        "x-description-zh-CN": "创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。output.generate_audio 是供应商无关的生成音轨开关，支持该能力的渠道省略时默认 true；provider_options.*.generate_audio 和 provider_options.*.reference_mode 会被拒绝。Adobe 视频提示词最多 1200 个 Unicode 字符。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。Leonardo Seedance 2.0 支持 4-15 秒 media 参考，最多 4 图、3 视频、1 音频。Leonardo Seedance 2.5 支持 4-30 秒，并额外支持一张首帧加可选尾帧的 frame 模式；其 media 限制与 2.0 相同。Seedance 音频必须搭配图片或视频。leonardo-minimax-h3-1440p 固定 1440p、支持 5-15 秒和六种画幅，支持 frame、images 或图片加音频的 media 模式，不支持视频参考，且始终生成原生音轨。leonardo-* 模型接受 HTTP(S) 参考 URL，拒绝 Data URL、Base64 和 provider file。参考音频时长由下游服务检测。原有 /v1/videos 兼容接口保持不变。",
+        "description": "Creates a normalized generation, edit, extension, or remix task. Provider capability and parameter limits are validated before precharge and upstream submission. output.generate_audio is the provider-neutral generated-audio control and defaults to true on supported providers; provider_options.*.generate_audio and provider_options.*.reference_mode are rejected. Adobe video prompts accept at most 1200 Unicode characters. Adobe Kling/Veo model SKUs fix the output resolution and reject output.resolution. Kling 3.0 uses 3-15 second frame generation and requires at least one frame image. Kling 3.0 Omni additionally accepts up to three images. Veo 3.1 accepts 4, 6, or 8 seconds; Standard images mode requires 8 seconds and 16:9, while Fast is frame-only. Leonardo-prefixed models accept HTTP(S) reference URLs and reject data URLs, base64, and provider files. The gateway applies only common reference validation and a 30-image, 10-video, 10-audio, 50-total safety envelope to Leonardo requests; the downstream Leonardo service validates concrete model reference counts, combinations, formats, and media durations. Exact model mapping, output duration, aspect ratio, and MiniMax H3 native-audio requirements are still validated before billing. Compatibility endpoints under /v1/videos remain unchanged.",
+        "x-description-zh-CN": "创建规范化的视频生成、编辑、扩展或 Remix 任务，并在预扣费及上游提交前完成模型能力校验。output.generate_audio 是供应商无关的生成音轨开关，支持该能力的渠道省略时默认 true；provider_options.*.generate_audio 和 provider_options.*.reference_mode 会被拒绝。Adobe 视频提示词最多 1200 个 Unicode 字符。Adobe Kling/Veo 模型名固定输出分辨率并拒绝 output.resolution。Kling 3.0 使用 3-15 秒 frame 模式且至少需要一张帧图；Kling 3.0 Omni 额外支持最多三图。Veo 3.1 仅支持 4、6、8 秒；Standard 的 images 模式固定为 8 秒、16:9，Fast 仅支持 frame。leonardo-* 模型接受 HTTP(S) 参考 URL，拒绝 Data URL、Base64 和 provider file。网关对 Leonardo 请求只执行公共参考素材校验及 30 图、10 视频、10 音频、总计 50 项的安全上限；具体模型的素材数量、组合、格式和时长由下游 Leonardo 服务校验。精确模型映射、输出时长、画面比例和 MiniMax H3 原生音轨要求仍在计费前校验。原有 /v1/videos 兼容接口保持不变。",
         "x-supertoken-video-model-capabilities": {
           "adobe-kling-3.0-{720p|1080p}": {
             "prompt_max_characters": 1200,
@@ -3958,7 +3958,7 @@
               "media"
             ],
             "default": "frame",
-            "description": "frame accepts image references only and maps at most two images to start/end frames. images accepts up to 3 image references. media accepts up to 9 images, 3 videos, 3 audio files, and 12 references total."
+            "description": "frame accepts image references only and maps at most two images to start/end frames. images accepts up to 5 image references. media has a gateway safety envelope of 30 images, 10 videos, 10 audio files, and 50 references total; provider adaptors validate concrete model limits."
           },
           "image": {
             "$ref": "#/components/schemas/VideoTaskSource",
@@ -3968,7 +3968,7 @@
           "reference_images": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 9,
+            "maxItems": 30,
             "items": {
               "$ref": "#/components/schemas/VideoTaskSource"
             },
@@ -3977,20 +3977,20 @@
           "reference_videos": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 3,
+            "maxItems": 10,
             "items": {
               "$ref": "#/components/schemas/VideoTaskSource"
             },
-            "description": "Reference videos for media mode. Each provider validates actual media duration and rejects values over 15 seconds."
+            "description": "Reference videos for media mode. Each provider validates concrete format, per-file duration, and total duration limits."
           },
           "reference_audios": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 3,
+            "maxItems": 10,
             "items": {
               "$ref": "#/components/schemas/VideoTaskSource"
             },
-            "description": "Reference audio files for media mode. Each provider validates actual media duration and rejects values over 15 seconds."
+            "description": "Reference audio files for media mode. Each provider validates concrete format, per-file duration, and total duration limits."
           },
           "video": {
             "$ref": "#/components/schemas/VideoTaskInputVideoSource",

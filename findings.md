@@ -1,4 +1,95 @@
+# Leonardo normalization error projection (2026-08-08)
+
+- Leonardo submission error projection already trusts `reference_media_normalization_failed`, but
+  `service/video_task_public.go` omitted it from code, message, and upstream diagnostic allowlists.
+- Without the public projection update, later task queries degraded the trusted error to
+  `video_task_failed` even though initial submission retained the specific code.
+- The submission boundary now preserves only the trusted Adobe/Leonardo media-validation allowlist;
+  arbitrary Leonardo upstream errors remain masked.
+
+---
+
+# Reference-video Per-second Surcharge Findings (2026-08-10)
+
+- Current `VideoPricingProfile` stores only `unit_price`; current billing computes `unit_price * seconds * group ratio` and cannot distinguish reference-video requests.
+- The normalized public request explicitly separates `input.reference_videos` from `input.video`, which supports the requested narrow trigger.
+- `VideoBillingEstimate` currently carries only seconds and basis; extending this provider-neutral estimate with a reference-video boolean avoids coupling pricing code to provider payload shapes.
+- The existing immutable `VideoPricingSnapshot` is the correct audit boundary because configuration changes must not reprice in-flight asynchronous tasks.
+- The admin editor and marketplace currently expose only one USD-per-second price and explicitly describe reference media as not affecting billing; both descriptions must change together.
+- The term `libtv` is not yet verified as an exact provider identity; research must not silently assume it means LiblibAI.
+- The normalized request is available centrally in `RelayTaskSubmit` before pricing and after provider validation, so surcharge detection can remain a single `len(normalizedRequest.Input.ReferenceVideos) > 0` check instead of changing every provider adaptor.
+- Public marketplace pricing receives `PublicVideoPricing`; adding the configured surcharge there lets table, card, and model-detail views describe the conditional price without exposing task-private billing data.
+- Existing log summaries treat snapshot `unit_price` as the charged rate. New snapshots need an explicit effective rate and frontend fallback to `unit_price` for historical logs.
+- Marketplace fixed prices are already multiplied by the selected group ratio and converted through `displayPrice`; the reference surcharge must use the same path rather than showing the raw configured USD value next to a converted base price.
+- The existing VideoPricing editor can fit the surcharge as a fourth responsive template field and a preview switch without introducing a new panel or nested card.
+- Local Docker already has healthy application and async-video mock containers plus running PostgreSQL/Redis; only `new-api-dev` needs rebuilding for this feature.
+- Rebuilt Docker image `sha256:dfdec4add0c...` exposes the configured model through `/api/pricing` with `unit_price=0.03` and `reference_video_unit_price=0.02`.
+- Three successful four-second mock tasks produced exact quotas `60000`, `100000`, and `100000` for zero, one, and two `input.reference_videos` entries. Both one and two references persisted `effective_unit_price=0.05` and `reference_video_applied=true`, proving the surcharge is request-level rather than per-item.
+- Consumption logs persisted the same immutable snapshots and explicit Chinese text: the reference cases say `$0.050000/秒（基础 $0.030000 + 参考视频附加 $0.020000）`; total user/token quota movement was exactly `260000`.
+- The existing Leonardo mock fixture used a deprecated `vip` group because its ratio and display keys were absent. Docker acceptance temporarily restored only those two absent keys with ratio `1`; exact cleanup must remove them again.
+- The rebuilt public `/pricing` marketplace loads without authentication in the in-app browser. Its model list is virtualized, so focused filtering is required before asserting the configured Leonardo row/card/detail text.
+- Focused card-view QA shows the configured Leonardo model as video per-second pricing with `参考视频附加价 +$0.001 / 秒`. Both base and surcharge are consistently transformed by the marketplace's current recharge-price display conversion, rather than mixing raw `$0.03/$0.02` configuration values with converted output.
+- Marketplace table QA renders separate `基础每秒价格` and `参考视频附加价` lines; the model-detail `vip` group row repeats the same converted base/surcharge values and retains the video-per-second and wallet-only labels.
+- The in-app browser's `canvas-denied-e2e` state referenced deleted user ID `994213`; protected routes correctly returned `/forbidden`. Desktop administrator QA used disposable root user `994214`, which was logged out and deleted afterward.
+- The browser viewport capability clamps a requested 375px override to an observed 560 CSS pixels. At that actual width the marketplace has no document-level horizontal overflow (`scrollWidth == clientWidth == 560`); table price content remains in the table's own horizontal scroll region. This must be reported as a 560px check, not a claimed 375px result.
+- After the user's display follow-up, rebuilt desktop card, table, and detail views all render one consistent formula: `(基础价格 $0.002 / 秒 + 参考视频附加价 $0.001 / 秒) = $0.003 / 秒` under the current marketplace conversion. The shared helper computes the effective value before display formatting.
+- Mobile QA was explicitly removed from scope by the user; the earlier viewport observation is retained only as an audit note and is not a delivery criterion.
+- Desktop administrator QA confirms the new `$0.02/second` input and preview switch. A five-second preview changes from `$0.03 × 5 = $0.15` to `($0.03 + $0.02) × 5 = $0.25` when reference video is enabled.
+- Desktop usage-log QA shows the no-reference request as `$0.030000 / second`, while both reference requests show `($0.030000 + $0.020000) / second` plus `已应用参考视频附加价`.
+- With the configured surcharge temporarily set to zero, marketplace card, table, and detail views all return to the legacy single-rate text. Backend `reference_video_applied` now also remains false when the configured surcharge is zero, so zero/absent configuration keeps legacy logging behavior.
+- Volcengine's official Seedance 2.x LAS operator documentation confirms that requests with input video have a different billable formula, but it is not a fixed surcharge: it combines input duration, output duration, and a resolution coefficient. The documented example is `2 RMB/second * [max(5s, 7s*2/3) + 7s] / 2 * 3.040 = 36.48 RMB` for a five-second input and seven-second 1080p output. This is LAS-specific and does not prove that every Jimeng/Ark surface uses the same formula: https://www.volcengine.com/docs/6492/2595411
+- LibTV is now verified as LiblibAI's product. Its official homepage advertises a distinct `720P 参考视频生成` per-second promotional price, currently as low as `0.4 RMB/second`, but neither the homepage nor its public package page exposes evidence that settlement is literally `base + surcharge`; the public evidence supports a separate total reference-video rate only: https://www.liblib.tv/ and https://libtv.gongke.net/pricing/
+- Final cleanup removed the three exact Task, Asset, idempotency-request, consumption-log, and Webhook-event rows; restored user `99011`, token `153`, and channel `128` counters; restored the original `$0.01/second` VideoPricing without a surcharge field; removed the temporary `vip` keys and administrator; reset mock metrics; and left Docker healthy with no startup errors.
+
+---
+
 # Multi-provider Async Video Final Findings (2026-07-23)
+
+# Video Error Diagnostic Findings (2026-08-05)
+
+## Requirements
+- Administrators must be able to inspect every upstream video-task failure after sensitive-data transformation.
+- Public task queries and failure Webhooks must return useful safe messages, including previously unknown error types.
+- Sensitive provider account IDs, balances, credentials, signed URLs, platform/channel details, and raw structured responses must not enter public payloads.
+
+## Confirmed Current Behavior
+- `updateVideoSingleTask` stores `redactVideoResponseBody(responseBody)` in `task.Data`, bounded to 64 KiB.
+- The Leonardo adaptor discards messages for error codes outside a four-code allowlist and stores `Video task failed` as `FailReason`.
+- `buildPublicVideoTaskError` and outbound video Webhooks already share the central public projection, but the useful message has already been discarded by the adaptor.
+- Existing recursive response redaction masks secret-valued keys but does not comprehensively sanitize sensitive values embedded inside arbitrary strings.
+- A provider credit error can contain an internal account UUID plus available/required balances; it must be retained for administrators but projected publicly as provider-neutral capacity unavailability.
+- Administrator task responses are produced through `relay.TaskModel2Dto` and `controller/tasksToDto`; the existing DTO already includes `fail_reason` but no structured upstream diagnostic.
+- The administrator task-log frontend currently renders `fail_reason`; it has no field for the sanitized provider code/message/status retained in `task.Data`.
+- `dto.TaskDto` currently exposes the entire redacted `Data` field to task-log callers, but the UI only shows it through the generic record JSON modal; a bounded structured diagnostic is clearer and avoids making the frontend parse provider payloads.
+- The task-log detail column is shared by administrators and ordinary users. Administrator-only diagnostic rendering must be gated by `isAdminUser`, while `fail_reason` remains the existing ordinary-user surface.
+- `relay.TaskModel2Dto` is context-free and currently copies `task.Data` for all callers; administrator diagnostics should be attached by the administrator controller path rather than globally in this converter.
+- The existing generic content modal can display bounded diagnostic text, so a separate nested modal is unnecessary; the detail column can open a formatted administrator diagnostic while retaining the compact table layout.
+- `GetAllTask` is the administrator list (`tasksToDto(..., true)`), while `GetUserTask` uses `false`; this is the correct boundary for adding/removing `upstream_error` without changing public Resource API DTOs.
+- `UpdateTaskBlockStatus` is administrator-only but returns `TaskModel2Dto` directly, so it must use the same administrator DTO helper to avoid losing diagnostics after block/unblock updates.
+- Existing service-level secret sanitizers (`sanitizeErrorSnapshotText` and diagnostic-map traversal) can be reused inside the `service` package; no duplicate credential regex is needed.
+- Public video tests currently assert all unknown provider errors become generic. These tests must be replaced with two cases: unknown safe messages survive, while sensitive/internal messages are transformed or masked.
+- Existing Webhook tests already exercise the send-boundary sanitizer for stored legacy failures, providing the correct place to assert public Task/Webhook equality.
+- The repository already has a stronger `sanitizeErrorSnapshotText` path that masks URLs/IPs/domains and secret assignments. It is suitable as the first pass for public unknown-error text, but administrator diagnostics need a narrower sanitizer so operational names and context remain useful.
+- `VideoTaskPublicError` already carries stable public code/message/retryable plus bounded diagnostic metadata (`upstream_status`, filtered `upstream_error_code`, `request_id`); no public schema field addition is required.
+- `common.MaskSensitiveInfo` preserves message structure while masking URL hosts/paths/query values, IPs, and domain names; combined with secret-assignment masking it provides a useful unknown-message public sanitizer.
+- Video task detection should accept either `Properties.AssetType == video` or the legacy action mapping so administrator diagnostics also work for older task rows.
+- The first implementation review found known business messages still bypassed the new central sanitizer and administrator text did not mask bare Bearer/JWT/email values; both need hardening before broad tests.
+- The design document was created under `docs/plans`, but that directory is ignored by the local repository configuration, so it is working documentation unless deliberately force-added later.
+- Final data-flow review found that public projection still sourced its message from `task.FailReason` after generic nested extraction. When that field was already generic, administrators saw the extracted detail but public Task/Webhook output did not. Public projection now uses the centralized diagnostic message first and falls back to `FailReason` only when extraction yields no message.
+
+## Technical Decisions
+| Decision | Rationale |
+| --- | --- |
+| Preserve the provider message through adaptor parsing | Central policy cannot evaluate text that an adaptor has already discarded. |
+| Keep the redacted diagnostic snapshot in existing `task.Data` | Avoid a cross-database migration and reuse current polling persistence. |
+| Build administrator diagnostics from structured fields in `task.Data` | Show useful context without exposing the entire response body. |
+| Sanitize unknown messages centrally instead of using a finite code allowlist | Future provider errors remain useful without a release for each new code. |
+| Use one public error builder for REST and Webhooks | Prevent divergent disclosure and retryability behavior. |
+
+## Visual Finding
+- The supplied new-api task-log screenshot shows a failed Leonardo task whose visible reason is only `Video task failed`; the upstream Leonardo2API task detail contains `originalFilename is required for audio uploads`.
+
+---
 
 - The normalized public contract is provider-neutral: public requests, tasks, Assets, and Webhooks do not expose channel IDs, platform IDs, upstream task IDs, quota, provider cost, raw responses, or internal Asset metadata.
 - Current official xAI documentation limits 1080p to `grok-imagine-video-1.5` image-to-video generation. The final adaptor therefore also rejects 1080p text-only and reference-image generation; compatibility `/v1/videos/*` payloads remain unvalidated passthrough.
@@ -1577,3 +1668,65 @@
   violations return `invalid_request` in the controller before provider validation.
   Provider-level `reference_*_limit_exceeded` codes are not externally reachable for the
   current Adobe limits, so the public docs now describe the observed API response.
+
+
+---
+
+## Infinite Canvas Authorization Findings
+
+- TokenAuth 会再次校验用户对 Token Group 的可用权限，授权前和兑换时都必须使用用户当前可用分组集合校验。
+- AssetKey 当前只有 assets:read scope，并且每个用户只保留最新一枚当前 Key；Canvas 应复用有效 Key，无效时使用事务兼容 helper 轮换。
+- 管理菜单 grantable 集合当前由默认权限派生；canvas_config 需要可授予但不属于普通管理员默认权限，必须拆分默认与可授予集合。
+- 模型白名单应从聚合分组可用模型与 endpoint type 交集生成：图片为 image-generation，视频为 video-task/openai-video。
+- Session Cookie SameSite=Strict 不影响顶层授权弹窗；公开兑换接口不依赖 Cookie，并使用 PKCE 防止授权码被截获兑换。
+- AutoMigrate 同时存在普通和 fast 两套模型清单，CanvasGrant 与 CanvasAuthorizationCode 必须加入两处。
+- 配置使用现有 Option 表可以避免单例配置表；管理员接口仍提供强类型校验和聚合分组/模型预览。
+- 现有 CreateAssetKeyWithScopes 内部开启事务，不能直接嵌套到授权兑换原子事务，需要抽取接收 *gorm.DB 的内部实现。
+- `service.GetModelsForGroup` 是聚合分组模型目录的现有事实来源，会展开聚合目标分组并去重。
+- 登录页所有本地成功分支集中在 LoginForm，可抽 same-origin return_to helper；第三方 OAuth 回调需读取同一 sessionStorage 目标。
+- 实测发现登录处理器与 `AuthRedirect` 会先后导航；只把 return-to 提前消费仍会让后续 `<Navigate>` 用默认 `/console` 覆盖。目标必须在登录跳转期间保持幂等，直到授权页确认抵达后清除；普通无参数登录页则清除陈旧目标。
+- new-api 的 `UserAuth` 不只校验 Session Cookie，还要求 `New-Api-User` 与 Session 用户一致；授权确认页使用原生 fetch 时必须显式携带该头，否则登录成功后仍返回 401。
+- 本地 UI 保存配置后，图片聚合分组识别 1 个 `gpt-image-2`，视频聚合分组识别 13 个视频任务模型；桌面与 390px 窄屏下本功能表单保持可读、单列换行且无控件重叠。
+- Canvas 专项服务测试已覆盖配置、回调、PKCE、授权码重放、分组权限、Token 修复/上限、Resource Key 复用与并发兑换；`go test ./service ./controller ./model` 通过。
+- 管理菜单权限测试与前端生产构建通过；剩余验证集中在本地 Docker 登录/授权交互和真实媒体链路。
+- `/api/canvas/oauth/token` 的 OPTIONS 响应并不能保证实际 POST 带 CORS；兑换路由必须显式挂载现有 CORS 中间件，路由测试需要同时断言 POST 响应头。
+- 真实浏览器已验证同步预开授权窗可避免异步 PKCE 丢失用户激活，完整授权会自动关闭弹窗并立即持久化三类凭证与模型缓存。
+- 本地真实图片和视频请求均通过自动授权凭证完成；重复授权修复与缺分组零副作用已由数据库状态和 UI 共同验证。
+- 联调测试数据已精确清理，临时倍率与模型元数据不存在，Canvas 管理配置保持分组/回调但 `enabled=false`。
+# Leonardo Seedance 2.5 Runtime Findings (2026-08-09)
+
+- Model discovery now returns Leonardo2API `/v1/models` without filtering, but the runtime adaptor still rejects provider SKUs absent from `supportedModels`.
+- The production `unsupported_video_model` response is emitted before upstream submission and billing.
+- Seedance 2.5 needs more than a list entry: the current non-H3 path caps duration at 15 seconds, permits only `media`, and omits `reference_mode` from the Leonardo2API request body.
+- Adobe model discovery was already unfiltered and is outside this runtime fix.
+- The Leonardo adaptor performs duration and reference-mode validation twice: request normalization and pre-billing model validation; both must classify 2.5 consistently.
+- `BuildRequestBody` currently forwards `reference_mode` only for H3, so Seedance 2.5 frame requests require an explicit payload change.
+- The OpenAPI generator owns the public model catalog and currently documents only five Seedance 2.0 SKUs; the generated JSON must be refreshed after adding the two 2.5 SKUs.
+- Seedance 2.5 can be represented without a new public DTO: its only normalized contract differences are a 30-second maximum and `frame` support with one or two ordered images.
+- Local Docker has an existing isolated Leonardo mock channel (`128`) pointing to `http://async-test-mock:8080`; the real local Leonardo channel is separate (`125`). A temporary 2.5 mapping can therefore be tested without paid generation if exact database state is restored afterward.
+- Existing unlimited local token `153` belongs to the mock channel's `vip` group, and the mock exposes reset/metrics endpoints plus the last submitted Leonardo payload. No new credential or real channel is required for the zero-paid probe.
+- Disposable Docker records can be removed exactly by returned public `tasks.task_id`, matching `logs.request_id`, and the temporary channel-128 ability/model mapping; no broad cleanup is needed.
+- Successful video polling may create `assets` rows keyed by the public task ID; cleanup must remove those before deleting the task and restore token/user/channel quota counters captured before the probe.
+- The second Docker probe reached channel submission and was refunded, but async-test-mock rejected the valid 30-second 2.5 payload because its own fixture still globally capped video duration at 15 seconds and treated non-H3 `reference_mode` as legacy. The production adaptor is no longer the blocker.
+- The rebuilt async-test-mock now mirrors Seedance 2.5's 4-30 second range and `frame`/`media` rules while leaving Seedance 2.0 and H3 behavior unchanged.
+- The public task query route requires an active Resource Key. The only pre-existing local `ak_` row was soft-deleted, so the final probe used a temporary read-only key and removed it afterward.
+- The completed new-api probe returned HTTP 202, reached `succeeded`, selected only mock channel 128, and created one Asset. Its upstream snapshot contained model `seedance-2.5-720p`, duration 30, `generate_audio=false`, and `seed=-1` with exactly one submit.
+- Final cleanup restored channel 128's original group/models/mapping, VideoPricing, user/token/channel quota counters, and removed the temporary ability, Task, Asset, log, idempotency, Webhook, and Resource Key records. Both application and mock containers are healthy.
+
+---
+
+## Broad Leonardo reference admission findings (2026-08-10)
+
+- The public controller currently caps media requests at 9 images, 3 videos, 3 audios, and 12 total,
+  rejecting valid Leonardo requests before channel selection.
+- The Leonardo adaptor separately duplicates H3, Seedance 2.0/Fast, and Seedance 2.5 reference
+  counts/combinations. Seedance 2.5 media currently falls through to the stale 4/3/1 branch.
+- The normalized reference DTO carries URL/provider/file ID/name but no trustworthy media duration.
+  Downloading and `ffprobe` validation correctly remain Leonardo2API responsibilities.
+- Known local validation runs before VideoPricing and precharge. Leonardo2API validation responses
+  are already accepted only through a bounded status/body/code/message sanitizer.
+- The agreed boundary is a 30-image/10-video/10-audio/50-total safety envelope plus common request
+  checks in new-api; exact per-model rules remain solely in Leonardo2API.
+- The generated OpenAPI and Resource Center page still advertised the former 9/3/3/12 common
+  envelope and copied concrete Leonardo reference rules, so they must be regenerated from wording
+  that distinguishes the gateway safety envelope from downstream model validation.

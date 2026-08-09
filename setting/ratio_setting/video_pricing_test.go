@@ -12,9 +12,10 @@ const videoPricingValidConfig = `{
   "version": 1,
   "profiles": {
     "seedance-720p": {
-      "name": " Seedance 720p ",
-      "billing_mode": "PER_SECOND",
-      "unit_price": 0.03
+	      "name": " Seedance 720p ",
+	      "billing_mode": "PER_SECOND",
+	      "unit_price": 0.03,
+	      "reference_video_unit_price": 0.02
     }
   },
   "model_bindings": {
@@ -49,6 +50,8 @@ func TestVideoPricingConfigValidation(t *testing.T) {
 		{name: "null unit price", config: `{"version":1,"profiles":{"p":{"name":"p","billing_mode":"per_second","unit_price":null}},"model_bindings":{}}`},
 		{name: "non numeric unit price", config: `{"version":1,"profiles":{"p":{"name":"p","billing_mode":"per_second","unit_price":"1"}},"model_bindings":{}}`},
 		{name: "negative unit price", config: `{"version":1,"profiles":{"p":{"name":"p","billing_mode":"per_second","unit_price":-1}},"model_bindings":{}}`},
+		{name: "null reference video unit price", config: `{"version":1,"profiles":{"p":{"name":"p","billing_mode":"per_second","unit_price":1,"reference_video_unit_price":null}},"model_bindings":{}}`},
+		{name: "negative reference video unit price", config: `{"version":1,"profiles":{"p":{"name":"p","billing_mode":"per_second","unit_price":1,"reference_video_unit_price":-1}},"model_bindings":{}}`},
 		{name: "trimmed duplicate profiles", config: `{"version":1,"profiles":{"p":{"name":"p","billing_mode":"per_second","unit_price":1}," p ":{"name":"other","billing_mode":"per_second","unit_price":2}},"model_bindings":{}}`},
 		{name: "empty model", config: `{"version":1,"profiles":{},"model_bindings":{" ":{"subscription_enabled":true}}}`},
 		{name: "missing profile", config: `{"version":1,"profiles":{},"model_bindings":{"model":{"profile":"missing"}}}`},
@@ -74,6 +77,13 @@ func TestVideoPricingRejectsNonFiniteUnitPrices(t *testing.T) {
 			UnitPrice:   price,
 		})
 		require.Error(t, err)
+		_, err = normalizeVideoPricingProfile("finite-reference-price", types.VideoPricingProfile{
+			Name:                    "finite-reference-price",
+			BillingMode:             types.VideoPricingModePerSecond,
+			UnitPrice:               1,
+			ReferenceVideoUnitPrice: price,
+		})
+		require.Error(t, err)
 	}
 }
 
@@ -86,6 +96,7 @@ func TestVideoPricingExactBindingsAndPublicView(t *testing.T) {
 	require.Equal(t, "Seedance 720p", profile.Name)
 	require.Equal(t, types.VideoPricingModePerSecond, profile.BillingMode)
 	require.Equal(t, 0.03, profile.UnitPrice)
+	require.Equal(t, 0.02, profile.ReferenceVideoUnitPrice)
 	require.Equal(t, "seedance-720p", binding.Profile)
 	require.False(t, binding.SubscriptionEnabled)
 	require.NotEmpty(t, profileHash)
@@ -98,6 +109,7 @@ func TestVideoPricingExactBindingsAndPublicView(t *testing.T) {
 	public := GetPublicVideoPricingSnapshot()
 	require.Equal(t, types.VideoPricingUnitSecond, public["seedance-1.5-pro-720p"].Unit)
 	require.Equal(t, 0.03, public["seedance-1.5-pro-720p"].UnitPrice)
+	require.Equal(t, 0.02, public["seedance-1.5-pro-720p"].ReferenceVideoUnitPrice)
 	require.False(t, public["seedance-1.5-pro-720p"].SubscriptionEnabled)
 	require.Empty(t, public["legacy-video-model"].ProfileID)
 	require.True(t, public["legacy-video-model"].SubscriptionEnabled)

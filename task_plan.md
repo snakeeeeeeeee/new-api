@@ -1,4 +1,177 @@
+# Leonardo Reference Media Normalization Error Projection (2026-08-08)
+
+## Goal
+
+Keep Leonardo2API's trusted normalization failure code visible through new-api submission and public
+task projections without exposing arbitrary upstream errors.
+
+## Status
+
+- [x] Submission validation whitelist already includes `reference_media_normalization_failed`.
+- [x] Add the code to public task projection and regression coverage.
+- [x] Run focused relay/service tests.
+
+## Errors Encountered
+
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Combined seven-locale patch assumed one stale French translation string and was rejected atomically | 1 | Re-read exact locale values and apply additions using stable key-only anchors per locale. |
+| Frontend preview tests compared JavaScript floating-point products with exact decimal literals | 1 | Keep backend decimal billing unchanged and use `toBeCloseTo` for frontend-only preview/display arithmetic. |
+| One Docker inspect template assumed every service defines a healthcheck | 1 | Check application/mock health separately and use running state for PostgreSQL/Redis; no container state changed. |
+| Combined patch used a stale planning-file title | 1 | Patch validation rejected all changes; split Go source and planning edits. |
+
+---
+
+# Task Plan: Reference-video Per-second Surcharge (2026-08-10)
+
+## Goal
+Add one optional per-second surcharge to VideoPricing when and only when a validated asynchronous video request contains at least one `input.reference_videos` item, then verify billing, logs, marketplace descriptions, and comparable upstream pricing.
+
+## Current Phase
+Complete
+
+- [x] Phase 1: Audit request normalization, pricing snapshots, logs, public pricing, and Docker test fixtures.
+- [x] Phase 2: Add backend configuration, one-time reference-video detection, immutable billing snapshot fields, and focused tests.
+- [x] Phase 3: Add the admin setting, preview, log display, marketplace description, translations, and frontend tests.
+- [x] Phase 4: Run focused/full Go and frontend verification.
+- [x] Phase 5: Rebuild local Docker dev and verify real request billing, persisted logs, and configured-model marketplace text with exact cleanup.
+- [x] Phase 6: Research current Jimeng official and LibTV pricing, separating confirmed facts from unavailable information.
+
+## Locked Decisions
+- Only `input.reference_videos` triggers the surcharge; `input.video`, images, and audio do not.
+- Any non-empty reference-video array adds the surcharge exactly once, regardless of item count.
+- Formula: `(base unit price + reference-video surcharge) * output seconds * group ratio`.
+- Existing configurations remain valid and default the new surcharge to zero.
+- The task billing snapshot and usage log must preserve whether the surcharge applied and the effective unit price.
+- Marketplace card, table, and detail views show `(base + reference surcharge) = effective per-second price` only when the configured surcharge is greater than zero; zero or absent surcharge preserves the original display.
+- Mobile browser QA is out of scope per the user's follow-up; verify desktop rendering only.
+
+## Errors Encountered
+
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Docker health wait used zsh's read-only `status` variable after the container was recreated | 1 | The application container had already started; rerun the read-only health check with a task-specific variable name. |
+| Initial PostgreSQL read-only probe used a nonexistent `newapi` role | 1 | Compose declares the local development role as `root`; rerun schema and fixture inspection with that exact role. |
+| Channel inventory probe guessed a `group_` column that does not exist | 1 | Query PostgreSQL's actual reserved column as `"group"`; no data was changed. |
+| First live-submit shell was rejected before execution because it planned `rm -f` cleanup for a temporary header file | 1 | Avoid temporary files entirely and parse each response body/status in memory. |
+| Existing Leonardo mock requests returned 403 because group `vip` is absent from both current group options | 1 | No tasks or charges were created; temporarily add only the previously absent `vip` ratio/display keys, then remove those exact keys during cleanup. |
+| Desktop pricing-formula patch failed the first scoped Prettier check in the table component | 1 | Helper tests and ESLint already pass; run the repository formatter on that file and recheck the scoped set. |
+| Frontend route lookup used an unmatched zsh `router*` glob | 1 | No files were touched; enumerate actual route/entry files with `rg --files` before searching them. |
+| The existing browser session referenced a deleted ordinary-user row and could not open administrator pages | 1 | Register one disposable local root user, complete desktop settings/log QA, log out, and hard-delete that exact user. |
+| The first PostgreSQL cleanup probe used the nonexistent container name `new-api-postgres-dev` | 1 | Read the live container list and use the actual `postgres-dev` container; the failed probe changed no state. |
+| The zero-surcharge regression patch used one stale expected test line and was rejected atomically | 1 | Re-read the focused test and apply a smaller exact patch; no partial edit was produced. |
+
+---
+
 # Task Plan: Multi-provider Async Video Resource API (2026-07-23)
+
+# Task Plan: Video Error Diagnostic and Public Projection (2026-08-05)
+
+## Goal
+Preserve every upstream video-task error for administrators while exposing the
+same safely redacted, provider-neutral error through public task queries and
+failure Webhooks without requiring an exhaustive provider error-code list.
+
+## Current Phase
+Complete
+
+### Phase 1: Contract and current-path audit
+- [x] Trace adaptor parsing, redacted response persistence, administrator DTOs, public projection, and Webhook projection.
+- [x] Lock the internal/public error envelope and sanitization fallback behavior.
+**Status:** complete
+
+### Phase 2: Regression tests
+- [x] Cover unknown safe messages, sensitive messages, account-credit errors, malformed/oversized diagnostics, and known business errors.
+- [x] Prove administrator visibility and public Task/Webhook parity.
+**Status:** complete
+
+### Phase 3: Backend implementation
+- [x] Preserve provider error messages and codes through polling without exposing raw response bodies publicly.
+- [x] Add centralized sensitive-data transformation and administrator diagnostic fields.
+- [x] Reuse the public projection for failure Webhooks.
+**Status:** complete
+
+### Phase 4: Frontend implementation
+- [x] Display administrator diagnostics in task details with bounded, non-overlapping content.
+- [x] Keep ordinary-user task surfaces limited to the public projection.
+**Status:** complete
+
+### Phase 5: Verification
+- [x] Run focused Go tests, complete Go tests, frontend checks/build, and Git hygiene checks.
+- [x] Review changed files and preserve unrelated untracked content.
+**Status:** complete
+
+## Locked Decisions
+- The provider message is retained after recursive secret redaction; adapters do not replace unknown failures with a generic string.
+- Unknown safe text may be returned publicly after central sanitization; unsafe or unusable text falls back to a provider-neutral message.
+- Account IDs, provider balances, credentials, signed URLs, internal channel/provider names, and structured upstream bodies are administrator-only or removed.
+- Public task queries and outbound failure Webhooks use the same error builder.
+- Administrator diagnostics are bounded and sanitized; no endpoint exposes an unredacted full upstream response.
+- No database migration is introduced unless discovery proves existing persisted fields cannot support the contract.
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Session catchup reported an unrelated interrupted probe and no synchronized plan updates | 1 | Verified the tracked diff is empty and started a separate dated task section without touching unrelated untracked files. |
+| Initial combined planning patch expected stale findings/progress headings | 1 | The patch changed nothing; inspected exact headings and applied file-specific patches. |
+| Focused red test failed because `BuildAdminVideoTaskDiagnostic` and `taskToDto` do not exist | 1 | Expected regression-test failure; proceed with the planned backend implementation. |
+| Final review found public projection ignored a generic nested diagnostic message when `FailReason` was already generic | 1 | Use the centralized diagnostic message as the public source and add a regression test for nested provider shapes. |
+
+---
+- [x] 增加 canvas_config 独立菜单权限和管理员配置接口
+- [x] 增加 CanvasGrant 与一次性授权码模型
+
+
+---
+
+# Task Plan: Infinite Canvas Authorization
+
+## Goal
+
+为 Infinite Canvas 提供管理员可配置、用户独立登录授权、PKCE 兑换并自动生成两枚模型 Token 和一枚 Resource Key 的完整授权链路。
+
+## Current Phase
+
+Complete
+
+### Phase 1: 配置、权限与模型
+- [x] 增加 canvas_config 独立菜单权限和管理员配置接口
+- [x] 增加 CanvasGrant 与一次性授权码模型
+- **Status:** complete
+
+### Phase 2: 授权服务与 API
+- [x] 完成用户分组/模型校验、PKCE、事务性凭证创建和重复授权修复
+- [x] 完成登录 return_to 和结构化错误
+- **Status:** complete
+
+### Phase 3: 管理与授权 UI
+- [x] 完成 Canvas 配置页和 GitHub OAuth 风格授权确认页
+- **Status:** complete
+
+### Phase 4: Verification
+- [x] 完成后端/前端测试、Docker Dev 联调和真实请求验收
+- **Status:** complete
+
+## Locked Decisions
+
+- client_id 固定为 infinite-canvas，回调 URI 必须精确命中管理员白名单。
+- 图片 Token 为 canvas-images，视频 Token 为 canvas-videos；长期、无限额度、模型白名单开启。
+- Resource Key 复用当前有效 Key，无有效 Key时轮换为长期 canvas-resources。
+- 凭证仅在授权码兑换事务中生成，缺任一分组权限不产生部分凭证。
+- 一期不增加授权用户列表或撤销管理。
+
+## Errors Encountered
+
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| 首次动态追加规划文件的补丁格式无效 | 1 | 修正新增行前缀后重试，失败补丁未产生修改 |
+| 启动方式检索命令包含未命中的 zsh `compose*.yml` glob | 1 | 前序只读检查已完成；后续直接使用已确认存在的 `docker-compose-dev.yml` |
+| 密码登录实测仍跳转 `/console`，首次提前捕获目标后仍被覆盖 | 2 | `AuthRedirect` 的后续 `<Navigate>` 仍会竞争；return-to 改为登录期间幂等保留，授权页确认抵达后再清除 |
+| 登录成功后授权 context 仍返回 401，跳转期间触发空 `context` 渲染 | 1 | new-api `UserAuth` 同时要求 Session 与 `New-Api-User`；授权页两次请求补用户头，并在 401 导航期间保持 loading |
+| 浏览器截图返回重复拼接的视口画面 | 1 | 使用首个真实视口、DOM 快照和控件布局共同验收，不把采集层拼接误判为页面溢出 |
+| abilities 诊断 SQL 误用了不存在的 `group_name` 列 | 1 | 读取列定义后改用实际的 `group` 列，后续查询成功 |
+| 清理前模型元数据查询误用了不存在的 `name`/`enabled` 列 | 1 | 读取 `models` schema 后改用 `model_name`/`status` 精确核对，失败查询未修改数据 |
+
 
 ## Goal
 Add a provider-neutral asynchronous video create/query contract, per-asset temporary downloads, and video terminal Webhooks while preserving all existing OpenAI/CLIProxyAPI/sub2api compatibility endpoints.
@@ -2241,3 +2414,89 @@ Complete
 | The Adobe2API runtime image does not include `pytest` | 1 | Run the repository's `unittest`-based suites with Python's standard-library test runner. |
 
 ---
+# Task Plan: Leonardo Seedance 2.5 Runtime Support (2026-08-09)
+
+## Goal
+Allow discovered `seedance-2.5-480p` and `seedance-2.5-720p` Leonardo mappings to run through `/v1/video/tasks` with correct pre-billing validation and upstream payloads.
+
+## Current Phase
+Complete
+
+- [x] Confirm discovery is already unfiltered and isolate the remaining runtime whitelist failure.
+- [x] Add Seedance 2.5 model, duration, reference-mode, and payload support.
+- [x] Update focused adaptor and public catalog tests/document generation sources as required.
+- [x] Run focused/full backend checks, frontend/OpenAPI checks if touched, and mock-only integration.
+- [x] Commit only task implementation files and push `main`.
+
+## Locked Decisions
+- Seedance 2.0 and MiniMax H3 behavior remains unchanged.
+- Seedance 2.5 supports exact 480p/720p mappings, 4-30 seconds, media mode, and 1-2 image frame mode.
+- Validation must happen before billing; unknown future model capabilities are not guessed.
+- No paid Leonardo Generate is executed.
+
+## Errors Encountered
+
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Focused red tests reject Seedance 2.5 as `unsupported_video_model` and reject frame mode as `unsupported_reference_mode` | 1 | Expected pre-implementation failure; add exact SKUs and separate 2.5 capability handling. |
+| Full Go suite retained the old six-model expectation in the shared relay registration test | 1 | Update the shared contract assertion with both exact Seedance 2.5 SKUs. |
+| Prettier warns on generated OpenAPI JSON even though generator drift check passes | 1 | Keep generated JSON in the generator's canonical `JSON.stringify` format and scope Prettier to the JavaScript source, matching repository behavior. |
+| Used the exec-cell wait helper with a nested PTY session ID during Docker build | 1 | Poll the returned PTY with `write_stdin`; the build continued normally and completed successfully. |
+| Initial residue count queried nonexistent `tasks.model` | 1 | Inspect the task schema before the next exact cleanup/residue query; no data was changed. |
+| First Docker API probe returned 403 because local `vip` group is deprecated | 1 | Cleanup restored all state; retry with existing active admin token/group and temporarily add only that group to mock channel 128. |
+| Second Docker API probe returned masked 502 after successful precharge/refund | 1 | Inspect mock validation: it still caps all non-H3 videos at 15 seconds and rejects 2.5 `reference_mode`; update the mock contract and rerun. |
+| First completed mock submission could not be queried with the create Bearer token | 1 | The normalized query route intentionally requires a Resource Key; preserve the successful create cleanup and switch the query probe to `ak_`. |
+| The selected local `ak_` row still returned 401 | 1 | Inspect the row and find it was soft-deleted; create one temporary active read-only Resource Key for the final probe and physically delete it during cleanup. |
+
+---
+
+# Task Plan: Broad Leonardo Reference Admission (2026-08-10)
+
+## Goal
+
+Keep only a broad, provider-neutral reference safety envelope in new-api's Leonardo channel and
+delegate concrete model capabilities, combinations, and media-duration limits to Leonardo2API.
+
+## Current Phase
+
+Complete
+
+### Phase 1: Contract tests
+
+- [x] Lock the public envelope at 30 images, 10 videos, 10 audios, and 50 total references.
+- [x] Lock the Leonardo adaptor to the same broad envelope for all supported Leonardo models.
+- [x] Prove frame/images public semantics, model mapping, duration, URL, and name checks remain.
+**Status:** complete
+
+### Phase 2: Implementation
+
+- [x] Remove Leonardo model-specific reference counts and combinations.
+- [x] Preserve H3 native-audio, model duration, aspect-ratio, and transport validation.
+- [x] Keep actual media probing and detailed validation authoritative in Leonardo2API.
+- [x] Align generated OpenAPI and the Resource Center reference copy with the new responsibility boundary.
+**Status:** complete
+
+### Phase 3: Verification
+
+- [x] Run focused controller/adaptor/relay tests and formatting.
+- [x] Run broader affected-package tests and `git diff --check`.
+- [x] Regenerate/check OpenAPI, validate i18n status, and build the frontend production bundle.
+**Status:** complete
+
+## Locked Decisions
+
+- The broad envelope is a request-abuse bound, not a claim that every Leonardo model supports it.
+- new-api does not download reference URLs or add client-supplied duration metadata.
+- Leonardo2API's safe validation code/message is returned to the caller; arbitrary upstream errors
+  remain sanitized.
+- Adobe, Higgsfield, xAI, billing, databases, and Leonardo2API are unchanged in this task.
+- Generated OpenAPI and Resource Center copy describe the broad gateway envelope without exposing internal channel names.
+- Preserve all unrelated tracked and untracked workspace changes.
+
+## Errors Encountered
+
+| Error | Attempt | Resolution |
+| --- | ---: | --- |
+| Initial planning patch targeted a heading present only in progress/findings, not task_plan | 1 | No file changed; inspect exact file tails and append this scoped plan using unique context. |
+| Focused contract tests do not compile because the shared broad-envelope constants do not exist | 1 | Expected red phase; add the constants and use them in both common and Leonardo validation. |
+| Combined OpenAPI/UI localization patch used translations that differed from the checked-in locale text | 1 | Patch was atomic and changed nothing; inspect exact locale entries and split generator/UI edits from precise locale replacements. |
