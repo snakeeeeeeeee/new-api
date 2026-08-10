@@ -1149,6 +1149,75 @@ func TestGetPricingMapsExtraAuthorizedAggregateGroupModels(t *testing.T) {
 	require.Fail(t, "pricing model not found")
 }
 
+func TestGetPricingUsesDefaultGroupForAnonymousAggregateVisibility(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+	originalGroups := setting.UserUsableGroups2JSONString()
+	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default","vip":"VIP"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":1,"anonymous-real":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatios))
+		model.RefreshPricing()
+	})
+
+	seedAggregateGroupControllerAbilityChannel(t, 2004, "anonymous-real", "anonymous-priced-model", 0)
+	defaultAggregate := &model.AggregateGroup{
+		Name:                    "anonymous-default-aggregate",
+		DisplayName:             "Anonymous Default Aggregate",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              1.75,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, defaultAggregate.SetVisibleUserGroups([]string{"default"}))
+	require.NoError(t, defaultAggregate.InsertWithTargets(service.NormalizeAggregateTargets([]string{"anonymous-real"})))
+
+	privateAggregate := &model.AggregateGroup{
+		Name:                    "anonymous-vip-aggregate",
+		DisplayName:             "Anonymous VIP Aggregate",
+		Status:                  model.AggregateGroupStatusEnabled,
+		GroupRatio:              9,
+		RecoveryEnabled:         true,
+		RecoveryIntervalSeconds: 300,
+	}
+	require.NoError(t, privateAggregate.SetVisibleUserGroups([]string{"vip"}))
+	require.NoError(t, privateAggregate.InsertWithTargets(service.NormalizeAggregateTargets([]string{"anonymous-real"})))
+	model.RefreshPricing()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/pricing", nil)
+	GetPricing(ctx)
+
+	var response struct {
+		Success                bool                                                    `json:"success"`
+		Data                   []model.Pricing                                         `json:"data"`
+		GroupRatio             map[string]float64                                      `json:"group_ratio"`
+		GroupRatioDetails      map[string]service.PublicGroupRatioView                 `json:"group_ratio_details"`
+		ModelGroupRatioDetails map[string]map[string]service.PublicModelGroupRatioView `json:"model_group_ratio_details"`
+		UsableGroup            map[string]string                                       `json:"usable_group"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Contains(t, response.UsableGroup, defaultAggregate.Name)
+	require.NotContains(t, response.UsableGroup, privateAggregate.Name)
+	require.Equal(t, 1.75, response.GroupRatio[defaultAggregate.Name])
+	require.Equal(t, 1.75, response.GroupRatioDetails[defaultAggregate.Name].Ratio)
+	require.Contains(t, response.ModelGroupRatioDetails["anonymous-priced-model"], defaultAggregate.Name)
+	require.NotContains(t, response.ModelGroupRatioDetails["anonymous-priced-model"], privateAggregate.Name)
+
+	for _, pricing := range response.Data {
+		if pricing.ModelName != "anonymous-priced-model" {
+			continue
+		}
+		require.Contains(t, pricing.EnableGroup, defaultAggregate.Name)
+		require.NotContains(t, pricing.EnableGroup, privateAggregate.Name)
+		return
+	}
+	require.Fail(t, "pricing model not found")
+}
+
 func TestCreateAggregateGroupRejectsInvalidSmartStrategyConfig(t *testing.T) {
 	setupAggregateGroupControllerTestDB(t)
 

@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const anonymousPricingUserGroup = "default"
+
 func clonePricingItems(pricing []model.Pricing) []model.Pricing {
 	cloned := make([]model.Pricing, 0, len(pricing))
 	imagePricingSnapshot := ratio_setting.GetPublicImagePricingSnapshot()
@@ -80,7 +82,7 @@ func GetPricing(c *gin.Context) {
 	groupRatio := map[string]float64{}
 	groupRatioDetails := map[string]service.PublicGroupRatioView{}
 	modelGroupRatioDetails := map[string]map[string]service.PublicModelGroupRatioView{}
-	var group string
+	group := anonymousPricingUserGroup
 	userSetting := dto.UserSetting{}
 	if exists {
 		user, err := model.GetUserCache(userId.(int))
