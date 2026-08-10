@@ -16,11 +16,14 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 )
 
@@ -302,6 +305,15 @@ func handleImageCallbackEvent(c *gin.Context, event imageCallbackEvent) imageCal
 		result.Message = "client_task_id is required"
 		return result
 	}
+	attempt, attemptExists, attemptErr := model.GetImageTaskAttemptByClientTaskID(event.ClientTaskID)
+	if attemptErr != nil {
+		result.Status = "not_found"
+		result.Message = attemptErr.Error()
+		return result
+	}
+	if attemptExists {
+		return handleImageAttemptCallbackEvent(c, event, attempt, result)
+	}
 	task, exist, err := model.GetByOnlyTaskId(event.ClientTaskID)
 	if err != nil {
 		result.Status = "not_found"
@@ -342,6 +354,17 @@ func handleImageCallbackEvent(c *gin.Context, event imageCallbackEvent) imageCal
 		result.Status = "invalid_status"
 		return result
 	}
+	if model.TaskStatus(taskInfo.Status) == model.TaskStatusFailure && event.Error != nil && event.Error.Retryable {
+		attempt, _, adoptErr := relay.AdoptLegacyAsyncImageTaskForRetry(task, event.ProviderTaskID)
+		if adoptErr != nil {
+			result.Status = "retry_state_error"
+			result.Message = adoptErr.Error()
+			return result
+		}
+		if attempt != nil {
+			return handleImageAttemptCallbackEvent(c, event, attempt, result)
+		}
+	}
 	adaptor := relay.GetTaskAdaptor(task.Platform)
 	if adaptor == nil {
 		result.Status = "invalid_status"
@@ -354,6 +377,258 @@ func handleImageCallbackEvent(c *gin.Context, event imageCallbackEvent) imageCal
 	service.ApplyTaskResult(c.Request.Context(), adaptor, task, taskInfo)
 	result.Status = "accepted"
 	return result
+}
+
+func handleImageAttemptCallbackEvent(c *gin.Context, event imageCallbackEvent, attempt *model.ImageTaskAttempt, result imageCallbackResultItem) imageCallbackResultItem {
+	if attempt == nil {
+		result.Status = "not_found"
+		return result
+	}
+	parent, err := relay.GetAsyncImageAttemptParent(attempt)
+	if err != nil || parent == nil {
+		result.Status = "not_found"
+		if err != nil {
+			result.Message = err.Error()
+		}
+		return result
+	}
+	if parent.Platform != imageHandleTaskPlatform() {
+		result.Status = "invalid_status"
+		result.Message = "task is not an image-handle task"
+		return result
+	}
+	if callbackChannelID := c.GetInt(imageCallbackChannelIDContextKey); callbackChannelID > 0 && attempt.ChannelID != callbackChannelID {
+		result.Status = "channel_mismatch"
+		return result
+	}
+	if event.ProviderTaskID != "" && attempt.ProviderTaskID != "" && event.ProviderTaskID != attempt.ProviderTaskID {
+		result.Status = "provider_task_mismatch"
+		return result
+	}
+	if model.ImageTaskAttemptIsTerminal(attempt.Status) || parent.Status == model.TaskStatusSuccess || parent.Status == model.TaskStatusFailure {
+		result.Status = "ignored_terminal"
+		relay.LogAsyncImageAttemptIgnored(c.Request.Context(), parent.TaskID, attempt.AttemptNumber, "terminal")
+		return result
+	}
+	if event.Sequence > 0 && event.Sequence <= attempt.ProgressSequence {
+		result.Status = "ignored_stale"
+		relay.LogAsyncImageAttemptIgnored(c.Request.Context(), parent.TaskID, attempt.AttemptNumber, "stale_sequence")
+		return result
+	}
+	taskInfo := imageCallbackEventToTaskInfo(event)
+	if taskInfo.Status == "" {
+		result.Status = "invalid_status"
+		return result
+	}
+	sanitizeImageCallbackEvent(&event)
+	raw, _ := common.Marshal(event)
+	taskInfo.Data = raw
+
+	switch model.TaskStatus(taskInfo.Status) {
+	case model.TaskStatusFailure:
+		return handleImageAttemptFailure(c, event, attempt, parent, taskInfo, raw, result)
+	case model.TaskStatusSuccess:
+		preparedParent, ignored, prepareErr := relay.PrepareAsyncImageAttemptSuccess(attempt.ID, event.ProviderTaskID, taskInfo, raw)
+		if prepareErr != nil {
+			result.Status = "retry_state_error"
+			result.Message = prepareErr.Error()
+			return result
+		}
+		if ignored || preparedParent == nil {
+			result.Status = "ignored_stale"
+			return result
+		}
+		logger.LogInfo(c.Request.Context(), fmt.Sprintf(
+			"async image attempt succeeded: task_id=%s attempt=%d channel_id=%d route_group=%q",
+			preparedParent.TaskID, attempt.AttemptNumber, attempt.ChannelID, attempt.RouteGroup,
+		))
+		adaptor := relay.GetTaskAdaptor(preparedParent.Platform)
+		if adaptor == nil {
+			result.Status = "invalid_status"
+			result.Message = "task adaptor not found"
+			return result
+		}
+		updated, _ := service.ApplyTaskResult(c.Request.Context(), adaptor, preparedParent, taskInfo)
+		if updated {
+			recordAsyncImageAttemptRouteSuccess(c, preparedParent, attempt)
+		}
+		result.Status = "accepted"
+		return result
+	default:
+		ignored, updateErr := relay.ApplyAsyncImageAttemptProgress(attempt.ID, event.ProviderTaskID, taskInfo, raw)
+		if updateErr != nil {
+			result.Status = "retry_state_error"
+			result.Message = updateErr.Error()
+			return result
+		}
+		if ignored {
+			result.Status = "ignored_stale"
+			return result
+		}
+		result.Status = "accepted"
+		return result
+	}
+}
+
+func handleImageAttemptFailure(c *gin.Context, event imageCallbackEvent, attempt *model.ImageTaskAttempt, parent *model.Task, taskInfo *relaycommon.TaskInfo, raw []byte, result imageCallbackResultItem) imageCallbackResultItem {
+	errorCode := "image_task_failed"
+	errorMessage := strings.TrimSpace(taskInfo.Reason)
+	retryable := false
+	if event.Error != nil {
+		if strings.TrimSpace(event.Error.Code) != "" {
+			errorCode = strings.TrimSpace(event.Error.Code)
+		}
+		if strings.TrimSpace(event.Error.Message) != "" {
+			errorMessage = strings.TrimSpace(event.Error.Message)
+		}
+		retryable = event.Error.Retryable
+	}
+	outcome, err := relay.TransitionAsyncImageAttemptFailure(c, attempt.ID, errorCode, errorMessage, retryable, raw)
+	if err != nil {
+		// A callback is acknowledged with HTTP 200 by protocol. If constructing a
+		// later attempt fails, close the same attempt non-retryably so the parent
+		// cannot remain queued forever.
+		fallback, fallbackErr := relay.TransitionAsyncImageAttemptFailure(c, attempt.ID, "retry_dispatch_failed", err.Error(), false, raw)
+		if fallbackErr != nil {
+			result.Status = "retry_state_error"
+			result.Message = fallbackErr.Error()
+			return result
+		}
+		outcome = fallback
+		errorCode = "retry_dispatch_failed"
+		retryable = false
+		taskInfo.Reason = "failed to schedule image retry: " + err.Error()
+	}
+	if outcome.Ignored {
+		result.Status = "ignored_stale"
+		return result
+	}
+	recordAsyncImageAttemptRouteFailure(c, parent, attempt, event)
+	processAsyncImageAttemptChannelFailure(attempt, event)
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf(
+		"async image attempt failed: task_id=%s attempt=%d channel_id=%d route_group=%q retryable=%t error_code=%q",
+		parent.TaskID, attempt.AttemptNumber, attempt.ChannelID, attempt.RouteGroup, retryable, errorCode,
+	))
+	if outcome.Retrying {
+		if outcome.NextAttempt != nil && outcome.NextAttempt.RouteGroup != attempt.RouteGroup {
+			logger.LogInfo(c.Request.Context(), fmt.Sprintf(
+				"async image route switched: task_id=%s from_group=%q to_group=%q",
+				parent.TaskID, attempt.RouteGroup, outcome.NextAttempt.RouteGroup,
+			))
+		}
+		result.Status = "retry_scheduled"
+		return result
+	}
+	if outcome.Exhausted {
+		attemptCount := attempt.AttemptNumber
+		if state, exists, stateErr := model.GetImageTaskRetryStateByTaskRecordID(parent.ID); stateErr == nil && exists && state != nil {
+			attemptCount = state.AttemptCount
+		}
+		logger.LogInfo(c.Request.Context(), fmt.Sprintf(
+			"async image retry exhausted: task_id=%s attempts=%d error_code=%q",
+			parent.TaskID, attemptCount, errorCode,
+		))
+		latestParent, loadErr := model.GetTaskByRecordID(parent.ID)
+		if loadErr != nil {
+			result.Status = "retry_state_error"
+			result.Message = loadErr.Error()
+			return result
+		}
+		adaptor := relay.GetTaskAdaptor(latestParent.Platform)
+		service.ApplyTaskResult(c.Request.Context(), adaptor, latestParent, taskInfo)
+		result.Status = "accepted"
+		return result
+	}
+	result.Status = "accepted"
+	return result
+}
+
+func recordAsyncImageAttemptRouteFailure(c *gin.Context, parent *model.Task, attempt *model.ImageTaskAttempt, event imageCallbackEvent) {
+	if c == nil || parent == nil || attempt == nil {
+		return
+	}
+	state, exists, err := model.GetImageTaskRetryStateByTaskRecordID(parent.ID)
+	if err != nil || !exists || state == nil || state.AggregateGroup == "" {
+		return
+	}
+	statusCode := 0
+	if event.Error != nil {
+		statusCode = event.Error.UpstreamStatus
+	}
+	common.SetContextKey(c, constant.ContextKeyAggregateGroup, state.AggregateGroup)
+	common.SetContextKey(c, constant.ContextKeyAggregateRoutingMode, state.RoutingMode)
+	common.SetContextKey(c, constant.ContextKeyRouteGroup, attempt.RouteGroup)
+	common.SetContextKey(c, constant.ContextKeyRouteGroupIndex, attempt.RouteIndex)
+	common.SetContextKey(c, constant.ContextKeyAggregateRoutePool, attempt.RoutePool)
+	if aggregateGroup, ok := service.GetAggregateGroup(state.AggregateGroup, true); ok {
+		common.SetContextKey(c, constant.ContextKeyAggregateSmartRouting, service.IsAggregateSmartRoutingEnabled(aggregateGroup))
+	}
+	service.RecordAggregateRouteRPMFailure(c, attempt.OriginModel)
+	service.RecordAggregateRouteSmartFailure(c, attempt.OriginModel, attempt.RouteGroup, statusCode)
+}
+
+func processAsyncImageAttemptChannelFailure(attempt *model.ImageTaskAttempt, event imageCallbackEvent) {
+	if attempt == nil || event.Error == nil {
+		return
+	}
+	channel, err := model.GetChannelById(attempt.ChannelID, true)
+	if err != nil || channel == nil || !channel.GetAutoBan() {
+		return
+	}
+	code := firstNonEmptyCallbackErrorValue(event.Error.ProviderErrorCode, event.Error.Code, "upstream_error")
+	message := firstNonEmptyCallbackErrorValue(event.Error.ProviderErrorMessage, event.Error.Message, code)
+	newAPIError := types.WithOpenAIError(types.OpenAIError{
+		Message: message,
+		Type:    event.Error.ProviderErrorType,
+		Param:   event.Error.ProviderErrorParam,
+		Code:    code,
+	}, event.Error.UpstreamStatus)
+	if !service.ShouldDisableChannel(channel.Type, newAPIError) {
+		return
+	}
+	usingKey := channel.Key
+	if channel.ChannelInfo.IsMultiKey {
+		lease, exists, leaseErr := model.GetImageCredentialLeaseByAttemptRecordID(attempt.ID)
+		if leaseErr != nil || !exists || lease == nil || lease.ResolvedKeyIndex == nil {
+			return
+		}
+		keys := channel.GetKeys()
+		if *lease.ResolvedKeyIndex < 0 || *lease.ResolvedKeyIndex >= len(keys) {
+			return
+		}
+		usingKey = keys[*lease.ResolvedKeyIndex]
+	}
+	channelError := types.NewChannelError(
+		channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, usingKey, channel.GetAutoBan(),
+	)
+	gopool.Go(func() {
+		service.DisableChannel(*channelError, newAPIError.ErrorWithStatusCode())
+	})
+}
+
+func firstNonEmptyCallbackErrorValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func recordAsyncImageAttemptRouteSuccess(c *gin.Context, parent *model.Task, attempt *model.ImageTaskAttempt) {
+	state, exists, err := model.GetImageTaskRetryStateByTaskRecordID(parent.ID)
+	if err != nil || !exists || state == nil || state.AggregateGroup == "" {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyAggregateGroup, state.AggregateGroup)
+	common.SetContextKey(c, constant.ContextKeyAggregateRoutingMode, state.RoutingMode)
+	common.SetContextKey(c, constant.ContextKeyRouteGroup, attempt.RouteGroup)
+	common.SetContextKey(c, constant.ContextKeyRouteGroupIndex, attempt.RouteIndex)
+	common.SetContextKey(c, constant.ContextKeyAggregateRoutePool, attempt.RoutePool)
+	if aggregateGroup, ok := service.GetAggregateGroup(state.AggregateGroup, true); ok {
+		common.SetContextKey(c, constant.ContextKeyAggregateSmartRouting, service.IsAggregateSmartRoutingEnabled(aggregateGroup))
+	}
+	service.RecordAggregateRouteSuccess(c, attempt.OriginModel)
 }
 
 func imageHandleTaskPlatform() constant.TaskPlatform {

@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,6 +92,27 @@ func seedTimeoutVideoWebhook(t *testing.T, task *model.Task) {
 		EventTypes: accountWebhookEventTypesJSON(), APIVersion: WebhookAPIVersion,
 		CreatedAt: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
 	}).Error)
+}
+
+func attachRetryAttemptForPollingTest(t *testing.T, task *model.Task, attemptNumber int, channelID int, status string) (*model.ImageTaskRetryState, *model.ImageTaskAttempt, *model.ImageCredentialLease) {
+	t.Helper()
+	state := model.NewImageTaskRetryState(task, 1, "default", "default", task.Properties.OriginModelName)
+	state.CurrentRouteGroup = task.Group
+	require.NoError(t, model.DB.Create(state).Error)
+	attempt := model.NewImageTaskAttempt(
+		task, attemptNumber, fmt.Sprintf("task_attempt_polling_%d_%d", task.ID, attemptNumber), channelID,
+		task.Group, -1, "", task.Properties.OriginModelName, task.Properties.UpstreamModelName,
+		task.Quota, task.PrivateData.BillingContext, "req_polling_attempt",
+	)
+	attempt.Status = status
+	require.NoError(t, model.DB.Create(attempt).Error)
+	state.ActiveAttemptRecordID = attempt.ID
+	state.AttemptCount = attemptNumber
+	state.CurrentGroupAttempts = attemptNumber
+	require.NoError(t, model.DB.Save(state).Error)
+	lease := model.NewImageCredentialLeaseForAttempt(task, attempt, "generation", attempt.UpstreamModel, 1800)
+	require.NoError(t, model.DB.Create(lease).Error)
+	return state, attempt, lease
 }
 
 func TestSweepTimedOutTasksUsesDefaultThirtyMinutesAndRefunds(t *testing.T) {
@@ -232,6 +255,171 @@ func TestSweepTimedOutAsyncImageTaskFinalizesZeroPrechargeLog(t *testing.T) {
 	other, err := common.StrToMap(logItem.Other)
 	require.NoError(t, err)
 	assert.Equal(t, "async_image_failed", other["billing_stage"])
+}
+
+func TestSweepTimedOutRetryImageTaskClosesAttemptAndRefundsOnce(t *testing.T) {
+	truncate(t)
+	resetAsyncTaskSettingForTest(t)
+
+	const userID, tokenID, channelID = 402, 402, 9402
+	const initialUserQuota, initialTokenQuota, prechargedQuota = 10000, 6000, 3000
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-timeout-retry-image", initialTokenQuota)
+	seedChannel(t, channelID)
+	setUserUsageCounters(t, userID, prechargedQuota, 1)
+	setChannelUsedQuota(t, channelID, prechargedQuota)
+	task := createPollingRefundTask(
+		t, "task_timeout_retry_image", "", imageHandleTaskPlatform(),
+		userID, channelID, prechargedQuota, tokenID, BillingSourceWallet, 0,
+	)
+	task.Action = constant.TaskActionImageGeneration
+	task.Properties = model.Properties{OriginModelName: "gpt-image-2", UpstreamModelName: "mapped-image", AssetType: constant.TaskAssetTypeImage}
+	task.SubmitTime = time.Now().Add(-31 * time.Minute).Unix()
+	require.NoError(t, model.DB.Model(task).Updates(map[string]any{
+		"action": task.Action, "properties": task.Properties, "submit_time": task.SubmitTime,
+	}).Error)
+	_, attempt, lease := attachRetryAttemptForPollingTest(t, task, 1, channelID, model.ImageTaskAttemptSubmitted)
+
+	sweepTimedOutTasks(context.Background())
+	sweepTimedOutTasks(context.Background())
+
+	reloaded := loadPollingRefundTask(t, task.ID)
+	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+	assert.Contains(t, reloaded.FailReason, "30分钟")
+	storedAttempt, err := model.GetImageTaskAttemptByID(attempt.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ImageTaskAttemptFailed, storedAttempt.Status)
+	assert.Equal(t, "task_timeout", storedAttempt.ErrorCode)
+	storedLease, exists, err := model.GetImageCredentialLeaseByLeaseID(lease.LeaseID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, model.ImageCredentialLeaseStatusFailed, storedLease.Status)
+	assert.Equal(t, initialUserQuota+prechargedQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenQuota+prechargedQuota, getTokenRemainQuota(t, tokenID))
+	assert.Zero(t, getChannelUsedQuota(t, channelID))
+	assert.Equal(t, int64(1), countLogs(t))
+}
+
+func TestReconcileFailedImageAttemptFinalizesParentOnce(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 403, 403, 9403
+	const initialUserQuota, initialTokenQuota, prechargedQuota = 10000, 6000, 2000
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-reconcile-failed-image", initialTokenQuota)
+	seedChannel(t, channelID)
+	setUserUsageCounters(t, userID, prechargedQuota, 1)
+	setChannelUsedQuota(t, channelID, prechargedQuota)
+	task := createPollingRefundTask(
+		t, "task_reconcile_failed_image", "", imageHandleTaskPlatform(),
+		userID, channelID, prechargedQuota, tokenID, BillingSourceWallet, 0,
+	)
+	task.Action = constant.TaskActionImageGeneration
+	task.Properties = model.Properties{OriginModelName: "gpt-image-2", UpstreamModelName: "mapped-image", AssetType: constant.TaskAssetTypeImage}
+	require.NoError(t, model.DB.Model(task).Updates(map[string]any{"action": task.Action, "properties": task.Properties}).Error)
+	state, attempt, _ := attachRetryAttemptForPollingTest(t, task, 1, channelID, model.ImageTaskAttemptSubmitted)
+	_, ignored, err := model.CloseActiveImageTaskAttemptNonRetryable(attempt.ID, "provider_failed", "provider exhausted", []byte(`{"error":{"message":"provider exhausted"}}`))
+	require.NoError(t, err)
+	require.False(t, ignored)
+	require.NoError(t, model.DB.First(state, state.ID).Error)
+
+	finalized, err := reconcileTerminalAsyncImageTaskState(context.Background(), state)
+	require.NoError(t, err)
+	require.True(t, finalized)
+	finalized, err = reconcileTerminalAsyncImageTaskState(context.Background(), state)
+	require.NoError(t, err)
+	require.True(t, finalized)
+
+	reloaded := loadPollingRefundTask(t, task.ID)
+	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+	assert.Equal(t, "provider exhausted", reloaded.FailReason)
+	assert.Equal(t, initialUserQuota+prechargedQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenQuota+prechargedQuota, getTokenRemainQuota(t, tokenID))
+	assert.Zero(t, getChannelUsedQuota(t, channelID))
+	assert.Equal(t, int64(1), countLogs(t))
+}
+
+func TestReconcileSuccessfulImageAttemptCreatesAssetsAndSettlesWinningRouteOnce(t *testing.T) {
+	truncate(t)
+	setupTimeoutWebhookTables(t)
+
+	const userID, tokenID, initialChannelID, winningChannelID = 404, 404, 9404, 9405
+	const initialUserQuota, initialTokenQuota, prechargedQuota, winningQuota = 10000, 6000, 100, 200
+	seedUser(t, userID, initialUserQuota)
+	seedToken(t, tokenID, userID, "sk-reconcile-success-image", initialTokenQuota)
+	seedChannel(t, initialChannelID)
+	seedChannel(t, winningChannelID)
+	setUserUsageCounters(t, userID, prechargedQuota, 1)
+	setChannelUsedQuota(t, initialChannelID, prechargedQuota)
+	setChannelUsedQuota(t, winningChannelID, 0)
+	task := createPollingRefundTask(
+		t, "task_reconcile_success_image", "", imageHandleTaskPlatform(),
+		userID, initialChannelID, prechargedQuota, tokenID, BillingSourceWallet, 0,
+	)
+	task.Action = constant.TaskActionImageGeneration
+	task.Group = "initial"
+	task.Properties = model.Properties{OriginModelName: "gpt-image-2", UpstreamModelName: "initial-image", AssetType: constant.TaskAssetTypeImage}
+	require.NoError(t, model.DB.Model(task).Updates(map[string]any{
+		"action": task.Action, "group": task.Group, "properties": task.Properties,
+	}).Error)
+	state, attempt, _ := attachRetryAttemptForPollingTest(t, task, 2, winningChannelID, model.ImageTaskAttemptSucceeded)
+	state.Status = model.ImageTaskRetryStateSucceeded
+	state.CurrentRouteGroup = "fallback"
+	state.AttemptCount = 2
+	attempt.RouteGroup = "fallback"
+	attempt.OriginModel = "gpt-image-2"
+	attempt.UpstreamModel = "winning-image"
+	attempt.ProviderTaskID = "provider_winner"
+	attempt.Quota = winningQuota
+	attempt.BillingContext.PerCallBilling = true
+	attempt.BillingContext.RouteQuota = winningQuota
+	attempt.BillingContext.OriginModelName = "gpt-image-2"
+	result := &relaycommon.TaskInfo{
+		Status: string(model.TaskStatusSuccess), Progress: "100%",
+		Url: "https://cdn.example.test/recovered.webp",
+	}
+	resultJSON, err := common.Marshal(result)
+	require.NoError(t, err)
+	attempt.TaskInfoJSON = string(resultJSON)
+	attempt.CallbackData = `{"result":{"images":[{"url":"https://cdn.example.test/recovered.webp","mime_type":"image/webp","width":1024,"height":1024}]}}`
+	require.NoError(t, model.DB.Save(attempt).Error)
+	require.NoError(t, model.DB.Save(state).Error)
+	task.ChannelId = winningChannelID
+	task.Group = "fallback"
+	task.Properties.OriginModelName = attempt.OriginModel
+	task.Properties.UpstreamModelName = attempt.UpstreamModel
+	task.PrivateData.UpstreamTaskID = attempt.ProviderTaskID
+	consumeLogID := task.PrivateData.BillingContext.ConsumeLogId
+	task.PrivateData.BillingContext = &attempt.BillingContext
+	task.PrivateData.BillingContext.ConsumeLogId = consumeLogID
+	require.NoError(t, model.DB.Model(task).Updates(map[string]any{
+		"channel_id": task.ChannelId, "group": task.Group, "properties": task.Properties, "private_data": task.PrivateData,
+	}).Error)
+
+	finalized, err := reconcileTerminalAsyncImageTaskState(context.Background(), state)
+	require.NoError(t, err)
+	require.True(t, finalized)
+	finalized, err = reconcileTerminalAsyncImageTaskState(context.Background(), state)
+	require.NoError(t, err)
+	require.True(t, finalized)
+
+	reloaded := loadPollingRefundTask(t, task.ID)
+	assert.EqualValues(t, model.TaskStatusSuccess, reloaded.Status)
+	assert.Equal(t, winningChannelID, reloaded.ChannelId)
+	assert.Equal(t, winningQuota, reloaded.Quota)
+	assert.Equal(t, initialUserQuota-(winningQuota-prechargedQuota), getUserQuota(t, userID))
+	assert.Equal(t, initialTokenQuota-(winningQuota-prechargedQuota), getTokenRemainQuota(t, tokenID))
+	assert.Zero(t, getChannelUsedQuota(t, initialChannelID))
+	assert.EqualValues(t, winningQuota, getChannelUsedQuota(t, winningChannelID))
+	var assets []model.Asset
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).Find(&assets).Error)
+	require.Len(t, assets, 1)
+	assert.Equal(t, "https://cdn.example.test/recovered.webp", assets[0].URL)
+	assert.Equal(t, int64(1), countLogs(t))
+	logItem := getLastLog(t)
+	require.NotNil(t, logItem)
+	assert.Equal(t, winningChannelID, logItem.ChannelId)
+	assert.Equal(t, winningQuota, logItem.Quota)
 }
 
 func TestSweepTimedOutTasksUsesPlatformAndActionOverrides(t *testing.T) {

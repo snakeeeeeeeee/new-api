@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/async_task_setting"
 	"github.com/QuantumNous/new-api/types"
 
+	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"gorm.io/gorm"
 )
@@ -54,6 +55,9 @@ func resolveTaskPollingUpstreamID(task *model.Task, now int64) (upstreamID strin
 		return "", true
 	}
 	if isImageHandleTask(task) && strings.TrimSpace(task.PrivateData.UpstreamTaskID) == "" {
+		if _, exists, err := model.GetImageTaskRetryStateByTaskRecordID(task.ID); err != nil || exists {
+			return "", false
+		}
 		withinSubmitGrace := task.SubmitTime > 0 && now-task.SubmitTime < imageHandleMissingUpstreamIDGraceSeconds
 		return "", !withinSubmitGrace
 	}
@@ -76,6 +80,7 @@ var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 // 每次最多处理 100 条，剩余的下个周期继续处理。
 // 使用 per-task CAS (UpdateWithStatus) 防止覆盖被正常轮询已推进的任务。
 func sweepTimedOutTasks(ctx context.Context) {
+	reconcileTerminalAsyncImageTasks(ctx)
 	setting := async_task_setting.GetAsyncTaskSetting()
 	async_task_setting.ApplyNormalization()
 	if setting.DefaultTimeoutMinutes <= 0 {
@@ -105,6 +110,19 @@ func sweepTimedOutTasks(ctx context.Context) {
 		}
 		reason := fmt.Sprintf("任务超时（%d分钟）", timeoutMinutes)
 		isLegacy := task.SubmitTime > 0 && task.SubmitTime < legacyTaskCutoff
+		if isImageHandleTask(task) {
+			handled, finalized, err := timeoutRetryEnabledImageTask(ctx, task, reason)
+			if err != nil {
+				logger.LogError(ctx, fmt.Sprintf("sweepTimedOutTasks attempt transition error for task %s: %v", task.TaskID, err))
+				continue
+			}
+			if handled {
+				if finalized {
+					timedOutCount++
+				}
+				continue
+			}
+		}
 
 		oldStatus := task.Status
 		task.Status = model.TaskStatusFailure
@@ -134,6 +152,137 @@ func sweepTimedOutTasks(ctx context.Context) {
 	if timedOutCount > 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("sweepTimedOutTasks: timed out %d tasks", timedOutCount))
 	}
+}
+
+func timeoutRetryEnabledImageTask(ctx context.Context, task *model.Task, reason string) (handled bool, finalized bool, err error) {
+	if task == nil || task.ID <= 0 {
+		return false, false, nil
+	}
+	state, exists, err := model.GetImageTaskRetryStateByTaskRecordID(task.ID)
+	if err != nil || !exists || state == nil {
+		return false, false, err
+	}
+	if state.Status != model.ImageTaskRetryStateActive || state.ActiveAttemptRecordID <= 0 {
+		finalized, err = reconcileTerminalAsyncImageTaskState(ctx, state)
+		return true, finalized, err
+	}
+	parent, ignored, err := model.CloseActiveImageTaskAttemptNonRetryable(
+		state.ActiveAttemptRecordID, "task_timeout", reason, nil,
+	)
+	if err != nil {
+		return true, false, err
+	}
+	if ignored {
+		refreshed, exists, loadErr := model.GetImageTaskRetryStateByTaskRecordID(task.ID)
+		if loadErr != nil || !exists || refreshed == nil {
+			return true, false, loadErr
+		}
+		finalized, err = reconcileTerminalAsyncImageTaskState(ctx, refreshed)
+		return true, finalized, err
+	}
+	ApplyTaskResult(ctx, nil, parent, relaycommon.FailTaskInfo(reason))
+	reloaded, err := model.GetTaskByRecordID(task.ID)
+	if err != nil {
+		return true, false, err
+	}
+	return true, reloaded.Status == model.TaskStatusFailure, nil
+}
+
+func reconcileTerminalAsyncImageTasks(ctx context.Context) {
+	states, err := model.ListUnfinalizedImageTaskRetryStates(100)
+	if err != nil {
+		logger.LogError(ctx, "load unfinalized async image retry states failed: "+err.Error())
+		return
+	}
+	for _, state := range states {
+		finalized, reconcileErr := reconcileTerminalAsyncImageTaskState(ctx, state)
+		if reconcileErr != nil {
+			logger.LogError(ctx, fmt.Sprintf("reconcile async image retry state %d failed: %v", state.ID, reconcileErr))
+			continue
+		}
+		if finalized {
+			logger.LogInfo(ctx, fmt.Sprintf("async image retry parent reconciled: task_id=%s attempts=%d status=%s", state.TaskID, state.AttemptCount, state.Status))
+		}
+	}
+}
+
+func reconcileTerminalAsyncImageTaskState(ctx context.Context, state *model.ImageTaskRetryState) (bool, error) {
+	if state == nil || state.TaskRecordID <= 0 {
+		return false, errors.New("image task retry state is nil")
+	}
+	parent, err := model.GetTaskByRecordID(state.TaskRecordID)
+	if err != nil {
+		return false, err
+	}
+	if parent.Status == model.TaskStatusSuccess || parent.Status == model.TaskStatusFailure {
+		return true, nil
+	}
+	attempt, err := terminalImageTaskRetryAttempt(state)
+	if err != nil {
+		return false, err
+	}
+
+	var taskInfo *relaycommon.TaskInfo
+	switch state.Status {
+	case model.ImageTaskRetryStateSucceeded:
+		if attempt.Status != model.ImageTaskAttemptSucceeded || strings.TrimSpace(attempt.TaskInfoJSON) == "" {
+			return false, errors.New("successful image attempt is missing terminal task data")
+		}
+		var restored relaycommon.TaskInfo
+		if err := common.UnmarshalJsonStr(attempt.TaskInfoJSON, &restored); err != nil {
+			return false, err
+		}
+		if strings.TrimSpace(attempt.CallbackData) != "" {
+			restored.Data = []byte(attempt.CallbackData)
+		}
+		taskInfo = &restored
+	case model.ImageTaskRetryStateFailed, model.ImageTaskRetryStateExhausted:
+		reason := strings.TrimSpace(attempt.ErrorMessage)
+		if reason == "" {
+			reason = "image task failed"
+		}
+		taskInfo = relaycommon.FailTaskInfo(reason)
+		if strings.TrimSpace(attempt.CallbackData) != "" {
+			taskInfo.Data = []byte(attempt.CallbackData)
+		}
+	default:
+		return false, nil
+	}
+
+	var adaptor TaskPollingAdaptor
+	if GetTaskAdaptorFunc != nil {
+		adaptor = GetTaskAdaptorFunc(parent.Platform)
+	}
+	ApplyTaskResult(ctx, adaptor, parent, taskInfo)
+	reloaded, err := model.GetTaskByRecordID(parent.ID)
+	if err != nil {
+		return false, err
+	}
+	finalized := reloaded.Status == model.TaskStatusSuccess || reloaded.Status == model.TaskStatusFailure
+	if finalized && reloaded.Status == model.TaskStatusSuccess {
+		recordRecoveredAsyncImageRouteSuccess(state, attempt)
+	}
+	return finalized, nil
+}
+
+func terminalImageTaskRetryAttempt(state *model.ImageTaskRetryState) (*model.ImageTaskAttempt, error) {
+	if state.Status == model.ImageTaskRetryStateSucceeded && state.ActiveAttemptRecordID > 0 {
+		return model.GetImageTaskAttemptByID(state.ActiveAttemptRecordID)
+	}
+	return model.GetLatestImageTaskAttempt(state.TaskRecordID)
+}
+
+func recordRecoveredAsyncImageRouteSuccess(state *model.ImageTaskRetryState, attempt *model.ImageTaskAttempt) {
+	if state == nil || attempt == nil || state.AggregateGroup == "" {
+		return
+	}
+	c, _ := gin.CreateTestContext(noopResponseWriter{})
+	common.SetContextKey(c, constant.ContextKeyAggregateGroup, state.AggregateGroup)
+	common.SetContextKey(c, constant.ContextKeyAggregateRoutingMode, state.RoutingMode)
+	common.SetContextKey(c, constant.ContextKeyRouteGroup, attempt.RouteGroup)
+	common.SetContextKey(c, constant.ContextKeyRouteGroupIndex, attempt.RouteIndex)
+	common.SetContextKey(c, constant.ContextKeyAggregateRoutePool, attempt.RoutePool)
+	RecordAggregateRouteSuccess(c, attempt.OriginModel)
 }
 
 func commitTimedOutTaskTransition(task *model.Task, oldStatus model.TaskStatus) (bool, error) {

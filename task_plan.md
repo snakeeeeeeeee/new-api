@@ -1,3 +1,81 @@
+# Task Plan: Async Image Cross-channel Retry (2026-08-11)
+
+## Goal
+
+Add durable new-api-managed retry and failover for `/v1/image/tasks` after a signed image-handle
+terminal callback reports `error.retryable=true`, while preserving one public task, one precharge,
+attempt-scoped idempotency, aggregate routing semantics, and exactly-once settlement/refund.
+
+## Current Phase
+
+Complete
+
+### Phase 1: Discovery and detailed design
+- [x] Re-audit durable image creation, callback, lease, dispatch, routing, billing, timeout, and migration paths.
+- [x] Write the validated design document and exact state transitions.
+- **Status:** complete
+
+### Phase 2: Persistence and routing primitives
+- [x] Add cross-database retry-state and attempt models plus compatible dispatch/lease links.
+- [x] Add failed-channel exclusion and durable ordinary/failover/cluster selection.
+- **Status:** complete
+
+### Phase 3: Attempt lifecycle integration
+- [x] Create the first attempt transactionally and rebuild later attempt payloads from the normalized request.
+- [x] Route callbacks, leases, dispatch results, terminal transitions, timeout cleanup, and stale events through attempts.
+- **Status:** complete
+
+### Phase 4: Billing, logs, and focused regression coverage
+- [x] Keep one precharge, settle using the successful attempt snapshot, and refund once only after exhaustion.
+- [x] Preserve channel health/aggregate signals and add bounded structured retry audit logs.
+- [x] Cover retry budgets, configuration snapshots, routing, races, restart persistence, and legacy tasks.
+- **Status:** complete
+
+### Phase 5: Full and Docker verification
+- [x] Run focused and full Go tests plus cross-database coverage.
+- [x] Run existing image-handle tests without modifying its production code.
+- [x] Rebuild Docker dev, run deterministic two-subgroup failover integration, inspect logs/billing, and clean fixtures.
+- **Status:** complete
+
+## Locked Decisions
+
+- Only normalized async images retry; videos and frontend/mobile UI are unchanged.
+- `RetryTimes` is snapshotted when the parent task is created; later configuration changes affect new tasks only.
+- `RetryTimes=X` means one initial channel plus at most X retry channels per real subgroup.
+- Only signed terminal callbacks with `error.retryable=true` can switch channels.
+- Failed channel IDs are excluded globally for the parent task; explicit/locked-channel requests do not switch.
+- image-handle keeps its existing per-task internal attempt behavior and requires no production protocol/code change.
+- Ambiguous new-api-to-image-handle submission failures continue the same attempt idempotently and never switch channels.
+- One parent task owns one precharge; final success uses the successful route pricing snapshot, while exhaustion refunds once.
+
+## Errors Encountered
+
+| Error | Attempt | Resolution |
+| --- | --- | --- |
+| Initial combined planning-file patch used the wrong historical `progress.md` title and was rejected atomically | 1 | Read exact file heads and split the additions with stable anchors; no partial edit occurred. |
+| GORM index migration initially treated `Index.Columns()` as returning `([]string, error)` | 1 | Checked the pinned GORM interface and used its actual single `[]string` return value. |
+| Focused controller callback tests failed because their isolated database did not migrate `image_task_attempts` | 1 | Added the retry-state and attempt models to the shared controller test migration; focused callbacks pass and production lookup remains strict. |
+| Combined attempt-lease test patch used a nonexistent historical test-function name | 1 | The patch was rejected atomically; located the actual `TestResolveImageCredentialLeaseAccepted` anchor and split the edit. |
+| Focused timeout tests failed because the service package's shared database did not migrate retry tables | 1 | Add retry state/attempt/lease/dispatch models to `service.TestMain`; do not mask missing production schema. |
+| Attempted to remove apparent backslashes from raw JSON test literals shown in tool output | 1 | Patch correctly found no such bytes; verified with fixed-string search that the files already contain valid JSON. |
+| Successful-recovery test created a second proxy Asset and used a strict `int`/`int64` assertion | 1 | Match real callback conversion by persisting the first image URL in `TaskInfo.Url`; use numeric type-agnostic quota assertion. |
+| Callback failure-signal patch left an unused `errors` import | 1 | Remove the import; no behavior or data change occurred. |
+| New callback fixture omitted one closing brace in its nested batch literal and referenced a nonexistent quota helper | 1 | Close the outer request literal and add a local read-only user-quota helper. |
+| Callback fixture used an unqualified service constant and omitted the `strings` test import | 1 | Qualify `service.BillingSourceWallet` and import `strings`. |
+| Attempt callback test hung after forcing the SQLite pool to one connection | 1 | Interrupted the run, moved retry request reconstruction before the locked transaction, and retained a one-connection regression test proving the transaction no longer reads through the global pool. |
+| Retryable callback panicked because reconstructed `RelayInfo` had no `ChannelMeta` | 1 | Match the normal relay lifecycle by calling `InitChannelMeta` after selected-channel context setup. |
+| Two legacy fixed-price image billing tests failed because all per-call/image-pricing completions were rewritten as retry-route final logs | 1 | Gate winning-route settlement on a persisted retry state; preserve the original frozen-precharge audit path for unmanaged legacy tasks. |
+| Combined planning-file update used stale generic headings for `findings.md` and `progress.md` | 1 | The patch was rejected atomically; read the actual file heads and apply updates with their task-specific headings. |
+| First disposable cross-database command omitted the DSN environment variables and only reran SQLite | 1 | Reran verbosely with both explicit temporary DSNs and confirmed the SQLite, MySQL, and PostgreSQL subtests all passed. |
+| Exclusion-aware channel selection added a flat 10 to each weight and distorted the established weighted routing semantics | 1 | Reuse the existing channel selector's smoothing behavior and strengthen the test with a deterministic positive-vs-zero weight case. |
+| Initial Docker fixture audit queried nonexistent `webhook_events.task_record_id` and `aggregate_group_targets.priority` columns | 1 | Read the live PostgreSQL schemas and use `object_id` plus `order_index`/ability priority for the scoped cleanup audit. |
+| Final E2E shell extracted a nonexistent top-level response task ID and polled `null`; a diagnostic dispatch query also used nonexistent `delivery_attempts` | 1 | Confirmed the real task by the scoped user fixture, stopped the redundant poll, and switched acceptance queries to live response/schema fields. |
+| Final review found retryable attempt failure left the old credential lease marked active/resolved | 1 | Close the attempt-scoped lease in the same failure transaction and assert the persisted failed status. |
+| Tried to resume a running shell session with the yielded-cell wait helper | 1 | Use the command session's `write_stdin` API; the focused test process completed successfully. |
+| First staged secret-scan pattern had an unmatched shell quote | 1 | Reran a simpler fixed pattern; only explicit test fixture values matched. |
+
+---
+
 # Leonardo Reference Media Normalization Error Projection (2026-08-08)
 
 ## Goal

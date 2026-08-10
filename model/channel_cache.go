@@ -190,6 +190,90 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 	return nil, errors.New("channel not found")
 }
 
+// GetRandomSatisfiedChannelExcluding is used by durable async retries. It
+// excludes failed channels before choosing the highest remaining priority.
+func GetRandomSatisfiedChannelExcluding(group string, modelName string, excludedChannelIDs []int) (*Channel, error) {
+	ensureCommonColumnsInitialized()
+	queryAbilities := func(candidateModel string) ([]Ability, error) {
+		query := DB.Model(&Ability{}).
+			Where(commonGroupCol+" = ? AND model = ? AND enabled = ?", group, candidateModel, true)
+		if len(excludedChannelIDs) > 0 {
+			query = query.Where("channel_id NOT IN ?", excludedChannelIDs)
+		}
+		var abilities []Ability
+		err := query.Order("priority DESC, weight DESC, channel_id ASC").Find(&abilities).Error
+		return abilities, err
+	}
+
+	abilities, err := queryAbilities(modelName)
+	if err != nil {
+		return nil, err
+	}
+	if len(abilities) == 0 {
+		normalizedModel := ratio_setting.FormatMatchingModelName(modelName)
+		if normalizedModel != "" && normalizedModel != modelName {
+			abilities, err = queryAbilities(normalizedModel)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if len(abilities) == 0 {
+		return nil, nil
+	}
+
+	for len(abilities) > 0 {
+		topPriority := int64(0)
+		if abilities[0].Priority != nil {
+			topPriority = *abilities[0].Priority
+		}
+		eligible := make([]Ability, 0, len(abilities))
+		remaining := make([]Ability, 0, len(abilities))
+		for _, ability := range abilities {
+			priority := int64(0)
+			if ability.Priority != nil {
+				priority = *ability.Priority
+			}
+			if priority == topPriority {
+				eligible = append(eligible, ability)
+			} else {
+				remaining = append(remaining, ability)
+			}
+		}
+
+		channels := make([]*Channel, 0, len(eligible))
+		sumWeight := 0
+		for _, ability := range eligible {
+			channel, err := CacheGetChannel(ability.ChannelId)
+			if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled {
+				continue
+			}
+			channels = append(channels, channel)
+			sumWeight += channel.GetWeight()
+		}
+		if len(channels) > 0 {
+			smoothingFactor := 1
+			smoothingAdjustment := 0
+			if sumWeight == 0 {
+				sumWeight = len(channels) * 100
+				smoothingAdjustment = 100
+			} else if sumWeight/len(channels) < 10 {
+				smoothingFactor = 100
+			}
+			randomWeight := rand.Intn(sumWeight * smoothingFactor)
+			for _, channel := range channels {
+				randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
+				if randomWeight < 0 {
+					return channel, nil
+				}
+			}
+			return channels[len(channels)-1], nil
+		}
+		abilities = remaining
+	}
+	return nil, nil
+}
+
 func GetSatisfiedChannelPriorityCount(group string, model string) (int, error) {
 	if !common.MemoryCacheEnabled {
 		ensureCommonColumnsInitialized()

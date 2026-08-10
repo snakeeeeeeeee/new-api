@@ -279,6 +279,8 @@ func migrateDB() error {
 		&Task{},
 		&ImageTaskRequest{},
 		&VideoTaskRequest{},
+		&ImageTaskRetryState{},
+		&ImageTaskAttempt{},
 		&ImageTaskDispatch{},
 		&ImageCredentialLease{},
 		&Asset{},
@@ -310,6 +312,9 @@ func migrateDB() error {
 		&CanvasAuthorizationCode{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := migrateImageTaskDispatchParentIndex(); err != nil {
 		return err
 	}
 	if common.UsingSQLite {
@@ -358,6 +363,8 @@ func migrateDBFast() error {
 		{&Task{}, "Task"},
 		{&ImageTaskRequest{}, "ImageTaskRequest"},
 		{&VideoTaskRequest{}, "VideoTaskRequest"},
+		{&ImageTaskRetryState{}, "ImageTaskRetryState"},
+		{&ImageTaskAttempt{}, "ImageTaskAttempt"},
 		{&ImageTaskDispatch{}, "ImageTaskDispatch"},
 		{&ImageCredentialLease{}, "ImageCredentialLease"},
 		{&Asset{}, "Asset"},
@@ -411,6 +418,9 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	if err := migrateImageTaskDispatchParentIndex(); err != nil {
+		return err
+	}
 	if common.UsingSQLite {
 		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
 			return err
@@ -433,6 +443,33 @@ func migrateDBFast() error {
 		return err
 	}
 	common.SysLog("database migrated")
+	return nil
+}
+
+func migrateImageTaskDispatchParentIndex() error {
+	migrator := DB.Migrator()
+	indexes, err := migrator.GetIndexes(&ImageTaskDispatch{})
+	if err != nil {
+		return err
+	}
+	for _, index := range indexes {
+		unique, uniqueOK := index.Unique()
+		if !uniqueOK || !unique {
+			continue
+		}
+		columns := index.Columns()
+		if len(columns) != 1 || !strings.EqualFold(columns[0], "task_record_id") {
+			continue
+		}
+		if err := migrator.DropIndex(&ImageTaskDispatch{}, index.Name()); err != nil {
+			return err
+		}
+	}
+	if !migrator.HasIndex(&ImageTaskDispatch{}, "idx_image_dispatch_task_record") {
+		if err := migrator.CreateIndex(&ImageTaskDispatch{}, "idx_image_dispatch_task_record"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -158,6 +158,7 @@ type TaskBillingContext struct {
 	OtherRatios              map[string]float64           `json:"other_ratios,omitempty"`                // 附加倍率（时长、分辨率等）
 	OriginModelName          string                       `json:"origin_model_name,omitempty"`           // 模型名称，必须为OriginModelName
 	PerCallBilling           bool                         `json:"per_call_billing,omitempty"`            // 按次计费：跳过轮询阶段的差额结算
+	RouteQuota               int                          `json:"route_quota,omitempty"`                 // 当前渠道路由的请求价格快照
 	BillingMode              string                       `json:"billing_mode,omitempty"`                // 计费模式快照，例如 async_image_usage_billing
 	PrechargeStrategy        string                       `json:"precharge_strategy,omitempty"`          // 预扣策略快照
 	PrechargePerImage        int                          `json:"precharge_per_image,omitempty"`         // 每张图预扣额度
@@ -177,6 +178,9 @@ type TaskFinalConsumeLogSnapshot struct {
 	CompletionTokens int                    `json:"completion_tokens"`
 	UseTimeSeconds   int                    `json:"use_time_seconds"`
 	Content          string                 `json:"content"`
+	ChannelId        int                    `json:"channel_id,omitempty"`
+	ModelName        string                 `json:"model_name,omitempty"`
+	Group            string                 `json:"group,omitempty"`
 	Other            map[string]interface{} `json:"other,omitempty"`
 }
 

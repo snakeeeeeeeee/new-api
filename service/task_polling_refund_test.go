@@ -106,6 +106,35 @@ func TestFailImageHandleTaskWithRefundUsesCASAndRefundsWalletAndTokenOnce(t *tes
 	assert.Equal(t, "req-task_public_missing_upstream", logItem.RequestId)
 }
 
+func TestResolveTaskPollingUpstreamIDDoesNotFailAttemptManagedParent(t *testing.T) {
+	truncate(t)
+	const userID, tokenID, channelID = 305, 305, 9305
+	seedUser(t, userID, 10000)
+	seedToken(t, tokenID, userID, "sk-attempt-provider-id", 6000)
+	seedChannel(t, channelID)
+	task := createPollingRefundTask(
+		t, "task_attempt_provider_scoped", "", imageHandleTaskPlatform(),
+		userID, channelID, 1000, tokenID, BillingSourceWallet, 0,
+	)
+	task.Action = constant.TaskActionImageGeneration
+	task.Properties = model.Properties{OriginModelName: "gpt-image-2", UpstreamModelName: "mapped-image", AssetType: constant.TaskAssetTypeImage}
+	task.SubmitTime = time.Now().Unix() - imageHandleMissingUpstreamIDGraceSeconds - 1
+	require.NoError(t, model.DB.Model(task).Updates(map[string]any{
+		"action": task.Action, "properties": task.Properties, "submit_time": task.SubmitTime,
+	}).Error)
+	_, attempt, _ := attachRetryAttemptForPollingTest(t, task, 1, channelID, model.ImageTaskAttemptSubmitted)
+	attempt.ProviderTaskID = "provider_attempt_scoped"
+	require.NoError(t, model.DB.Save(attempt).Error)
+
+	upstreamID, missing := resolveTaskPollingUpstreamID(task, time.Now().Unix())
+
+	assert.Empty(t, upstreamID)
+	assert.False(t, missing)
+	reloaded := loadPollingRefundTask(t, task.ID)
+	assert.EqualValues(t, model.TaskStatusQueued, reloaded.Status)
+	assert.Empty(t, reloaded.PrivateData.UpstreamTaskID)
+}
+
 func TestResolveTaskPollingUpstreamIDPreservesSubmitGraceAndLegacyFallback(t *testing.T) {
 	now := time.Now().Unix()
 

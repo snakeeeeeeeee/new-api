@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/image_handle_setting"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -58,6 +61,539 @@ func makeLeaseResolveRequest(t *testing.T, leaseID string, body []byte, secretID
 	ctx.Request.Header.Set("X-ImageHandle-Event-Id", "evt_resolve_1")
 	ctx.Params = gin.Params{{Key: "lease_id", Value: leaseID}}
 	return ctx, recorder
+}
+
+func seedAttemptLeaseResolveFixture(t *testing.T, suffix string) (*model.Task, *model.ImageTaskRetryState, *model.ImageTaskAttempt, *model.ImageCredentialLease) {
+	t.Helper()
+	settings, err := common.Marshal(dto.ChannelOtherSettings{ImageHandleExecutionDriver: dto.ImageHandleExecutionDriverAdobeAsyncImage})
+	require.NoError(t, err)
+	channelID := 880 + len(suffix)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: channelID, Type: constant.ChannelTypeOpenAI, Name: "attempt-channel-" + suffix,
+		Key: "attempt-key-" + suffix, Status: common.ChannelStatusEnabled, OtherSettings: string(settings),
+	}).Error)
+	now := time.Now().Unix()
+	parent := &model.Task{
+		TaskID: "task_attempt_lease_" + suffix, Platform: constant.TaskPlatform("58"),
+		Action: constant.TaskActionImageGeneration, UserId: 1, ChannelId: 777,
+		Status: model.TaskStatusQueued, Progress: "0%", SubmitTime: now,
+		PrivateData: model.TaskPrivateData{ImageHandleExecutionDriver: dto.ImageHandleExecutionDriverAdobeAsyncImage},
+		Properties:  model.Properties{OriginModelName: "gpt-image-2", UpstreamModelName: "initial-mapped-image"},
+		CreatedAt:   now, UpdatedAt: now,
+	}
+	require.NoError(t, model.DB.Create(parent).Error)
+	state := model.NewImageTaskRetryState(parent, 1, "default", "default", "gpt-image-2")
+	state.CurrentRouteGroup = "fallback"
+	require.NoError(t, model.DB.Create(state).Error)
+	attempt := model.NewImageTaskAttempt(
+		parent, 2, "task_attempt_internal_"+suffix, channelID, "fallback", 1, "primary",
+		"gpt-image-2", "attempt-mapped-image", 100, &model.TaskBillingContext{OriginModelName: "gpt-image-2"}, "req_attempt_lease",
+	)
+	attempt.ExecutionDriver = dto.ImageHandleExecutionDriverLegacySync
+	attempt.ProviderTaskID = "provider_attempt_" + suffix
+	attempt.Status = model.ImageTaskAttemptSubmitted
+	require.NoError(t, model.DB.Create(attempt).Error)
+	state.ActiveAttemptRecordID = attempt.ID
+	state.AttemptCount = 2
+	require.NoError(t, model.DB.Save(state).Error)
+	lease := model.NewImageCredentialLeaseForAttempt(parent, attempt, "generation", attempt.UpstreamModel, 1800)
+	require.NoError(t, model.DB.Create(lease).Error)
+	return parent, state, attempt, lease
+}
+
+type imageRetryCallbackFixture struct {
+	Secret  string
+	Parent  *model.Task
+	State   *model.ImageTaskRetryState
+	Attempt *model.ImageTaskAttempt
+	LogID   int
+}
+
+func setupImageRetryCallbackFixture(t *testing.T, suffix string, retryLimit int) *imageRetryCallbackFixture {
+	t.Helper()
+	db := setupInviteCodeControllerTestDB(t)
+	originalMemoryCache := common.MemoryCacheEnabled
+	originalImageHandleSetting := *image_handle_setting.GetImageHandleSetting()
+	originalModelPrice := ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalMemoryCache
+		*image_handle_setting.GetImageHandleSetting() = originalImageHandleSetting
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(originalModelPrice))
+	})
+	common.MemoryCacheEnabled = false
+	const publicModel = "image-retry-callback-model"
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"image-retry-callback-model":0.0002}`))
+	*image_handle_setting.GetImageHandleSetting() = image_handle_setting.NormalizeSetting(image_handle_setting.ImageHandleSetting{
+		BaseURL:          "http://image-handle.invalid",
+		APIKey:           "image-handle-test-key",
+		InternalBaseURL:  "http://new-api.internal",
+		InternalSecretID: "image_handle_1",
+		InternalSecret:   "internal-secret",
+		CallbackSecret:   "global-callback-secret",
+	})
+
+	secret := "retry-callback-secret"
+	channelSettings, err := common.Marshal(dto.ChannelOtherSettings{
+		CallbackSecret: secret, ImageHandleExecutionDriver: dto.ImageHandleExecutionDriverLegacySync,
+	})
+	require.NoError(t, err)
+	priority := int64(100)
+	weight := uint(100)
+	for _, channelID := range []int{123, 124} {
+		channel := &model.Channel{
+			Id: channelID, Type: constant.ChannelTypeOpenAI, Name: fmt.Sprintf("retry-channel-%d-%s", channelID, suffix),
+			Key: fmt.Sprintf("retry-key-%d", channelID), Status: common.ChannelStatusEnabled,
+			Group: "default", Models: publicModel, Priority: &priority, Weight: &weight,
+			OtherSettings: string(channelSettings), CreatedTime: time.Now().Unix(),
+		}
+		if channelID == 123 {
+			channel.UsedQuota = 100
+		}
+		require.NoError(t, db.Create(channel).Error)
+		require.NoError(t, channel.AddAbilities(nil))
+	}
+	require.NoError(t, db.Create(&model.User{
+		Id: 1, Username: "retry-user", Quota: 1000, Status: common.UserStatusEnabled, Group: "default",
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id: 11, UserId: 1, Key: "retry-token", Name: "retry-token", Status: common.TokenStatusEnabled,
+		RemainQuota: 1000, Group: "default",
+	}).Error)
+
+	now := time.Now().Unix()
+	parent := &model.Task{
+		TaskID: "task_retry_callback_" + suffix, Platform: imageHandleTaskPlatform(),
+		Action: constant.TaskActionImageGeneration, UserId: 1, ChannelId: 123,
+		Quota: 100, Status: model.TaskStatusQueued, Progress: "0%", Group: "default",
+		SubmitTime: now, CreatedAt: now, UpdatedAt: now,
+		PrivateData: model.TaskPrivateData{
+			BillingSource: service.BillingSourceWallet, TokenId: 11,
+			ImageHandleExecutionDriver: dto.ImageHandleExecutionDriverLegacySync,
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice: 0.0002, GroupRatio: 1, OriginModelName: publicModel,
+				UsePrice: true, PerCallBilling: true, RouteQuota: 100, RequestId: "req_retry_callback_" + suffix,
+			},
+		},
+		Properties: model.Properties{
+			OriginModelName: publicModel, UpstreamModelName: publicModel, AssetType: constant.TaskAssetTypeImage,
+		},
+	}
+	require.NoError(t, db.Create(parent).Error)
+	prechargeLog := &model.Log{
+		UserId: parent.UserId, CreatedAt: now, Type: model.LogTypeConsume,
+		Content: "async image precharge", ModelName: publicModel, Quota: parent.Quota,
+		ChannelId: parent.ChannelId, TokenId: parent.PrivateData.TokenId, Group: parent.Group,
+		RequestId: parent.PrivateData.BillingContext.RequestId,
+		Other:     common.MapToJsonStr(map[string]interface{}{"task_id": parent.TaskID}),
+	}
+	require.NoError(t, db.Create(prechargeLog).Error)
+	parent.PrivateData.BillingContext.ConsumeLogId = prechargeLog.Id
+	require.NoError(t, db.Model(parent).Update("private_data", parent.PrivateData).Error)
+	request := dto.ImageTaskCreateRequest{
+		Model: publicModel, Operation: "generation", Input: dto.ImageTaskInputRequest{Prompt: "retry callback test"},
+	}
+	requestJSON, err := common.Marshal(request)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(model.NewImageTaskRequest(parent, parent.UserId, nil, "retry-callback-fingerprint-"+suffix, "", requestJSON)).Error)
+	state := model.NewImageTaskRetryState(parent, retryLimit, "default", "default", publicModel)
+	state.CurrentRouteGroup = "default"
+	state.CurrentRouteIndex = -1
+	state.CurrentGroupAttempts = 1
+	require.NoError(t, db.Create(state).Error)
+	attempt := model.NewImageTaskAttempt(
+		parent, 1, "task_attempt_callback_"+suffix, 123, "default", -1, "",
+		publicModel, publicModel, 100, parent.PrivateData.BillingContext, "req_retry_callback_"+suffix+":attempt:1",
+	)
+	attempt.Status = model.ImageTaskAttemptSubmitted
+	attempt.ProviderTaskID = "provider_retry_callback_" + suffix
+	require.NoError(t, db.Create(attempt).Error)
+	state.ActiveAttemptRecordID = attempt.ID
+	state.AttemptCount = 1
+	state.AppendTrace(attempt, model.ImageTaskAttemptSubmitted, "")
+	require.NoError(t, db.Save(state).Error)
+	lease := model.NewImageCredentialLeaseForAttempt(parent, attempt, "generation", publicModel, 1800)
+	require.NoError(t, db.Create(lease).Error)
+	dispatch := model.NewImageTaskDispatchForAttempt(parent, attempt, []byte(`{"client_task_id":"`+attempt.ClientTaskID+`"}`))
+	dispatch.Status = model.ImageTaskDispatchDelivered
+	dispatch.DeliveredAt = now
+	require.NoError(t, db.Create(dispatch).Error)
+	return &imageRetryCallbackFixture{Secret: secret, Parent: parent, State: state, Attempt: attempt, LogID: prechargeLog.Id}
+}
+
+func sendImageAttemptFailureCallback(t *testing.T, fixture *imageRetryCallbackFixture, eventID string, retryable bool) *httptest.ResponseRecorder {
+	t.Helper()
+	return sendImageAttemptFailureCallbackWithError(t, fixture, eventID, &imageCallbackError{
+		Code: "upstream_unavailable", Message: "temporary provider outage", Retryable: retryable, UpstreamStatus: http.StatusServiceUnavailable,
+	})
+}
+
+func sendImageAttemptFailureCallbackWithError(t *testing.T, fixture *imageRetryCallbackFixture, eventID string, callbackError *imageCallbackError) *httptest.ResponseRecorder {
+	t.Helper()
+	payload, err := common.Marshal(imageCallbackBatchRequest{Events: []imageCallbackEvent{{
+		EventID: eventID, ClientTaskID: fixture.Attempt.ClientTaskID, ProviderTaskID: fixture.Attempt.ProviderTaskID,
+		Status: "failed", Progress: "100%", Error: callbackError,
+	}}})
+	require.NoError(t, err)
+	ctx, recorder := makeCallbackRequest(t, payload, fixture.Secret)
+	ImageTaskCallbackBatch(ctx)
+	return recorder
+}
+
+func convertImageRetryFixtureToLegacy(t *testing.T, fixture *imageRetryCallbackFixture, keepNormalizedRequest bool) {
+	t.Helper()
+	db := model.DB
+	require.NoError(t, db.Model(&model.ImageTaskDispatch{}).
+		Where("task_record_id = ?", fixture.Parent.ID).
+		UpdateColumn("attempt_record_id", nil).Error)
+	require.NoError(t, db.Model(&model.ImageCredentialLease{}).
+		Where("task_record_id = ?", fixture.Parent.ID).
+		UpdateColumn("attempt_record_id", nil).Error)
+	require.NoError(t, db.Where("task_record_id = ?", fixture.Parent.ID).Delete(&model.ImageTaskAttempt{}).Error)
+	require.NoError(t, db.Where("task_record_id = ?", fixture.Parent.ID).Delete(&model.ImageTaskRetryState{}).Error)
+	if !keepNormalizedRequest {
+		require.NoError(t, db.Where("task_record_id = ?", fixture.Parent.ID).Delete(&model.ImageTaskRequest{}).Error)
+	}
+	fixture.Attempt = &model.ImageTaskAttempt{
+		ClientTaskID:   fixture.Parent.TaskID,
+		ProviderTaskID: "provider_legacy_" + fixture.Parent.TaskID,
+		ChannelID:      fixture.Parent.ChannelId,
+	}
+}
+
+func getUserQuotaForControllerTest(t *testing.T, userID int) int {
+	t.Helper()
+	var user model.User
+	require.NoError(t, model.DB.First(&user, userID).Error)
+	return user.Quota
+}
+
+func sendImageAttemptSuccessCallback(t *testing.T, fixture *imageRetryCallbackFixture, attempt *model.ImageTaskAttempt, eventID string) *httptest.ResponseRecorder {
+	t.Helper()
+	payload, err := common.Marshal(imageCallbackBatchRequest{Events: []imageCallbackEvent{{
+		EventID: eventID, ClientTaskID: attempt.ClientTaskID, ProviderTaskID: "provider_retry_winner",
+		Status: "succeeded", Progress: "100%", Result: &imageCallbackResult{Images: []imageCallbackImage{{
+			URL: "https://cdn.example.test/retry-winner.webp", MimeType: "image/webp", Width: 1024, Height: 1024,
+		}}},
+	}}})
+	require.NoError(t, err)
+	ctx, recorder := makeCallbackRequest(t, payload, fixture.Secret)
+	ctx.Request.Header.Set("X-Callback-Secret-Id", fmt.Sprintf("channel_%d", attempt.ChannelID))
+	ImageTaskCallbackBatch(ctx)
+	return recorder
+}
+
+func TestImageTaskAttemptRetryableCallbackSchedulesOneDifferentChannel(t *testing.T) {
+	fixture := setupImageRetryCallbackFixture(t, "retryable", 1)
+
+	recorder := sendImageAttemptFailureCallback(t, fixture, "evt_retryable_1", true)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"status":"retry_scheduled"`)
+	attempts, err := model.ListImageTaskAttempts(fixture.Parent.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 2)
+	assert.Equal(t, model.ImageTaskAttemptFailed, attempts[0].Status)
+	assert.True(t, attempts[0].ErrorRetryable)
+	assert.Equal(t, 123, attempts[0].ChannelID)
+	assert.Equal(t, 124, attempts[1].ChannelID)
+	assert.NotEqual(t, attempts[0].ClientTaskID, attempts[1].ClientTaskID)
+	state, exists, err := model.GetImageTaskRetryStateByTaskRecordID(fixture.Parent.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, model.ImageTaskRetryStateActive, state.Status)
+	assert.Equal(t, 2, state.AttemptCount)
+	assert.Contains(t, state.FailedChannelIDs, 123)
+	parent, err := model.GetTaskByRecordID(fixture.Parent.ID)
+	require.NoError(t, err)
+	assert.EqualValues(t, model.TaskStatusQueued, parent.Status)
+	assert.Equal(t, 1000, getUserQuotaForControllerTest(t, 1))
+
+	var dispatches []model.ImageTaskDispatch
+	require.NoError(t, model.DB.Where("task_record_id = ?", fixture.Parent.ID).Order("id ASC").Find(&dispatches).Error)
+	require.Len(t, dispatches, 2)
+	require.NotNil(t, dispatches[1].AttemptRecordID)
+	assert.Equal(t, attempts[1].ID, *dispatches[1].AttemptRecordID)
+	assert.Contains(t, dispatches[1].RequestBody, attempts[1].ClientTaskID)
+	lease, leaseExists, err := model.GetImageCredentialLeaseByAttemptRecordID(attempts[1].ID)
+	require.NoError(t, err)
+	require.True(t, leaseExists)
+	assert.Equal(t, 124, lease.ChannelID)
+	failedLease, failedLeaseExists, err := model.GetImageCredentialLeaseByAttemptRecordID(attempts[0].ID)
+	require.NoError(t, err)
+	require.True(t, failedLeaseExists)
+	assert.Equal(t, model.ImageCredentialLeaseStatusFailed, failedLease.Status)
+
+	duplicate := sendImageAttemptFailureCallback(t, fixture, "evt_retryable_duplicate", true)
+	assert.Contains(t, duplicate.Body.String(), `"status":"ignored_terminal"`)
+	attempts, err = model.ListImageTaskAttempts(fixture.Parent.ID)
+	require.NoError(t, err)
+	assert.Len(t, attempts, 2)
+}
+
+func TestImageTaskAttemptNonRetryableCallbackFinalizesAndRefundsOnce(t *testing.T) {
+	fixture := setupImageRetryCallbackFixture(t, "non_retryable", 2)
+
+	first := sendImageAttemptFailureCallback(t, fixture, "evt_non_retryable_1", false)
+	second := sendImageAttemptFailureCallback(t, fixture, "evt_non_retryable_2", false)
+
+	require.Equal(t, http.StatusOK, first.Code)
+	assert.Contains(t, first.Body.String(), `"status":"accepted"`)
+	assert.Contains(t, second.Body.String(), `"status":"ignored_terminal"`)
+	parent, err := model.GetTaskByRecordID(fixture.Parent.ID)
+	require.NoError(t, err)
+	assert.EqualValues(t, model.TaskStatusFailure, parent.Status)
+	assert.Equal(t, 1100, getUserQuotaForControllerTest(t, 1))
+	attempts, err := model.ListImageTaskAttempts(fixture.Parent.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	assert.False(t, attempts[0].ErrorRetryable)
+}
+
+func TestImageTaskAttemptConcurrentRetryableCallbacksCreateOneNextAttempt(t *testing.T) {
+	fixture := setupImageRetryCallbackFixture(t, "concurrent", 1)
+	var wait sync.WaitGroup
+	wait.Add(2)
+	responses := make([]*httptest.ResponseRecorder, 2)
+	for index := range responses {
+		go func(index int) {
+			defer wait.Done()
+			responses[index] = sendImageAttemptFailureCallback(t, fixture, fmt.Sprintf("evt_concurrent_%d", index), true)
+		}(index)
+	}
+	wait.Wait()
+
+	attempts, err := model.ListImageTaskAttempts(fixture.Parent.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 2)
+	retryScheduled := 0
+	ignored := 0
+	for _, response := range responses {
+		if strings.Contains(response.Body.String(), `"status":"retry_scheduled"`) {
+			retryScheduled++
+		}
+		if strings.Contains(response.Body.String(), `"status":"ignored_stale"`) || strings.Contains(response.Body.String(), `"status":"ignored_terminal"`) {
+			ignored++
+		}
+	}
+	assert.Equal(t, 1, retryScheduled)
+	assert.Equal(t, 1, ignored)
+}
+
+func TestLegacyNormalizedImageTaskRetryableCallbackLazilyCreatesAttempts(t *testing.T) {
+	fixture := setupImageRetryCallbackFixture(t, "legacy_lazy_retry", 1)
+	convertImageRetryFixtureToLegacy(t, fixture, true)
+	originalRetryTimes := common.RetryTimes
+	common.RetryTimes = 1
+	t.Cleanup(func() { common.RetryTimes = originalRetryTimes })
+
+	response := sendImageAttemptFailureCallback(t, fixture, "evt_legacy_lazy_retry", true)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.Contains(t, response.Body.String(), `"status":"retry_scheduled"`)
+	attempts, err := model.ListImageTaskAttempts(fixture.Parent.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 2)
+	assert.Equal(t, fixture.Parent.TaskID, attempts[0].ClientTaskID)
+	assert.Equal(t, model.ImageTaskAttemptFailed, attempts[0].Status)
+	assert.Equal(t, 123, attempts[0].ChannelID)
+	assert.Equal(t, 124, attempts[1].ChannelID)
+	state, exists, err := model.GetImageTaskRetryStateByTaskRecordID(fixture.Parent.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, 1, state.RetryLimit)
+	assert.False(t, state.LockedChannel)
+	assert.Equal(t, 2, state.AttemptCount)
+
+	var dispatches []model.ImageTaskDispatch
+	require.NoError(t, model.DB.Where("task_record_id = ?", fixture.Parent.ID).Order("id ASC").Find(&dispatches).Error)
+	require.Len(t, dispatches, 2)
+	require.NotNil(t, dispatches[0].AttemptRecordID)
+	assert.Equal(t, attempts[0].ID, *dispatches[0].AttemptRecordID)
+	var leases []model.ImageCredentialLease
+	require.NoError(t, model.DB.Where("task_record_id = ?", fixture.Parent.ID).Order("id ASC").Find(&leases).Error)
+	require.Len(t, leases, 2)
+	require.NotNil(t, leases[0].AttemptRecordID)
+	assert.Equal(t, attempts[0].ID, *leases[0].AttemptRecordID)
+}
+
+func TestLegacyImageTaskWithoutNormalizedRequestKeepsLegacyFailurePath(t *testing.T) {
+	fixture := setupImageRetryCallbackFixture(t, "legacy_without_request", 1)
+	convertImageRetryFixtureToLegacy(t, fixture, false)
+
+	response := sendImageAttemptFailureCallback(t, fixture, "evt_legacy_without_request", true)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.Contains(t, response.Body.String(), `"status":"accepted"`)
+	_, exists, err := model.GetImageTaskRetryStateByTaskRecordID(fixture.Parent.ID)
+	require.NoError(t, err)
+	assert.False(t, exists)
+	parent, err := model.GetTaskByRecordID(fixture.Parent.ID)
+	require.NoError(t, err)
+	assert.EqualValues(t, model.TaskStatusFailure, parent.Status)
+}
+
+func TestLegacyAdministratorImageTaskIsConservativelyLocked(t *testing.T) {
+	fixture := setupImageRetryCallbackFixture(t, "legacy_admin_locked", 1)
+	convertImageRetryFixtureToLegacy(t, fixture, true)
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", fixture.Parent.UserId).
+		Update("role", common.RoleAdminUser).Error)
+
+	response := sendImageAttemptFailureCallback(t, fixture, "evt_legacy_admin_locked", true)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.Contains(t, response.Body.String(), `"status":"accepted"`)
+	state, exists, err := model.GetImageTaskRetryStateByTaskRecordID(fixture.Parent.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.True(t, state.LockedChannel)
+	assert.Equal(t, model.ImageTaskRetryStateFailed, state.Status)
+	attempts, err := model.ListImageTaskAttempts(fixture.Parent.ID)
+	require.NoError(t, err)
+	assert.Len(t, attempts, 1)
+}
+
+func TestImageTaskAttemptRetryDoesNotReadThroughLockedTransaction(t *testing.T) {
+	fixture := setupImageRetryCallbackFixture(t, "single_connection", 1)
+	sqlDB, err := model.DB.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { sqlDB.SetMaxOpenConns(10) })
+
+	response := sendImageAttemptFailureCallback(t, fixture, "evt_single_connection", true)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.Contains(t, response.Body.String(), `"status":"retry_scheduled"`)
+	attempts, err := model.ListImageTaskAttempts(fixture.Parent.ID)
+	require.NoError(t, err)
+	assert.Len(t, attempts, 2)
+}
+
+func TestImageTaskAttemptFailureRecordsAggregateRPMAndSmartSignals(t *testing.T) {
+	fixture := setupImageRetryCallbackFixture(t, "aggregate_signals", 1)
+	originalSmartStrategyEnabled := setting.AggregateGroupSmartStrategyEnabled
+	setting.AggregateGroupSmartStrategyEnabled = true
+	t.Cleanup(func() { setting.AggregateGroupSmartStrategyEnabled = originalSmartStrategyEnabled })
+	aggregateName := "image-retry-signals"
+	aggregate := &model.AggregateGroup{
+		Name: aggregateName, DisplayName: aggregateName, Status: model.AggregateGroupStatusEnabled,
+		RoutingMode: model.AggregateGroupRoutingModeFailover, SmartRoutingEnabled: true,
+		CreatedTime: time.Now().Unix(), UpdatedTime: time.Now().Unix(),
+	}
+	require.NoError(t, model.DB.Create(aggregate).Error)
+	require.NoError(t, model.DB.Create(&model.AggregateGroupTarget{
+		AggregateGroupId: aggregate.Id, RealGroup: "default", OrderIndex: 0,
+	}).Error)
+	fixture.State.AggregateGroup = aggregateName
+	fixture.State.RoutingMode = model.AggregateGroupRoutingModeFailover
+	fixture.State.CurrentRouteIndex = 0
+	require.NoError(t, model.DB.Save(fixture.State).Error)
+	t.Cleanup(func() {
+		_ = service.ResetAggregateGroupRouteStrategyState(aggregateName, fixture.Attempt.OriginModel, "default")
+	})
+
+	response := sendImageAttemptFailureCallback(t, fixture, "evt_aggregate_signals", true)
+
+	require.Equal(t, http.StatusOK, response.Code)
+	assert.Contains(t, response.Body.String(), `"status":"retry_scheduled"`)
+	stats := service.GetAggregateRouteWindowStatsForPool(aggregateName, fixture.Attempt.OriginModel, "", "default", 60)
+	assert.Equal(t, 1, stats.Attempts)
+	assert.Equal(t, 1, stats.Failures)
+	assert.Equal(t, 1, stats.StrategyFailures)
+}
+
+func TestImageTaskAttemptAutoDisableUsesResolvedMultiKeyIndex(t *testing.T) {
+	fixture := setupImageRetryCallbackFixture(t, "multi_key_disable", 0)
+	channel, err := model.GetChannelById(fixture.Attempt.ChannelID, true)
+	require.NoError(t, err)
+	autoBan := 1
+	channel.AutoBan = &autoBan
+	channel.Key = "first-image-key\nsecond-image-key"
+	channel.ChannelInfo = model.ChannelInfo{
+		IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling, MultiKeyPollingIndex: 1,
+	}
+	require.NoError(t, channel.Save())
+	originalAutomaticDisable := common.AutomaticDisableChannelEnabled
+	common.AutomaticDisableChannelEnabled = true
+	t.Cleanup(func() { common.AutomaticDisableChannelEnabled = originalAutomaticDisable })
+
+	body := []byte(fmt.Sprintf(
+		`{"provider_task_id":%q,"client_task_id":%q,"attempt":1,"operation":"generation","model":%q}`,
+		fixture.Attempt.ProviderTaskID, fixture.Attempt.ClientTaskID, fixture.Attempt.OriginModel,
+	))
+	resolveContext, resolveRecorder := makeLeaseResolveRequest(t, "", body, "image_handle_1", "internal-secret")
+	lease, exists, err := model.GetImageCredentialLeaseByAttemptRecordID(fixture.Attempt.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	resolveContext.Params = gin.Params{{Key: "lease_id", Value: lease.LeaseID}}
+	ResolveImageCredentialLease(resolveContext)
+	require.Equal(t, http.StatusOK, resolveRecorder.Code, resolveRecorder.Body.String())
+	var resolveResponse imageCredentialLeaseResolveResponse
+	require.NoError(t, common.Unmarshal(resolveRecorder.Body.Bytes(), &resolveResponse))
+	assert.Equal(t, "second-image-key", resolveResponse.APIKey)
+	lease, exists, err = model.GetImageCredentialLeaseByAttemptRecordID(fixture.Attempt.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NotNil(t, lease.ResolvedKeyIndex)
+	assert.Equal(t, 1, *lease.ResolvedKeyIndex)
+
+	failure := sendImageAttemptFailureCallbackWithError(t, fixture, "evt_multi_key_disable", &imageCallbackError{
+		Code: "invalid_api_key", ProviderErrorCode: "invalid_api_key", Message: "invalid credential",
+		ProviderErrorMessage: "invalid credential", Retryable: false, UpstreamStatus: http.StatusUnauthorized,
+	})
+	require.Equal(t, http.StatusOK, failure.Code)
+	assert.Eventually(t, func() bool {
+		stored, loadErr := model.GetChannelById(fixture.Attempt.ChannelID, true)
+		return loadErr == nil && stored.ChannelInfo.MultiKeyStatusList[1] == common.ChannelStatusAutoDisabled
+	}, time.Second, 10*time.Millisecond)
+	stored, err := model.GetChannelById(fixture.Attempt.ChannelID, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
+	assert.NotContains(t, stored.ChannelInfo.MultiKeyStatusList, 0)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, stored.ChannelInfo.MultiKeyStatusList[1])
+}
+
+func TestImageTaskAttemptRetryThenSuccessSettlesWinningRouteAndLog(t *testing.T) {
+	fixture := setupImageRetryCallbackFixture(t, "retry_success", 1)
+	failed := sendImageAttemptFailureCallback(t, fixture, "evt_retry_then_success_failure", true)
+	require.Contains(t, failed.Body.String(), `"status":"retry_scheduled"`)
+	attempts, err := model.ListImageTaskAttempts(fixture.Parent.ID)
+	require.NoError(t, err)
+	require.Len(t, attempts, 2)
+
+	succeeded := sendImageAttemptSuccessCallback(t, fixture, attempts[1], "evt_retry_then_success_winner")
+
+	require.Equal(t, http.StatusOK, succeeded.Code)
+	assert.Contains(t, succeeded.Body.String(), `"status":"accepted"`)
+	parent, err := model.GetTaskByRecordID(fixture.Parent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, fixture.Parent.TaskID, parent.TaskID)
+	assert.EqualValues(t, model.TaskStatusSuccess, parent.Status)
+	assert.Equal(t, 124, parent.ChannelId)
+	assert.Equal(t, "provider_retry_winner", parent.PrivateData.UpstreamTaskID)
+	assert.Equal(t, 1000, getUserQuotaForControllerTest(t, 1))
+	var assets []model.Asset
+	require.NoError(t, model.DB.Where("task_record_id = ?", parent.ID).Find(&assets).Error)
+	require.Len(t, assets, 1)
+	assert.Equal(t, "https://cdn.example.test/retry-winner.webp", assets[0].URL)
+	var finalLog model.Log
+	require.NoError(t, model.LOG_DB.First(&finalLog, fixture.LogID).Error)
+	assert.Equal(t, 124, finalLog.ChannelId)
+	assert.Equal(t, 100, finalLog.Quota)
+	other, err := common.StrToMap(finalLog.Other)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, other["attempt_count"])
+	assert.EqualValues(t, 1, other["channel_switch_count"])
+	var initialChannel, winningChannel model.Channel
+	require.NoError(t, model.DB.First(&initialChannel, 123).Error)
+	require.NoError(t, model.DB.First(&winningChannel, 124).Error)
+	assert.Zero(t, initialChannel.UsedQuota)
+	assert.EqualValues(t, 100, winningChannel.UsedQuota)
+
+	late := sendImageAttemptFailureCallback(t, fixture, "evt_retry_then_success_late", true)
+	assert.Contains(t, late.Body.String(), `"status":"ignored_terminal"`)
+	attempts, err = model.ListImageTaskAttempts(fixture.Parent.ID)
+	require.NoError(t, err)
+	assert.Len(t, attempts, 2)
 }
 
 func TestImageTaskCallbackBatchAccepted(t *testing.T) {
@@ -224,6 +760,55 @@ func TestResolveImageCredentialLeaseAccepted(t *testing.T) {
 	require.Equal(t, http.StatusOK, secondRecorder.Code)
 	require.NoError(t, common.Unmarshal(secondRecorder.Body.Bytes(), &resolveResp))
 	assert.Equal(t, dto.ImageHandleExecutionDriverAdobeAsyncImage, resolveResp.ExecutionDriver)
+}
+
+func TestResolveImageCredentialLeaseUsesActiveAttemptIdentityAndChannel(t *testing.T) {
+	setupInviteCodeControllerTestDB(t)
+	secret := "attempt-internal-secret"
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+	_, _, attempt, lease := seedAttemptLeaseResolveFixture(t, "active")
+	body := []byte(fmt.Sprintf(
+		`{"provider_task_id":%q,"client_task_id":%q,"attempt":2,"operation":"generation","model":"gpt-image-2"}`,
+		attempt.ProviderTaskID, attempt.ClientTaskID,
+	))
+	ctx, recorder := makeLeaseResolveRequest(t, lease.LeaseID, body, "image_handle_1", secret)
+
+	ResolveImageCredentialLease(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response imageCredentialLeaseResolveResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "attempt-key-active", response.APIKey)
+	assert.Equal(t, "attempt-mapped-image", response.Model)
+	assert.Equal(t, fmt.Sprintf("channel_%d", attempt.ChannelID), response.ChannelID)
+	assert.Equal(t, dto.ImageHandleExecutionDriverLegacySync, response.ExecutionDriver)
+}
+
+func TestResolveImageCredentialLeaseRejectsInactiveAttempt(t *testing.T) {
+	setupInviteCodeControllerTestDB(t)
+	secret := "attempt-internal-secret"
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET", secret)
+	t.Setenv("IMAGE_HANDLE_INTERNAL_SECRET_ID", "image_handle_1")
+	image_handle_setting.ApplyEnvFallback()
+	_, state, attempt, lease := seedAttemptLeaseResolveFixture(t, "inactive")
+	state.ActiveAttemptRecordID = 0
+	require.NoError(t, model.DB.Save(state).Error)
+	body := []byte(fmt.Sprintf(
+		`{"provider_task_id":%q,"client_task_id":%q,"attempt":2,"operation":"generation","model":"gpt-image-2"}`,
+		attempt.ProviderTaskID, attempt.ClientTaskID,
+	))
+	ctx, recorder := makeLeaseResolveRequest(t, lease.LeaseID, body, "image_handle_1", secret)
+
+	ResolveImageCredentialLease(ctx)
+
+	require.Equal(t, http.StatusConflict, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "attempt_not_active")
+	storedLease, exists, err := model.GetImageCredentialLeaseByLeaseID(lease.LeaseID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, model.ImageCredentialLeaseStatusFailed, storedLease.Status)
 }
 
 func TestResolveImageCredentialLeaseBuildsGeminiGenerateContentEndpoint(t *testing.T) {

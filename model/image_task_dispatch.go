@@ -16,21 +16,22 @@ const (
 )
 
 type ImageTaskDispatch struct {
-	ID             int64  `json:"id" gorm:"primaryKey"`
-	DispatchID     string `json:"dispatch_id" gorm:"type:varchar(191);uniqueIndex"`
-	TaskRecordID   int64  `json:"task_record_id" gorm:"uniqueIndex"`
-	TaskID         string `json:"task_id" gorm:"type:varchar(191);index"`
-	RequestBody    string `json:"request_body" gorm:"type:text"`
-	Status         string `json:"status" gorm:"type:varchar(20);index:idx_image_dispatch_due,priority:1"`
-	Attempts       int    `json:"attempts"`
-	NextAttemptAt  int64  `json:"next_attempt_at" gorm:"index:idx_image_dispatch_due,priority:2"`
-	LockedUntil    int64  `json:"locked_until" gorm:"index"`
-	LockToken      string `json:"lock_token" gorm:"type:varchar(64);index"`
-	LastHTTPStatus int    `json:"last_http_status"`
-	LastError      string `json:"last_error" gorm:"type:text"`
-	DeliveredAt    int64  `json:"delivered_at"`
-	CreatedAt      int64  `json:"created_at" gorm:"index"`
-	UpdatedAt      int64  `json:"updated_at"`
+	ID              int64  `json:"id" gorm:"primaryKey"`
+	DispatchID      string `json:"dispatch_id" gorm:"type:varchar(191);uniqueIndex"`
+	TaskRecordID    int64  `json:"task_record_id" gorm:"index:idx_image_dispatch_task_record"`
+	AttemptRecordID *int64 `json:"attempt_record_id,omitempty" gorm:"uniqueIndex:idx_image_dispatch_attempt"`
+	TaskID          string `json:"task_id" gorm:"type:varchar(191);index"`
+	RequestBody     string `json:"request_body" gorm:"type:text"`
+	Status          string `json:"status" gorm:"type:varchar(20);index:idx_image_dispatch_due,priority:1"`
+	Attempts        int    `json:"attempts"`
+	NextAttemptAt   int64  `json:"next_attempt_at" gorm:"index:idx_image_dispatch_due,priority:2"`
+	LockedUntil     int64  `json:"locked_until" gorm:"index"`
+	LockToken       string `json:"lock_token" gorm:"type:varchar(64);index"`
+	LastHTTPStatus  int    `json:"last_http_status"`
+	LastError       string `json:"last_error" gorm:"type:text"`
+	DeliveredAt     int64  `json:"delivered_at"`
+	CreatedAt       int64  `json:"created_at" gorm:"index"`
+	UpdatedAt       int64  `json:"updated_at"`
 }
 
 func ClaimDueImageTaskDispatches(limit int, leaseSeconds int64) ([]*ImageTaskDispatch, error) {
@@ -153,8 +154,12 @@ func GenerateImageTaskDispatchID() string {
 }
 
 func NewImageTaskDispatch(task *Task, body []byte) *ImageTaskDispatch {
+	return NewImageTaskDispatchForAttempt(task, nil, body)
+}
+
+func NewImageTaskDispatchForAttempt(task *Task, attempt *ImageTaskAttempt, body []byte) *ImageTaskDispatch {
 	now := time.Now().Unix()
-	return &ImageTaskDispatch{
+	dispatch := &ImageTaskDispatch{
 		DispatchID:    GenerateImageTaskDispatchID(),
 		TaskRecordID:  task.ID,
 		TaskID:        task.TaskID,
@@ -164,4 +169,8 @@ func NewImageTaskDispatch(task *Task, body []byte) *ImageTaskDispatch {
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
+	if attempt != nil {
+		dispatch.AttemptRecordID = &attempt.ID
+	}
+	return dispatch
 }

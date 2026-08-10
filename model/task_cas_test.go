@@ -35,7 +35,7 @@ func TestMain(m *testing.M) {
 	}
 	sqlDB.SetMaxOpenConns(1)
 
-	if err := db.AutoMigrate(&Task{}, &User{}, &Token{}, &Log{}, &Channel{}, &InviteCode{}, &TopUp{}, &UserSubscription{}, &SubscriptionPlan{}, &SubscriptionOrder{}, &ImageTaskDispatch{}); err != nil {
+	if err := db.AutoMigrate(&Task{}, &User{}, &Token{}, &Log{}, &Channel{}, &InviteCode{}, &TopUp{}, &UserSubscription{}, &SubscriptionPlan{}, &SubscriptionOrder{}, &ImageTaskRetryState{}, &ImageTaskAttempt{}, &ImageTaskDispatch{}, &ImageCredentialLease{}); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
 
@@ -45,6 +45,10 @@ func TestMain(m *testing.M) {
 func truncateTables(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		DB.Exec("DELETE FROM image_credential_leases")
+		DB.Exec("DELETE FROM image_task_dispatches")
+		DB.Exec("DELETE FROM image_task_attempts")
+		DB.Exec("DELETE FROM image_task_retry_states")
 		DB.Exec("DELETE FROM tasks")
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM tokens")

@@ -58,6 +58,10 @@ func TestMain(m *testing.M) {
 		&model.SubscriptionPlan{},
 		&model.SubscriptionPreConsumeRecord{},
 		&model.Option{},
+		&model.ImageTaskRetryState{},
+		&model.ImageTaskAttempt{},
+		&model.ImageTaskDispatch{},
+		&model.ImageCredentialLease{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -72,6 +76,10 @@ func TestMain(m *testing.M) {
 func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
+		model.DB.Exec("DELETE FROM image_credential_leases")
+		model.DB.Exec("DELETE FROM image_task_dispatches")
+		model.DB.Exec("DELETE FROM image_task_attempts")
+		model.DB.Exec("DELETE FROM image_task_retry_states")
 		model.DB.Exec("DELETE FROM tasks")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")
@@ -1180,6 +1188,15 @@ func TestSettleImageHandleUsageExactPrechargeStillUpdatesUsage(t *testing.T) {
 	task := makeTask(userID, channelID, exactQuota, tokenID, BillingSourceWallet, 0)
 	task.Platform = imageHandleTaskPlatform()
 	task.PrivateData.BillingContext.BillingMode = "async_image_usage_billing"
+	require.NoError(t, model.DB.Create(task).Error)
+	retryState := model.NewImageTaskRetryState(task, 1, "default", "default", "test-model")
+	retryState.AttemptCount = 2
+	retryState.FailedChannelIDs = []int{channelID + 1}
+	retryState.RouteTrace = []model.ImageTaskRouteTraceEntry{
+		{AttemptNumber: 1, ChannelID: channelID + 1, RouteGroup: "default", Status: model.ImageTaskAttemptFailed, ErrorCode: "upstream_error"},
+		{AttemptNumber: 2, ChannelID: channelID, RouteGroup: "default", Status: model.ImageTaskAttemptSucceeded},
+	}
+	require.NoError(t, model.DB.Create(retryState).Error)
 	seedAsyncImageConsumeLog(t, task, "req-image-exact")
 
 	settleTaskQuotaDeltaWithUsage(ctx, task, textQuotaSummary{
@@ -1200,6 +1217,14 @@ func TestSettleImageHandleUsageExactPrechargeStillUpdatesUsage(t *testing.T) {
 	assert.Equal(t, 89, logItem.CompletionTokens)
 	assert.Equal(t, 6, logItem.UseTime)
 	assert.Contains(t, logItem.Content, "与预扣一致")
+	other, err := common.StrToMap(logItem.Other)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, other["attempt_count"])
+	assert.EqualValues(t, 1, other["channel_switch_count"])
+	assert.Equal(t, []interface{}{float64(channelID + 1)}, other["failed_channel_ids"])
+	routeTrace, ok := other["route_trace"].([]interface{})
+	require.True(t, ok)
+	assert.Len(t, routeTrace, 2)
 }
 
 func TestRecalculate_ZeroDelta(t *testing.T) {

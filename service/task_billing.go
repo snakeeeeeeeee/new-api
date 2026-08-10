@@ -16,6 +16,8 @@ import (
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func formatQuotaUSD(quota int) string {
@@ -214,12 +216,38 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 		}
 	}
 	appendImageExecutionAuditFromTask(task.Data, nil, other)
+	appendAsyncImageRetryLogOther(task, other)
 	props := task.Properties
 	if props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = props.UpstreamModelName
 	}
 	return other
+}
+
+func appendAsyncImageRetryLogOther(task *model.Task, other map[string]interface{}) {
+	if task == nil || task.ID <= 0 || other == nil || !isImageHandleTask(task) {
+		return
+	}
+	state, exists, err := model.GetImageTaskRetryStateByTaskRecordID(task.ID)
+	if err != nil || !exists || state == nil {
+		return
+	}
+	other["attempt_count"] = state.AttemptCount
+	other["channel_switch_count"] = maxIntValue(state.AttemptCount-1, 0)
+	if len(state.FailedChannelIDs) > 0 {
+		other["failed_channel_ids"] = state.FailedChannelIDs
+	}
+	if len(state.RouteTrace) > 0 {
+		other["route_trace"] = state.RouteTrace
+	}
+}
+
+func maxIntValue(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
 }
 
 // taskModelName 从 BillingContext 或 Properties 中获取模型名称。
@@ -468,11 +496,17 @@ func settleAsyncImageBillingOnComplete(ctx context.Context, task *model.Task, ta
 	}
 	bc := task.PrivateData.BillingContext
 	if bc != nil && bc.BillingMode == types.ImagePricingBillingMode && bc.ImagePricing != nil {
+		if isAsyncImageRetryManagedTask(ctx, task) {
+			return settleAsyncImageRouteSnapshotBilling(ctx, task, taskResult, "异步图片按张计费胜出路由结算")
+		}
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 图片参数按张计费，成功后保持请求快照额度 %s", task.TaskID, formatQuotaUSD(task.Quota)))
 		recordImageExecutionAudit(task, taskResult)
 		return true
 	}
 	if bc == nil || bc.PerCallBilling || bc.UsePrice {
+		if isAsyncImageRetryManagedTask(ctx, task) {
+			return settleAsyncImageRouteSnapshotBilling(ctx, task, taskResult, "异步图片按次计费胜出路由结算")
+		}
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，成功后保持预扣费 %s", task.TaskID, formatQuotaUSD(task.Quota)))
 		recordImageExecutionAudit(task, taskResult)
 		return true
@@ -507,6 +541,39 @@ func settleAsyncImageBillingOnComplete(ctx context.Context, task *model.Task, ta
 	summary := calculateTextQuotaSummary(taskLogContext(ctx, task), taskRelayInfoForBilling(task), usage)
 	reason := "异步图片按量真实结算"
 	settleTaskQuotaDeltaWithUsage(ctx, task, summary, reason, true)
+	return true
+}
+
+func isAsyncImageRetryManagedTask(ctx context.Context, task *model.Task) bool {
+	if task == nil || task.ID <= 0 {
+		return false
+	}
+	_, exists, err := model.GetImageTaskRetryStateByTaskRecordID(task.ID)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("读取异步图片重试状态失败 task %s: %s", task.TaskID, err.Error()))
+		return task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.RouteQuota > 0
+	}
+	return exists
+}
+
+func settleAsyncImageRouteSnapshotBilling(ctx context.Context, task *model.Task, taskResult *relaycommon.TaskInfo, reason string) bool {
+	actualQuota := task.Quota
+	if task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.RouteQuota > 0 {
+		actualQuota = task.PrivateData.BillingContext.RouteQuota
+	}
+	preConsumedQuota := task.Quota
+	if !settleAsyncImageQuotaDelta(ctx, task, actualQuota, reason, true) {
+		return false
+	}
+	recordImageExecutionAudit(task, taskResult)
+	other := asyncImageFinalLogOther(task, preConsumedQuota, actualQuota)
+	snapshot := &model.TaskFinalConsumeLogSnapshot{
+		Quota:          actualQuota,
+		UseTimeSeconds: taskTerminalUseTimeSeconds(task),
+		Content:        asyncImageFinalLogContent(preConsumedQuota, actualQuota),
+		Other:          other,
+	}
+	persistAndReconcileAsyncImageConsumeLog(ctx, task, snapshot)
 	return true
 }
 
@@ -703,6 +770,7 @@ func asyncImageUsageLogOther(ctx context.Context, task *model.Task, summary text
 	if cacheWriteTokens := cacheWriteTokensTotal(summary); cacheWriteTokens > 0 {
 		other["cache_write_tokens"] = cacheWriteTokens
 	}
+	appendAsyncImageRetryLogOther(task, other)
 	return other
 }
 
@@ -868,6 +936,15 @@ func persistAndReconcileAsyncImageConsumeLog(ctx context.Context, task *model.Ta
 		}
 		return
 	}
+	if snapshot.ChannelId == 0 {
+		snapshot.ChannelId = task.ChannelId
+	}
+	if strings.TrimSpace(snapshot.ModelName) == "" {
+		snapshot.ModelName = taskModelName(task)
+	}
+	if strings.TrimSpace(snapshot.Group) == "" {
+		snapshot.Group = task.Group
+	}
 	task.PrivateData.BillingContext.FinalConsumeLog = snapshot
 	if task.ID > 0 {
 		if err := model.PersistTaskFinalConsumeLogSnapshot(task.ID, snapshot); err != nil {
@@ -896,6 +973,40 @@ func ReconcileCompletedAsyncImageConsumeLog(taskId int64) {
 		return
 	}
 	reconcileAsyncImageConsumeLog(context.Background(), &task)
+	reconcileAsyncImageRetryChannelQuota(context.Background(), &task)
+}
+
+func reconcileAsyncImageRetryChannelQuota(ctx context.Context, task *model.Task) {
+	if task == nil || task.ID <= 0 || task.Status != model.TaskStatusSuccess || task.PrivateData.BillingContext == nil || task.PrivateData.BillingContext.ConsumeLogId <= 0 {
+		return
+	}
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var state model.ImageTaskRetryState
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("task_record_id = ?", task.ID).Limit(1).Find(&state)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		if state.ChannelQuotaTransferred || state.InitialChannelID <= 0 || state.InitialChannelID == task.ChannelId || state.PrechargedQuota == 0 {
+			return nil
+		}
+		if err := tx.Model(&model.Channel{}).Where("id = ?", state.InitialChannelID).
+			Update("used_quota", gorm.Expr("used_quota - ?", state.PrechargedQuota)).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Channel{}).Where("id = ?", task.ChannelId).
+			Update("used_quota", gorm.Expr("used_quota + ?", state.PrechargedQuota)).Error; err != nil {
+			return err
+		}
+		state.ChannelQuotaTransferred = true
+		state.UpdatedAt = time.Now().Unix()
+		return tx.Save(&state).Error
+	})
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("转移异步图片胜出渠道用量失败 task %s: %s", task.TaskID, err.Error()))
+	}
 }
 
 func reconcileAsyncImageConsumeLog(ctx context.Context, task *model.Task) {

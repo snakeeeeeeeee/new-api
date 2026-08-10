@@ -79,7 +79,36 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		return
 	}
 	var task *model.Task
-	if lease.TaskRecordID > 0 {
+	var attempt *model.ImageTaskAttempt
+	if lease.AttemptRecordID != nil {
+		var active bool
+		attempt, _, task, active, err = model.GetActiveImageTaskAttemptByID(*lease.AttemptRecordID)
+		if err != nil {
+			writeImageCredentialLeaseError(c, http.StatusInternalServerError, "task_query_failed", err.Error(), true)
+			return
+		}
+		if !active {
+			_ = model.MarkImageCredentialLeaseFailed(lease.LeaseID)
+			writeImageCredentialLeaseError(c, http.StatusConflict, "attempt_not_active", "image task attempt is no longer active", false)
+			return
+		}
+		if task == nil || task.Platform != imageHandleTaskPlatform() || task.ID != lease.TaskRecordID || task.TaskID != lease.TaskID {
+			writeImageCredentialLeaseError(c, http.StatusConflict, "task_mismatch", "task record does not match lease", false)
+			return
+		}
+		if req.ClientTaskID != "" && req.ClientTaskID != attempt.ClientTaskID {
+			writeImageCredentialLeaseError(c, http.StatusConflict, "task_mismatch", "client_task_id does not match attempt", false)
+			return
+		}
+		if req.ProviderTaskID != "" && attempt.ProviderTaskID != "" && req.ProviderTaskID != attempt.ProviderTaskID {
+			writeImageCredentialLeaseError(c, http.StatusConflict, "task_mismatch", "provider_task_id does not match attempt", false)
+			return
+		}
+		if attempt.ChannelID != lease.ChannelID {
+			writeImageCredentialLeaseError(c, http.StatusConflict, "channel_mismatch", "attempt channel does not match lease", false)
+			return
+		}
+	} else if lease.TaskRecordID > 0 {
 		var exists bool
 		task, exists, err = model.GetByOnlyTaskId(lease.TaskID)
 		if err != nil {
@@ -130,6 +159,9 @@ func ResolveImageCredentialLease(c *gin.Context) {
 	publicModelName := strings.TrimSpace(req.Model)
 	if task != nil {
 		persistedPublicModel := strings.TrimSpace(task.Properties.OriginModelName)
+		if attempt != nil && strings.TrimSpace(attempt.OriginModel) != "" {
+			persistedPublicModel = strings.TrimSpace(attempt.OriginModel)
+		}
 		if persistedPublicModel == "" {
 			persistedPublicModel = strings.TrimSpace(task.Properties.UpstreamModelName)
 		}
@@ -142,6 +174,9 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		}
 	}
 	upstreamModelName := strings.TrimSpace(lease.Model)
+	if upstreamModelName == "" && attempt != nil {
+		upstreamModelName = strings.TrimSpace(attempt.UpstreamModel)
+	}
 	if upstreamModelName == "" && task != nil {
 		upstreamModelName = strings.TrimSpace(task.Properties.UpstreamModelName)
 	}
@@ -157,7 +192,7 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		writeImageCredentialLeaseError(c, http.StatusBadRequest, "model_not_supported", "channel does not support the image credential lease format", false)
 		return
 	}
-	key, _, apiErr := channel.GetNextEnabledKey()
+	key, keyIndex, apiErr := channel.GetNextEnabledKey()
 	if apiErr != nil || strings.TrimSpace(key) == "" {
 		message := "channel credential unavailable"
 		if apiErr != nil {
@@ -166,12 +201,14 @@ func ResolveImageCredentialLease(c *gin.Context) {
 		writeImageCredentialLeaseError(c, http.StatusServiceUnavailable, "credential_unavailable", message, true)
 		return
 	}
-	_ = model.MarkImageCredentialLeaseResolved(lease)
+	_ = model.MarkImageCredentialLeaseResolved(lease, keyIndex)
 	baseURL := resolveChannelBaseURL(channel)
 	provider := "openai_compatible"
 	requestFormat := "openai_images"
 	executionDriver := dto.NormalizeImageHandleExecutionDriver(channel.GetOtherSettings().ImageHandleExecutionDriver)
-	if task != nil {
+	if attempt != nil && strings.TrimSpace(attempt.ExecutionDriver) != "" {
+		executionDriver = dto.NormalizeImageHandleExecutionDriver(attempt.ExecutionDriver)
+	} else if task != nil {
 		executionDriver = dto.NormalizeImageHandleExecutionDriver(task.PrivateData.ImageHandleExecutionDriver)
 	}
 	endpointURL := ""

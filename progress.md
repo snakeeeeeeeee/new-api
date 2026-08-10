@@ -1,3 +1,126 @@
+# Async Image Cross-channel Retry Progress (2026-08-11)
+
+## Final acceptance-gap closure
+
+- Added retry metadata to token/usage-priced final image consumption logs and extended exact-quota settlement coverage.
+- Added explicit structured callback logs for accepted attempt failures, subgroup switches, attempt successes, and
+  retry exhaustion; fields exclude error messages and channel credentials.
+- Focused service/controller tests, `go test ./... -count=1`, `gofmt`, and `git diff --check` pass.
+- Rebuilt image `sha256:f9eb35d7c2e9...`, recreated the app and deterministic mock, and completed the final three-attempt
+  failover task successfully; persisted billing/Webhook assertions and exact fixture cleanup passed.
+- Final review now closes the failed attempt's credential lease in the same transaction; focused package tests and
+  the complete Go suite passed again after that correction.
+- Re-ran the migration contract against in-memory SQLite, MySQL 8.0.33, and PostgreSQL 15; all subtests passed and
+  both explicitly named temporary databases were removed by the command trap.
+- Confirmed image-handle remains source-clean; its previously run TypeScript build and 96 tests passed, and its API,
+  worker, notifier, PostgreSQL, and Redis containers remain running while `new-api-dev` reports healthy.
+- Rebuilt the final source after the lease-state correction as image `sha256:04adb3f829c...`, recreated only
+  `new-api-dev`, and confirmed `/api/status`, container health, and startup migration/error-log checks pass.
+
+## Billing compatibility regression fix
+
+- Restored legacy image-handle fixed-price/image-parameter completion behavior for tasks without retry state.
+- Kept winning-route quota and final consume-log projection only for retry-managed tasks.
+- Replaced expected-missing retry-state `First` lookup with `Find`/`RowsAffected` to avoid not-found log noise.
+- Passed focused service tests for Gemini fixed-price audit, parameter-priced image audit, and retry-winning-route settlement.
+- Passed `go test ./model ./service ./relay ./controller -count=1 -timeout=180s`.
+- Passed the SQLite branch of `TestImageTaskAndWebhookSchemaAcrossDatabases`; MySQL/PostgreSQL remain to run against
+  isolated disposable containers.
+- Passed all verbose `TestImageTaskAndWebhookSchemaAcrossDatabases` subtests against SQLite plus disposable MySQL 8.0.33
+  and PostgreSQL 15 containers.
+- Stopped and auto-removed both disposable database containers after the schema test.
+- Passed image-handle's existing `npm test`: TypeScript server build plus all 96 Node tests, with no source changes.
+- Passed `go test ./... -count=1` across the complete new-api Go module.
+
+## Phase 1: Discovery and detailed design
+
+- **Status:** complete
+- Confirmed the implementation plan, retry boundary, failed-channel exclusion, successful-route billing, and
+  create-time `RetryTimes` snapshot with the user.
+- Loaded the required brainstorming and file-planning workflows.
+- Verified the worktree is on tracked `main` at `ee779d8d1`; unrelated untracked `2dev` diagnostics remain.
+- Confirmed image-handle production code/protocol is out of scope and the running Docker stacks share `ai-gateway`.
+- Confirmed the package boundary: durable routing state in model/service, attempt request reconstruction in relay,
+  and callback orchestration in controller without a new import cycle.
+- Traced normalized-image conversion and `RelayInfo` generation; later attempts can reuse existing validation,
+  model mapping, pricing, and adaptor body building from the persisted public request.
+- Audited the generic timeout and submit-failure paths and identified both as parent-terminalizing paths that require
+  attempt-aware integration to preserve retry and exactly-once refund semantics.
+- Confirmed the dispatch uniqueness/index migration and attempt-first callback resolution strategy while preserving
+  the existing signed callback wire contract and legacy-task fallback.
+- Confirmed existing dispatch backoff can be retained per attempt; isolated the two worker changes to internal-ID
+  response validation and attempt-scoped provider-ID persistence.
+- Audited ordinary channel selection and billing attribution; decided on an image-only exclusion selector and an
+  atomic winning-route projection to the parent before terminal settlement.
+- Confirmed the existing parent terminal CAS already guarantees one asset/Webhook/billing path; retry integration will
+  gate entry by active attempt and reuse that finalizer.
+- Chose reuse of the existing in-package aggregate cluster candidate/RPM/degradation helpers with durable route-state
+  restoration; failover remains ordered and subgroup-budgeted.
+- Wrote the validated implementation design at
+  `docs/plans/2026-08-11-async-image-channel-retry-design.md`, including persistence, routing, callback races,
+  billing ownership, migration compatibility, and Docker acceptance.
+
+## Phase 2: Persistence and routing primitives
+
+- **Status:** complete
+- Added durable retry-state/attempt models, attempt links on dispatch and leases, and cross-database index migration.
+- Added failed-channel exclusion plus ordinary, ordered failover, and weighted cluster routing with subgroup budgets.
+- Integrated transactional first-attempt creation, later-attempt request reconstruction, and attempt-first callback routing.
+- Added the retry-state and attempt tables to the shared isolated controller migration; focused callback and lease tests pass.
+
+## Phase 3: Attempt lifecycle integration
+
+- **Status:** complete
+- Audited dispatch, lease, timeout, and terminal recovery paths. Dispatch still used parent identity, later-attempt
+  leases inherited the initial parent channel, and terminal attempt preparation had no restart reconciliation.
+- Added model-level active-attempt lookup, submit-result persistence, non-retryable execution closure, terminal-state
+  recovery queries, and corrected attempt lease channel ownership.
+- Updated the dispatch worker to preserve legacy rows while validating internal client IDs and persisting provider IDs
+  on active attempts. Same-attempt transport retries remain unchanged; deterministic failures close without failover.
+- Made credential resolution attempt-aware, reject inactive/stale leases, and preserve the selected attempt's channel,
+  model mapping, and execution-driver snapshot rather than reading mutable parent route data.
+- Preserved aggregate failure/RPM signals and safe auto-disable decisions for accepted attempt failures; multi-key
+  leases persist only the selected key index so callbacks never store or log credentials.
+- Added signed callback coverage for retryable, non-retryable, duplicate, and concurrent attempt failures.
+- Added periodic terminal-attempt reconciliation, retry-aware timeout closure, and suppression of the legacy
+  missing-parent-provider-ID repair for attempt-managed image tasks.
+
+## Test Results
+
+| Test | Expected | Actual | Status |
+| --- | --- | --- | --- |
+| Focused image callback and lease tests | Attempt-first callbacks and legacy fallback remain compatible | `go test ./controller -run 'Test(ImageTaskCallback\|ImageCredentialLease)' -count=1` passed | pass |
+| Focused image retry model tests | Lease channel, attempt submit identity, and execution-only closure are durable | Focused `go test ./model` selection passed | pass |
+| Focused attempt dispatch tests | Success is attempt-scoped, 503 keeps the same attempt, mismatched IDs fail/refund once | `go test ./service -run 'TestProcessImageTaskDispatch' -count=1` passed | pass |
+| Focused credential lease tests | Active attempt resolves its own route; inactive attempt lease is rejected | `go test ./controller -run 'TestResolveImageCredentialLease' -count=1` passed | pass |
+| Existing timeout regression tests | Legacy timeout/refund behavior remains unchanged with retry recovery enabled | Focused `go test ./service` timeout selection passed | pass |
+| Attempt timeout and restart recovery tests | Failure refunds once; success restores Asset/log/winning-route billing and counters once | Focused retry timeout/reconciliation tests passed | pass |
+| Attempt failure callback tests | Retry schedules one different channel; non-retry refunds once; concurrent callbacks create one retry | Focused controller attempt callback tests passed | pass |
+| Full Go regression | All backend packages remain compatible | `go test ./... -count=1` passed after final lease-state correction | pass |
+| Cross-database schema | Retry tables and dispatch/lease indexes work on all supported engine families | SQLite, MySQL 8.0.33, and PostgreSQL 15 subtests passed | pass |
+| Docker integration | Two failures in the first subgroup switch to the successful second subgroup without duplicate billing/Webhook | Three attempts completed as expected; billing/log/asset ownership and cleanup passed | pass |
+
+## Error Log
+
+| Timestamp | Error | Attempt | Resolution |
+| --- | --- | --- | --- |
+| 2026-08-11 | Combined planning patch used a stale `progress.md` heading | 1 | Re-read exact heads and applied stable prepend anchors. |
+| 2026-08-11 | Model compile failed because this GORM version's `Index.Columns()` has one return value | 1 | Updated the migration helper to the pinned interface signature. |
+| 2026-08-11 | Controller callback tests failed with `no such table: image_task_attempts` | 1 | Added both retry tables to the shared controller test migration; focused suite passes. |
+| 2026-08-11 | Attempt-lease test patch used a stale test-function anchor | 1 | No partial edit occurred; use the actual accepted-lease test anchor and split the patch. |
+| 2026-08-11 | Timeout tests failed with missing `image_task_retry_states` in the shared service test DB | 1 | Extend `service.TestMain` migration and cleanup for the retry lifecycle tables. |
+| 2026-08-11 | Misread JSON-escaped tool output as literal backslashes in Go raw strings | 1 | Fixed-string search confirmed no backslash-quote bytes; no source change was needed. |
+| 2026-08-11 | Recovery fixture omitted the first image `TaskInfo.Url`, producing the generic proxy fallback Asset | 1 | Mirror the real callback converter and relax only the integer-width assertion. |
+| 2026-08-11 | Controller callback build failed on an unused `errors` import | 1 | Removed the import before rerunning focused tests. |
+| 2026-08-11 | New attempt-callback tests did not compile due to one missing literal brace | 1 | Fixed the nested request literal and added the intended local quota reader. |
+| 2026-08-11 | Callback fixture compile then found a missing package qualifier/import | 1 | Qualified the billing-source constant and added `strings`. |
+| 2026-08-11 | Forced single-connection callback test self-blocked during retry request reconstruction | 1 | Interrupted it with no residual process and removed the artificial pool constraint. |
+| 2026-08-11 | First real retry callback panicked on embedded nil channel metadata | 1 | Added the missing normal-lifecycle `RelayInfo.InitChannelMeta` initialization. |
+| 2026-08-11 | Docker audit used two nonexistent schema columns | 1 | Read live schemas and switched to Webhook `object_id` plus aggregate target `order_index`. |
+| 2026-08-11 | E2E shell polled a nonexistent top-level task ID; dispatch diagnostic used a stale column name | 1 | Located the sole scoped task, stopped the redundant loop, and use live API/schema fields for final assertions. |
+
+---
+
 # Leonardo normalization error projection (2026-08-08)
 
 - Added the Leonardo normalization failure code to public video task projection and focused tests.

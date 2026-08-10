@@ -809,6 +809,7 @@ func newAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, platform con
 			info.ChannelType == constant.ChannelTypeXai ||
 			info.PriceData.UsePrice ||
 			info.PriceData.ImagePricing != nil,
+		RouteQuota: info.PriceData.Quota,
 	}
 	if info.PriceData.ImagePricing != nil {
 		task.PrivateData.BillingContext.BillingMode = types.ImagePricingBillingMode
@@ -875,15 +876,38 @@ func createDurableAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, pl
 	if err != nil {
 		return nil, nil, err
 	}
+	publicTaskID := task.TaskID
 	err = model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(task).Error; err != nil {
 			return err
 		}
-		lease := model.NewImageCredentialLease(task, operation, info.UpstreamModelName, imageCredentialLeaseTTL(info, task))
+		retryState := newAsyncImageRetryState(c, task, info)
+		if err := tx.Create(retryState).Error; err != nil {
+			return err
+		}
+		attempt := model.NewImageTaskAttempt(
+			task, 1, model.GenerateImageTaskAttemptClientID(), info.ChannelId,
+			retryState.CurrentRouteGroup, retryState.CurrentRouteIndex, retryState.CurrentRoutePool,
+			info.OriginModelName, info.UpstreamModelName, quota, task.PrivateData.BillingContext,
+			c.GetString(common.RequestIdKey),
+		)
+		if err := tx.Create(attempt).Error; err != nil {
+			return err
+		}
+		retryState.ActiveAttemptRecordID = attempt.ID
+		retryState.AttemptCount = 1
+		retryState.CurrentGroupAttempts = 1
+		retryState.AppendTrace(attempt, model.ImageTaskAttemptPending, "")
+		retryState.UpdatedAt = time.Now().Unix()
+		if err := tx.Save(retryState).Error; err != nil {
+			return err
+		}
+		lease := model.NewImageCredentialLeaseForAttempt(task, attempt, operation, info.UpstreamModelName, imageCredentialLeaseTTL(info, task))
 		if err := tx.Create(lease).Error; err != nil {
 			return err
 		}
 		c.Set("image_credential_lease_id", lease.LeaseID)
+		info.PublicTaskID = attempt.ClientTaskID
 		bodyReader, err := adaptor.BuildRequestBody(c, info)
 		if err != nil {
 			return err
@@ -896,8 +920,9 @@ func createDurableAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, pl
 		if err := tx.Create(requestRecord).Error; err != nil {
 			return err
 		}
-		return tx.Create(model.NewImageTaskDispatch(task, body)).Error
+		return tx.Create(model.NewImageTaskDispatchForAttempt(task, attempt, body)).Error
 	})
+	info.PublicTaskID = publicTaskID
 	if err == nil {
 		return task, nil, nil
 	}
@@ -916,6 +941,30 @@ func createDurableAsyncImageTask(c *gin.Context, info *relaycommon.RelayInfo, pl
 		return nil, nil, err
 	}
 	return nil, existingTask, nil
+}
+
+func newAsyncImageRetryState(c *gin.Context, task *model.Task, info *relaycommon.RelayInfo) *model.ImageTaskRetryState {
+	state := model.NewImageTaskRetryState(task, common.RetryTimes, info.TokenGroup, info.UserGroup, info.OriginModelName)
+	state.CrossGroupRetry = common.GetContextKeyBool(c, constant.ContextKeyTokenCrossGroupRetry)
+	_, specificChannel := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
+	state.LockedChannel = specificChannel || info.LockedChannel != nil
+	state.AggregateGroup = common.GetContextKeyString(c, constant.ContextKeyAggregateGroup)
+	state.RoutingMode = common.GetContextKeyString(c, constant.ContextKeyAggregateRoutingMode)
+	if state.AggregateGroup != "" && state.RoutingMode == "" {
+		if aggregateGroup, ok := service.GetAggregateGroup(state.AggregateGroup, true); ok {
+			state.RoutingMode = aggregateGroup.GetRoutingMode()
+		}
+	}
+	state.CurrentRouteGroup = common.GetContextKeyString(c, constant.ContextKeyRouteGroup)
+	if state.CurrentRouteGroup == "" {
+		state.CurrentRouteGroup = info.UsingGroup
+	}
+	state.CurrentRouteIndex = -1
+	if _, ok := common.GetContextKey(c, constant.ContextKeyRouteGroupIndex); ok {
+		state.CurrentRouteIndex = common.GetContextKeyInt(c, constant.ContextKeyRouteGroupIndex)
+	}
+	state.CurrentRoutePool = common.GetContextKeyString(c, constant.ContextKeyAggregateRoutePool)
+	return state
 }
 
 func imageCredentialLeaseTTL(info *relaycommon.RelayInfo, task *model.Task) int64 {

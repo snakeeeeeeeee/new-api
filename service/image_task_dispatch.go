@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -119,6 +120,23 @@ func processImageTaskDispatchWithTimeout(ctx context.Context, dispatch *model.Im
 		err := model.MarkImageTaskDispatchDelivered(dispatch.ID, dispatch.LockToken, 0)
 		return workerAttemptResult{succeeded: err == nil}
 	}
+	var attempt *model.ImageTaskAttempt
+	if dispatch.AttemptRecordID != nil {
+		var active bool
+		attempt, _, task, active, err = model.GetActiveImageTaskAttemptByID(*dispatch.AttemptRecordID)
+		if err != nil {
+			rescheduleOrFailImageTaskDispatch(ctx, dispatch, task, 0, err.Error(), true)
+			return workerAttemptResult{}
+		}
+		if !active {
+			err = model.MarkImageTaskDispatchDelivered(dispatch.ID, dispatch.LockToken, 0)
+			return workerAttemptResult{succeeded: err == nil}
+		}
+		logger.LogInfo(ctx, fmt.Sprintf(
+			"async image attempt dispatching: task_id=%s attempt=%d client_task_id=%s channel_id=%d dispatch_id=%s delivery=%d",
+			task.TaskID, attempt.AttemptNumber, attempt.ClientTaskID, attempt.ChannelID, dispatch.DispatchID, dispatch.Attempts,
+		))
+	}
 	configErr := ValidateImageHandleSubmitConfig()
 	if configErr != nil {
 		rescheduleOrFailImageTaskDispatch(ctx, dispatch, task, 0, configErr.Error(), true)
@@ -154,11 +172,33 @@ func processImageTaskDispatchWithTimeout(ctx context.Context, dispatch *model.Im
 			rescheduleOrFailImageTaskDispatch(ctx, dispatch, task, response.StatusCode, "image-handle returned an invalid submit response", true)
 			return workerAttemptResult{}
 		}
-		if submit.ClientTaskID != "" && submit.ClientTaskID != task.TaskID {
+		expectedClientTaskID := task.TaskID
+		if attempt != nil {
+			expectedClientTaskID = attempt.ClientTaskID
+		}
+		if submit.ClientTaskID != "" && submit.ClientTaskID != expectedClientTaskID {
 			failImageTaskDispatch(ctx, dispatch, task, response.StatusCode, "image-handle returned a mismatched client_task_id")
 			return workerAttemptResult{}
 		}
-		if err := model.PersistTaskSubmitResult(task.ID, submit.ProviderTaskID, body, 0); err != nil {
+		if attempt != nil {
+			updated, persistErr := model.PersistImageTaskAttemptSubmitResult(attempt.ID, submit.ProviderTaskID, body)
+			if persistErr != nil {
+				if errors.Is(persistErr, model.ErrImageTaskAttemptProviderTaskIDMismatch) {
+					failImageTaskDispatch(ctx, dispatch, task, response.StatusCode, persistErr.Error())
+				} else {
+					rescheduleOrFailImageTaskDispatch(ctx, dispatch, task, response.StatusCode, persistErr.Error(), true)
+				}
+				return workerAttemptResult{}
+			}
+			if !updated {
+				err = model.MarkImageTaskDispatchDelivered(dispatch.ID, dispatch.LockToken, response.StatusCode)
+				return workerAttemptResult{succeeded: err == nil}
+			}
+			logger.LogInfo(ctx, fmt.Sprintf(
+				"async image attempt dispatched: task_id=%s attempt=%d client_task_id=%s provider_task_id=%s channel_id=%d",
+				task.TaskID, attempt.AttemptNumber, attempt.ClientTaskID, submit.ProviderTaskID, attempt.ChannelID,
+			))
+		} else if err := model.PersistTaskSubmitResult(task.ID, submit.ProviderTaskID, body, 0); err != nil {
 			rescheduleOrFailImageTaskDispatch(ctx, dispatch, task, response.StatusCode, err.Error(), true)
 			return workerAttemptResult{}
 		}
@@ -199,6 +239,28 @@ func rescheduleOrFailImageTaskDispatch(ctx context.Context, dispatch *model.Imag
 }
 
 func failImageTaskDispatch(ctx context.Context, dispatch *model.ImageTaskDispatch, task *model.Task, status int, reason string) {
+	if dispatch != nil && dispatch.AttemptRecordID != nil {
+		parent, ignored, err := model.CloseActiveImageTaskAttemptNonRetryable(
+			*dispatch.AttemptRecordID, "image_handle_submit_failed", reason, nil,
+		)
+		if err != nil {
+			if rescheduleErr := model.RescheduleImageTaskDispatch(dispatch.ID, dispatch.LockToken, status, err.Error(), 30*time.Second); rescheduleErr != nil {
+				logger.LogError(ctx, "reschedule image task dispatch after attempt transition failure: "+rescheduleErr.Error())
+			}
+			return
+		}
+		if ignored {
+			if err := model.MarkImageTaskDispatchDelivered(dispatch.ID, dispatch.LockToken, status); err != nil {
+				logger.LogError(ctx, "close stale image task dispatch failed: "+err.Error())
+			}
+			return
+		}
+		task = parent
+		logger.LogInfo(ctx, fmt.Sprintf(
+			"async image attempt dispatch failed: task_id=%s attempt_record_id=%d status=%d reason=%s",
+			task.TaskID, *dispatch.AttemptRecordID, status, reason,
+		))
+	}
 	ApplyTaskResult(ctx, nil, task, relaycommon.FailTaskInfo(reason))
 	if task.Status != model.TaskStatusFailure {
 		if err := model.RescheduleImageTaskDispatch(dispatch.ID, dispatch.LockToken, status, reason, 30*time.Second); err != nil {

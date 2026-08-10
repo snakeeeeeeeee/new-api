@@ -48,12 +48,16 @@ func TestImageTaskAndWebhookSchemaAcrossDatabases(t *testing.T) {
 			t.Cleanup(func() { DB = originalDB })
 
 			models := []any{
-				&ImageTaskRequest{}, &VideoTaskRequest{}, &ImageTaskDispatch{}, &WebhookEndpoint{},
+				&ImageTaskRequest{}, &VideoTaskRequest{}, &ImageTaskRetryState{}, &ImageTaskAttempt{},
+				&ImageTaskDispatch{}, &ImageCredentialLease{}, &WebhookEndpoint{},
 				&WebhookEvent{}, &WebhookDelivery{}, &WebhookDeliveryAttempt{},
 			}
 			require.NoError(t, db.AutoMigrate(models...))
 			require.True(t, db.Migrator().HasIndex(&ImageTaskRequest{}, "idx_image_task_idempotency"))
 			require.True(t, db.Migrator().HasIndex(&VideoTaskRequest{}, "idx_video_task_idempotency"))
+			require.True(t, db.Migrator().HasIndex(&ImageTaskAttempt{}, "idx_image_attempt_task_number"))
+			require.True(t, db.Migrator().HasIndex(&ImageTaskDispatch{}, "idx_image_dispatch_task_record"))
+			require.True(t, db.Migrator().HasIndex(&ImageTaskDispatch{}, "idx_image_dispatch_attempt"))
 			require.True(t, db.Migrator().HasIndex(&WebhookEvent{}, "idx_webhook_event_object"))
 			require.True(t, db.Migrator().HasIndex(&WebhookDelivery{}, "idx_webhook_delivery_target"))
 			require.True(t, db.Migrator().HasIndex(&WebhookEndpoint{}, "idx_webhook_config_owner"))
@@ -83,6 +87,68 @@ func TestImageTaskAndWebhookSchemaAcrossDatabases(t *testing.T) {
 				NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
 			}
 			require.NoError(t, db.Create(dispatch).Error)
+
+			state := &ImageTaskRetryState{
+				TaskRecordID: 1, TaskID: request.TaskID, Status: ImageTaskRetryStateActive,
+				RetryLimit: 1, TokenGroup: "aggregate-images", UserGroup: "default", OriginalModel: "gpt-image-2",
+				CurrentRouteGroup: "image-primary", CurrentRouteIndex: 0, CurrentGroupAttempts: 2, AttemptCount: 2,
+				FailedChannelIDs: []int{7}, AttemptedRouteKeys: []string{"default:image-primary"},
+				RouteTrace: []ImageTaskRouteTraceEntry{{AttemptNumber: 1, ChannelID: 7, RouteGroup: "image-primary", Status: ImageTaskAttemptFailed, CreatedAt: now}},
+				CreatedAt:  now, UpdatedAt: now,
+			}
+			require.NoError(t, db.Create(state).Error)
+			firstAttempt := &ImageTaskAttempt{
+				AttemptID: "task_attempt_cross_db_1", ClientTaskID: "task_attempt_cross_db_1",
+				TaskRecordID: 1, TaskID: request.TaskID, AttemptNumber: 1, ChannelID: 7,
+				RouteGroup: "image-primary", RouteIndex: 0, OriginModel: "gpt-image-2", UpstreamModel: "gpt-image-2-upstream",
+				Status: ImageTaskAttemptFailed, ErrorRetryable: true, Quota: 123,
+				BillingContext: TaskBillingContext{OriginModelName: "gpt-image-2", ModelPrice: 0.01, GroupRatio: 1.5},
+				CreatedAt:      now, UpdatedAt: now,
+			}
+			require.NoError(t, db.Create(firstAttempt).Error)
+			secondAttempt := &ImageTaskAttempt{
+				AttemptID: "task_attempt_cross_db_2", ClientTaskID: "task_attempt_cross_db_2",
+				TaskRecordID: 1, TaskID: request.TaskID, AttemptNumber: 2, ChannelID: 8,
+				RouteGroup: "image-primary", RouteIndex: 0, OriginModel: "gpt-image-2", UpstreamModel: "gpt-image-2-b",
+				Status: ImageTaskAttemptPending, Quota: 150,
+				BillingContext: TaskBillingContext{OriginModelName: "gpt-image-2", ModelPrice: 0.02, GroupRatio: 1.5},
+				CreatedAt:      now, UpdatedAt: now,
+			}
+			require.NoError(t, db.Create(secondAttempt).Error)
+			state.ActiveAttemptRecordID = secondAttempt.ID
+			require.NoError(t, db.Model(state).Update("active_attempt_record_id", secondAttempt.ID).Error)
+			for index, attempt := range []*ImageTaskAttempt{firstAttempt, secondAttempt} {
+				attemptID := attempt.ID
+				retryDispatch := &ImageTaskDispatch{
+					DispatchID: "dispatch_cross_db_retry_" + string(rune('1'+index)), TaskRecordID: 1,
+					AttemptRecordID: &attemptID, TaskID: request.TaskID, RequestBody: requestJSON,
+					Status: ImageTaskDispatchPending, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+				}
+				require.NoError(t, db.Create(retryDispatch).Error)
+				lease := &ImageCredentialLease{
+					LeaseID: "lease_cross_db_retry_" + string(rune('1'+index)), TaskID: request.TaskID,
+					TaskRecordID: 1, AttemptRecordID: &attemptID, UserID: 101, ChannelID: attempt.ChannelID,
+					Operation: "generation", Model: attempt.UpstreamModel, Status: ImageCredentialLeaseStatusActive,
+					ExpiresAt: now + 1800, CreatedAt: now, UpdatedAt: now,
+				}
+				require.NoError(t, db.Create(lease).Error)
+			}
+			duplicateAttemptDispatchID := firstAttempt.ID
+			require.Error(t, db.Create(&ImageTaskDispatch{
+				DispatchID: "dispatch_cross_db_retry_duplicate", TaskRecordID: 1, AttemptRecordID: &duplicateAttemptDispatchID,
+				TaskID: request.TaskID, RequestBody: requestJSON, Status: ImageTaskDispatchPending,
+				NextAttemptAt: now, CreatedAt: now, UpdatedAt: now,
+			}).Error)
+
+			var restoredState ImageTaskRetryState
+			require.NoError(t, db.First(&restoredState, state.ID).Error)
+			require.Equal(t, 1, restoredState.RetryLimit)
+			require.Equal(t, []int{7}, restoredState.FailedChannelIDs)
+			require.Equal(t, []string{"default:image-primary"}, restoredState.AttemptedRouteKeys)
+			require.Len(t, restoredState.RouteTrace, 1)
+			var restoredAttempt ImageTaskAttempt
+			require.NoError(t, db.First(&restoredAttempt, secondAttempt.ID).Error)
+			require.Equal(t, 0.02, restoredAttempt.BillingContext.ModelPrice)
 
 			configOwnerID := 101
 			endpoint := &WebhookEndpoint{
@@ -118,7 +184,7 @@ func TestImageTaskAndWebhookSchemaAcrossDatabases(t *testing.T) {
 			}).Error)
 			imageQueue, err := GetImageTaskDispatchQueueStats(now)
 			require.NoError(t, err)
-			require.EqualValues(t, 1, imageQueue.Pending)
+			require.EqualValues(t, 3, imageQueue.Pending)
 			webhookQueue, err := GetWebhookDeliveryQueueStats(now)
 			require.NoError(t, err)
 			require.EqualValues(t, 1, webhookQueue.Pending)

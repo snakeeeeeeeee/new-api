@@ -1,3 +1,125 @@
+# Async Image Cross-channel Retry Findings (2026-08-11)
+
+- Final usage/token-priced image logs are built by `asyncImageUsageLogOther`, not `taskBillingOther`; retry audit
+  metadata must be appended in both builders so every successful billing mode records the same route history.
+- Callback state transitions were durable but only dispatch/ignore events had explicit lifecycle logs. Logging after
+  accepted transitions provides failure, subgroup-switch, success, and exhaustion visibility without logging error
+  messages or channel credentials.
+- Winning-route final billing must be gated by a persisted `ImageTaskRetryState`; platform/type alone also matches
+  historical image-handle tasks that must preserve their original frozen-precharge consume-log content.
+- Expected absence of retry state is a normal legacy condition. Queries use `Find` plus `RowsAffected` so this
+  compatibility path does not emit GORM `record not found` noise.
+- When retry-state lookup itself errors, a nonzero persisted `BillingContext.RouteQuota` is a conservative
+  retry-managed fallback that preserves the frozen winning-route charge.
+- Focused legacy fixed-price, image-parameter pricing, and retry-winning-route settlement tests pass after this gate.
+- Cross-database coverage is opt-in through `TEST_MYSQL_DSN` and `TEST_POSTGRES_DSN` and explicitly requires
+  disposable empty databases; the existing dev databases must not be reused for this test.
+- The image-handle source repository is `/Users/zhangyu/code/myProject/supertoken-projects/image-handle`; its API,
+  worker, notifier, PostgreSQL, Redis, and MinIO Docker services are already running.
+- Review found the first exclusion selector applied a flat `+10` to every channel weight, which changed established
+  same-priority routing ratios and made zero-weight channels eligible. The selector must reuse the existing smoothing
+  semantics: zero weight only receives traffic when every peer weight is zero.
+- Retryable failure already made an old credential lease unusable because active-attempt validation rejects it, but
+  leaving the row marked active/resolved made operational state misleading. The failure transaction now closes that
+  attempt-scoped lease together with the attempt and retry-state update.
+
+- `/v1/image/tasks` currently creates one parent `Task`, one `ImageTaskRequest`, one `ImageTaskDispatch`,
+  and one `ImageCredentialLease`; dispatch and callback validation assume exactly one channel/provider task.
+- new-api dispatch already retries ambiguous network/408/429/5xx failures against the same image-handle body and
+  client task ID. This transport retry must remain separate from channel failover.
+- image-handle executes a retryable direct-lease task at most three times on the same lease before emitting a
+  terminal callback with `error.retryable=true`; no image-handle production change is required for new-api to
+  submit a distinct later attempt with a new client task ID and lease.
+- Existing aggregate failover uses ordered real-group targets; cluster uses effective target weights and tracks
+  attempted route keys. Channel priority is selected before same-priority weight, but existing sync selection does
+  not exclude a previously used channel.
+- The approved async behavior adds parent-scoped failed-channel exclusion and snapshots `RetryTimes` at creation.
+- Current terminal callback handling calls `ApplyTaskResult`, which immediately makes failure terminal and refunds;
+  retryable attempt failure therefore needs a transactional branch before parent terminalization.
+- Current image-handle billing snapshots live on the parent task and settlement is already CAS guarded; the
+  successful attempt must replace the effective route snapshot before the one final settlement.
+- Existing unrelated untracked `2dev` diagnostics belong to the user and must remain untouched.
+- `relay/relay_task.go` already owns normalized image pricing, task creation, lease creation, and adaptor body
+  construction, so attempt payload reconstruction should stay in `relay` while route state remains in `service/model`.
+- The image-handle adaptor needs only a restored task request, selected-channel `RelayInfo`, request ID, and lease ID;
+  callback URL and secret ID can remain attempt-scoped without changing image-handle's wire contract.
+- Both normal and fast migration lists explicitly enumerate every model. New retry models and the dispatch-index
+  migration must be registered in both startup paths.
+- The normalized public request can be deterministically converted back to the legacy `TaskSubmitReq`; a restored
+  Gin context can then use `GenRelayInfo(...RelayFormatTask...)`, selected-channel setup, model mapping, pricing, and
+  the existing image-handle adaptor instead of duplicating provider rules.
+- Initial distributor state includes token group, user group/settings, cross-group retry, and specific-channel lock.
+  Those routing inputs must be persisted because callback handling no longer has the authenticated request context.
+- The public task platform remains image-handle (`58`) while `Task.ChannelId` identifies the real credential channel;
+  later attempts therefore need the same image-handle adaptor with refreshed real-channel context.
+- The generic timeout sweeper currently terminalizes every unfinished parent task and immediately refunds it. Retry-enabled
+  image parents need an attempt-aware timeout transition so a stale attempt cannot race a callback or bypass exactly-once
+  parent finalization.
+- Durable submit failures currently flow through `resolveAsyncImageSubmitFailure`/`markAsyncImageSubmitFailed`, which also
+  terminalize the parent. Once dispatches are attempt-scoped, ambiguous delivery errors must remain on the same dispatch,
+  while a deterministic final dispatch failure must be reconciled through the attempt state machine.
+- Current normalized durable creation already wraps parent, lease, request, and dispatch in one transaction; retry state
+  and the first attempt can be added to that transaction without weakening the idempotency-key conflict behavior.
+- `ImageTaskDispatch.TaskRecordID` is currently globally unique, which structurally forbids retry history. The migration
+  must drop that generated unique index, retain a non-unique parent lookup index, and make nullable `AttemptID` unique.
+- Callback authentication already resolves a concrete channel from `X-Callback-Secret-Id`; attempt callbacks can keep
+  that protocol and validate the resolved channel against `ImageTaskAttempt.ChannelID` instead of the mutable parent.
+- Backward compatibility can be localized: resolve callback IDs as attempt client IDs first, then fall back to the
+  existing public-task lookup only when no retry attempt exists.
+- The dispatch worker already classifies transport errors plus HTTP 408/429/5xx as same-body retries with bounded
+  backoff. For retry-enabled rows it must compare the submit response to `attempt.ClientTaskID` and persist the
+  provider task ID on the attempt, not on the public parent.
+- A deterministic image-handle submission/protocol failure is not the signed terminal provider callback required by
+  the product rule, so it remains a non-retryable parent failure; it must not consume cross-channel retry budget.
+- `model.GetChannel(group, model, retry)` interprets retry as a priority-tier index and does not exclude failed channel
+  IDs. Async retry therefore needs a separate selector: filter exclusions first, choose the maximum remaining priority,
+  then preserve the existing same-priority smoothing and weighted lottery.
+- Existing settlement/log/counter code reads route data from the parent task. Before the one successful terminal CAS,
+  the parent must receive the winning attempt's channel, real group, upstream mapping, and billing context snapshot so
+  the final log and channel quota attribution are correct.
+- `ApplyTaskResult` already performs the terminal parent CAS, asset creation, Webhook event creation, and then gates
+  settlement/refund on winning that CAS. The retry layer should preserve this function as the only public terminalizer
+  and prevent inactive/stale attempts from reaching it.
+- Non-terminal attempt callbacks can project progress only when that attempt is still active; terminal success must
+  atomically mark the attempt successful and project its route snapshot before calling the existing parent finalizer.
+- Aggregate cluster candidate construction, effective weighting, degradation fallback, attempted-route exclusion, and
+  RPM limiting already live in `service`. A durable async planner in the same package can restore attempted route keys
+  into a temporary context and reuse those private helpers rather than duplicating smart-routing policy.
+- Aggregate failover remains simpler and deterministic: retain the configured target order, retry distinct channels
+  within the current real group up to the snapshotted budget, then advance to the next target.
+- The attempt callback path currently records aggregate success but not the accepted failed route. It must emit smart
+  failure/RPM strategy signals exactly when an active attempt failure is accepted, not during terminal recovery where
+  repeated reconciliation could double-count it.
+- Multi-key channel auto-disable cannot safely use an empty key after an asynchronous callback because that defaults to
+  the first key. Credential resolution now needs to retain only the selected key index on the lease; callback handling
+  can resolve the current key in memory without persisting or logging any credential.
+- The current dispatch worker still compares image-handle's echoed internal attempt client ID with the public parent
+  task ID and persists the provider task ID on the parent. Attempt-scoped dispatch must validate against
+  `ImageTaskAttempt.ClientTaskID` and update only that attempt until a winning callback projects it to the parent.
+- Attempt-scoped leases currently still validate client task ID, provider task ID, and channel against the mutable
+  parent. They must require the lease's attempt to remain the retry state's active attempt and validate all three
+  values against that attempt, while preserving the legacy path for rows without `AttemptRecordID`.
+- `NewImageCredentialLeaseForAttempt` currently copies `task.ChannelId`; later attempts intentionally do not mutate
+  the public parent before success, so this would lease the first channel's credential after a route switch. The
+  attempt constructor path must persist `attempt.ChannelID` instead.
+- Marking an attempt/state terminal before `ApplyTaskResult` creates a restart window: a crash or transactional finalizer
+  failure leaves the public parent non-terminal, and duplicate callbacks are then correctly ignored but cannot repair it.
+  A periodic reconciliation path must replay the stored successful `TaskInfoJSON` or synthesize the stored terminal
+  failure into the existing parent finalizer.
+- Successful reconciliation can reuse `persistAndReconcileAsyncImageConsumeLog`; after the final snapshot is durable it
+  already invokes completed-image reconciliation, including exactly-once transfer of precharged channel usage from the
+  initial route to the winning route.
+- `relaycommon.TaskInfo.Data` is intentionally excluded from JSON serialization. Recovery must combine the persisted
+  `TaskInfoJSON` with the attempt's separately stored sanitized `CallbackData`, otherwise a recovered success would lose
+  its image results and create no Assets.
+- Parent task timeout is not a provider retry signal. For retry-enabled image parents it must first atomically close the
+  active attempt and retry state as non-retryable, then use the existing parent finalizer so one refund/Webhook remains.
+- The polling loop's legacy missing-upstream-ID repair reads only the parent. New retry parents deliberately keep their
+  provider ID attempt-scoped until success, so they would be falsely failed after the legacy grace period unless the
+  presence of retry state suppresses that repair path.
+
+---
+
 # Leonardo normalization error projection (2026-08-08)
 
 - Leonardo submission error projection already trusts `reference_media_normalization_failed`, but

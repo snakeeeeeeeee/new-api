@@ -22,7 +22,8 @@ import (
 func setupImageDispatchTest(t *testing.T, handler http.HandlerFunc) (*model.Task, *model.ImageTaskDispatch) {
 	t.Helper()
 	require.NoError(t, model.DB.AutoMigrate(
-		&model.ImageTaskRequest{}, &model.ImageTaskDispatch{}, &model.Asset{},
+		&model.ImageTaskRequest{}, &model.ImageTaskRetryState{}, &model.ImageTaskAttempt{},
+		&model.ImageTaskDispatch{}, &model.ImageCredentialLease{}, &model.Asset{},
 		&model.WebhookEndpoint{}, &model.WebhookEvent{}, &model.WebhookDelivery{}, &model.WebhookDeliveryAttempt{},
 	))
 	originalClient := httpClient
@@ -37,7 +38,10 @@ func setupImageDispatchTest(t *testing.T, handler http.HandlerFunc) (*model.Task
 		httpClient = originalClient
 		*image_handle_setting.GetImageHandleSetting() = originalSetting
 		server.Close()
+		model.DB.Where("task_id LIKE ?", "task_dispatch_test_%").Delete(&model.ImageCredentialLease{})
 		model.DB.Where("task_id LIKE ?", "task_dispatch_test_%").Delete(&model.ImageTaskDispatch{})
+		model.DB.Where("task_id LIKE ?", "task_dispatch_test_%").Delete(&model.ImageTaskAttempt{})
+		model.DB.Where("task_id LIKE ?", "task_dispatch_test_%").Delete(&model.ImageTaskRetryState{})
 		model.DB.Where("task_id LIKE ?", "task_dispatch_test_%").Delete(&model.ImageTaskRequest{})
 		model.DB.Where("object_id LIKE ?", "task_dispatch_test_%").Delete(&model.WebhookEvent{})
 		model.DB.Where("task_id LIKE ?", "task_dispatch_test_%").Delete(&model.Task{})
@@ -57,6 +61,29 @@ func setupImageDispatchTest(t *testing.T, handler http.HandlerFunc) (*model.Task
 	dispatch.LockedUntil = now + 60
 	require.NoError(t, model.DB.Create(dispatch).Error)
 	return task, dispatch
+}
+
+func attachImageDispatchAttempt(t *testing.T, task *model.Task, legacyDispatch *model.ImageTaskDispatch, channelID int, clientTaskID string) (*model.ImageTaskRetryState, *model.ImageTaskAttempt, *model.ImageTaskDispatch) {
+	t.Helper()
+	require.NoError(t, model.DB.Delete(legacyDispatch).Error)
+	state := model.NewImageTaskRetryState(task, 1, "default", "default", "gpt-image-2")
+	state.CurrentRouteGroup = "default"
+	require.NoError(t, model.DB.Create(state).Error)
+	attempt := model.NewImageTaskAttempt(
+		task, 1, clientTaskID, channelID, "default", -1, "", "gpt-image-2", "mapped-image",
+		100, &model.TaskBillingContext{OriginModelName: "gpt-image-2", RouteQuota: 100}, "req_dispatch_attempt",
+	)
+	require.NoError(t, model.DB.Create(attempt).Error)
+	state.ActiveAttemptRecordID = attempt.ID
+	state.AttemptCount = 1
+	require.NoError(t, model.DB.Save(state).Error)
+	dispatch := model.NewImageTaskDispatchForAttempt(task, attempt, []byte(`{"client_task_id":"`+clientTaskID+`"}`))
+	dispatch.Status = model.ImageTaskDispatchProcessing
+	dispatch.Attempts = 1
+	dispatch.LockToken = "attempt-dispatch-lock"
+	dispatch.LockedUntil = time.Now().Unix() + 60
+	require.NoError(t, model.DB.Create(dispatch).Error)
+	return state, attempt, dispatch
 }
 
 func attachPublicImageTaskRequest(t *testing.T, task *model.Task) {
@@ -89,6 +116,88 @@ func TestProcessImageTaskDispatchPersistsSuccessfulSubmission(t *testing.T) {
 	var storedTask model.Task
 	require.NoError(t, model.DB.First(&storedTask, task.ID).Error)
 	assert.Equal(t, "imgtask_dispatch_success", storedTask.PrivateData.UpstreamTaskID)
+}
+
+func TestProcessImageTaskDispatchPersistsAttemptSubmissionWithoutMutatingParent(t *testing.T) {
+	const clientTaskID = "task_attempt_dispatch_success"
+	task, legacyDispatch := setupImageDispatchTest(t, func(writer http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, "Bearer dispatch-test-key", request.Header.Get("Authorization"))
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"provider_task_id":"provider_attempt_success","client_task_id":"` + clientTaskID + `"}`))
+	})
+	_, attempt, dispatch := attachImageDispatchAttempt(t, task, legacyDispatch, 22, clientTaskID)
+
+	processImageTaskDispatch(context.Background(), dispatch)
+
+	var storedDispatch model.ImageTaskDispatch
+	require.NoError(t, model.DB.First(&storedDispatch, dispatch.ID).Error)
+	assert.Equal(t, model.ImageTaskDispatchDelivered, storedDispatch.Status)
+	storedAttempt, err := model.GetImageTaskAttemptByID(attempt.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ImageTaskAttemptSubmitted, storedAttempt.Status)
+	assert.Equal(t, "provider_attempt_success", storedAttempt.ProviderTaskID)
+	storedParent, err := model.GetTaskByRecordID(task.ID)
+	require.NoError(t, err)
+	assert.Empty(t, storedParent.PrivateData.UpstreamTaskID)
+	assert.Equal(t, task.ChannelId, storedParent.ChannelId)
+}
+
+func TestProcessImageTaskDispatchRetryableFailureKeepsSameAttemptActive(t *testing.T) {
+	task, legacyDispatch := setupImageDispatchTest(t, func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = writer.Write([]byte(`{"error":{"message":"temporary attempt outage"}}`))
+	})
+	state, attempt, dispatch := attachImageDispatchAttempt(t, task, legacyDispatch, 22, "task_attempt_dispatch_retry")
+
+	processImageTaskDispatch(context.Background(), dispatch)
+
+	var storedDispatch model.ImageTaskDispatch
+	require.NoError(t, model.DB.First(&storedDispatch, dispatch.ID).Error)
+	assert.Equal(t, model.ImageTaskDispatchPending, storedDispatch.Status)
+	storedAttempt, err := model.GetImageTaskAttemptByID(attempt.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ImageTaskAttemptPending, storedAttempt.Status)
+	storedState, exists, err := model.GetImageTaskRetryStateByTaskRecordID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, model.ImageTaskRetryStateActive, storedState.Status)
+	assert.Equal(t, state.ActiveAttemptRecordID, storedState.ActiveAttemptRecordID)
+	assert.Empty(t, storedState.FailedChannelIDs)
+}
+
+func TestProcessImageTaskDispatchMismatchedAttemptIDFailsParentWithoutChannelRetry(t *testing.T) {
+	truncate(t)
+	seedUser(t, 1, 10_000)
+	seedToken(t, 1, 1, "dispatch-attempt-refund", 5_000)
+	seedChannel(t, 1)
+	task, legacyDispatch := setupImageDispatchTest(t, func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"provider_task_id":"provider_wrong_echo","client_task_id":"task_attempt_wrong"}`))
+	})
+	task.Quota = 3_000
+	task.PrivateData.BillingSource = BillingSourceWallet
+	task.PrivateData.TokenId = 1
+	task.PrivateData.BillingContext = &model.TaskBillingContext{OriginModelName: "gpt-image-2"}
+	require.NoError(t, model.DB.Save(task).Error)
+	attachPublicImageTaskRequest(t, task)
+	_, attempt, dispatch := attachImageDispatchAttempt(t, task, legacyDispatch, 22, "task_attempt_expected")
+
+	processImageTaskDispatch(context.Background(), dispatch)
+
+	storedAttempt, err := model.GetImageTaskAttemptByID(attempt.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ImageTaskAttemptFailed, storedAttempt.Status)
+	assert.False(t, storedAttempt.ErrorRetryable)
+	storedState, exists, err := model.GetImageTaskRetryStateByTaskRecordID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, model.ImageTaskRetryStateFailed, storedState.Status)
+	assert.Equal(t, 1, storedState.AttemptCount)
+	storedParent, err := model.GetTaskByRecordID(task.ID)
+	require.NoError(t, err)
+	assert.EqualValues(t, model.TaskStatusFailure, storedParent.Status)
+	assert.Equal(t, 13_000, getUserQuota(t, 1))
+	assert.Equal(t, 8_000, getTokenRemainQuota(t, 1))
 }
 
 func TestProcessImageTaskDispatchReschedulesRetryableFailure(t *testing.T) {

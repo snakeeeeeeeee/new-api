@@ -403,7 +403,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 // consume log. The task ID check prevents an incorrect log association even
 // if a stale or corrupted consume_log_id is present in task private data.
 func MergeConsumeLogOther(logId int, userId int, taskId string, updates map[string]interface{}) (bool, error) {
-	return updateConsumeLog(logId, userId, taskId, updates, nil, nil, nil, nil, nil, "", nil)
+	return updateConsumeLog(logId, userId, taskId, updates, nil, nil, nil, nil, nil, "", nil, nil, nil, nil)
 }
 
 // MergeConsumeLogOtherAndTokens updates execution metadata and optional real
@@ -416,7 +416,7 @@ func MergeConsumeLogOtherAndTokens(
 	promptTokens *int,
 	completionTokens *int,
 ) (bool, error) {
-	return updateConsumeLog(logId, userId, taskId, updates, nil, promptTokens, completionTokens, nil, nil, "", nil)
+	return updateConsumeLog(logId, userId, taskId, updates, nil, promptTokens, completionTokens, nil, nil, "", nil, nil, nil, nil)
 }
 
 // FinalizeAsyncImageConsumeLog turns the original precharge row into the
@@ -437,6 +437,9 @@ func FinalizeAsyncImageConsumeLog(
 	useTime := snapshot.UseTimeSeconds
 	content := snapshot.Content
 	logType := snapshot.LogType
+	channelID := snapshot.ChannelId
+	modelName := snapshot.ModelName
+	group := snapshot.Group
 	if logType == LogTypeUnknown {
 		logType = LogTypeConsume
 	}
@@ -455,6 +458,9 @@ func FinalizeAsyncImageConsumeLog(
 		&content,
 		requestId,
 		&logType,
+		&channelID,
+		&modelName,
+		&group,
 	)
 }
 
@@ -470,6 +476,9 @@ func updateConsumeLog(
 	content *string,
 	requestId string,
 	targetLogType *int,
+	channelID *int,
+	modelName *string,
+	group *string,
 ) (bool, error) {
 	if logId <= 0 || userId <= 0 || strings.TrimSpace(taskId) == "" {
 		return false, nil
@@ -539,6 +548,15 @@ func updateConsumeLog(
 		}
 		if targetLogType != nil {
 			columnUpdates["type"] = *targetLogType
+		}
+		if channelID != nil && *channelID > 0 {
+			columnUpdates["channel_id"] = *channelID
+		}
+		if modelName != nil && strings.TrimSpace(*modelName) != "" {
+			columnUpdates["model_name"] = strings.TrimSpace(*modelName)
+		}
+		if group != nil && strings.TrimSpace(*group) != "" {
+			columnUpdates["group"] = strings.TrimSpace(*group)
 		}
 		result := LOG_DB.Model(&Log{}).
 			Where("id = ? AND other = ? AND type = ?", logItem.Id, logItem.Other, logItem.Type).

@@ -56,7 +56,7 @@ func setupInviteCodeControllerTestDB(t *testing.T) *gorm.DB {
 
 	model.DB = db
 	model.LOG_DB = db
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.InviteCode{}, &model.TopUp{}, &model.Token{}, &model.Log{}, &model.Task{}, &model.ImageCredentialLease{}, &model.ImageTaskRequest{}, &model.ImageTaskDispatch{}, &model.Asset{}, &model.AssetKey{}, &model.Channel{}, &model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.Option{}, &model.WebhookEndpoint{}, &model.WebhookEvent{}, &model.WebhookDelivery{}, &model.WebhookDeliveryAttempt{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.InviteCode{}, &model.TopUp{}, &model.Token{}, &model.Log{}, &model.Task{}, &model.ImageTaskRetryState{}, &model.ImageTaskAttempt{}, &model.ImageCredentialLease{}, &model.ImageTaskRequest{}, &model.ImageTaskDispatch{}, &model.Asset{}, &model.AssetKey{}, &model.Channel{}, &model.Ability{}, &model.AggregateGroup{}, &model.AggregateGroupTarget{}, &model.AggregateGroupRouteModelRatio{}, &model.UserSubscription{}, &model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.Option{}, &model.WebhookEndpoint{}, &model.WebhookEvent{}, &model.WebhookDelivery{}, &model.WebhookDeliveryAttempt{}))
 
 	t.Cleanup(func() {
 		common.UsingSQLite = originalUsingSQLite

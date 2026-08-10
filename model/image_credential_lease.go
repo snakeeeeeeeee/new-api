@@ -17,19 +17,21 @@ const (
 )
 
 type ImageCredentialLease struct {
-	ID           int64  `json:"id" gorm:"primaryKey"`
-	LeaseID      string `json:"lease_id" gorm:"type:varchar(191);uniqueIndex"`
-	TaskID       string `json:"task_id" gorm:"type:varchar(191);index"`
-	TaskRecordID int64  `json:"task_record_id" gorm:"index"`
-	UserID       int    `json:"user_id" gorm:"index"`
-	ChannelID    int    `json:"channel_id" gorm:"index"`
-	Operation    string `json:"operation" gorm:"type:varchar(40)"`
-	Model        string `json:"model" gorm:"type:varchar(191)"`
-	Status       string `json:"status" gorm:"type:varchar(20);index"`
-	ExpiresAt    int64  `json:"expires_at" gorm:"index"`
-	ResolvedAt   int64  `json:"resolved_at"`
-	CreatedAt    int64  `json:"created_at" gorm:"index"`
-	UpdatedAt    int64  `json:"updated_at"`
+	ID               int64  `json:"id" gorm:"primaryKey"`
+	LeaseID          string `json:"lease_id" gorm:"type:varchar(191);uniqueIndex"`
+	TaskID           string `json:"task_id" gorm:"type:varchar(191);index"`
+	TaskRecordID     int64  `json:"task_record_id" gorm:"index"`
+	AttemptRecordID  *int64 `json:"attempt_record_id,omitempty" gorm:"uniqueIndex:idx_image_lease_attempt"`
+	UserID           int    `json:"user_id" gorm:"index"`
+	ChannelID        int    `json:"channel_id" gorm:"index"`
+	Operation        string `json:"operation" gorm:"type:varchar(40)"`
+	Model            string `json:"model" gorm:"type:varchar(191)"`
+	Status           string `json:"status" gorm:"type:varchar(20);index"`
+	ResolvedKeyIndex *int   `json:"resolved_key_index,omitempty"`
+	ExpiresAt        int64  `json:"expires_at" gorm:"index"`
+	ResolvedAt       int64  `json:"resolved_at"`
+	CreatedAt        int64  `json:"created_at" gorm:"index"`
+	UpdatedAt        int64  `json:"updated_at"`
 }
 
 func GenerateImageCredentialLeaseID() string {
@@ -38,11 +40,15 @@ func GenerateImageCredentialLeaseID() string {
 }
 
 func NewImageCredentialLease(task *Task, operation string, modelName string, ttlSeconds int64) *ImageCredentialLease {
+	return NewImageCredentialLeaseForAttempt(task, nil, operation, modelName, ttlSeconds)
+}
+
+func NewImageCredentialLeaseForAttempt(task *Task, attempt *ImageTaskAttempt, operation string, modelName string, ttlSeconds int64) *ImageCredentialLease {
 	now := time.Now().Unix()
 	if ttlSeconds <= 0 {
 		ttlSeconds = 1800
 	}
-	return &ImageCredentialLease{
+	lease := &ImageCredentialLease{
 		LeaseID:      GenerateImageCredentialLeaseID(),
 		TaskID:       task.TaskID,
 		TaskRecordID: task.ID,
@@ -55,6 +61,11 @@ func NewImageCredentialLease(task *Task, operation string, modelName string, ttl
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+	if attempt != nil {
+		lease.AttemptRecordID = &attempt.ID
+		lease.ChannelID = attempt.ChannelID
+	}
+	return lease
 }
 
 func CreateImageCredentialLease(lease *ImageCredentialLease) error {
@@ -81,17 +92,33 @@ func GetImageCredentialLeaseByLeaseID(leaseID string) (*ImageCredentialLease, bo
 	return &lease, true, nil
 }
 
-func MarkImageCredentialLeaseResolved(lease *ImageCredentialLease) error {
+func MarkImageCredentialLeaseResolved(lease *ImageCredentialLease, keyIndex int) error {
 	if lease == nil {
 		return fmt.Errorf("lease is nil")
 	}
 	now := time.Now().Unix()
 	updates := map[string]any{
-		"status":      ImageCredentialLeaseStatusResolved,
-		"resolved_at": now,
-		"updated_at":  now,
+		"status":             ImageCredentialLeaseStatusResolved,
+		"resolved_key_index": keyIndex,
+		"resolved_at":        now,
+		"updated_at":         now,
 	}
 	return DB.Model(lease).Where("lease_id = ?", lease.LeaseID).Updates(updates).Error
+}
+
+func GetImageCredentialLeaseByAttemptRecordID(attemptRecordID int64) (*ImageCredentialLease, bool, error) {
+	if attemptRecordID <= 0 {
+		return nil, false, nil
+	}
+	var lease ImageCredentialLease
+	err := DB.Where("attempt_record_id = ?", attemptRecordID).First(&lease).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return &lease, true, nil
 }
 
 func MarkImageCredentialLeaseFailed(leaseID string) error {
