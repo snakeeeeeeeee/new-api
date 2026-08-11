@@ -55,6 +55,15 @@ func IsImageGenerationModel(modelName string) bool {
 	return false
 }
 
+func IsGrokVideoTaskModel(modelName string) bool {
+	switch strings.ToLower(strings.TrimSpace(modelName)) {
+	case "grok-imagine-video-720p", "grok-imagine-video-1.5-preview-720p":
+		return true
+	default:
+		return false
+	}
+}
+
 func IsOpenAITextModel(modelName string) bool {
 	modelName = strings.ToLower(modelName)
 	for _, m := range OpenAITextModels {

@@ -248,6 +248,36 @@ func TestCanvasImageGroupRecognizesCurrentModelsWithoutEndpointMetadata(t *testi
 	}, option.ImageModels)
 }
 
+func TestCanvasVideoGroupRecognizesOnlyGrok720pModelsWithTextEndpointMetadata(t *testing.T) {
+	setupCanvasAuthorizationTest(t)
+	xaiChannel := model.Channel{
+		Id: 9103, Type: constant.ChannelTypeXai, Key: "test", Status: common.ChannelStatusEnabled,
+		Name: "canvas-grok-video", Models: strings.Join([]string{
+			"grok-imagine-video-720p",
+			"grok-imagine-video-1.5-preview-720p",
+			"grok-imagine-video-480p",
+			"grok-imagine-video-1.5-preview-15s-720p",
+		}, ","), Group: "grok-video",
+	}
+	require.NoError(t, model.DB.Create(&xaiChannel).Error)
+	require.NoError(t, model.DB.Create([]model.Model{
+		{ModelName: "grok-imagine-video-720p", Endpoints: `{"openai":{},"openai-response":{}}`, Status: 1},
+		{ModelName: "grok-imagine-video-1.5-preview-720p", Endpoints: `{"openai":{},"openai-response":{}}`, Status: 1},
+	}).Error)
+	require.NoError(t, model.DB.Create([]model.Ability{
+		{Group: "grok-video", Model: "grok-imagine-video-720p", ChannelId: xaiChannel.Id, Enabled: true},
+		{Group: "grok-video", Model: "grok-imagine-video-1.5-preview-720p", ChannelId: xaiChannel.Id, Enabled: true},
+		{Group: "grok-video", Model: "grok-imagine-video-480p", ChannelId: xaiChannel.Id, Enabled: true},
+		{Group: "grok-video", Model: "grok-imagine-video-1.5-preview-15s-720p", ChannelId: xaiChannel.Id, Enabled: true},
+	}).Error)
+	model.RefreshPricing()
+
+	require.Equal(t, []string{
+		"grok-imagine-video-1.5-preview-720p",
+		"grok-imagine-video-720p",
+	}, canvasModelsForGroup("grok-video", constant.EndpointTypeVideoTask, constant.EndpointTypeOpenAIVideo))
+}
+
 func TestCanvasAuthorizationFirstRepeatAndCredentialRepair(t *testing.T) {
 	setupCanvasAuthorizationTest(t)
 	seedCanvasUser(t, 9201)

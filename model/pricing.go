@@ -227,6 +227,11 @@ func updatePricing() {
 			}
 		}
 	}
+	for modelName, endpoints := range modelSupportEndpointsStr {
+		if common.IsGrokVideoTaskModel(modelName) && !common.StringsContains(endpoints, string(constant.EndpointTypeVideoTask)) {
+			modelSupportEndpointsStr[modelName] = append([]string{string(constant.EndpointTypeVideoTask)}, endpoints...)
+		}
+	}
 
 	modelSupportEndpointTypes = make(map[string][]constant.EndpointType)
 	for model, endpoints := range modelSupportEndpointsStr {

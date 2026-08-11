@@ -27,3 +27,29 @@ func TestLeonardoVideoUsesNormalizedVideoTaskEndpoint(t *testing.T) {
 		GetEndpointTypesByChannelType(constant.ChannelTypeLeonardoVideo, "leonardo-seedance-2.0-fast-480p"),
 	)
 }
+
+func TestGrok720pVideoModelsIncludeNormalizedVideoTaskEndpoint(t *testing.T) {
+	want := []constant.EndpointType{
+		constant.EndpointTypeVideoTask,
+		constant.EndpointTypeOpenAI,
+		constant.EndpointTypeOpenAIResponse,
+	}
+	for _, modelName := range []string{
+		"grok-imagine-video-720p",
+		"grok-imagine-video-1.5-preview-720p",
+	} {
+		assert.Equal(t, want, GetEndpointTypesByChannelType(constant.ChannelTypeXai, modelName))
+	}
+}
+
+func TestXAIImageAndTextEndpointInferenceRemainsUnchanged(t *testing.T) {
+	assert.Equal(t, []constant.EndpointType{
+		constant.EndpointTypeImageGeneration,
+		constant.EndpointTypeOpenAI,
+		constant.EndpointTypeOpenAIResponse,
+	}, GetEndpointTypesByChannelType(constant.ChannelTypeXai, "grok-imagine-image"))
+	assert.Equal(t, []constant.EndpointType{
+		constant.EndpointTypeOpenAI,
+		constant.EndpointTypeOpenAIResponse,
+	}, GetEndpointTypesByChannelType(constant.ChannelTypeXai, "grok-4-0709"))
+}
