@@ -80,20 +80,9 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	if request.Output.Duration == nil {
 		return requestError("duration is required", "video_duration_required", http.StatusBadRequest)
 	}
-	modelName := providerModel(info)
-	isH3 := isMiniMaxH3Model(modelName) || isMiniMaxH3Model(request.Model)
-	isSeedance25 := isSeedance25Model(modelName) || isSeedance25Model(request.Model)
 	duration := *request.Output.Duration
-	minimumDuration := 4
-	maximumDuration := 15
-	if isH3 {
-		minimumDuration = 5
-	}
-	if isSeedance25 {
-		maximumDuration = 30
-	}
-	if duration < minimumDuration || duration > maximumDuration {
-		return requestError(fmt.Sprintf("duration must be an integer between %d and %d seconds", minimumDuration, maximumDuration), "invalid_video_duration", http.StatusBadRequest)
+	if duration <= 0 {
+		return requestError("duration must be a positive integer", "invalid_video_duration", http.StatusBadRequest)
 	}
 	if request.Output.Resolution != nil {
 		return requestError("resolution is selected by the exact model mapping", "invalid_video_parameter", http.StatusBadRequest)
@@ -102,16 +91,13 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	if request.Output.AspectRatio != nil {
 		aspectRatio = strings.TrimSpace(*request.Output.AspectRatio)
 	}
-	if _, ok := supportedAspectRatios[aspectRatio]; !ok {
-		return requestError(fmt.Sprintf("aspect_ratio %q is not supported", aspectRatio), "invalid_video_aspect_ratio", http.StatusBadRequest)
+	if aspectRatio == "" {
+		return requestError("aspect_ratio must not be empty", "invalid_video_aspect_ratio", http.StatusBadRequest)
 	}
 
 	generateAudio := common.GetPointer(true)
 	if request.Output.GenerateAudio != nil {
 		generateAudio = request.Output.GenerateAudio
-	}
-	if isH3 && generateAudio != nil && !*generateAudio {
-		return requestError("MiniMax H3 always generates native audio", "invalid_video_parameter", http.StatusBadRequest)
 	}
 	for namespace, options := range request.ProviderOptions {
 		if strings.TrimSpace(namespace) != ProviderOptionsNamespace {
@@ -136,9 +122,6 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	videos := request.Input.ReferenceVideos
 	audios := request.Input.ReferenceAudios
 	mode := strings.ToLower(strings.TrimSpace(request.Input.ReferenceMode))
-	if mode != "" && mode != "frame" && mode != "images" && mode != "media" {
-		return requestError("reference_mode must be frame, images, or media", "unsupported_reference_mode", http.StatusBadRequest)
-	}
 	if len(images) > dto.VideoTaskMaxReferenceImages {
 		return requestError(fmt.Sprintf("at most %d image references are accepted", dto.VideoTaskMaxReferenceImages), "reference_image_limit_exceeded", http.StatusBadRequest)
 	}
@@ -152,7 +135,6 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		return requestError(fmt.Sprintf("at most %d total references are accepted", dto.VideoTaskMaxReferences), "reference_limit_exceeded", http.StatusBadRequest)
 	}
 
-	names := make(map[string]struct{}, len(images)+len(videos)+len(audios))
 	normalize := func(source dto.VideoTaskSource, kind string) (referenceMedia, *dto.TaskError) {
 		if strings.TrimSpace(source.Provider) != "" || strings.TrimSpace(source.FileID) != "" {
 			return referenceMedia{}, requestError(fmt.Sprintf("%s references must use HTTP(S) URLs", kind), "unsupported_file_provider", http.StatusBadRequest)
@@ -175,12 +157,6 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		name := strings.TrimSpace(source.Name)
 		if len(name) > 100 {
 			return referenceMedia{}, requestError("reference names must not exceed 100 characters", "invalid_video_parameter", http.StatusBadRequest)
-		}
-		if name != "" {
-			if _, exists := names[name]; exists {
-				return referenceMedia{}, requestError("reference names must be unique", "invalid_video_parameter", http.StatusBadRequest)
-			}
-			names[name] = struct{}{}
 		}
 		return referenceMedia{URL: value, Name: name}, nil
 	}
@@ -216,29 +192,18 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 
 func (a *TaskAdaptor) ValidateNormalizedVideoModel(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	modelName := providerModel(info)
-	if !isSupportedProviderModel(modelName) {
-		return requestError(fmt.Sprintf("unsupported video model mapping %q", modelName), "unsupported_video_model", http.StatusBadRequest)
+	if modelName == "" {
+		return requestError("video model mapping must target a non-empty provider SKU", "unsupported_video_model", http.StatusBadRequest)
 	}
 	payload, err := normalizedPayload(c)
 	if err != nil {
 		return requestError(err.Error(), "invalid_request", http.StatusBadRequest)
 	}
-	minimumDuration := 4
-	maximumDuration := 15
-	if modelName == "minimax-h3-1440p" {
-		minimumDuration = 5
+	if payload.Duration <= 0 {
+		return requestError("duration must be a positive integer", "invalid_video_duration", http.StatusBadRequest)
 	}
-	if isSeedance25Model(modelName) {
-		maximumDuration = 30
-	}
-	if payload.Duration < minimumDuration || payload.Duration > maximumDuration {
-		return requestError(fmt.Sprintf("duration must be an integer between %d and %d seconds", minimumDuration, maximumDuration), "invalid_video_duration", http.StatusBadRequest)
-	}
-	if modelName == "minimax-h3-1440p" && payload.GenerateAudio != nil && !*payload.GenerateAudio {
-		return requestError("MiniMax H3 always generates native audio", "invalid_video_parameter", http.StatusBadRequest)
-	}
-	if _, ok := supportedAspectRatios[payload.AspectRatio]; !ok {
-		return requestError(fmt.Sprintf("aspect_ratio %q is not supported", payload.AspectRatio), "invalid_video_aspect_ratio", http.StatusBadRequest)
+	if strings.TrimSpace(payload.AspectRatio) == "" {
+		return requestError("aspect_ratio must not be empty", "invalid_video_aspect_ratio", http.StatusBadRequest)
 	}
 	return nil
 }
@@ -277,8 +242,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	modelName := providerModel(info)
-	if !isSupportedProviderModel(modelName) {
-		return nil, fmt.Errorf("unsupported Leonardo video provider model %q", modelName)
+	if modelName == "" {
+		return nil, fmt.Errorf("Leonardo video provider model is empty")
 	}
 	images := make([]referenceMedia, len(payload.ReferenceImages))
 	copy(images, payload.ReferenceImages)
@@ -291,10 +256,6 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		AspectRatio: payload.AspectRatio, GenerateAudio: payload.GenerateAudio,
 		Public: false, ReferenceMode: payload.ReferenceMode,
 		ImageReferences: images, VideoReferences: videos, AudioReferences: audios,
-	}
-	if modelName != "minimax-h3-1440p" {
-		seed := -1
-		requestPayload.Seed = &seed
 	}
 	body, err := common.Marshal(requestPayload)
 	if err != nil {
@@ -504,41 +465,6 @@ func providerModel(info *relaycommon.RelayInfo) string {
 		return strings.TrimSpace(info.OriginModelName)
 	}
 	return ""
-}
-
-func isMiniMaxH3Model(value string) bool {
-	switch strings.TrimSpace(value) {
-	case "minimax-h3-1440p", "leonardo-minimax-h3-1440p":
-		return true
-	default:
-		return false
-	}
-}
-
-func isSupportedProviderModel(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "minimax-h3-1440p" {
-		return true
-	}
-	parts := seedanceModelPattern.FindStringSubmatch(value)
-	if len(parts) != 3 {
-		return false
-	}
-	if resolutions, known := knownSeedanceResolutions[parts[1]]; known {
-		_, supported := resolutions[parts[2]]
-		return supported
-	}
-	return true
-}
-
-func isSeedance25Model(value string) bool {
-	switch strings.TrimSpace(value) {
-	case "seedance-2.5-480p", "seedance-2.5-720p",
-		"leonardo-seedance-2.5-480p", "leonardo-seedance-2.5-720p":
-		return true
-	default:
-		return false
-	}
 }
 
 func requestError(message, code string, status int) *dto.TaskError {

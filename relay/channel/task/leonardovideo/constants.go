@@ -1,7 +1,5 @@
 package leonardovideo
 
-import "regexp"
-
 const (
 	ChannelName              = "leonardo-video"
 	ProviderOptionsNamespace = "leonardo_video"
@@ -20,23 +18,6 @@ var ModelList = []string{
 	"seedance-2.5-480p",
 	"seedance-2.5-720p",
 	"minimax-h3-1440p",
-}
-
-var seedanceModelPattern = regexp.MustCompile(`^seedance-([a-z0-9]+(?:[.-][a-z0-9]+)*)-([1-9][0-9]*p)$`)
-
-var knownSeedanceResolutions = map[string]map[string]struct{}{
-	"2.0-fast": {"480p": {}, "720p": {}},
-	"2.0":      {"480p": {}, "720p": {}, "1080p": {}},
-	"2.5":      {"480p": {}, "720p": {}},
-}
-
-var supportedAspectRatios = map[string]struct{}{
-	"21:9": {},
-	"16:9": {},
-	"4:3":  {},
-	"1:1":  {},
-	"3:4":  {},
-	"9:16": {},
 }
 
 type referenceMedia struct {
@@ -63,7 +44,6 @@ type upstreamRequest struct {
 	AspectRatio     string           `json:"aspect_ratio"`
 	GenerateAudio   *bool            `json:"generate_audio,omitempty"`
 	Public          bool             `json:"public"`
-	Seed            *int             `json:"seed,omitempty"`
 	ReferenceMode   string           `json:"reference_mode,omitempty"`
 	ImageReferences []referenceMedia `json:"image_references,omitempty"`
 	VideoReferences []referenceMedia `json:"video_references,omitempty"`

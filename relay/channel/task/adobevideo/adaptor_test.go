@@ -311,7 +311,7 @@ func TestPrepareNormalizedVideoRequestRejectsInvalidInputBeforeDispatch(t *testi
 	}
 }
 
-func TestValidateNormalizedVideoModelAppliesProviderCapabilityBeforeBilling(t *testing.T) {
+func TestValidateNormalizedVideoModelDelegatesProviderCapabilitiesBeforeBilling(t *testing.T) {
 	tests := []struct {
 		name        string
 		model       string
@@ -321,25 +321,24 @@ func TestValidateNormalizedVideoModelAppliesProviderCapabilityBeforeBilling(t *t
 		images      int
 		videos      int
 		audios      int
-		wantCode    string
 	}{
 		{name: "kling 3 three second frame", model: "kling_3.0_720p", duration: 3, aspectRatio: "16:9", mode: "frame", images: 2},
 		{name: "kling 3 text to video", model: "kling_3.0_720p", duration: 3, aspectRatio: "16:9", mode: "frame"},
-		{name: "kling 3 below minimum", model: "kling_3.0_1080p", duration: 2, aspectRatio: "9:16", mode: "frame", wantCode: "invalid_video_duration"},
-		{name: "kling 3 images rejected", model: "kling_3.0_1080p", duration: 3, aspectRatio: "9:16", mode: "images", wantCode: "unsupported_reference_mode"},
+		{name: "kling 3 duration delegated", model: "kling_3.0_1080p", duration: 2, aspectRatio: "9:16", mode: "frame"},
+		{name: "kling 3 images delegated", model: "kling_3.0_1080p", duration: 3, aspectRatio: "9:16", mode: "images"},
 		{name: "kling omni images", model: "kling_3.0_omni_720p", duration: 15, aspectRatio: "9:16", mode: "images", images: 3},
-		{name: "kling omni duration above maximum", model: "kling_3.0_omni_1080p", duration: 16, aspectRatio: "16:9", mode: "frame", wantCode: "invalid_video_duration"},
-		{name: "kling omni image limit", model: "kling_3.0_omni_1080p", duration: 4, aspectRatio: "16:9", mode: "images", images: 4, wantCode: "reference_image_limit_exceeded"},
+		{name: "kling omni duration delegated", model: "kling_3.0_omni_1080p", duration: 16, aspectRatio: "16:9", mode: "frame"},
+		{name: "kling omni image limit delegated", model: "kling_3.0_omni_1080p", duration: 4, aspectRatio: "16:9", mode: "images", images: 4},
 		{name: "veo standard images", model: "veo_3.1_standard_720p", duration: 8, aspectRatio: "16:9", mode: "images", images: 3},
-		{name: "veo standard images duration constraint", model: "veo_3.1_standard_1080p", duration: 6, aspectRatio: "16:9", mode: "images", wantCode: "invalid_video_parameter"},
-		{name: "veo standard duration set", model: "veo_3.1_standard_1080p", duration: 5, aspectRatio: "16:9", mode: "frame", wantCode: "invalid_video_duration"},
+		{name: "veo standard images constraint delegated", model: "veo_3.1_standard_1080p", duration: 6, aspectRatio: "16:9", mode: "images"},
+		{name: "veo standard duration delegated", model: "veo_3.1_standard_1080p", duration: 5, aspectRatio: "16:9", mode: "frame"},
 		{name: "veo fast frame", model: "veo_3.1_fast_720p", duration: 4, aspectRatio: "9:16", mode: "frame", images: 2},
-		{name: "veo fast images rejected", model: "veo_3.1_fast_1080p", duration: 8, aspectRatio: "16:9", mode: "images", wantCode: "unsupported_reference_mode"},
-		{name: "stable ratio rejected", model: "kling_3.0_720p", duration: 4, aspectRatio: "1:1", mode: "frame", wantCode: "invalid_video_aspect_ratio"},
-		{name: "stable media rejected", model: "kling_3.0_720p", duration: 4, aspectRatio: "16:9", mode: "frame", images: 1, videos: 1, wantCode: "reference_video_limit_exceeded"},
+		{name: "veo fast images delegated", model: "veo_3.1_fast_1080p", duration: 8, aspectRatio: "16:9", mode: "images"},
+		{name: "stable ratio delegated", model: "kling_3.0_720p", duration: 4, aspectRatio: "1:1", mode: "frame"},
+		{name: "stable media delegated", model: "kling_3.0_720p", duration: 4, aspectRatio: "16:9", mode: "frame", images: 1, videos: 1},
 		{name: "seedance mixed media", model: "seedance_2.0_fast_480p", duration: 4, aspectRatio: "1:1", mode: "media", images: 6, videos: 3, audios: 3},
-		{name: "seedance below minimum", model: "seedance_2.0_720p", duration: 3, aspectRatio: "16:9", mode: "frame", wantCode: "invalid_video_duration"},
-		{name: "seedance frame media rejected", model: "seedance_2.0_1080p", duration: 4, aspectRatio: "16:9", mode: "frame", audios: 1, wantCode: "unsupported_reference_mode"},
+		{name: "seedance duration delegated", model: "seedance_2.0_720p", duration: 3, aspectRatio: "16:9", mode: "frame"},
+		{name: "seedance frame media delegated", model: "seedance_2.0_1080p", duration: 4, aspectRatio: "16:9", mode: "frame", audios: 1},
 	}
 
 	for _, test := range tests {
@@ -371,11 +370,6 @@ func TestValidateNormalizedVideoModelAppliesProviderCapabilityBeforeBilling(t *t
 			c := adobeVideoTestContext()
 			require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(c, info, request))
 			taskErr := (&TaskAdaptor{}).ValidateNormalizedVideoModel(c, info)
-			if test.wantCode != "" {
-				require.NotNil(t, taskErr)
-				assert.Equal(t, test.wantCode, taskErr.Code)
-				return
-			}
 			require.Nil(t, taskErr)
 			estimate, billingErr := (&TaskAdaptor{}).ResolveVideoBilling(c, info)
 			require.Nil(t, billingErr)
@@ -384,23 +378,123 @@ func TestValidateNormalizedVideoModelAppliesProviderCapabilityBeforeBilling(t *t
 	}
 }
 
-func TestValidateNormalizedVideoModelRequiresExactProviderSKU(t *testing.T) {
+func TestValidateNormalizedVideoModelRequiresNonEmptyProviderSKU(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	validContext := adobeVideoTestContext()
 	validContext.Set(videoRequestContextKey, &requestPayload{
 		Duration: 4, AspectRatio: "16:9", ReferenceMode: "frame",
 	})
-	require.Nil(t, adaptor.ValidateNormalizedVideoModel(
-		validContext,
-		&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "seedance_2.0_fast_480p"}},
-	))
+	for _, modelName := range []string{"seedance_2.0_fast_480p", "future_vendor_sku_2160p"} {
+		require.Nil(t, adaptor.ValidateNormalizedVideoModel(
+			validContext,
+			&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: modelName}},
+		))
+	}
 
 	taskErr := adaptor.ValidateNormalizedVideoModel(
-		adobeVideoTestContext(),
-		&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "seedance-2.0-fast-480p"}},
+		validContext,
+		&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}},
 	)
 	require.NotNil(t, taskErr)
 	assert.Equal(t, "unsupported_video_model", taskErr.Code)
+}
+
+func TestAdobeArbitraryMappedSKUDelegatesCapabilitiesUpstream(t *testing.T) {
+	duration := 37
+	aspectRatio := "2:1"
+	request := dto.VideoTaskCreateRequest{
+		Model:     "public-future-video",
+		Operation: "generation",
+		Input: dto.VideoTaskInputRequest{
+			Prompt:          "future provider contract",
+			ReferenceMode:   "storyboard",
+			ReferenceImages: []dto.VideoTaskSource{{URL: "https://example.com/image.png"}},
+			ReferenceVideos: []dto.VideoTaskSource{{URL: "https://example.com/video.mp4"}},
+			ReferenceAudios: []dto.VideoTaskSource{{URL: "https://example.com/audio.wav"}},
+		},
+		Output: dto.VideoTaskOutputRequest{
+			Duration:      &duration,
+			AspectRatio:   &aspectRatio,
+			GenerateAudio: common.GetPointer(false),
+		},
+	}
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "future_vendor_sku_2160p"},
+	}
+	c := adobeVideoTestContext()
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, request))
+	require.Nil(t, adaptor.ValidateNormalizedVideoModel(c, info))
+	estimate, taskErr := adaptor.ResolveVideoBilling(c, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, duration, estimate.Seconds)
+	assert.Equal(t, types.VideoPricingBasisGeneration, estimate.Basis)
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "future_vendor_sku_2160p", payload["model"])
+	assert.EqualValues(t, duration, payload["duration"])
+	assert.Equal(t, aspectRatio, payload["aspect_ratio"])
+	assert.Equal(t, false, payload["generate_audio"])
+	assert.Equal(t, "storyboard", payload["reference_mode"])
+	assert.Len(t, payload["reference_images"], 1)
+	assert.Len(t, payload["reference_videos"], 1)
+	assert.Len(t, payload["reference_audios"], 1)
+}
+
+func TestAdobeReferenceCountBoundariesRemainProviderNeutral(t *testing.T) {
+	makeSources := func(count int, prefix string) []dto.VideoTaskSource {
+		result := make([]dto.VideoTaskSource, count)
+		for index := range result {
+			result[index].URL = fmt.Sprintf("https://example.com/%s-%d", prefix, index)
+		}
+		return result
+	}
+	duration := 4
+	base := func() dto.VideoTaskCreateRequest {
+		return dto.VideoTaskCreateRequest{
+			Model: "public-model", Operation: "generation",
+			Input:  dto.VideoTaskInputRequest{Prompt: "reference", ReferenceMode: "future-mode"},
+			Output: dto.VideoTaskOutputRequest{Duration: &duration},
+		}
+	}
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+
+	valid := base()
+	valid.Input.ReferenceImages = makeSources(dto.VideoTaskMaxReferenceImages, "image")
+	valid.Input.ReferenceVideos = makeSources(dto.VideoTaskMaxReferenceVideos, "video")
+	valid.Input.ReferenceAudios = makeSources(dto.VideoTaskMaxReferenceAudios, "audio")
+	require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(adobeVideoTestContext(), info, valid))
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*dto.VideoTaskCreateRequest)
+		code   string
+	}{
+		{name: "images", mutate: func(request *dto.VideoTaskCreateRequest) {
+			request.Input.ReferenceImages = makeSources(dto.VideoTaskMaxReferenceImages+1, "image")
+		}, code: "reference_image_limit_exceeded"},
+		{name: "videos", mutate: func(request *dto.VideoTaskCreateRequest) {
+			request.Input.ReferenceVideos = makeSources(dto.VideoTaskMaxReferenceVideos+1, "video")
+		}, code: "reference_video_limit_exceeded"},
+		{name: "audios", mutate: func(request *dto.VideoTaskCreateRequest) {
+			request.Input.ReferenceAudios = makeSources(dto.VideoTaskMaxReferenceAudios+1, "audio")
+		}, code: "reference_audio_limit_exceeded"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := base()
+			test.mutate(&request)
+			taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(adobeVideoTestContext(), info, request)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, test.code, taskErr.Code)
+		})
+	}
 }
 
 func TestDoResponseAndParseTaskLifecycle(t *testing.T) {

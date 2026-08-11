@@ -243,6 +243,37 @@ func TestSeedanceCapabilityRejectsInvalidDurationBeforeBilling(t *testing.T) {
 	assert.Equal(t, "invalid_video_duration", taskErr.Code)
 }
 
+func TestHiggsfieldRetainsProviderSKUAndCapabilityValidation(t *testing.T) {
+	duration := 4
+	for _, test := range []struct {
+		name          string
+		upstreamModel string
+		referenceMode string
+		code          string
+	}{
+		{name: "unknown sku", upstreamModel: "future-provider-sku", referenceMode: "frame", code: "unsupported_video_model"},
+		{name: "unknown reference mode", upstreamModel: "seedance-2.0-480p", referenceMode: "storyboard", code: "unsupported_reference_mode"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			request := dto.VideoTaskCreateRequest{
+				Model: "public-model", Operation: "generation",
+				Input:  dto.VideoTaskInputRequest{Prompt: "test", ReferenceMode: test.referenceMode},
+				Output: dto.VideoTaskOutputRequest{Duration: &duration},
+			}
+			info := &relaycommon.RelayInfo{
+				TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+				ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: test.upstreamModel},
+			}
+			adaptor := &TaskAdaptor{}
+			require.Nil(t, adaptor.PrepareNormalizedVideoRequest(context, info, request))
+			taskErr := adaptor.ValidateNormalizedVideoModel(context, info)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, test.code, taskErr.Code)
+		})
+	}
+}
+
 func intPointer(value int) *int {
 	return &value
 }

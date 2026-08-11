@@ -150,9 +150,6 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	}
 	publicReferenceMode := strings.ToLower(strings.TrimSpace(request.Input.ReferenceMode))
 	if publicReferenceMode != "" {
-		if !validReferenceMode(publicReferenceMode) {
-			return adobeVideoRequestError("input.reference_mode must be frame, images, or media", "invalid_video_parameter")
-		}
 		payload.ReferenceMode = publicReferenceMode
 	}
 	for namespace, options := range request.ProviderOptions {
@@ -193,6 +190,30 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		imageSources = append(imageSources, *request.Input.Image)
 	}
 	imageSources = append(imageSources, request.Input.ReferenceImages...)
+	if len(imageSources) > dto.VideoTaskMaxReferenceImages {
+		return adobeVideoRequestError(
+			fmt.Sprintf("at most %d image references are accepted", dto.VideoTaskMaxReferenceImages),
+			"reference_image_limit_exceeded",
+		)
+	}
+	if len(request.Input.ReferenceVideos) > dto.VideoTaskMaxReferenceVideos {
+		return adobeVideoRequestError(
+			fmt.Sprintf("at most %d video references are accepted", dto.VideoTaskMaxReferenceVideos),
+			"reference_video_limit_exceeded",
+		)
+	}
+	if len(request.Input.ReferenceAudios) > dto.VideoTaskMaxReferenceAudios {
+		return adobeVideoRequestError(
+			fmt.Sprintf("at most %d audio references are accepted", dto.VideoTaskMaxReferenceAudios),
+			"reference_audio_limit_exceeded",
+		)
+	}
+	if len(imageSources)+len(request.Input.ReferenceVideos)+len(request.Input.ReferenceAudios) > dto.VideoTaskMaxReferences {
+		return adobeVideoRequestError(
+			fmt.Sprintf("at most %d total references are accepted", dto.VideoTaskMaxReferences),
+			"reference_limit_exceeded",
+		)
+	}
 	for _, source := range imageSources {
 		image, taskErr := normalizedAdobeVideoReference(source, "image")
 		if taskErr != nil {
@@ -226,10 +247,9 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 
 func (a *TaskAdaptor) ValidateNormalizedVideoModel(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	modelName := adobeProviderModel(info)
-	capability, ok := supportedModels[modelName]
-	if !ok {
+	if modelName == "" {
 		return adobeVideoRequestError(
-			fmt.Sprintf("AdobeVideo model mapping must target an exact supported provider SKU, got %q", modelName),
+			"AdobeVideo model mapping must target a non-empty provider SKU",
 			"unsupported_video_model",
 		)
 	}
@@ -237,7 +257,13 @@ func (a *TaskAdaptor) ValidateNormalizedVideoModel(c *gin.Context, info *relayco
 	if err != nil {
 		return adobeVideoRequestError(err.Error(), "invalid_request")
 	}
-	return validateVideoCapability(payload, capability)
+	if payload.Duration <= 0 {
+		return adobeVideoRequestError("duration must be a positive integer", "invalid_video_duration")
+	}
+	if strings.TrimSpace(payload.AspectRatio) == "" {
+		return adobeVideoRequestError("aspect_ratio must not be empty", "invalid_video_aspect_ratio")
+	}
+	return nil
 }
 
 func (a *TaskAdaptor) ResolveVideoBilling(c *gin.Context, info *relaycommon.RelayInfo) (channel.VideoBillingEstimate, *dto.TaskError) {
@@ -245,11 +271,7 @@ func (a *TaskAdaptor) ResolveVideoBilling(c *gin.Context, info *relaycommon.Rela
 	if err != nil {
 		return channel.VideoBillingEstimate{}, adobeVideoRequestError(err.Error(), "invalid_request")
 	}
-	capability, ok := supportedModels[adobeProviderModel(info)]
-	if !ok {
-		return channel.VideoBillingEstimate{}, adobeVideoRequestError("unsupported AdobeVideo provider SKU", "unsupported_video_model")
-	}
-	if taskErr := validateVideoCapability(payload, capability); taskErr != nil {
+	if taskErr := a.ValidateNormalizedVideoModel(c, info); taskErr != nil {
 		return channel.VideoBillingEstimate{}, taskErr
 	}
 	return channel.VideoBillingEstimate{
@@ -299,7 +321,7 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
-	return a.BuildRequestBodyForProvider(c, info, "AdobeVideo", supportedModelNames)
+	return a.BuildRequestBodyForProvider(c, info, "AdobeVideo", nil)
 }
 
 func (a *TaskAdaptor) BuildRequestBodyForProvider(
@@ -319,8 +341,14 @@ func (a *TaskAdaptor) BuildRequestBodyForProvider(
 	if upstreamModel == "" && info != nil {
 		upstreamModel = strings.TrimSpace(info.OriginModelName)
 	}
-	if _, ok := models[upstreamModel]; !ok {
-		return nil, fmt.Errorf("unsupported %s provider SKU %q", providerName, upstreamModel)
+	if upstreamModel == "" {
+		return nil, fmt.Errorf("%s provider SKU is empty", providerName)
+	}
+	// A nil set enables dynamic SKUs; shared adaptors can pass a set to retain an allowlist.
+	if models != nil {
+		if _, ok := models[upstreamModel]; !ok {
+			return nil, fmt.Errorf("unsupported %s provider SKU %q", providerName, upstreamModel)
+		}
 	}
 	payload.Model = upstreamModel
 	data, err := common.Marshal(payload)
@@ -523,15 +551,6 @@ func adobeProviderModel(info *relaycommon.RelayInfo) string {
 		return strings.TrimSpace(info.OriginModelName)
 	}
 	return ""
-}
-
-func validReferenceMode(value string) bool {
-	switch value {
-	case "frame", "images", "media":
-		return true
-	default:
-		return false
-	}
 }
 
 func validateVideoCapability(payload *requestPayload, capability videoCapability) *dto.TaskError {

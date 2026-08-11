@@ -353,6 +353,85 @@ func TestRelayTaskSubmitAdobeVideoUsesExactMappedModelAndPerSecondWalletQuota(t 
 	assert.Equal(t, "wallet_only", info.BillingPreferenceOverride)
 }
 
+func TestRelayTaskSubmitLeonardoVideoAllowsDynamicMappedSKUAndPerSecondBilling(t *testing.T) {
+	db := setupRelayTaskTestDB(t)
+	originalVideoPricing := ratio_setting.VideoPricing2JSONString()
+	originalGroupRatio := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(originalVideoPricing))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalGroupRatio))
+	})
+	require.NoError(t, ratio_setting.UpdateVideoPricingByJSONString(`{
+		"version":1,
+		"profiles":{"dynamic-h3":{"name":"Dynamic H3","billing_mode":"per_second","unit_price":0.01}},
+		"model_bindings":{"leonardo-minimax-h3-2160p":{"profile":"dynamic-h3","subscription_enabled":false}}
+	}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	require.NoError(t, db.Create(&model.User{
+		Id:       39,
+		Username: "leonardo-dynamic-video-user",
+		Quota:    0,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          399,
+		UserId:      39,
+		Key:         "leonardo-dynamic-video-token",
+		Status:      common.TokenStatusEnabled,
+		Name:        "leonardo-dynamic-video-token",
+		RemainQuota: 0,
+		Group:       "default",
+	}).Error)
+
+	duration := 37
+	aspectRatio := "2:1"
+	normalizedRequest := dto.VideoTaskCreateRequest{
+		Model:     "leonardo-minimax-h3-2160p",
+		Operation: "generation",
+		Input: dto.VideoTaskInputRequest{
+			Prompt:        "dynamic upstream capability",
+			ReferenceMode: "storyboard",
+		},
+		Output: dto.VideoTaskOutputRequest{
+			Duration:    &duration,
+			AspectRatio: &aspectRatio,
+		},
+	}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/tasks", strings.NewReader(`{}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(relaycommon.VideoTaskPublicRequestContextKey, normalizedRequest)
+	c.Set("platform", strconv.Itoa(constant.ChannelTypeLeonardoVideo))
+	c.Set("model_mapping", `{"leonardo-minimax-h3-2160p":"minimax-h3-2160p"}`)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeLeonardoVideo)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 690)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, "http://leonardo-video.invalid")
+	common.SetContextKey(c, constant.ContextKeyChannelKey, "provider-key")
+	common.SetContextKey(c, constant.ContextKeyOriginalModel, normalizedRequest.Model)
+
+	info := &relaycommon.RelayInfo{
+		UserId:          39,
+		TokenId:         399,
+		OriginModelName: normalizedRequest.Model,
+		UsingGroup:      "default",
+		UserGroup:       "default",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	result, taskErr := RelayTaskSubmit(c, info)
+
+	require.Nil(t, result)
+	require.NotNil(t, taskErr, "the zero-balance fixture must stop before upstream dispatch")
+	assert.NotEqual(t, "unsupported_video_model", taskErr.Code)
+	require.NotNil(t, info.PriceData.VideoPricing)
+	assert.Equal(t, "minimax-h3-2160p", info.UpstreamModelName)
+	assert.Equal(t, duration, info.PriceData.VideoPricing.Seconds)
+	assert.Equal(t, 0.01, info.PriceData.VideoPricing.UnitPrice)
+	assert.Equal(t, common.QuotaFromFloat(0.01*float64(duration)*common.QuotaPerUnit), info.PriceData.Quota)
+	assert.Equal(t, "wallet_only", info.BillingPreferenceOverride)
+}
+
 func TestGeminiProFixedPriceSkipsGlobalAsyncImageUsagePrecharge(t *testing.T) {
 	originalSetting := *image_handle_setting.GetImageHandleSetting()
 	t.Cleanup(func() {

@@ -51,10 +51,6 @@ func TestLeonardoModelListAndRegistrationContract(t *testing.T) {
 		"minimax-h3-1440p",
 	}, (&TaskAdaptor{}).GetModelList())
 	assert.NotContains(t, ModelList, "seedance-2.0-2160p")
-	assert.True(t, isSupportedProviderModel("seedance-3.0-ultra-1440p"))
-	assert.False(t, isSupportedProviderModel("seedance-2.0-2160p"))
-	assert.False(t, isSupportedProviderModel("seedance-2.5-1080p"))
-	assert.False(t, isSupportedProviderModel("leonardo-seedance-3.0-720p"))
 }
 
 func TestLeonardoMiniMaxH3FramePayload(t *testing.T) {
@@ -126,8 +122,8 @@ func TestLeonardoMiniMaxH3ReferenceRulesAreDelegatedUpstream(t *testing.T) {
 	}
 }
 
-func TestLeonardoMiniMaxH3DurationStartsAtFiveSeconds(t *testing.T) {
-	for duration, valid := range map[int]bool{4: false, 5: true, 15: true, 16: false} {
+func TestLeonardoDurationOnlyRequiresPositiveSeconds(t *testing.T) {
+	for duration, valid := range map[int]bool{-1: false, 0: false, 1: true, 4: true, 5: true, 16: true, 60: true} {
 		request := leonardoRequest("leonardo-minimax-h3-1440p", duration)
 		taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
 			leonardoVideoTestContext(), leonardoInfo("minimax-h3-1440p"), request,
@@ -142,16 +138,11 @@ func TestLeonardoMiniMaxH3DurationStartsAtFiveSeconds(t *testing.T) {
 }
 
 func TestLeonardoSeedance25DurationAndFramePayload(t *testing.T) {
-	for duration, valid := range map[int]bool{3: false, 4: true, 15: true, 30: true, 31: false} {
+	for _, duration := range []int{1, 3, 4, 15, 30, 31} {
 		request := leonardoRequest("leonardo-seedance-2.5-720p", duration)
 		info := leonardoInfo("seedance-2.5-720p")
 		c := leonardoVideoTestContext()
 		taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(c, info, request)
-		if !valid {
-			require.NotNil(t, taskErr)
-			assert.Equal(t, "invalid_video_duration", taskErr.Code)
-			continue
-		}
 		require.Nil(t, taskErr)
 		require.Nil(t, (&TaskAdaptor{}).ValidateNormalizedVideoModel(c, info))
 	}
@@ -179,7 +170,7 @@ func TestLeonardoSeedance25DurationAndFramePayload(t *testing.T) {
 	require.NoError(t, common.Unmarshal(data, &payload))
 	assert.Equal(t, "seedance-2.5-720p", payload["model"])
 	assert.Equal(t, "frame", payload["reference_mode"])
-	assert.EqualValues(t, -1, payload["seed"])
+	assert.NotContains(t, payload, "seed")
 	assert.Len(t, payload["image_references"], 2)
 }
 
@@ -244,9 +235,7 @@ func TestLeonardoFutureSeedanceMappingUsesDefaultContract(t *testing.T) {
 	assert.Len(t, payload["image_references"], 1)
 
 	request = leonardoRequest("leonardo-seedance-3.0-ultra-1440p", 16)
-	taskErr := adaptor.PrepareNormalizedVideoRequest(leonardoVideoTestContext(), info, request)
-	require.NotNil(t, taskErr)
-	assert.Equal(t, "invalid_video_duration", taskErr.Code)
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(leonardoVideoTestContext(), info, request))
 }
 
 func TestPrepareAndBuildLeonardoRequestUsesOnlyUpstreamFields(t *testing.T) {
@@ -283,7 +272,7 @@ func TestPrepareAndBuildLeonardoRequestUsesOnlyUpstreamFields(t *testing.T) {
 	assert.Equal(t, "9:16", payload["aspect_ratio"])
 	assert.Equal(t, false, payload["generate_audio"])
 	assert.Equal(t, false, payload["public"])
-	assert.EqualValues(t, -1, payload["seed"])
+	assert.NotContains(t, payload, "seed")
 	assert.Equal(t, "media", payload["reference_mode"])
 	assert.NotContains(t, payload, "reference_images")
 	assert.NotContains(t, payload, "reference_videos")
@@ -349,13 +338,8 @@ func TestLeonardoReferenceAndParameterLimits(t *testing.T) {
 		mutate func(*dto.VideoTaskCreateRequest)
 		code   string
 	}{
-		{name: "duration below minimum", mutate: func(r *dto.VideoTaskCreateRequest) { d := 3; r.Output.Duration = &d }, code: "invalid_video_duration"},
-		{name: "duration above maximum", mutate: func(r *dto.VideoTaskCreateRequest) { d := 16; r.Output.Duration = &d }, code: "invalid_video_duration"},
 		{name: "resolution is model bound", mutate: func(r *dto.VideoTaskCreateRequest) { v := "480p"; r.Output.Resolution = &v }, code: "invalid_video_parameter"},
 		{name: "edit is unsupported", mutate: func(r *dto.VideoTaskCreateRequest) { r.Operation = "edit" }, code: "unsupported_video_operation"},
-		{name: "invalid reference mode", mutate: func(r *dto.VideoTaskCreateRequest) {
-			r.Input.ReferenceMode = "storyboard"
-		}, code: "unsupported_reference_mode"},
 		{name: "input video", mutate: func(r *dto.VideoTaskCreateRequest) {
 			r.Input.Video = &dto.VideoTaskSource{URL: "https://example.com/a.mp4"}
 		}, code: "unsupported_video_input"},
@@ -424,10 +408,6 @@ func TestLeonardoReferenceCountBoundaries(t *testing.T) {
 		modelName := modelName
 		t.Run(modelName+" shares broad envelope", func(t *testing.T) {
 			request := base()
-			if isMiniMaxH3Model(modelName) {
-				duration := 5
-				request.Output.Duration = &duration
-			}
 			request.Input.ReferenceImages = makeSources(dto.VideoTaskMaxReferenceImages, "image")
 			request.Input.ReferenceVideos = makeSources(dto.VideoTaskMaxReferenceVideos, "video")
 			request.Input.ReferenceAudios = makeSources(dto.VideoTaskMaxReferenceAudios, "audio")
@@ -456,26 +436,33 @@ func TestLeonardoReferenceCountBoundaries(t *testing.T) {
 	assert.Equal(t, "reference_audio_limit_exceeded", err.Code)
 }
 
-func TestLeonardoMiniMaxH3RejectsDisabledNativeAudioBeforeBilling(t *testing.T) {
+func TestLeonardoMiniMaxH3DelegatesNativeAudioRulesUpstream(t *testing.T) {
 	request := leonardoRequest("leonardo-minimax-h3-1440p", 5)
 	request.Output.GenerateAudio = common.GetPointer(false)
-	taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
-		leonardoVideoTestContext(), leonardoInfo("minimax-h3-1440p"), request,
-	)
-	require.NotNil(t, taskErr)
-	assert.Equal(t, "invalid_video_parameter", taskErr.Code)
+	c := leonardoVideoTestContext()
+	info := leonardoInfo("minimax-h3-1440p")
+	require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(c, info, request))
+	require.Nil(t, (&TaskAdaptor{}).ValidateNormalizedVideoModel(c, info))
 }
 
-func TestLeonardoReferenceNamesAreUniqueAcrossMediaTypes(t *testing.T) {
+func TestLeonardoReferenceModesAndDuplicateNamesAreDelegatedUpstream(t *testing.T) {
 	request := leonardoRequest("leonardo-seedance-2.0-fast-480p", 4)
-	request.Input.ReferenceMode = "media"
+	request.Input.ReferenceMode = "storyboard"
 	request.Input.Image = &dto.VideoTaskSource{URL: "https://example.com/image.png", Name: "subject"}
 	request.Input.ReferenceAudios = []dto.VideoTaskSource{{URL: "https://example.com/audio.mp3", Name: "subject"}}
-	taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(
-		leonardoVideoTestContext(), leonardoInfo("seedance-2.0-fast-480p"), request,
-	)
-	require.NotNil(t, taskErr)
-	assert.Equal(t, "invalid_video_parameter", taskErr.Code)
+	c := leonardoVideoTestContext()
+	info := leonardoInfo("seedance-2.0-fast-480p")
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, request))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "storyboard", payload["reference_mode"])
+	assert.Len(t, payload["image_references"], 1)
+	assert.Len(t, payload["audio_references"], 1)
 }
 
 func TestLeonardoModelAndAspectValidation(t *testing.T) {
@@ -492,19 +479,59 @@ func TestLeonardoModelAndAspectValidation(t *testing.T) {
 	request := leonardoRequest("leonardo-seedance-2.0-fast-480p", duration)
 	badRatio := "2:1"
 	request.Output.AspectRatio = &badRatio
-	err := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), leonardoInfo("seedance-2.0-fast-480p"), request)
-	require.NotNil(t, err)
-	assert.Equal(t, "invalid_video_aspect_ratio", err.Code)
+	require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), leonardoInfo("seedance-2.0-fast-480p"), request))
 
 	for _, modelName := range []string{"seedance-2.0", "seedance-2.0-2160p", "unknown-model"} {
 		modelRequest := leonardoRequest("leonardo-seedance-2.0-fast-480p", duration)
 		c := leonardoVideoTestContext()
 		info := leonardoInfo(modelName)
 		require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(c, info, modelRequest))
-		err := (&TaskAdaptor{}).ValidateNormalizedVideoModel(c, info)
-		require.NotNil(t, err)
-		assert.Equal(t, "unsupported_video_model", err.Code)
+		require.Nil(t, (&TaskAdaptor{}).ValidateNormalizedVideoModel(c, info))
 	}
+
+	emptyContext := leonardoVideoTestContext()
+	emptyContext.Set(videoRequestContextKey, &normalizedRequest{Duration: duration, AspectRatio: "16:9"})
+	err := (&TaskAdaptor{}).ValidateNormalizedVideoModel(emptyContext, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}})
+	require.NotNil(t, err)
+	assert.Equal(t, "unsupported_video_model", err.Code)
+}
+
+func TestLeonardoArbitraryMappedSKUDelegatesCapabilitiesUpstream(t *testing.T) {
+	duration := 37
+	aspectRatio := "2:1"
+	request := leonardoRequest("leonardo-minimax-h3-2160p", duration)
+	request.Output.AspectRatio = &aspectRatio
+	request.Output.GenerateAudio = common.GetPointer(false)
+	request.Input.ReferenceMode = "storyboard"
+	request.Input.ReferenceImages = []dto.VideoTaskSource{{URL: "https://example.com/image.png"}}
+	request.Input.ReferenceVideos = []dto.VideoTaskSource{{URL: "https://example.com/video.mp4"}}
+	request.Input.ReferenceAudios = []dto.VideoTaskSource{{URL: "https://example.com/audio.wav"}}
+	info := leonardoInfo("minimax-h3-2160p")
+	c := leonardoVideoTestContext()
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, request))
+	require.Nil(t, adaptor.ValidateNormalizedVideoModel(c, info))
+	estimate, taskErr := adaptor.ResolveVideoBilling(c, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, duration, estimate.Seconds)
+	assert.Equal(t, types.VideoPricingBasisGeneration, estimate.Basis)
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "minimax-h3-2160p", payload["model"])
+	assert.EqualValues(t, duration, payload["duration"])
+	assert.Equal(t, aspectRatio, payload["aspect_ratio"])
+	assert.Equal(t, false, payload["generate_audio"])
+	assert.NotContains(t, payload, "seed")
+	assert.Equal(t, "storyboard", payload["reference_mode"])
+	assert.Len(t, payload["image_references"], 1)
+	assert.Len(t, payload["video_references"], 1)
+	assert.Len(t, payload["audio_references"], 1)
 }
 
 func TestLeonardoTaskLifecycleAndErrorMasking(t *testing.T) {
