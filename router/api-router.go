@@ -51,6 +51,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			canvasRoute.GET("/authorization/context", middleware.UserAuth(), controller.GetCanvasAuthorizationContext)
 			canvasRoute.POST("/authorization/code", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.CreateCanvasAuthorizationCode)
+			canvasRoute.POST("/authorization/sync", middleware.CORS(), middleware.CriticalRateLimit(), middleware.AssetKeyAuth(), controller.SyncCanvasModels)
 			canvasRoute.POST("/oauth/token", middleware.CORS(), middleware.CriticalRateLimit(), controller.ExchangeCanvasAuthorizationCode)
 			canvasAdminRoute := canvasRoute.Group("/admin")
 			canvasAdminRoute.Use(middleware.AdminAuth())

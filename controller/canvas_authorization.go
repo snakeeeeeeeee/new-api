@@ -73,6 +73,21 @@ func ExchangeCanvasAuthorizationCode(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func SyncCanvasModels(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	var request service.CanvasModelSyncRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		canvasOAuthError(c, &service.CanvasAuthorizationError{Code: "invalid_request", Message: "Canvas 模型同步参数无效"})
+		return
+	}
+	result, err := service.SyncCanvasModels(c.GetInt("id"), c.GetInt64("asset_key_id"), request)
+	if err != nil {
+		canvasOAuthError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func canvasAuthorizationRequestFromQuery(c *gin.Context) service.CanvasAuthorizationRequest {
 	return service.CanvasAuthorizationRequest{
 		ClientId: c.Query("client_id"), RedirectUri: c.Query("redirect_uri"), State: c.Query("state"),

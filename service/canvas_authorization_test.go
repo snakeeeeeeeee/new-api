@@ -165,6 +165,19 @@ func exchangeCanvasCode(code string) (CanvasTokenExchangeResult, error) {
 	})
 }
 
+func canvasModelSyncRequest(credentials CanvasTokenExchangeResult) CanvasModelSyncRequest {
+	return CanvasModelSyncRequest{
+		ClientId: CanvasClientId, ImageApiKey: credentials.ImageApiKey, VideoApiKey: credentials.VideoApiKey,
+	}
+}
+
+func syncCanvasModels(t *testing.T, userId int, credentials CanvasTokenExchangeResult) (CanvasModelSyncResult, error) {
+	t.Helper()
+	assetKey, err := model.GetAssetKeyByKey(credentials.ResourceApiKey)
+	require.NoError(t, err)
+	return SyncCanvasModels(userId, assetKey.ID, canvasModelSyncRequest(credentials))
+}
+
 func requireCanvasErrorCode(t *testing.T, err error, code string) *CanvasAuthorizationError {
 	t.Helper()
 	var typed *CanvasAuthorizationError
@@ -274,6 +287,94 @@ func TestCanvasAuthorizationFirstRepeatAndCredentialRepair(t *testing.T) {
 	require.Equal(t, "canvas-images", imageToken.Name)
 	require.Equal(t, "default", imageToken.Group)
 	require.Equal(t, "canvas-image", imageToken.ModelLimits)
+}
+
+func TestCanvasModelSyncUpdatesExistingGrantTokens(t *testing.T) {
+	setupCanvasAuthorizationTest(t)
+	seedCanvasUser(t, 9210)
+	credentials, err := exchangeCanvasCode(issueCanvasCode(t, 9210).Code)
+	require.NoError(t, err)
+
+	require.NoError(t, model.DB.Create([]model.Model{
+		{ModelName: "canvas-image-new", Endpoints: `{"image-generation":{}}`, Status: 1},
+		{ModelName: "canvas-video-new", Endpoints: `{"video-task":{}}`, Status: 1},
+	}).Error)
+	require.NoError(t, model.DB.Create([]model.Ability{
+		{Group: "default", Model: "canvas-image-new", ChannelId: 9101, Enabled: true},
+		{Group: "vip", Model: "canvas-video-new", ChannelId: 9102, Enabled: true},
+	}).Error)
+	model.RefreshPricing()
+
+	var grant model.CanvasGrant
+	require.NoError(t, model.DB.Where("user_id = ?", 9210).First(&grant).Error)
+	result, err := syncCanvasModels(t, 9210, credentials)
+	require.NoError(t, err)
+	require.Equal(t, []string{"canvas-image", "canvas-image-new"}, result.ImageModels)
+	require.Equal(t, []string{"canvas-video", "canvas-video-new"}, result.VideoModels)
+	require.NotZero(t, result.SyncedAt)
+
+	var imageToken, videoToken model.Token
+	require.NoError(t, model.DB.First(&imageToken, grant.ImageTokenId).Error)
+	require.NoError(t, model.DB.First(&videoToken, grant.VideoTokenId).Error)
+	require.Equal(t, strings.TrimPrefix(credentials.ImageApiKey, "sk-"), imageToken.Key)
+	require.Equal(t, strings.TrimPrefix(credentials.VideoApiKey, "sk-"), videoToken.Key)
+	require.Equal(t, "canvas-image,canvas-image-new", imageToken.ModelLimits)
+	require.Equal(t, "canvas-video,canvas-video-new", videoToken.ModelLimits)
+}
+
+func TestCanvasModelSyncRejectsInvalidOrDisabledCredentialsWithoutRepair(t *testing.T) {
+	setupCanvasAuthorizationTest(t)
+	seedCanvasUser(t, 9211)
+	credentials, err := exchangeCanvasCode(issueCanvasCode(t, 9211).Code)
+	require.NoError(t, err)
+
+	wrong := canvasModelSyncRequest(credentials)
+	wrong.VideoApiKey = credentials.ImageApiKey
+	assetKey, assetErr := model.GetAssetKeyByKey(credentials.ResourceApiKey)
+	require.NoError(t, assetErr)
+	_, err = SyncCanvasModels(9211, assetKey.ID, wrong)
+	requireCanvasErrorCode(t, err, "invalid_credentials")
+
+	var grant model.CanvasGrant
+	require.NoError(t, model.DB.Where("user_id = ?", 9211).First(&grant).Error)
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", grant.ImageTokenId).Updates(map[string]any{
+		"status": common.TokenStatusDisabled, "model_limits": "stale-image",
+	}).Error)
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", grant.VideoTokenId).Update("model_limits", "stale-video").Error)
+
+	_, err = syncCanvasModels(t, 9211, credentials)
+	requireCanvasErrorCode(t, err, "invalid_credentials")
+	var imageToken, videoToken model.Token
+	require.NoError(t, model.DB.First(&imageToken, grant.ImageTokenId).Error)
+	require.NoError(t, model.DB.First(&videoToken, grant.VideoTokenId).Error)
+	require.Equal(t, common.TokenStatusDisabled, imageToken.Status)
+	require.Equal(t, "stale-image", imageToken.ModelLimits)
+	require.Equal(t, "stale-video", videoToken.ModelLimits)
+}
+
+func TestCanvasModelSyncRechecksGroupPermission(t *testing.T) {
+	setupCanvasAuthorizationTest(t)
+	seedCanvasUser(t, 9212)
+	credentials, err := exchangeCanvasCode(issueCanvasCode(t, 9212).Code)
+	require.NoError(t, err)
+	setCanvasTestConfig("default", "restricted")
+
+	_, err = syncCanvasModels(t, 9212, credentials)
+	typed := requireCanvasErrorCode(t, err, "group_forbidden")
+	require.Equal(t, []string{"restricted"}, typed.MissingGroups)
+}
+
+func TestCanvasModelSyncRejectsDisabledResourceKey(t *testing.T) {
+	setupCanvasAuthorizationTest(t)
+	seedCanvasUser(t, 9213)
+	credentials, err := exchangeCanvasCode(issueCanvasCode(t, 9213).Code)
+	require.NoError(t, err)
+	assetKey, err := model.GetAssetKeyByKey(credentials.ResourceApiKey)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&model.AssetKey{}).Where("id = ?", assetKey.ID).Update("status", model.AssetKeyStatusDisabled).Error)
+
+	_, err = SyncCanvasModels(9213, assetKey.ID, canvasModelSyncRequest(credentials))
+	requireCanvasErrorCode(t, err, "invalid_credentials")
 }
 
 func TestCanvasAuthorizationRepairsSharedGrantToken(t *testing.T) {

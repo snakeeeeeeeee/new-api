@@ -110,6 +110,18 @@ type CanvasTokenExchangeResult struct {
 	AuthorizedAt   int64    `json:"authorized_at"`
 }
 
+type CanvasModelSyncRequest struct {
+	ClientId    string `json:"client_id"`
+	ImageApiKey string `json:"image_api_key"`
+	VideoApiKey string `json:"video_api_key"`
+}
+
+type CanvasModelSyncResult struct {
+	ImageModels []string `json:"image_models"`
+	VideoModels []string `json:"video_models"`
+	SyncedAt    int64    `json:"synced_at"`
+}
+
 func canvasError(code, message string) error {
 	return &CanvasAuthorizationError{Code: code, Message: message}
 }
@@ -469,6 +481,110 @@ func ExchangeCanvasAuthorizationCode(request CanvasTokenExchangeRequest) (Canvas
 	model.RefreshTokenCacheById(imageTokenId)
 	model.RefreshTokenCacheById(videoTokenId)
 	return result, nil
+}
+
+func SyncCanvasModels(userId int, assetKeyId int64, request CanvasModelSyncRequest) (CanvasModelSyncResult, error) {
+	if userId == 0 || assetKeyId == 0 || request.ClientId != CanvasClientId {
+		return CanvasModelSyncResult{}, canvasError("invalid_client", "不支持的 Canvas 客户端")
+	}
+	imageKey := canvasTokenKey(request.ImageApiKey)
+	videoKey := canvasTokenKey(request.VideoApiKey)
+	if imageKey == "" || videoKey == "" || imageKey == videoKey {
+		return CanvasModelSyncResult{}, canvasError("invalid_credentials", "Canvas 授权凭证无效，请重新授权")
+	}
+	imageToken, imageErr := model.GetTokenByKey(imageKey, true)
+	videoToken, videoErr := model.GetTokenByKey(videoKey, true)
+	if imageErr != nil || videoErr != nil || imageToken.UserId != userId || videoToken.UserId != userId {
+		return CanvasModelSyncResult{}, canvasError("invalid_credentials", "Canvas 授权凭证无效，请重新授权")
+	}
+	config := GetCanvasConfig()
+	if !config.Enabled || len(config.ImageModels) == 0 || len(config.VideoModels) == 0 {
+		return CanvasModelSyncResult{}, canvasError("invalid_canvas_config", "Canvas 授权配置不可用，请联系管理员")
+	}
+
+	var result CanvasModelSyncResult
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		now := time.Now().Unix()
+		var user model.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, userId).Error; err != nil {
+			return err
+		}
+		if err := validateCanvasUser(&user, config); err != nil {
+			return err
+		}
+		var assetKey model.AssetKey
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", assetKeyId, userId).First(&assetKey).Error; err != nil {
+			return canvasError("invalid_credentials", "Canvas Resource Key 不可用，请重新授权")
+		}
+		if assetKey.Status != model.AssetKeyStatusEnabled || assetKey.IsExpired(now) || !model.AssetKeyHasScope(assetKey.Scopes, model.AssetKeyScopeRead) {
+			return canvasError("invalid_credentials", "Canvas Resource Key 不可用，请重新授权")
+		}
+		var currentAssetKey model.AssetKey
+		if err := tx.Where("user_id = ?", userId).Order("id DESC").First(&currentAssetKey).Error; err != nil || currentAssetKey.ID != assetKey.ID {
+			return canvasError("invalid_credentials", "Canvas Resource Key 不可用，请重新授权")
+		}
+
+		var grant model.CanvasGrant
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ? AND client_id = ?", userId, CanvasClientId).First(&grant).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return canvasError("invalid_credentials", "Canvas 授权凭证无效，请重新授权")
+			}
+			return err
+		}
+		if grant.ImageTokenId != imageToken.Id || grant.VideoTokenId != videoToken.Id || grant.ImageTokenId == grant.VideoTokenId {
+			return canvasError("invalid_credentials", "Canvas 授权凭证无效，请重新授权")
+		}
+
+		var lockedImageToken, lockedVideoToken model.Token
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", grant.ImageTokenId, userId).First(&lockedImageToken).Error; err != nil {
+			return canvasError("invalid_credentials", "Canvas 图片凭证不可用，请重新授权")
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", grant.VideoTokenId, userId).First(&lockedVideoToken).Error; err != nil {
+			return canvasError("invalid_credentials", "Canvas 视频凭证不可用，请重新授权")
+		}
+		if !canvasTokenMatches(&lockedImageToken, imageKey, now) || !canvasTokenMatches(&lockedVideoToken, videoKey, now) {
+			return canvasError("invalid_credentials", "Canvas 授权凭证不可用，请重新授权")
+		}
+		if err := syncCanvasToken(tx, &lockedImageToken, config.ImageGroup, config.ImageModels); err != nil {
+			return err
+		}
+		if err := syncCanvasToken(tx, &lockedVideoToken, config.VideoGroup, config.VideoModels); err != nil {
+			return err
+		}
+		result = CanvasModelSyncResult{ImageModels: config.ImageModels, VideoModels: config.VideoModels, SyncedAt: now}
+		return nil
+	})
+	if err != nil {
+		return CanvasModelSyncResult{}, err
+	}
+	model.RefreshTokenCacheById(imageToken.Id)
+	model.RefreshTokenCacheById(videoToken.Id)
+	return result, nil
+}
+
+func canvasTokenKey(value string) string {
+	return strings.TrimPrefix(strings.TrimSpace(value), "sk-")
+}
+
+func canvasTokenMatches(token *model.Token, key string, now int64) bool {
+	if token == nil || token.Status != common.TokenStatusEnabled || (token.ExpiredTime != -1 && token.ExpiredTime < now) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token.Key), []byte(key)) == 1
+}
+
+func syncCanvasToken(tx *gorm.DB, token *model.Token, group string, models []string) error {
+	modelLimits := strings.Join(models, ",")
+	if err := tx.Model(token).Updates(map[string]any{
+		"model_limits_enabled": true,
+		"model_limits":         modelLimits,
+		"group":                group,
+		"cross_group_retry":    false,
+	}).Error; err != nil {
+		return err
+	}
+	token.ModelLimitsEnabled, token.ModelLimits, token.Group, token.CrossGroupRetry = true, modelLimits, group, false
+	return nil
 }
 
 func getCanvasGrantToken(tx *gorm.DB, tokenId, userId int) (*model.Token, bool, error) {
