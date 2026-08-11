@@ -5174,6 +5174,10 @@
     "传统同步": "Legacy synchronous",
     "Adobe2API 异步图片": "Adobe2API async images",
     "生成中": "Generating",
-    "收尾中": "Finalizing"
+    "收尾中": "Finalizing",
+    "上游接口": "Upstream API",
+    "请选择上游接口": "Select an upstream API",
+    "xAI 官方 API": "Official xAI API",
+    "2KEN API": "2KEN API"
   }
 }

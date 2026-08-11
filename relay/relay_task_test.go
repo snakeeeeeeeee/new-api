@@ -888,6 +888,26 @@ func TestRelayTaskSubmitImagePricingNormalizesBeforeMappingAndPersistsSnapshot(t
 	assert.Equal(t, "gpt-image-2", lease.Model)
 }
 
+func TestBuildAsyncImageTaskRequestSnapshotPreservesEditImages(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", nil)
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: "grok-imagine-image", Prompt: "combine references", Mode: "edit",
+		Images: []string{"https://cdn.example.com/first.png", "https://cdn.example.com/second.png"},
+	})
+	info := &relaycommon.RelayInfo{OriginModelName: "grok-imagine-image", ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "grok-imagine-image"}}
+
+	snapshot, err := buildAsyncImageTaskRequestSnapshot(c, info)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(snapshot.request, &payload))
+	images := payload["images"].([]any)
+	require.Len(t, images, 2)
+	assert.Equal(t, "https://cdn.example.com/first.png", images[0].(map[string]any)["url"])
+	assert.Equal(t, "https://cdn.example.com/second.png", images[1].(map[string]any)["url"])
+}
+
 func TestRelayTaskSubmitImageHandleMarksTaskAndLeaseFailedWhenSubmitFails(t *testing.T) {
 	db := setupRelayTaskTestDB(t)
 	originalSetting := *image_handle_setting.GetImageHandleSetting()

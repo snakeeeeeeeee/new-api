@@ -1144,17 +1144,29 @@ func buildAsyncImageRequestSnapshot(c *gin.Context, relayInfo *relaycommon.Relay
 	if err != nil {
 		return nil, err
 	}
-	if taskReq.Metadata != nil {
-		if raw, ok := rawMetadataValue(taskReq.Metadata["resolution"]); ok {
-			var auditRequest map[string]json.RawMessage
-			if err := common.Unmarshal(data, &auditRequest); err != nil {
-				return nil, err
+	if len(images) > 0 || taskReq.Metadata != nil {
+		var auditRequest map[string]json.RawMessage
+		if err := common.Unmarshal(data, &auditRequest); err != nil {
+			return nil, err
+		}
+		if len(images) > 0 {
+			sources := make([]map[string]string, 0, len(images))
+			for _, image := range images {
+				sources = append(sources, map[string]string{"url": image})
 			}
-			auditRequest["resolution"] = raw
-			data, err = common.Marshal(auditRequest)
+			auditRequest["images"], err = common.Marshal(sources)
 			if err != nil {
 				return nil, err
 			}
+		}
+		if taskReq.Metadata != nil {
+			if raw, ok := rawMetadataValue(taskReq.Metadata["resolution"]); ok {
+				auditRequest["resolution"] = raw
+			}
+		}
+		data, err = common.Marshal(auditRequest)
+		if err != nil {
+			return nil, err
 		}
 	}
 	return &asyncImageRequestSnapshot{

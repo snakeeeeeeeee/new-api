@@ -782,7 +782,8 @@ func imageHandleBase64UploadItemsFromValue(value any, fallbackField string, fall
 		}
 		return items, nil
 	case map[string]any:
-		if url := imageHandleStringMapValue(typed, "url"); isImageHandleSyncURL(url) {
+		urlValue := firstNonEmpty(imageHandleStringMapValue(typed, "url"), imageHandleStringMapValue(typed, "image_url"))
+		if isImageHandleSyncURL(urlValue) {
 			return nil, nil
 		}
 		data := firstNonEmpty(
@@ -791,6 +792,7 @@ func imageHandleBase64UploadItemsFromValue(value any, fallbackField string, fall
 			imageHandleStringMapValue(typed, "data"),
 			imageHandleStringMapValue(typed, "image"),
 			imageHandleStringMapValue(typed, "url"),
+			imageHandleStringMapValue(typed, "image_url"),
 		)
 		if data == "" {
 			return nil, fmt.Errorf("image edit base64 upload item must include b64_json, base64, data, or image")
@@ -908,42 +910,80 @@ func recordImageHandleUploadErrorDetail(c *gin.Context, statusCode int, response
 func imageHandleSyncInputsFromRequest(request dto.ImageRequest) ([]string, *string, error) {
 	var images []string
 	if len(request.Image) > 0 {
-		var one string
-		if err := common.Unmarshal(request.Image, &one); err == nil && strings.TrimSpace(one) != "" {
-			images = append(images, strings.TrimSpace(one))
-		} else {
-			var many []string
-			if err := common.Unmarshal(request.Image, &many); err == nil {
-				for _, image := range many {
-					if strings.TrimSpace(image) != "" {
-						images = append(images, strings.TrimSpace(image))
-					}
-				}
-			} else if err != nil {
-				return nil, nil, fmt.Errorf("image-handle sync image edits only support image URL input")
-			}
+		parsed, err := imageHandleSyncInputValues(request.Image)
+		if err != nil {
+			return nil, nil, err
 		}
+		images = append(images, parsed...)
 	}
 	if len(request.Extra) > 0 {
 		if raw, ok := request.Extra["images"]; ok && len(raw) > 0 {
-			var many []string
-			if err := common.Unmarshal(raw, &many); err == nil {
-				for _, image := range many {
-					if strings.TrimSpace(image) != "" {
-						images = append(images, strings.TrimSpace(image))
-					}
-				}
+			parsed, err := imageHandleSyncInputValues(raw)
+			if err != nil {
+				return nil, nil, err
 			}
+			images = append(images, parsed...)
 		}
 		if raw, ok := request.Extra["mask"]; ok && len(raw) > 0 {
-			var mask string
-			if err := common.Unmarshal(raw, &mask); err == nil && strings.TrimSpace(mask) != "" {
-				mask = strings.TrimSpace(mask)
-				return images, &mask, nil
+			parsed, err := imageHandleSyncInputValues(raw)
+			if err != nil {
+				return nil, nil, err
+			}
+			if len(parsed) > 1 {
+				return nil, nil, fmt.Errorf("image-handle sync image edits accept at most one mask")
+			}
+			if len(parsed) == 1 {
+				return images, &parsed[0], nil
 			}
 		}
 	}
 	return images, nil, nil
+}
+
+func imageHandleSyncInputValues(raw json.RawMessage) ([]string, error) {
+	var value any
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("parse image-handle sync image edit input failed: %w", err)
+	}
+	return imageHandleSyncInputValuesFromAny(value)
+}
+
+func imageHandleSyncInputValuesFromAny(value any) ([]string, error) {
+	switch typed := value.(type) {
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil, nil
+		}
+		return []string{strings.TrimSpace(typed)}, nil
+	case []any:
+		values := make([]string, 0, len(typed))
+		for _, item := range typed {
+			parsed, err := imageHandleSyncInputValuesFromAny(item)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, parsed...)
+		}
+		return values, nil
+	case map[string]any:
+		if fileID := imageHandleStringMapValue(typed, "file_id"); fileID != "" {
+			return nil, fmt.Errorf("image-handle sync image edits do not support file_id input")
+		}
+		input := firstNonEmpty(
+			imageHandleStringMapValue(typed, "url"),
+			imageHandleStringMapValue(typed, "image_url"),
+			imageHandleStringMapValue(typed, "b64_json"),
+			imageHandleStringMapValue(typed, "base64"),
+			imageHandleStringMapValue(typed, "data"),
+			imageHandleStringMapValue(typed, "image"),
+		)
+		if input == "" {
+			return nil, fmt.Errorf("image-handle sync image edit source must contain url or image data")
+		}
+		return []string{input}, nil
+	default:
+		return nil, fmt.Errorf("image-handle sync image edits require URL, multipart file, or base64 image input")
+	}
 }
 
 func imageHandleSyncEditInputsAreURLs(request dto.ImageRequest) bool {

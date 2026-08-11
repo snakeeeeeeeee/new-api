@@ -582,11 +582,7 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	if adaptor == nil {
 		return fmt.Errorf("video adaptor not found")
 	}
-	info := &relaycommon.RelayInfo{}
-	info.ChannelMeta = &relaycommon.ChannelMeta{
-		ChannelBaseUrl: cacheGetChannel.GetBaseURL(),
-	}
-	info.ApiKey = cacheGetChannel.Key
+	info := taskPollingRelayInfo(cacheGetChannel)
 	adaptor.Init(info)
 	if batchAdaptor, ok := adaptor.(BatchTaskPollingAdaptor); ok && len(taskIds) > 1 {
 		if err := updateVideoBatchTasks(ctx, adaptor, batchAdaptor, cacheGetChannel, taskIds, taskM); err != nil {
@@ -602,6 +598,20 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 		time.Sleep(1 * time.Second)
 	}
 	return nil
+}
+
+func taskPollingRelayInfo(channel *model.Channel) *relaycommon.RelayInfo {
+	if channel == nil {
+		return &relaycommon.RelayInfo{}
+	}
+	return &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelType:          channel.Type,
+		ChannelId:            channel.Id,
+		ChannelBaseUrl:       channel.GetBaseURL(),
+		ApiKey:               channel.Key,
+		ChannelSetting:       channel.GetSetting(),
+		ChannelOtherSettings: channel.GetOtherSettings(),
+	}}
 }
 
 func failImageHandleTaskWithRefund(ctx context.Context, task *model.Task, reason string) {

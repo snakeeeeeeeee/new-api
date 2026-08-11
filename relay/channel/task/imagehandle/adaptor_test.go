@@ -1,6 +1,7 @@
 package imagehandle
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -125,6 +126,47 @@ func TestValidateRequestRejectsAsyncBase64ResultFormat(t *testing.T) {
 	require.NotNil(t, taskErr)
 	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 	assert.Equal(t, "unsupported_result_data_format", taskErr.Code)
+}
+
+func TestValidateRequestAppliesXAIGrokEditReferenceLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		model   string
+		variant string
+		images  int
+		wantErr bool
+	}{
+		{name: "official three", model: "grok-imagine-image", images: 3},
+		{name: "official rejects four", model: "grok-imagine-image", images: 4, wantErr: true},
+		{name: "2KEN base five", model: "grok-imagine-image", variant: dto.XAIAPIVariant2KEN, images: 5},
+		{name: "2KEN base rejects six", model: "grok-imagine-image", variant: dto.XAIAPIVariant2KEN, images: 6, wantErr: true},
+		{name: "2KEN quality rejects four", model: "grok-imagine-image-quality", variant: dto.XAIAPIVariant2KEN, images: 4, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			images := make([]string, test.images)
+			for index := range images {
+				images[index] = fmt.Sprintf("https://cdn.example.com/%d.png", index)
+			}
+			body, err := common.Marshal(relaycommon.TaskSubmitReq{Model: test.model, Prompt: "edit", Mode: "edit", Images: images})
+			require.NoError(t, err)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/image/tasks", strings.NewReader(string(body)))
+			c.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}, ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelType:          constant.ChannelTypeXai,
+				ChannelOtherSettings: dto.ChannelOtherSettings{XAIAPIVariant: test.variant},
+			}}
+
+			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+			if test.wantErr {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, "unsupported_image_input", taskErr.Code)
+				return
+			}
+			require.Nil(t, taskErr)
+		})
+	}
 }
 
 func TestValidateRequestPreservesResponseFormatContract(t *testing.T) {

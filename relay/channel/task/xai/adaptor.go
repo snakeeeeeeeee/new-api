@@ -2,10 +2,13 @@ package xai
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -24,9 +27,15 @@ import (
 
 const ChannelName = "xai"
 
+const xai2KENContentResolver = "xai-2ken-content"
+
 var ModelList = []string{
 	"grok-imagine-video",
 	"grok-imagine-video-1.5",
+	"grok-imagine-video-480p",
+	"grok-imagine-video-720p",
+	"grok-imagine-video-1.5-preview-480p",
+	"grok-imagine-video-1.5-preview-720p",
 }
 
 type requestPayload map[string]any
@@ -34,12 +43,17 @@ type requestPayload map[string]any
 type submitResponse struct {
 	RequestID string `json:"request_id"`
 	ID        string `json:"id,omitempty"`
+	TaskID    string `json:"task_id,omitempty"`
 }
 
 type taskResponse struct {
-	Status string `json:"status"`
-	Code   string `json:"code,omitempty"`
-	Video  *struct {
+	ID       string `json:"id,omitempty"`
+	TaskID   string `json:"task_id,omitempty"`
+	Status   string `json:"status"`
+	Code     string `json:"code,omitempty"`
+	Seconds  string `json:"seconds,omitempty"`
+	VideoURL string `json:"video_url,omitempty"`
+	Video    *struct {
 		URL               string `json:"url"`
 		Duration          int    `json:"duration"`
 		RespectModeration *bool  `json:"respect_moderation"`
@@ -57,21 +71,33 @@ type TaskAdaptor struct {
 	taskcommon.BaseBilling
 	apiKey  string
 	baseURL string
+	is2KEN  bool
 }
 
 func (a *TaskAdaptor) OpenAIVideoCompatibility() channel.OpenAIVideoCompatibility {
+	if a.is2KEN {
+		return channel.OpenAIVideoCompatibility{Generation: true}
+	}
 	return channel.OpenAIVideoCompatibility{Generation: true, Edit: true, Extension: true}
 }
+
+var (
+	_ channel.TaskAdaptor                = (*TaskAdaptor)(nil)
+	_ channel.NormalizedVideoTaskAdaptor = (*TaskAdaptor)(nil)
+	_ channel.VideoBillingEstimator      = (*TaskAdaptor)(nil)
+	_ channel.VideoContentResolver       = (*TaskAdaptor)(nil)
+)
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	if info == nil || info.ChannelMeta == nil {
 		return
 	}
-	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
+	a.baseURL = strings.TrimRight(strings.TrimSpace(info.ChannelBaseUrl), "/")
 	if a.baseURL == "" {
 		a.baseURL = constant.ChannelBaseURLs[constant.ChannelTypeXai]
 	}
 	a.apiKey = info.ApiKey
+	a.is2KEN = info.ChannelOtherSettings.IsXAI2KEN()
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -110,6 +136,9 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	}
 	if info.TaskRelayInfo == nil {
 		info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+	}
+	if a.is2KEN {
+		return a.prepare2KENNormalizedVideoRequest(c, info, request)
 	}
 	if request.Output.GenerateAudio != nil {
 		return xaiNormalizedVideoError("output.generate_audio is not supported by xAI")
@@ -235,10 +264,108 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 	return nil
 }
 
+func (a *TaskAdaptor) prepare2KENNormalizedVideoRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.VideoTaskCreateRequest) *dto.TaskError {
+	if request.Operation != "generation" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("2KEN only supports video generation"), "unsupported_video_operation", http.StatusBadRequest)
+	}
+	if strings.TrimSpace(request.Input.Prompt) == "" {
+		return xaiNormalizedVideoError("prompt is required")
+	}
+	if request.Output.GenerateAudio != nil {
+		return xaiNormalizedVideoError("output.generate_audio is not supported by 2KEN")
+	}
+	if request.Input.Video != nil {
+		return xaiUnsupportedVideoInput("2KEN generation does not accept input.video")
+	}
+	if len(request.Input.ReferenceVideos) > 0 || len(request.Input.ReferenceAudios) > 0 {
+		return xaiUnsupportedVideoInput("2KEN generation only accepts image reference media")
+	}
+	if request.Input.Image != nil && len(request.Input.ReferenceImages) > 0 {
+		return xaiUnsupportedVideoInput("2KEN image and reference_images generation modes are mutually exclusive")
+	}
+	if len(request.Input.ReferenceImages) > 2 {
+		return xaiUnsupportedVideoInput("2KEN reference_images supports at most 2 images")
+	}
+	referenceMode := strings.ToLower(strings.TrimSpace(request.Input.ReferenceMode))
+	if request.Input.Image != nil && referenceMode != "" && referenceMode != "frame" {
+		return xaiUnsupportedVideoInput("2KEN single image input requires reference_mode=frame")
+	}
+	if len(request.Input.ReferenceImages) > 0 && referenceMode != "" && referenceMode != "media" {
+		return xaiUnsupportedVideoInput("2KEN reference_images requires reference_mode=media")
+	}
+	if request.Input.Image == nil && len(request.Input.ReferenceImages) == 0 && referenceMode != "" {
+		return xaiUnsupportedVideoInput("2KEN reference_mode requires image input")
+	}
+	if len(request.ProviderOptions) > 0 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("provider_options are not supported by 2KEN"), "invalid_provider_options", http.StatusBadRequest)
+	}
+
+	_, modelResolution, supported := xai2KENVideoModel(request.Model)
+	if !supported {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported 2KEN public video model: %s", request.Model), "unsupported_video_model", http.StatusBadRequest)
+	}
+	duration := 4
+	if request.Output.Duration != nil {
+		duration = *request.Output.Duration
+	}
+	if duration < 1 || duration > 15 {
+		return xaiNormalizedVideoError("duration must be between 1 and 15 seconds")
+	}
+
+	payload := requestPayload{
+		"model":      strings.TrimSpace(request.Model),
+		"prompt":     strings.TrimSpace(request.Input.Prompt),
+		"duration":   duration,
+		"resolution": modelResolution,
+	}
+	if request.Output.Resolution != nil {
+		requestedResolution := strings.ToLower(strings.TrimSpace(*request.Output.Resolution))
+		if requestedResolution != modelResolution {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("resolution %s conflicts with public model resolution %s", requestedResolution, modelResolution),
+				"invalid_video_resolution", http.StatusBadRequest,
+			)
+		}
+	}
+	if request.Output.AspectRatio != nil {
+		aspectRatio := strings.TrimSpace(*request.Output.AspectRatio)
+		if !validXAIAspectRatio(aspectRatio) {
+			return xaiNormalizedVideoError("aspect_ratio is not supported by 2KEN")
+		}
+		payload["aspect_ratio"] = aspectRatio
+	}
+	if request.Input.Image != nil {
+		imageURL, taskErr := normalized2KENImageURL(*request.Input.Image)
+		if taskErr != nil {
+			return taskErr
+		}
+		payload["image"] = map[string]any{"url": imageURL}
+	}
+	if len(request.Input.ReferenceImages) > 0 {
+		references := make([]map[string]any, 0, len(request.Input.ReferenceImages))
+		for _, input := range request.Input.ReferenceImages {
+			imageURL, taskErr := normalized2KENImageURL(input)
+			if taskErr != nil {
+				return taskErr
+			}
+			references = append(references, map[string]any{"url": imageURL})
+		}
+		payload["reference_images"] = references
+	}
+
+	info.Action = constant.TaskActionVideoGeneration
+	info.OriginModelName = strings.TrimSpace(request.Model)
+	c.Set("xai_video_request", payload)
+	return nil
+}
+
 func (a *TaskAdaptor) ValidateNormalizedVideoModel(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	payload, err := getPayloadFromContext(c)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if a.is2KEN {
+		return validate2KENNormalizedVideoModel(info, payload)
 	}
 	modelName := ""
 	if info != nil {
@@ -262,6 +389,44 @@ func (a *TaskAdaptor) ValidateNormalizedVideoModel(c *gin.Context, info *relayco
 		return service.TaskErrorWrapperLocal(fmt.Errorf("1080p is only supported for xAI image-to-video generation"), "unsupported_video_resolution", http.StatusBadRequest)
 	}
 	return nil
+}
+
+func validate2KENNormalizedVideoModel(info *relaycommon.RelayInfo, payload requestPayload) *dto.TaskError {
+	publicModel := ""
+	upstreamModel := ""
+	if info != nil {
+		publicModel = strings.TrimSpace(info.OriginModelName)
+		upstreamModel = strings.TrimSpace(info.UpstreamModelName)
+	}
+	expectedUpstream, expectedResolution, supported := xai2KENVideoModel(publicModel)
+	if !supported {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported 2KEN public video model: %s", publicModel), "unsupported_video_model", http.StatusBadRequest)
+	}
+	if upstreamModel != expectedUpstream {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("2KEN model %s must map to %s, got %s", publicModel, expectedUpstream, upstreamModel),
+			"unsupported_video_model_mapping", http.StatusBadRequest,
+		)
+	}
+	if strings.ToLower(strings.TrimSpace(getString(payload, "resolution"))) != expectedResolution {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("2KEN public model resolution mapping is invalid"), "invalid_video_resolution", http.StatusBadRequest)
+	}
+	return nil
+}
+
+func xai2KENVideoModel(modelName string) (upstreamModel string, resolution string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(modelName)) {
+	case "grok-imagine-video-480p":
+		return "grok-imagine-video", "480p", true
+	case "grok-imagine-video-720p":
+		return "grok-imagine-video", "720p", true
+	case "grok-imagine-video-1.5-preview-480p":
+		return "grok-imagine-video-1.5-preview", "480p", true
+	case "grok-imagine-video-1.5-preview-720p":
+		return "grok-imagine-video-1.5-preview", "720p", true
+	default:
+		return "", "", false
+	}
 }
 
 func normalizedXAISource(source dto.VideoTaskSource) (map[string]any, *dto.TaskError) {
@@ -440,6 +605,9 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	}
 	switch action {
 	case constant.TaskActionVideoGeneration:
+		if a.is2KEN {
+			return fmt.Sprintf("%s/v1/videos", a.baseURL), nil
+		}
 		return fmt.Sprintf("%s/v1/videos/generations", a.baseURL), nil
 	case constant.TaskActionVideoEdit:
 		return fmt.Sprintf("%s/v1/videos/edits", a.baseURL), nil
@@ -472,12 +640,52 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if upstreamModel != "" {
 		payload["model"] = upstreamModel
 	}
+	if a.is2KEN {
+		seconds, exists := payloadInteger(payload, "duration")
+		if !exists || seconds < 1 || seconds > 15 {
+			return nil, fmt.Errorf("valid duration is required for 2KEN video generation")
+		}
+		upstreamPayload := requestPayload{
+			"model":      upstreamModel,
+			"prompt":     getString(payload, "prompt"),
+			"seconds":    strconv.Itoa(seconds),
+			"resolution": getString(payload, "resolution"),
+		}
+		if aspectRatio := strings.TrimSpace(getString(payload, "aspect_ratio")); aspectRatio != "" {
+			upstreamPayload["aspect_ratio"] = aspectRatio
+		}
+		if image, ok := payload["image"].(map[string]any); ok {
+			if imageURL, ok := image["url"].(string); ok && strings.TrimSpace(imageURL) != "" {
+				upstreamPayload["image_url"] = strings.TrimSpace(imageURL)
+			}
+		}
+		if references, ok := payload["reference_images"]; ok {
+			upstreamPayload["reference_images"] = references
+		}
+		body, err := common.Marshal(upstreamPayload)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(body), nil
+	}
 
 	body, err := common.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 	return bytes.NewReader(body), nil
+}
+
+func normalized2KENImageURL(source dto.VideoTaskSource) (string, *dto.TaskError) {
+	imageURL := strings.TrimSpace(source.URL)
+	if source.Provider != "" || source.FileID != "" {
+		return "", xaiUnsupportedVideoInput("2KEN image input only accepts a public URL")
+	}
+	lowerURL := strings.ToLower(imageURL)
+	if imageURL == "" || strings.HasPrefix(lowerURL, "data:") || (!strings.HasPrefix(lowerURL, "http://") && !strings.HasPrefix(lowerURL, "https://")) {
+		return "", xaiUnsupportedVideoInput("2KEN image input must be a public HTTP(S) URL")
+	}
+	return imageURL, nil
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -496,6 +704,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 	}
 	upstreamID := strings.TrimSpace(submit.RequestID)
+	if a.is2KEN && upstreamID == "" {
+		upstreamID = strings.TrimSpace(submit.TaskID)
+	}
 	if upstreamID == "" {
 		upstreamID = strings.TrimSpace(submit.ID)
 	}
@@ -523,7 +734,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	uri := fmt.Sprintf("%s/v1/videos/%s", baseUrl, taskID)
+	uri := fmt.Sprintf("%s/v1/videos/%s", strings.TrimRight(baseUrl, "/"), url.PathEscape(strings.TrimSpace(taskID)))
 	req, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {
 		return nil, err
@@ -556,23 +767,43 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		}
 	}
 	switch strings.ToLower(res.Status) {
+	case "queued":
+		if a.is2KEN {
+			taskResult.Status = model.TaskStatusQueued
+		}
 	case "pending":
 		taskResult.Status = model.TaskStatusInProgress
+	case "in_progress":
+		if a.is2KEN {
+			taskResult.Status = model.TaskStatusInProgress
+		}
 	case "done", "completed":
-		if res.Video == nil || strings.TrimSpace(res.Video.URL) == "" {
+		providerTaskID := firstNonEmpty(res.TaskID, res.ID)
+		if res.Video != nil && strings.TrimSpace(res.Video.URL) != "" {
+			taskResult.Status = model.TaskStatusSuccess
+			taskResult.Url = res.Video.URL
+			taskResult.VideoOutputs = []relaycommon.VideoOutput{{
+				Index: 0, URL: res.Video.URL, MimeType: "video/mp4",
+				DurationMS: int64(res.Video.Duration) * 1000,
+			}}
+		} else if a.is2KEN && providerTaskID != "" {
+			duration, _ := strconv.Atoi(strings.TrimSpace(res.Seconds))
+			taskResult.Status = model.TaskStatusSuccess
+			taskResult.VideoOutputs = []relaycommon.VideoOutput{{
+				Index:             0,
+				ProviderReference: providerTaskID,
+				Resolver:          xai2KENContentResolver,
+				MimeType:          "video/mp4",
+				Filename:          providerTaskID + ".mp4",
+				DurationMS:        int64(duration) * 1000,
+			}}
+		} else {
 			taskResult.Status = model.TaskStatusFailure
 			taskResult.Reason = "video url is empty"
 			if res.Video != nil && res.Video.RespectModeration != nil && !*res.Video.RespectModeration {
 				taskResult.Reason = "video rejected by moderation"
 			}
-			break
 		}
-		taskResult.Status = model.TaskStatusSuccess
-		taskResult.Url = res.Video.URL
-		taskResult.VideoOutputs = []relaycommon.VideoOutput{{
-			Index: 0, URL: res.Video.URL, MimeType: "video/mp4",
-			DurationMS: int64(res.Video.Duration) * 1000,
-		}}
 	case "failed", "expired":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Reason = "task failed"
@@ -589,6 +820,52 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Progress = fmt.Sprintf("%d%%", *res.Progress)
 	}
 	return &taskResult, nil
+}
+
+func (a *TaskAdaptor) ResolveVideoContent(ctx context.Context, providerChannel *model.Channel, task *model.Task, output relaycommon.VideoOutput, headers http.Header) (*http.Response, error) {
+	if providerChannel == nil || task == nil {
+		return nil, fmt.Errorf("video content context is incomplete")
+	}
+	if output.Resolver != xai2KENContentResolver {
+		return nil, fmt.Errorf("unsupported video content resolver %q", output.Resolver)
+	}
+	taskID := strings.TrimSpace(output.ProviderReference)
+	if taskID == "" {
+		taskID = strings.TrimSpace(task.GetUpstreamTaskID())
+	}
+	if taskID == "" {
+		return nil, fmt.Errorf("video provider task reference is missing")
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(providerChannel.GetBaseURL()), "/")
+	if baseURL == "" {
+		return nil, fmt.Errorf("2KEN channel base URL is required")
+	}
+	key := strings.TrimSpace(task.PrivateData.Key)
+	if key == "" {
+		key = strings.TrimSpace(providerChannel.Key)
+	}
+	if key == "" {
+		return nil, fmt.Errorf("2KEN channel key is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/videos/"+url.PathEscape(taskID)+"/content", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Accept", "video/*")
+	for _, name := range []string{"Range", "If-Range"} {
+		if value := headers.Get(name); value != "" {
+			req.Header.Set(name, value)
+		}
+	}
+	client, err := service.GetHttpClientWithProxy(providerChannel.GetSetting().Proxy)
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	return client.Do(req)
 }
 
 func xaiTaskErrorMessage(res taskResponse) string {

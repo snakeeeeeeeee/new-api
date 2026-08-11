@@ -5,6 +5,8 @@ import "strings"
 const (
 	ImageHandleExecutionDriverLegacySync      = "legacy_sync"
 	ImageHandleExecutionDriverAdobeAsyncImage = "adobe2api_async_image_v1"
+	XAIAPIVariantOfficial                     = "official"
+	XAIAPIVariant2KEN                         = "2ken"
 )
 
 func NormalizeImageHandleExecutionDriver(value string) string {
@@ -14,6 +16,13 @@ func NormalizeImageHandleExecutionDriver(value string) string {
 	default:
 		return ImageHandleExecutionDriverLegacySync
 	}
+}
+
+func NormalizeXAIAPIVariant(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), XAIAPIVariant2KEN) {
+		return XAIAPIVariant2KEN
+	}
+	return XAIAPIVariantOfficial
 }
 
 type ChannelSettings struct {
@@ -40,6 +49,7 @@ const (
 )
 
 type ChannelOtherSettings struct {
+	XAIAPIVariant                         string        `json:"xai_api_variant,omitempty"`
 	AzureResponsesVersion                 string        `json:"azure_responses_version,omitempty"`
 	ImageResponseAdapter                  string        `json:"image_response_adapter,omitempty"`
 	ImageHandleSyncMode                   string        `json:"image_handle_sync_mode,omitempty"`
@@ -63,6 +73,10 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateLastDetectedModels []string      `json:"upstream_model_update_last_detected_models,omitempty"` // 上次检测到的可加入模型
 	UpstreamModelUpdateLastRemovedModels  []string      `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
 	UpstreamModelUpdateIgnoredModels      []string      `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
+}
+
+func (s ChannelOtherSettings) IsXAI2KEN() bool {
+	return NormalizeXAIAPIVariant(s.XAIAPIVariant) == XAIAPIVariant2KEN
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

@@ -314,10 +314,12 @@ func resolveChannelBaseURL(channel *model.Channel) string {
 	if channel == nil {
 		return ""
 	}
+	ensureV1 := channel.Type == constant.ChannelTypeOpenAI ||
+		(channel.Type == constant.ChannelTypeXai && channel.GetOtherSettings().IsXAI2KEN())
 	if baseURL := strings.TrimRight(strings.TrimSpace(channel.GetBaseURL()), "/"); baseURL != "" {
-		return normalizeOpenAIImagesBaseURL(baseURL, channel.Type)
+		return normalizeOpenAIImagesBaseURL(baseURL, ensureV1)
 	}
-	return normalizeOpenAIImagesBaseURL(constant.ChannelBaseURLs[channel.Type], channel.Type)
+	return normalizeOpenAIImagesBaseURL(constant.ChannelBaseURLs[channel.Type], ensureV1)
 }
 
 func resolveGeminiChannelBaseURL(channel *model.Channel) string {
@@ -330,7 +332,7 @@ func resolveGeminiChannelBaseURL(channel *model.Channel) string {
 	return strings.TrimRight(strings.TrimSpace(constant.ChannelBaseURLs[channel.Type]), "/")
 }
 
-func normalizeOpenAIImagesBaseURL(baseURL string, channelType int) string {
+func normalizeOpenAIImagesBaseURL(baseURL string, ensureV1 bool) string {
 	normalized := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	for {
 		lower := strings.ToLower(normalized)
@@ -340,7 +342,7 @@ func normalizeOpenAIImagesBaseURL(baseURL string, channelType int) string {
 		case strings.HasSuffix(lower, "/images/edits"):
 			normalized = strings.TrimRight(normalized[:len(normalized)-len("/images/edits")], "/")
 		default:
-			if channelType == constant.ChannelTypeOpenAI && !strings.HasSuffix(strings.ToLower(normalized), "/v1") {
+			if ensureV1 && !strings.HasSuffix(strings.ToLower(normalized), "/v1") {
 				return normalized + "/v1"
 			}
 			return normalized

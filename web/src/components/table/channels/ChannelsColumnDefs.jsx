@@ -49,6 +49,24 @@ import {
 import { FaRandom } from 'react-icons/fa';
 
 // Render functions
+const is2KENXAIChannel = (type, record) => {
+  if (type !== 48 || !record || record.children !== undefined) {
+    return false;
+  }
+  const settings = record.settings;
+  if (settings && typeof settings === 'object') {
+    return settings.xai_api_variant === '2ken';
+  }
+  if (typeof settings !== 'string' || settings.trim() === '') {
+    return false;
+  }
+  try {
+    return JSON.parse(settings)?.xai_api_variant === '2ken';
+  } catch (error) {
+    return false;
+  }
+};
+
 const renderType = (type, record = {}, t) => {
   const channelInfo = record?.channel_info;
   let type2label = new Map();
@@ -76,7 +94,9 @@ const renderType = (type, record = {}, t) => {
 
   const typeTag = (
     <Tag color={type2label[type]?.color} shape='circle' prefixIcon={icon}>
-      {type2label[type]?.label}
+      {is2KENXAIChannel(type, record)
+        ? `${type2label[type]?.label} · 2KEN`
+        : type2label[type]?.label}
     </Tag>
   );
 

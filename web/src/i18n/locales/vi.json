@@ -5651,6 +5651,10 @@
     "传统同步": "Đồng bộ truyền thống",
     "Adobe2API 异步图片": "Ảnh bất đồng bộ Adobe2API",
     "生成中": "Đang tạo",
-    "收尾中": "Đang hoàn tất"
+    "收尾中": "Đang hoàn tất",
+    "上游接口": "API thượng nguồn",
+    "请选择上游接口": "Chọn API thượng nguồn",
+    "xAI 官方 API": "API xAI chính thức",
+    "2KEN API": "API 2KEN"
   }
 }

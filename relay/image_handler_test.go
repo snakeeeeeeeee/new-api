@@ -1217,6 +1217,19 @@ func TestApplyImageHandleUploadResponseToRequestMergesExistingURLInputs(t *testi
 	require.Equal(t, existingMask, *mask)
 }
 
+func TestImageHandleSyncInputsAcceptXAIImageSourceObjects(t *testing.T) {
+	t.Parallel()
+	request := dto.ImageRequest{Prompt: "edit", Extra: map[string]json.RawMessage{
+		"images": []byte(`[{"url":"https://cdn.example.com/first.png"},{"image_url":"https://cdn.example.com/second.png"}]`),
+	}}
+
+	images, mask, err := imageHandleSyncInputsFromRequest(request)
+	require.NoError(t, err)
+	require.Equal(t, []string{"https://cdn.example.com/first.png", "https://cdn.example.com/second.png"}, images)
+	require.Nil(t, mask)
+	require.True(t, imageHandleSyncEditInputsAreURLs(request))
+}
+
 func TestNormalizeImageHandleSyncEditRequestUploadsMultipartFiles(t *testing.T) {
 	originalSetting := *image_handle_setting.GetImageHandleSetting()
 	defer func() {

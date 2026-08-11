@@ -5157,6 +5157,10 @@
     "传统同步": "Synchronisation traditionnelle",
     "Adobe2API 异步图片": "Images asynchrones Adobe2API",
     "生成中": "Génération en cours",
-    "收尾中": "Finalisation"
+    "收尾中": "Finalisation",
+    "上游接口": "API en amont",
+    "请选择上游接口": "Sélectionnez une API en amont",
+    "xAI 官方 API": "API xAI officielle",
+    "2KEN API": "API 2KEN"
   }
 }

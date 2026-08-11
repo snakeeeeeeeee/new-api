@@ -466,14 +466,22 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 
 // validateChannel 通用的渠道校验函数
 func validateChannel(channel *model.Channel, isAdd bool) error {
+	if channel == nil {
+		return fmt.Errorf("channel cannot be empty")
+	}
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
 	}
 
+	isXAI2KEN := channel.Type == constant.ChannelTypeXai && channel.GetOtherSettings().IsXAI2KEN()
+
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
-		if channel == nil || channel.Key == "" {
+		if strings.TrimSpace(channel.Key) == "" {
+			if isXAI2KEN {
+				return fmt.Errorf("2KEN API 密钥不能为空")
+			}
 			return fmt.Errorf("channel cannot be empty")
 		}
 
@@ -482,6 +490,15 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 			if len(m) > 255 {
 				return fmt.Errorf("模型名称过长: %s", m)
 			}
+		}
+	}
+
+	if isXAI2KEN {
+		if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
+			return fmt.Errorf("2KEN API 地址不能为空")
+		}
+		if len(channel.GetModels()) == 0 {
+			return fmt.Errorf("2KEN 渠道至少需要配置一个模型")
 		}
 	}
 
@@ -521,6 +538,16 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
+	return nil
+}
+
+func validateXAI2KENEffectiveKey(channel *model.Channel, existingKey string) error {
+	if channel == nil || channel.Type != constant.ChannelTypeXai || !channel.GetOtherSettings().IsXAI2KEN() {
+		return nil
+	}
+	if strings.TrimSpace(channel.Key) == "" && strings.TrimSpace(existingKey) == "" {
+		return fmt.Errorf("2KEN API 密钥不能为空")
+	}
 	return nil
 }
 
@@ -890,6 +917,13 @@ func UpdateChannel(c *gin.Context) {
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	if err := validateXAI2KENEffectiveKey(&channel.Channel, originChannel.Key); err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": err.Error(),

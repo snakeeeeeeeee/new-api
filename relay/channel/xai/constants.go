@@ -28,6 +28,10 @@ var ModelList = []string{
 	"grok-2-image-1212",
 	// video generation model
 	"grok-imagine-video",
+	"grok-imagine-video-480p",
+	"grok-imagine-video-720p",
+	"grok-imagine-video-1.5-preview-480p",
+	"grok-imagine-video-1.5-preview-720p",
 }
 
 var ChannelName = "xai"

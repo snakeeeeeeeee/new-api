@@ -196,7 +196,43 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		action = constant.TaskActionImageEdit
 	}
 	info.Action = action
+	if action == constant.TaskActionImageEdit {
+		if taskErr := validateXAIGrokImageEdit(info, req); taskErr != nil {
+			return taskErr
+		}
+	}
 	c.Set("task_request", req)
+	return nil
+}
+
+func validateXAIGrokImageEdit(info *relaycommon.RelayInfo, req relaycommon.TaskSubmitReq) *dto.TaskError {
+	if info == nil || info.ChannelType != constant.ChannelTypeXai {
+		return nil
+	}
+	modelName := strings.ToLower(strings.TrimSpace(req.Model))
+	if modelName == "" {
+		modelName = strings.ToLower(strings.TrimSpace(info.UpstreamModelName))
+	}
+	if modelName != "grok-imagine-image" && modelName != "grok-imagine-image-quality" {
+		return nil
+	}
+	imageCount := len(req.Images)
+	if imageCount == 0 && strings.TrimSpace(req.Image) != "" {
+		imageCount = 1
+	}
+	limit := 3
+	if info.ChannelOtherSettings.IsXAI2KEN() && modelName == "grok-imagine-image" {
+		limit = 5
+	}
+	if imageCount > limit {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("xAI image edit model %s supports at most %d source images", modelName, limit),
+			"unsupported_image_input", http.StatusBadRequest,
+		)
+	}
+	if metadataString(req.Metadata, "mask", "") != "" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("xAI Grok image edits do not support mask"), "unsupported_image_input", http.StatusBadRequest)
+	}
 	return nil
 }
 

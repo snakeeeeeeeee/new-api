@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -80,6 +81,22 @@ func TestInitTaskStartsAsSubmitted(t *testing.T) {
 	assert.Equal(t, "task_public", task.TaskID)
 	assert.EqualValues(t, TaskStatusSubmitted, task.Status)
 	assert.Equal(t, "0%", task.Progress)
+}
+
+func TestInitTaskPersistsOnly2KENXAISelectedKey(t *testing.T) {
+	newTask := func(settings dto.ChannelOtherSettings) *Task {
+		return InitTask(constant.TaskPlatform("48"), &relaycommon.RelayInfo{
+			ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelType:          constant.ChannelTypeXai,
+				ApiKey:               "selected-key",
+				ChannelOtherSettings: settings,
+			},
+			TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+		})
+	}
+
+	assert.Empty(t, newTask(dto.ChannelOtherSettings{}).PrivateData.Key)
+	assert.Equal(t, "selected-key", newTask(dto.ChannelOtherSettings{XAIAPIVariant: dto.XAIAPIVariant2KEN}).PrivateData.Key)
 }
 
 func TestToOpenAIVideoOnlySetsURLForSuccessfulTask(t *testing.T) {

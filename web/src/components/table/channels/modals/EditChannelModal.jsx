@@ -241,6 +241,7 @@ const EditChannelModal = (props) => {
     image_handle_sync_mode: 'inherit',
     image_handle_execution_driver: 'legacy_sync',
     callback_secret: '',
+    xai_api_variant: 'official',
     // 字段透传控制默认值
     allow_service_tier: false,
     disable_store: false, // false = 允许透传（默认开启）
@@ -892,6 +893,8 @@ const EditChannelModal = (props) => {
           const parsedSettings = JSON.parse(data.settings);
           data.azure_responses_version =
             parsedSettings.azure_responses_version || '';
+          data.xai_api_variant =
+            parsedSettings.xai_api_variant === '2ken' ? '2ken' : 'official';
           data.image_response_adapter =
             parsedSettings.image_response_adapter || '';
           data.image_handle_sync_mode =
@@ -946,6 +949,7 @@ const EditChannelModal = (props) => {
         } catch (error) {
           console.error('解析其他设置失败:', error);
           data.azure_responses_version = '';
+          data.xai_api_variant = 'official';
           data.image_response_adapter = '';
           data.image_handle_sync_mode = 'inherit';
           data.image_handle_execution_driver = 'legacy_sync';
@@ -972,6 +976,7 @@ const EditChannelModal = (props) => {
       } else {
         // 兼容历史数据：老渠道没有 settings 时，默认按 json 展示
         data.image_response_adapter = '';
+        data.xai_api_variant = 'official';
         data.image_handle_sync_mode = 'inherit';
         data.image_handle_execution_driver = 'legacy_sync';
         data.callback_secret = '';
@@ -1744,6 +1749,14 @@ const EditChannelModal = (props) => {
       showInfo(t('请输入API地址！'));
       return;
     }
+    if (
+      localInputs.type === 48 &&
+      localInputs.xai_api_variant === '2ken' &&
+      (!localInputs.base_url || localInputs.base_url.trim() === '')
+    ) {
+      showInfo(t('请输入API地址！'));
+      return;
+    }
     const hasModelMapping =
       typeof localInputs.model_mapping === 'string' &&
       localInputs.model_mapping.trim() !== '';
@@ -1870,6 +1883,12 @@ const EditChannelModal = (props) => {
         localInputs.is_enterprise_account === true;
     }
 
+    if (localInputs.type === 48 && localInputs.xai_api_variant === '2ken') {
+      settings.xai_api_variant = '2ken';
+    } else if ('xai_api_variant' in settings) {
+      delete settings.xai_api_variant;
+    }
+
     if (localInputs.type === 1) {
       settings.image_response_adapter =
         localInputs.image_response_adapter || '';
@@ -1978,6 +1997,7 @@ const EditChannelModal = (props) => {
     delete localInputs.image_handle_sync_mode;
     delete localInputs.image_handle_execution_driver;
     delete localInputs.callback_secret;
+    delete localInputs.xai_api_variant;
     // 顶层的 vertex_key_type 不应发送给后端
     delete localInputs.vertex_key_type;
     // 顶层的 aws_key_type 不应发送给后端
@@ -3898,6 +3918,33 @@ const EditChannelModal = (props) => {
                             />
                           )}
 
+                          {inputs.type === 48 && (
+                            <div>
+                              <Form.Select
+                                field='xai_api_variant'
+                                label={t('上游接口')}
+                                placeholder={t('请选择上游接口')}
+                                rules={[
+                                  {
+                                    required: true,
+                                    message: t('请选择上游接口'),
+                                  },
+                                ]}
+                                optionList={[
+                                  {
+                                    value: 'official',
+                                    label: t('xAI 官方 API'),
+                                  },
+                                  { value: '2ken', label: t('2KEN API') },
+                                ]}
+                                onChange={(value) =>
+                                  handleInputChange('xai_api_variant', value)
+                                }
+                                disabled={isIonetLocked}
+                              />
+                            </div>
+                          )}
+
                           {inputs.type !== 3 &&
                             inputs.type !== 8 &&
                             inputs.type !== 22 &&
@@ -3907,17 +3954,38 @@ const EditChannelModal = (props) => {
                                 <Form.Input
                                   field='base_url'
                                   label={t('API地址')}
-                                  placeholder={t(
-                                    '此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/',
-                                  )}
+                                  placeholder={
+                                    inputs.type === 48 &&
+                                    inputs.xai_api_variant === '2ken'
+                                      ? 'https://apis.2ken.com'
+                                      : t(
+                                          '此项可选，用于通过自定义API地址来进行 API 调用，末尾不要带/v1和/',
+                                        )
+                                  }
+                                  rules={
+                                    inputs.type === 48 &&
+                                    inputs.xai_api_variant === '2ken'
+                                      ? [
+                                          {
+                                            required: true,
+                                            message: t('请输入API地址！'),
+                                          },
+                                        ]
+                                      : []
+                                  }
                                   onChange={(value) =>
                                     handleInputChange('base_url', value)
                                   }
                                   showClear
                                   disabled={isIonetLocked}
-                                  extraText={t(
-                                    '对于官方渠道，new-api已经内置地址，除非是第三方代理站点或者Azure的特殊接入地址，否则不需要填写',
-                                  )}
+                                  extraText={
+                                    inputs.type === 48 &&
+                                    inputs.xai_api_variant === '2ken'
+                                      ? undefined
+                                      : t(
+                                          '对于官方渠道，new-api已经内置地址，除非是第三方代理站点或者Azure的特殊接入地址，否则不需要填写',
+                                        )
+                                  }
                                 />
                               </div>
                             )}

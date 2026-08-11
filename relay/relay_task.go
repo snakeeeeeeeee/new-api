@@ -1384,21 +1384,33 @@ func buildAsyncImageTaskRequestSnapshot(c *gin.Context, info *relaycommon.RelayI
 	if err != nil {
 		return nil, err
 	}
-	if taskReq.Metadata != nil {
-		for _, key := range []string{"resolution", "aspect_ratio"} {
-			raw, ok := taskRawMetadataValue(taskReq.Metadata[key])
-			if !ok {
-				continue
+	if len(images) > 0 || taskReq.Metadata != nil {
+		var auditRequest map[string]json.RawMessage
+		if err := common.Unmarshal(data, &auditRequest); err != nil {
+			return nil, err
+		}
+		if len(images) > 0 {
+			sources := make([]map[string]string, 0, len(images))
+			for _, image := range images {
+				sources = append(sources, map[string]string{"url": image})
 			}
-			var auditRequest map[string]json.RawMessage
-			if err := common.Unmarshal(data, &auditRequest); err != nil {
-				return nil, err
-			}
-			auditRequest[key] = raw
-			data, err = common.Marshal(auditRequest)
+			auditRequest["images"], err = common.Marshal(sources)
 			if err != nil {
 				return nil, err
 			}
+		}
+		if taskReq.Metadata != nil {
+			for _, key := range []string{"resolution", "aspect_ratio"} {
+				raw, ok := taskRawMetadataValue(taskReq.Metadata[key])
+				if !ok {
+					continue
+				}
+				auditRequest[key] = raw
+			}
+		}
+		data, err = common.Marshal(auditRequest)
+		if err != nil {
+			return nil, err
 		}
 	}
 	return &asyncImageTaskRequestSnapshot{

@@ -1,6 +1,7 @@
 package xai
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -582,6 +583,16 @@ func TestParseTaskResult(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, string(model.TaskStatusFailure), expired.Status)
 	assert.Equal(t, "task expired", expired.Reason)
+
+	missingOfficialVideo, err := adaptor.ParseTaskResult([]byte(`{"id":"official-provider-id","status":"completed"}`))
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusFailure), missingOfficialVideo.Status)
+	assert.Equal(t, "video url is empty", missingOfficialVideo.Reason)
+	assert.Empty(t, missingOfficialVideo.VideoOutputs)
+
+	officialQueued, err := adaptor.ParseTaskResult([]byte(`{"status":"queued"}`))
+	require.NoError(t, err)
+	assert.Empty(t, officialQueued.Status)
 }
 
 func TestConvertToOpenAIVideoUsesLocalTaskIDAndResultURL(t *testing.T) {
@@ -609,4 +620,255 @@ func TestConvertToOpenAIVideoUsesLocalTaskIDAndResultURL(t *testing.T) {
 	assert.Equal(t, "grok-imagine-video-1.5-preview-15s-480p", payload["model"])
 	metadata := payload["metadata"].(map[string]any)
 	assert.Equal(t, taskcommon.BuildProxyURL("task_public"), metadata["url"])
+}
+
+func Test2KENVideoAliasesBuildProviderRequest(t *testing.T) {
+	tests := []struct {
+		publicModel   string
+		upstreamModel string
+		resolution    string
+	}{
+		{publicModel: "grok-imagine-video-480p", upstreamModel: "grok-imagine-video", resolution: "480p"},
+		{publicModel: "grok-imagine-video-720p", upstreamModel: "grok-imagine-video", resolution: "720p"},
+		{publicModel: "grok-imagine-video-1.5-preview-480p", upstreamModel: "grok-imagine-video-1.5-preview", resolution: "480p"},
+		{publicModel: "grok-imagine-video-1.5-preview-720p", upstreamModel: "grok-imagine-video-1.5-preview", resolution: "720p"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.publicModel, func(t *testing.T) {
+			c, _ := buildTestContext(t, "/v1/video/tasks", `{}`)
+			info := &relaycommon.RelayInfo{
+				OriginModelName: test.publicModel,
+				ChannelMeta: &relaycommon.ChannelMeta{
+					ChannelType:       constant.ChannelTypeXai,
+					ChannelBaseUrl:    "https://apis.2ken.com",
+					ApiKey:            "2ken-key",
+					UpstreamModelName: test.upstreamModel,
+					ChannelOtherSettings: dto.ChannelOtherSettings{
+						XAIAPIVariant: dto.XAIAPIVariant2KEN,
+					},
+				},
+			}
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+			request := dto.VideoTaskCreateRequest{
+				Model: test.publicModel, Operation: "generation",
+				Input: dto.VideoTaskInputRequest{
+					Prompt: "slow camera push",
+					Image:  &dto.VideoTaskSource{URL: "https://cdn.example.com/frame.jpg"},
+				},
+				Output: dto.VideoTaskOutputRequest{AspectRatio: common.GetPointer("16:9")},
+			}
+
+			require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, request))
+			require.Nil(t, adaptor.ValidateNormalizedVideoModel(c, info))
+			estimate, taskErr := adaptor.ResolveVideoBilling(c, info)
+			require.Nil(t, taskErr)
+			assert.Equal(t, 4, estimate.Seconds)
+			assert.Equal(t, types.VideoPricingBasisGeneration, estimate.Basis)
+
+			requestURL, err := adaptor.BuildRequestURL(info)
+			require.NoError(t, err)
+			assert.Equal(t, "https://apis.2ken.com/v1/videos", requestURL)
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(data, &payload))
+			assert.Equal(t, test.upstreamModel, payload["model"])
+			assert.Equal(t, "4", payload["seconds"])
+			assert.Equal(t, test.resolution, payload["resolution"])
+			assert.Equal(t, "16:9", payload["aspect_ratio"])
+			assert.Equal(t, "https://cdn.example.com/frame.jpg", payload["image_url"])
+			assert.NotContains(t, payload, "duration")
+			assert.NotContains(t, payload, "image")
+			assert.NotContains(t, payload, "size")
+		})
+	}
+}
+
+func Test2KENVideoMapsTwoReferenceImages(t *testing.T) {
+	for _, publicModel := range []string{"grok-imagine-video-480p", "grok-imagine-video-1.5-preview-480p"} {
+		t.Run(publicModel, func(t *testing.T) {
+			upstreamModel, _, supported := xai2KENVideoModel(publicModel)
+			require.True(t, supported)
+			c, _ := buildTestContext(t, "/v1/video/tasks", `{}`)
+			info := &relaycommon.RelayInfo{OriginModelName: publicModel, ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelType: constant.ChannelTypeXai, ChannelBaseUrl: "https://apis.2ken.com",
+				UpstreamModelName:    upstreamModel,
+				ChannelOtherSettings: dto.ChannelOtherSettings{XAIAPIVariant: dto.XAIAPIVariant2KEN},
+			}}
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+			request := dto.VideoTaskCreateRequest{Model: publicModel, Operation: "generation", Input: dto.VideoTaskInputRequest{
+				Prompt:        "combine <IMAGE_0> and <IMAGE_1>",
+				ReferenceMode: "media",
+				ReferenceImages: []dto.VideoTaskSource{
+					{URL: "https://cdn.example.com/first.png"},
+					{URL: "https://cdn.example.com/second.png"},
+				},
+			}, Output: dto.VideoTaskOutputRequest{Duration: common.GetPointer(1)}}
+
+			require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, request))
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(data, &payload))
+			references := payload["reference_images"].([]any)
+			require.Len(t, references, 2)
+			assert.Equal(t, "https://cdn.example.com/first.png", references[0].(map[string]any)["url"])
+			assert.Equal(t, "https://cdn.example.com/second.png", references[1].(map[string]any)["url"])
+			assert.NotContains(t, payload, "image_url")
+		})
+	}
+}
+
+func Test2KENVideoValidationRejectsConflictsAndUnsupportedInputs(t *testing.T) {
+	newAdaptor := func() (*TaskAdaptor, *relaycommon.RelayInfo) {
+		info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeXai,
+			ChannelOtherSettings: dto.ChannelOtherSettings{
+				XAIAPIVariant: dto.XAIAPIVariant2KEN,
+			},
+		}}
+		adaptor := &TaskAdaptor{}
+		adaptor.Init(info)
+		return adaptor, info
+	}
+	base := dto.VideoTaskCreateRequest{
+		Model: "grok-imagine-video-480p", Operation: "generation",
+		Input: dto.VideoTaskInputRequest{Prompt: "generate"},
+	}
+	tests := []struct {
+		name     string
+		mutate   func(*dto.VideoTaskCreateRequest)
+		wantCode string
+	}{
+		{name: "explicit zero duration", mutate: func(r *dto.VideoTaskCreateRequest) { r.Output.Duration = common.GetPointer(0) }, wantCode: "invalid_video_parameter"},
+		{name: "conflicting resolution", mutate: func(r *dto.VideoTaskCreateRequest) { r.Output.Resolution = common.GetPointer("720p") }, wantCode: "invalid_video_resolution"},
+		{name: "edit operation", mutate: func(r *dto.VideoTaskCreateRequest) { r.Operation = "edit" }, wantCode: "unsupported_video_operation"},
+		{name: "too many reference images", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.Input.ReferenceImages = []dto.VideoTaskSource{
+				{URL: "https://cdn.example.com/1.jpg"},
+				{URL: "https://cdn.example.com/2.jpg"},
+				{URL: "https://cdn.example.com/3.jpg"},
+			}
+		}, wantCode: "unsupported_video_input"},
+		{name: "reference data URL", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.Input.ReferenceImages = []dto.VideoTaskSource{{URL: "data:image/png;base64,AA"}}
+		}, wantCode: "unsupported_video_input"},
+		{name: "reference mode mismatch", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.Input.ReferenceMode = "frame"
+			r.Input.ReferenceImages = []dto.VideoTaskSource{{URL: "https://cdn.example.com/ref.jpg"}}
+		}, wantCode: "unsupported_video_input"},
+		{name: "input video", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.Input.Video = &dto.VideoTaskSource{URL: "https://cdn.example.com/input.mp4"}
+		}, wantCode: "unsupported_video_input"},
+		{name: "file id", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.Input.Image = &dto.VideoTaskSource{Provider: "xai", FileID: "file-1"}
+		}, wantCode: "unsupported_video_input"},
+		{name: "data url", mutate: func(r *dto.VideoTaskCreateRequest) {
+			r.Input.Image = &dto.VideoTaskSource{URL: "data:image/png;base64,AA"}
+		}, wantCode: "unsupported_video_input"},
+		{name: "provider options", mutate: func(r *dto.VideoTaskCreateRequest) { r.ProviderOptions = map[string]map[string]any{"xai": {"seed": 1}} }, wantCode: "invalid_provider_options"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adaptor, info := newAdaptor()
+			request := base
+			test.mutate(&request)
+			c, _ := buildTestContext(t, "/v1/video/tasks", `{}`)
+			taskErr := adaptor.PrepareNormalizedVideoRequest(c, info, request)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, test.wantCode, taskErr.Code)
+		})
+	}
+}
+
+func Test2KENVideoModelMappingMustMatchAlias(t *testing.T) {
+	c, _ := buildTestContext(t, "/v1/video/tasks", `{}`)
+	info := &relaycommon.RelayInfo{OriginModelName: "grok-imagine-video-720p", ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelType:       constant.ChannelTypeXai,
+		UpstreamModelName: "grok-imagine-video-1.5-preview",
+		ChannelOtherSettings: dto.ChannelOtherSettings{
+			XAIAPIVariant: dto.XAIAPIVariant2KEN,
+		},
+	}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	require.Nil(t, adaptor.PrepareNormalizedVideoRequest(c, info, dto.VideoTaskCreateRequest{
+		Model: "grok-imagine-video-720p", Operation: "generation", Input: dto.VideoTaskInputRequest{Prompt: "generate"},
+	}))
+	taskErr := adaptor.ValidateNormalizedVideoModel(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "unsupported_video_model_mapping", taskErr.Code)
+}
+
+func Test2KENSubmitPollAndContentResolver(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelOtherSettings: dto.ChannelOtherSettings{XAIAPIVariant: dto.XAIAPIVariant2KEN},
+	}})
+	c, _ := buildTestContext(t, "/v1/videos", `{}`)
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"}}
+	resp := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"id":"provider-1","task_id":"provider-1","status":"queued"}`))}
+	upstreamID, _, taskErr := adaptor.DoResponse(c, resp, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, "provider-1", upstreamID)
+
+	queued, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-1","status":"queued","progress":0}`))
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusQueued), queued.Status)
+	inProgress, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-1","status":"in_progress","progress":50}`))
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusInProgress), inProgress.Status)
+	completed, err := adaptor.ParseTaskResult([]byte(`{"task_id":"provider-1","status":"completed","progress":100,"seconds":"1","video_url":"https://temporary.example/video.mp4","model":"grok-imagine-video-1.5"}`))
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusSuccess), completed.Status)
+	assert.Empty(t, completed.Url)
+	require.Len(t, completed.VideoOutputs, 1)
+	assert.Empty(t, completed.VideoOutputs[0].URL)
+	assert.Equal(t, "provider-1", completed.VideoOutputs[0].ProviderReference)
+	assert.Equal(t, xai2KENContentResolver, completed.VideoOutputs[0].Resolver)
+	assert.Equal(t, int64(1000), completed.VideoOutputs[0].DurationMS)
+
+	var authHeader, rangeHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		rangeHeader = r.Header.Get("Range")
+		assert.Equal(t, "/v1/videos/provider-1/content", r.URL.Path)
+		w.Header().Set("Content-Type", "video/mp4")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("video"))
+	}))
+	defer server.Close()
+	channelModel := &model.Channel{Type: constant.ChannelTypeXai, Key: "channel-key", BaseURL: common.GetPointer(server.URL)}
+	task := &model.Task{PrivateData: model.TaskPrivateData{UpstreamTaskID: "provider-1", Key: "selected-key"}}
+	headers := make(http.Header)
+	headers.Set("Range", "bytes=0-3")
+	contentResponse, err := adaptor.ResolveVideoContent(context.Background(), channelModel, task, completed.VideoOutputs[0], headers)
+	require.NoError(t, err)
+	defer contentResponse.Body.Close()
+	assert.Equal(t, http.StatusOK, contentResponse.StatusCode)
+	assert.Equal(t, "Bearer selected-key", authHeader)
+	assert.Equal(t, "bytes=0-3", rangeHeader)
+}
+
+func Test2KENCompatibilityAndModelLists(t *testing.T) {
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelOtherSettings: dto.ChannelOtherSettings{XAIAPIVariant: dto.XAIAPIVariant2KEN}}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	capabilities := adaptor.OpenAIVideoCompatibility()
+	assert.True(t, capabilities.Generation)
+	assert.False(t, capabilities.Edit)
+	assert.False(t, capabilities.Extension)
+	for _, modelName := range []string{
+		"grok-imagine-video-480p", "grok-imagine-video-720p",
+		"grok-imagine-video-1.5-preview-480p", "grok-imagine-video-1.5-preview-720p",
+	} {
+		assert.Contains(t, ModelList, modelName)
+	}
 }

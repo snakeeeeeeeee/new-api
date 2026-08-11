@@ -50,6 +50,11 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	if raw, ok := request.Extra["resolution"]; ok && len(raw) > 0 {
 		xaiRequest.Resolution = raw
 	}
+	if info != nil && info.RelayMode == constant.RelayModeImagesEdits {
+		if err := applyXAIImageEditSources(c, info, request, &xaiRequest); err != nil {
+			return nil, err
+		}
+	}
 	return xaiRequest, nil
 }
 
@@ -62,6 +67,9 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
+	if info != nil && info.RelayMode == constant.RelayModeImagesEdits {
+		req.Set("Content-Type", "application/json")
+	}
 	req.Set("Authorization", "Bearer "+info.ApiKey)
 	return nil
 }

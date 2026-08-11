@@ -28,7 +28,14 @@ type ImageRequest struct {
 	ResponseFormat string          `json:"response_format,omitempty"`
 	AspectRatio    json.RawMessage `json:"aspect_ratio,omitempty"`
 	Resolution     json.RawMessage `json:"resolution,omitempty"`
+	Image          *ImageSource    `json:"image,omitempty"`
+	Images         []ImageSource   `json:"images,omitempty"`
 	// Style       string          `json:"style,omitempty"`
 	// User        string          `json:"user,omitempty"`
 	// ExtraFields json.RawMessage `json:"extra_fields,omitempty"`
+}
+
+type ImageSource struct {
+	URL    string `json:"url,omitempty"`
+	FileID string `json:"file_id,omitempty"`
 }
