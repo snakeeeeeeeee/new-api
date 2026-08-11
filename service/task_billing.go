@@ -175,6 +175,15 @@ func taskAdjustTokenQuotaWithDebtOption(ctx context.Context, task *model.Task, d
 // taskBillingOther 从 task 的 BillingContext 构建日志 Other 字段。
 func taskBillingOther(task *model.Task) map[string]interface{} {
 	other := make(map[string]interface{})
+	if task == nil {
+		return other
+	}
+	if task.PrivateData.BillingSource != "" {
+		other["billing_source"] = task.PrivateData.BillingSource
+	}
+	if task.PrivateData.SubscriptionId > 0 {
+		other["subscription_id"] = task.PrivateData.SubscriptionId
+	}
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		other["model_price"] = bc.ModelPrice
 		other["group_ratio"] = bc.GroupRatio
@@ -258,8 +267,9 @@ func taskModelName(task *model.Task) string {
 	return task.Properties.OriginModelName
 }
 
-// adjustTaskUsedQuota preserves legacy task accounting while making
-// image-handle counters reflect the final settled quota instead of precharge.
+// adjustTaskUsedQuota keeps cumulative quota counters aligned with the final
+// task charge. Request count is only incremented for legacy supplemental
+// charges and is never decremented by a refund.
 func adjustTaskUsedQuota(task *model.Task, quotaDelta int) {
 	if task == nil || quotaDelta == 0 {
 		return
@@ -272,7 +282,10 @@ func adjustTaskUsedQuota(task *model.Task, quotaDelta int) {
 	if quotaDelta > 0 {
 		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
 		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
+		return
 	}
+	model.UpdateUserUsedQuota(task.UserId, quotaDelta)
+	model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 }
 
 // RefundTaskQuota 统一的任务失败退款逻辑。

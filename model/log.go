@@ -1009,6 +1009,7 @@ type usageStatsLogRow struct {
 	UserId           int
 	Username         string
 	ModelName        string
+	Type             int
 	Quota            int64
 	PromptTokens     int64
 	CompletionTokens int64
@@ -1213,7 +1214,7 @@ func applyUsageStatsSubscriptionPurchaseFilters(tx *gorm.DB, query UsageStatsQue
 }
 
 func applyUsageStatsFilters(tx *gorm.DB, query UsageStatsQuery) (*gorm.DB, error) {
-	tx = tx.Where("logs.type = ?", LogTypeConsume)
+	tx = tx.Where("logs.type IN ?", []int{LogTypeConsume, LogTypeRefund})
 	tx = excludeNonBillingAuditLogs(tx, "logs.other")
 	tx = tx.Where("logs.created_at >= ? AND logs.created_at <= ?", query.StartTimestamp, query.EndTimestamp)
 	if query.UserId > 0 {
@@ -1325,6 +1326,13 @@ func usageStatsBillingSourceFromOther(other map[string]interface{}) string {
 
 func usageStatsMatchesBillingSource(query UsageStatsQuery, source string) bool {
 	return query.BillingSource == UsageStatsBillingSourceAll || query.BillingSource == source
+}
+
+func usageStatsSignedQuota(row usageStatsLogRow) int64 {
+	if row.Type == LogTypeRefund {
+		return -row.Quota
+	}
+	return row.Quota
 }
 
 func usageStatsTokenBreakdownFromLog(row usageStatsLogRow) usageStatsTokenBreakdown {
@@ -1778,7 +1786,19 @@ func populateUsageStatsSubscriptionPurchase(data *UsageStatsData, query UsageSta
 }
 
 func addUsageStatsBaseRow(target *usageStatsBaseRow, row usageStatsLogRow, tokens usageStatsTokenBreakdown, source string) {
-	target.Quota += row.Quota
+	signedQuota := usageStatsSignedQuota(row)
+	target.Quota += signedQuota
+	switch source {
+	case UsageStatsBillingSourceWallet:
+		target.WalletQuota += signedQuota
+	case UsageStatsBillingSourceSubscription:
+		target.SubscriptionQuota += signedQuota
+	default:
+		target.UnknownQuota += signedQuota
+	}
+	if row.Type != LogTypeConsume {
+		return
+	}
 	target.RequestCount++
 	target.InputTokens += tokens.InputTokens
 	target.CacheTokens += tokens.CacheTokens
@@ -1788,13 +1808,10 @@ func addUsageStatsBaseRow(target *usageStatsBaseRow, row usageStatsLogRow, token
 	target.useTimeTotal += row.UseTime
 	switch source {
 	case UsageStatsBillingSourceWallet:
-		target.WalletQuota += row.Quota
 		target.WalletRequestCount++
 	case UsageStatsBillingSourceSubscription:
-		target.SubscriptionQuota += row.Quota
 		target.SubscriptionRequestCount++
 	default:
-		target.UnknownQuota += row.Quota
 		target.UnknownRequestCount++
 	}
 	if row.CreatedAt > target.LastRequestAt {
@@ -1873,31 +1890,43 @@ func usageStatsSortedUserRows(rows map[int]*usageStatsBaseRow, limit int) []usag
 	return result
 }
 
-func usageStatsAddSummarySource(summary *UsageStatsSummary, source string, quota int64) {
+func usageStatsAddSummarySource(summary *UsageStatsSummary, source string, quota int64, countRequest bool) {
 	switch source {
 	case UsageStatsBillingSourceWallet:
 		summary.WalletQuota += quota
-		summary.WalletRequestCount++
+		if countRequest {
+			summary.WalletRequestCount++
+		}
 	case UsageStatsBillingSourceSubscription:
 		summary.SubscriptionQuota += quota
-		summary.SubscriptionRequestCount++
+		if countRequest {
+			summary.SubscriptionRequestCount++
+		}
 	default:
 		summary.UnknownQuota += quota
-		summary.UnknownRequestCount++
+		if countRequest {
+			summary.UnknownRequestCount++
+		}
 	}
 }
 
-func usageStatsAddTrendSource(row *usageStatsTrendRow, source string, quota int64) {
+func usageStatsAddTrendSource(row *usageStatsTrendRow, source string, quota int64, countRequest bool) {
 	switch source {
 	case UsageStatsBillingSourceWallet:
 		row.WalletQuota += quota
-		row.WalletRequestCount++
+		if countRequest {
+			row.WalletRequestCount++
+		}
 	case UsageStatsBillingSourceSubscription:
 		row.SubscriptionQuota += quota
-		row.SubscriptionRequestCount++
+		if countRequest {
+			row.SubscriptionRequestCount++
+		}
 	default:
 		row.UnknownQuota += quota
-		row.UnknownRequestCount++
+		if countRequest {
+			row.UnknownRequestCount++
+		}
 	}
 }
 
@@ -1907,7 +1936,7 @@ func populateUsageStatsUsage(data *UsageStatsData, query UsageStatsQuery) error 
 		return err
 	}
 	var logRows []usageStatsLogRow
-	if err = baseQuery.Select("user_id, username, model_name, quota, prompt_tokens, completion_tokens, use_time, created_at, other").Scan(&logRows).Error; err != nil {
+	if err = baseQuery.Select("user_id, username, model_name, type, quota, prompt_tokens, completion_tokens, use_time, created_at, other").Scan(&logRows).Error; err != nil {
 		return err
 	}
 
@@ -1926,24 +1955,30 @@ func populateUsageStatsUsage(data *UsageStatsData, query UsageStatsQuery) error 
 		if !usageStatsMatchesBillingSource(query, source) {
 			continue
 		}
-		tokens := usageStatsTokenBreakdownFromOther(row, other)
-		claudeCacheTTLSubsidy := usageStatsClaudeCacheTTLSubsidyFromOther(other)
-		data.Summary.Quota += row.Quota
-		data.Summary.RequestCount++
-		data.Summary.InputTokens += tokens.InputTokens
-		data.Summary.CacheTokens += tokens.CacheTokens
-		data.Summary.PromptTokens += tokens.InputTokens
-		data.Summary.CompletionTokens += tokens.CompletionTokens
-		data.Summary.TotalTokens += tokens.TotalTokens
-		data.Summary.ClaudeCacheTTLSubsidyQuota += claudeCacheTTLSubsidy.Quota
-		data.Summary.ClaudeCacheTTLSubsidyRequestCount += claudeCacheTTLSubsidy.RequestCount
-		data.Summary.ClaudeCacheTTLRepricedTokens += claudeCacheTTLSubsidy.RepricedTokens
-		data.Summary.ClaudeCacheTTLUpstream1hTokens += claudeCacheTTLSubsidy.Upstream1hTokens
-		data.Summary.ClaudeCacheTTLBilled5mTokens += claudeCacheTTLSubsidy.Billed5mTokens
-		usageStatsAddSummarySource(&data.Summary, source, row.Quota)
-		activeUsers[row.UserId] = struct{}{}
-		if source == UsageStatsBillingSourceSubscription && row.Quota > 0 {
-			subscriptionActiveUsers[row.UserId] = struct{}{}
+		signedQuota := usageStatsSignedQuota(row)
+		isConsume := row.Type == LogTypeConsume
+		var tokens usageStatsTokenBreakdown
+		var claudeCacheTTLSubsidy usageStatsClaudeCacheTTLSubsidy
+		data.Summary.Quota += signedQuota
+		usageStatsAddSummarySource(&data.Summary, source, signedQuota, isConsume)
+		if isConsume {
+			tokens = usageStatsTokenBreakdownFromOther(row, other)
+			claudeCacheTTLSubsidy = usageStatsClaudeCacheTTLSubsidyFromOther(other)
+			data.Summary.RequestCount++
+			data.Summary.InputTokens += tokens.InputTokens
+			data.Summary.CacheTokens += tokens.CacheTokens
+			data.Summary.PromptTokens += tokens.InputTokens
+			data.Summary.CompletionTokens += tokens.CompletionTokens
+			data.Summary.TotalTokens += tokens.TotalTokens
+			data.Summary.ClaudeCacheTTLSubsidyQuota += claudeCacheTTLSubsidy.Quota
+			data.Summary.ClaudeCacheTTLSubsidyRequestCount += claudeCacheTTLSubsidy.RequestCount
+			data.Summary.ClaudeCacheTTLRepricedTokens += claudeCacheTTLSubsidy.RepricedTokens
+			data.Summary.ClaudeCacheTTLUpstream1hTokens += claudeCacheTTLSubsidy.Upstream1hTokens
+			data.Summary.ClaudeCacheTTLBilled5mTokens += claudeCacheTTLSubsidy.Billed5mTokens
+			activeUsers[row.UserId] = struct{}{}
+			if source == UsageStatsBillingSourceSubscription && row.Quota > 0 {
+				subscriptionActiveUsers[row.UserId] = struct{}{}
+			}
 		}
 
 		rankingRow := rankingMap[row.UserId]
@@ -1952,7 +1987,7 @@ func populateUsageStatsUsage(data *UsageStatsData, query UsageStatsQuery) error 
 			rankingMap[row.UserId] = rankingRow
 		}
 		addUsageStatsBaseRow(rankingRow, row, tokens, source)
-		if source == UsageStatsBillingSourceWallet && row.Quota > 0 {
+		if source == UsageStatsBillingSourceWallet && (row.Quota > 0 || row.Type == LogTypeRefund) {
 			walletRow := walletRankingMap[row.UserId]
 			if walletRow == nil {
 				walletRow = &usageStatsBaseRow{UserId: row.UserId, Username: row.Username}
@@ -1960,7 +1995,7 @@ func populateUsageStatsUsage(data *UsageStatsData, query UsageStatsQuery) error 
 			}
 			addUsageStatsBaseRow(walletRow, row, tokens, source)
 		}
-		if source == UsageStatsBillingSourceSubscription && row.Quota > 0 {
+		if source == UsageStatsBillingSourceSubscription && (row.Quota > 0 || row.Type == LogTypeRefund) {
 			subscriptionRow := subscriptionRankingMap[row.UserId]
 			if subscriptionRow == nil {
 				subscriptionRow = &usageStatsBaseRow{UserId: row.UserId, Username: row.Username}
@@ -1990,17 +2025,19 @@ func populateUsageStatsUsage(data *UsageStatsData, query UsageStatsQuery) error 
 			trendRow = &usageStatsTrendRow{BucketStart: bucketStart}
 			trendMap[bucketStart] = trendRow
 		}
-		trendRow.Quota += row.Quota
-		trendRow.RequestCount++
-		trendRow.InputTokens += tokens.InputTokens
-		trendRow.CacheTokens += tokens.CacheTokens
-		trendRow.PromptTokens = trendRow.InputTokens
-		trendRow.CompletionTokens += tokens.CompletionTokens
-		trendRow.TotalTokens += tokens.TotalTokens
-		trendRow.ClaudeCacheTTLSubsidyQuota += claudeCacheTTLSubsidy.Quota
-		trendRow.ClaudeCacheTTLSubsidyRequestCount += claudeCacheTTLSubsidy.RequestCount
-		trendRow.ClaudeCacheTTLRepricedTokens += claudeCacheTTLSubsidy.RepricedTokens
-		usageStatsAddTrendSource(trendRow, source, row.Quota)
+		trendRow.Quota += signedQuota
+		usageStatsAddTrendSource(trendRow, source, signedQuota, isConsume)
+		if isConsume {
+			trendRow.RequestCount++
+			trendRow.InputTokens += tokens.InputTokens
+			trendRow.CacheTokens += tokens.CacheTokens
+			trendRow.PromptTokens = trendRow.InputTokens
+			trendRow.CompletionTokens += tokens.CompletionTokens
+			trendRow.TotalTokens += tokens.TotalTokens
+			trendRow.ClaudeCacheTTLSubsidyQuota += claudeCacheTTLSubsidy.Quota
+			trendRow.ClaudeCacheTTLSubsidyRequestCount += claudeCacheTTLSubsidy.RequestCount
+			trendRow.ClaudeCacheTTLRepricedTokens += claudeCacheTTLSubsidy.RepricedTokens
+		}
 	}
 	data.Summary.ActiveUserCount = int64(len(activeUsers))
 	data.Summary.SubscriptionActiveUserCount = int64(len(subscriptionActiveUsers))
@@ -2100,10 +2137,14 @@ func GetUsageStats(query UsageStatsQuery) (UsageStatsData, error) {
 }
 
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
-	tx := LOG_DB.Table("logs").Select("sum(quota) quota")
+	tx := LOG_DB.Table("logs").Select(
+		"COALESCE(SUM(CASE WHEN type = ? THEN quota WHEN type = ? THEN -quota ELSE 0 END), 0) AS quota",
+		LogTypeConsume,
+		LogTypeRefund,
+	)
 
 	// 为rpm和tpm创建单独的查询
-	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, sum(prompt_tokens) + sum(completion_tokens) tpm")
+	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm")
 
 	if username != "" {
 		tx = tx.Where("username = ?", username)
@@ -2136,8 +2177,15 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 		rpmTpmQuery = rpmTpmQuery.Where(logGroupCol+" = ?", group)
 	}
 
-	tx = tx.Where("type = ?", LogTypeConsume)
+	if logType == LogTypeUnknown {
+		tx = tx.Where("type IN ?", []int{LogTypeConsume, LogTypeRefund})
+	} else {
+		tx = tx.Where("type = ?", logType)
+	}
 	rpmTpmQuery = rpmTpmQuery.Where("type = ?", LogTypeConsume)
+	if logType != LogTypeUnknown && logType != LogTypeConsume {
+		rpmTpmQuery = rpmTpmQuery.Where("1 = 0")
+	}
 	tx = excludeNonBillingAuditLogs(tx, "logs.other")
 	rpmTpmQuery = excludeNonBillingAuditLogs(rpmTpmQuery, "logs.other")
 

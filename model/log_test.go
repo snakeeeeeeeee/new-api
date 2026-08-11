@@ -527,6 +527,85 @@ func TestGetUsageStatsSplitsBillingSourcesAndBuildsSourceRankings(t *testing.T) 
 	require.Equal(t, int64(400), modelsByName["gemini-pro"].UnknownQuota)
 }
 
+func TestGetUsageStatsNetsRefundsWithoutCountingThemAsRequests(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+	base := time.Date(2026, 7, 13, 9, 0, 0, 0, time.Local).Unix()
+	logs := []*Log{
+		{UserId: 1, Username: "alice", CreatedAt: base, Type: LogTypeConsume, ModelName: "model-a", Quota: 100, PromptTokens: 10, CompletionTokens: 1, UseTime: 2, Other: `{"billing_source":"wallet"}`},
+		{UserId: 2, Username: "bob", CreatedAt: base + 60, Type: LogTypeConsume, ModelName: "model-a", Quota: 200, PromptTokens: 20, CompletionTokens: 2, UseTime: 4, Other: `{"billing_source":"subscription"}`},
+		{UserId: 3, Username: "carol", CreatedAt: base + 120, Type: LogTypeConsume, ModelName: "model-b", Quota: 50, PromptTokens: 5, CompletionTokens: 3, UseTime: 6, Other: `{"billing_source":"wallet"}`},
+		{UserId: 1, Username: "alice", CreatedAt: base + 3600, Type: LogTypeRefund, ModelName: "model-a", Quota: 40, PromptTokens: 400, CompletionTokens: 500, UseTime: 100, Other: `{"billing_source":"wallet"}`},
+		{UserId: 2, Username: "bob", CreatedAt: base + 3660, Type: LogTypeRefund, ModelName: "model-a", Quota: 200, PromptTokens: 600, CompletionTokens: 700, UseTime: 200, Other: `{"billing_source":"subscription"}`},
+	}
+	for _, logItem := range logs {
+		seedUsageStatsLog(t, logItem)
+	}
+
+	stats, err := GetUsageStats(UsageStatsQuery{
+		Section:          UsageStatsSectionUsage,
+		StartTimestamp:   base,
+		EndTimestamp:     base + 7199,
+		Limit:            10,
+		TrendGranularity: UsageStatsGranularityHour,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(110), stats.Summary.Quota)
+	require.Equal(t, int64(3), stats.Summary.RequestCount)
+	require.Equal(t, int64(35), stats.Summary.InputTokens)
+	require.Equal(t, int64(6), stats.Summary.CompletionTokens)
+	require.Equal(t, int64(41), stats.Summary.TotalTokens)
+	require.Equal(t, int64(110), stats.Summary.WalletQuota)
+	require.Equal(t, int64(2), stats.Summary.WalletRequestCount)
+	require.Zero(t, stats.Summary.SubscriptionQuota)
+	require.Equal(t, int64(1), stats.Summary.SubscriptionRequestCount)
+	require.Equal(t, int64(3), stats.Summary.ActiveUserCount)
+	require.Equal(t, int64(1), stats.Summary.SubscriptionActiveUserCount)
+
+	require.Len(t, stats.Ranking, 3)
+	require.Equal(t, 1, stats.Ranking[0].UserId)
+	require.Equal(t, int64(60), stats.Ranking[0].Quota)
+	require.Equal(t, 3, stats.Ranking[1].UserId)
+	require.Equal(t, int64(50), stats.Ranking[1].Quota)
+	require.Equal(t, 2, stats.Ranking[2].UserId)
+	require.Zero(t, stats.Ranking[2].Quota)
+	require.Equal(t, int64(1), stats.Ranking[2].RequestCount)
+
+	require.Len(t, stats.WalletRanking, 2)
+	require.Equal(t, int64(60), stats.WalletRanking[0].Quota)
+	require.Len(t, stats.SubscriptionRanking, 1)
+	require.Zero(t, stats.SubscriptionRanking[0].Quota)
+	require.Equal(t, int64(1), stats.SubscriptionRanking[0].RequestCount)
+
+	models := make(map[string]UsageStatsModelItem)
+	for _, item := range stats.Models {
+		models[item.ModelName] = item
+	}
+	require.Equal(t, int64(60), models["model-a"].Quota)
+	require.Equal(t, int64(2), models["model-a"].RequestCount)
+	require.Equal(t, int64(50), models["model-b"].Quota)
+
+	trendTotal := sumUsageStatsTrend(stats.Trend)
+	require.Equal(t, stats.Summary.Quota, trendTotal.Quota)
+	require.Equal(t, stats.Summary.RequestCount, trendTotal.RequestCount)
+	require.Equal(t, int64(-240), stats.Trend[1].Quota)
+	require.Zero(t, stats.Trend[1].RequestCount)
+	require.Zero(t, stats.Trend[1].TotalTokens)
+
+	walletStats, err := GetUsageStats(UsageStatsQuery{
+		Section:          UsageStatsSectionUsage,
+		BillingSource:    UsageStatsBillingSourceWallet,
+		StartTimestamp:   base,
+		EndTimestamp:     base + 7199,
+		Limit:            10,
+		TrendGranularity: UsageStatsGranularityHour,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(110), walletStats.Summary.Quota)
+	require.Equal(t, int64(2), walletStats.Summary.RequestCount)
+	require.Zero(t, walletStats.Summary.SubscriptionQuota)
+}
+
 func TestGetUsageStatsFiltersBillingSourceAndSection(t *testing.T) {
 	truncateTables(t)
 	resetLogTestTables(t)
@@ -730,6 +809,38 @@ func TestLogStatisticsExcludeNonBillingAuditRows(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, dashboardLogs, 1)
 	require.Equal(t, "按张消费", dashboardLogs[0].Content)
+}
+
+func TestSumUsedQuotaNetsRefundsAndKeepsThroughputConsumeOnly(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+	now := time.Now().Unix()
+	seedUsageStatsLog(t, &Log{
+		UserId: 1, Username: "alice", CreatedAt: now, Type: LogTypeConsume,
+		ModelName: "async-video", Quota: 100, PromptTokens: 10, CompletionTokens: 20,
+	})
+	seedUsageStatsLog(t, &Log{
+		UserId: 1, Username: "alice", CreatedAt: now, Type: LogTypeRefund,
+		ModelName: "async-video", Quota: 60, PromptTokens: 600, CompletionTokens: 700,
+	})
+
+	netStat, err := SumUsedQuota(LogTypeUnknown, now-1, now+1, "async-video", "alice", "", 0, "")
+	require.NoError(t, err)
+	require.Equal(t, 40, netStat.Quota)
+	require.Equal(t, 1, netStat.Rpm)
+	require.Equal(t, 30, netStat.Tpm)
+
+	consumeStat, err := SumUsedQuota(LogTypeConsume, now-1, now+1, "async-video", "alice", "", 0, "")
+	require.NoError(t, err)
+	require.Equal(t, 100, consumeStat.Quota)
+	require.Equal(t, 1, consumeStat.Rpm)
+	require.Equal(t, 30, consumeStat.Tpm)
+
+	refundStat, err := SumUsedQuota(LogTypeRefund, now-1, now+1, "async-video", "alice", "", 0, "")
+	require.NoError(t, err)
+	require.Equal(t, -60, refundStat.Quota)
+	require.Zero(t, refundStat.Rpm)
+	require.Zero(t, refundStat.Tpm)
 }
 
 func TestGetUsageStatsNormalizesCacheTokenBreakdown(t *testing.T) {
