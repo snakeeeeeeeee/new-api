@@ -75,7 +75,7 @@ func (a *TaskAdaptor) PrepareNormalizedVideoRequest(c *gin.Context, info *relayc
 		return requestError("prompt is required", "invalid_video_parameter", http.StatusBadRequest)
 	}
 	if utf8.RuneCountInString(prompt) > maxVideoPromptRunes {
-		return requestError("prompt must not exceed 1200 characters", "invalid_video_parameter", http.StatusBadRequest)
+		return requestError(fmt.Sprintf("prompt must not exceed %d characters", maxVideoPromptRunes), "invalid_video_parameter", http.StatusBadRequest)
 	}
 	if request.Output.Duration == nil {
 		return requestError("duration is required", "video_duration_required", http.StatusBadRequest)

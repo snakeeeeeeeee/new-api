@@ -8,7 +8,7 @@ const (
 	videoRequestContextKey   = "leonardo_video_request"
 	videoContentResolver     = "leonardo-video-content"
 	defaultAspectRatio       = "16:9"
-	maxVideoPromptRunes      = 1200
+	maxVideoPromptRunes      = 2500
 )
 
 var ModelList = []string{

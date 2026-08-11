@@ -327,6 +327,22 @@ func TestLeonardoGenerateAudioMapping(t *testing.T) {
 	}
 }
 
+func TestLeonardoPromptLimit(t *testing.T) {
+	duration := 4
+	info := leonardoInfo("seedance-2.0-fast-480p")
+
+	atLimit := leonardoRequest("seedance-2.0-fast-480p", duration)
+	atLimit.Input.Prompt = strings.Repeat("界", 2500)
+	require.Nil(t, (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), info, atLimit))
+
+	overLimit := leonardoRequest("seedance-2.0-fast-480p", duration)
+	overLimit.Input.Prompt = strings.Repeat("界", 2501)
+	taskErr := (&TaskAdaptor{}).PrepareNormalizedVideoRequest(leonardoVideoTestContext(), info, overLimit)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_video_parameter", taskErr.Code)
+	assert.Equal(t, "prompt must not exceed 2500 characters", taskErr.Message)
+}
+
 func TestLeonardoReferenceAndParameterLimits(t *testing.T) {
 	tests := []struct {
 		name   string
