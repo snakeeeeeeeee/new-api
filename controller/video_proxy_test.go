@@ -161,6 +161,33 @@ func TestStreamVideoContentForwardsRangeAndSameOriginAuth(t *testing.T) {
 	assert.Equal(t, "data", recorder.Body.String())
 }
 
+func TestWriteVideoProxyResponseFiltersUpstreamCORSHeaders(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/assets/asset_test/content", nil)
+
+	writeVideoProxyResponse(ctx, "task_stream", &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type":                         []string{"video/mp4"},
+			"Access-Control-Allow-Origin":          []string{"*"},
+			"Access-Control-Allow-Credentials":     []string{"true"},
+			"Access-Control-Expose-Headers":        []string{"Content-Range"},
+			"Access-Control-Allow-Private-Network": []string{"true"},
+		},
+		Body: io.NopCloser(strings.NewReader("data")),
+	})
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "video/mp4", recorder.Header().Get("Content-Type"))
+	assert.Equal(t, "private, max-age=600", recorder.Header().Get("Cache-Control"))
+	assert.Empty(t, recorder.Header().Values("Access-Control-Allow-Origin"))
+	assert.Empty(t, recorder.Header().Values("Access-Control-Allow-Credentials"))
+	assert.Empty(t, recorder.Header().Values("Access-Control-Expose-Headers"))
+	assert.Empty(t, recorder.Header().Values("Access-Control-Allow-Private-Network"))
+	assert.Equal(t, "data", recorder.Body.String())
+}
+
 func TestStreamVideoContentMapsUpstreamExpiration(t *testing.T) {
 	db := setupInviteCodeControllerTestDB(t)
 	originalMemoryCache := common.MemoryCacheEnabled

@@ -299,6 +299,9 @@ func writeVideoProxyResponse(c *gin.Context, taskID string, resp *http.Response)
 	}
 
 	for key, values := range resp.Header {
+		if strings.HasPrefix(strings.ToLower(key), "access-control-") {
+			continue
+		}
 		for _, value := range values {
 			c.Writer.Header().Add(key, value)
 		}
