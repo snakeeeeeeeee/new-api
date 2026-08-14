@@ -44,6 +44,7 @@ func handleClaudeFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
 	}
 	claudeResponses := service.StreamResponseOpenAI2Claude(&streamResponse, info)
 	for _, resp := range claudeResponses {
+		recordOpenAIResponseDownstreamObject(c, resp)
 		helper.ClaudeData(c, *resp)
 	}
 	return nil
@@ -70,6 +71,7 @@ func handleGeminiFormat(c *gin.Context, data string, info *relaycommon.RelayInfo
 	}
 
 	// send gemini format response
+	recordOpenAIResponseDownstream(c, string(geminiResponseStr))
 	c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
 	_ = helper.FlushWriter(c)
 	return nil
@@ -203,8 +205,10 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		if info.ShouldIncludeUsage && !containStreamUsage {
 			response := helper.GenerateFinalUsageResponse(responseId, createAt, model, *usage)
 			response.SetSystemFingerprint(systemFingerprint)
+			recordOpenAIResponseDownstreamObject(c, response)
 			helper.ObjectData(c, response)
 		}
+		recordOpenAIResponseDownstream(c, "[DONE]")
 		helper.Done(c)
 
 	case types.RelayFormatClaude:
@@ -218,6 +222,7 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 
 		claudeResponses := service.StreamResponseOpenAI2Claude(&streamResponse, info)
 		for _, resp := range claudeResponses {
+			recordOpenAIResponseDownstreamObject(c, resp)
 			_ = helper.ClaudeData(c, *resp)
 		}
 		info.ClaudeConvertInfo.Done = true
@@ -248,6 +253,7 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		}
 
 		// 发送最终的 Gemini 响应
+		recordOpenAIResponseDownstream(c, string(geminiResponseStr))
 		c.Render(-1, common.CustomEvent{Data: "data: " + string(geminiResponseStr)})
 		_ = helper.FlushWriter(c)
 	}
@@ -257,5 +263,6 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
 	if data == "" {
 		return
 	}
+	recordOpenAIResponseDownstream(c, data)
 	helper.ResponseChunkData(c, streamResponse, data)
 }

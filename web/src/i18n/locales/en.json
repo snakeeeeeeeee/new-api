@@ -4916,6 +4916,7 @@
     "上游响应": "Upstream response",
     "异常上游响应": "Failed upstream response",
     "没有可用的上游响应片段": "No upstream response fragment is available",
+    "没有可用的下游响应片段": "No downstream response fragment is available",
     "流状态": "Stream state",
     "流事件摘要": "Stream event summary",
     "该错误没有流状态摘要": "No stream state summary is available for this error",

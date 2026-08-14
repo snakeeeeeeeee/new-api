@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -139,6 +140,37 @@ func TestBuildErrorSnapshotWorkPriorityAndSummary(t *testing.T) {
 	require.Equal(t, model.ErrorSnapshotCaptureLevelSummary, work.index.CaptureLevel)
 	require.NotContains(t, string(work.payload), "client_request")
 	require.NotContains(t, string(work.payload), "upstream_request")
+}
+
+func TestBuildErrorSnapshotWorkPromotesRelayDiagnosticsToFullCapture(t *testing.T) {
+	setupErrorSnapshotTest(t)
+	body := `{"model":"gpt-test","messages":[{"role":"user","content":"client prompt"}]}`
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(common.RequestIdKey, "req-relay-diagnostic-error")
+	c.Set("original_model", "gpt-test")
+	BeginErrorSnapshotAttempt(c, 0)
+	CaptureRelayDiagnosticUpstreamRequestIfNeeded(c, []byte(`{"model":"mapped-model"}`))
+	BeginRelayResponseDiagnostics(c, "openai_responses")
+	RecordRelayResponseUpstream(c, "response.failed", `{"type":"response.failed"}`)
+	RecordRelayResponseDownstream(c, "chat.chunk", `{"choices":[]}`)
+
+	apiErr := types.NewOpenAIError(errors.New("upstream stream failed"), types.ErrorCodeBadResponse, http.StatusBadGateway)
+	work, err := buildErrorSnapshotWork(c, apiErr, false)
+	require.NoError(t, err)
+	require.Equal(t, model.ErrorSnapshotCaptureLevelDiagnostic, work.index.CaptureLevel)
+
+	var envelope errorSnapshotEnvelope
+	require.NoError(t, common.Unmarshal(work.payload, &envelope))
+	require.NotNil(t, envelope.ClientRequest)
+	require.Contains(t, envelope.ClientRequest.Body, "client prompt")
+	require.NotNil(t, envelope.UpstreamRequest)
+	require.Contains(t, envelope.UpstreamRequest.Body, "mapped-model")
+	require.Equal(t, "openai_responses", envelope.Stream["protocol"])
+	require.NotNil(t, envelope.Stream["upstream"])
+	require.NotNil(t, envelope.Stream["downstream"])
 }
 
 func TestErrorSnapshotUnsupportedClientBodyStoresMetadataOnly(t *testing.T) {

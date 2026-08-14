@@ -800,16 +800,19 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 }
 
 type ClaudeResponseInfo struct {
-	ResponseId          string
-	Created             int64
-	Model               string
-	ResponseText        strings.Builder
-	VisibleResponseText strings.Builder
-	StopReason          string
-	ContentBlockTypes   []string
-	Diagnostics         *claudeResponseDiagnostics
-	Usage               *dto.Usage
-	Done                bool
+	ResponseId            string
+	Created               int64
+	Model                 string
+	ResponseText          strings.Builder
+	VisibleResponseText   strings.Builder
+	ReasoningResponseText strings.Builder
+	StopReason            string
+	ContentBlockTypes     []string
+	Diagnostics           *claudeResponseDiagnostics
+	RawUsage              *dto.Usage
+	Usage                 *dto.Usage
+	MessageStopSeen       bool
+	Done                  bool
 }
 
 func cacheCreationTokensForOpenAIUsage(usage *dto.Usage) int {
@@ -988,6 +991,9 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 			}
 			if claudeResponse.Delta.Thinking != nil {
 				claudeInfo.ResponseText.WriteString(*claudeResponse.Delta.Thinking)
+				if claudeInfo.Diagnostics != nil {
+					claudeInfo.ReasoningResponseText.WriteString(*claudeResponse.Delta.Thinking)
+				}
 			}
 		}
 	} else if claudeResponse.Type == "message_delta" {
@@ -1030,9 +1036,18 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 			if claudeResponse.ContentBlock.Type == "text" && claudeResponse.ContentBlock.Text != nil {
 				claudeInfo.VisibleResponseText.WriteString(*claudeResponse.ContentBlock.Text)
 			}
+			if claudeResponse.ContentBlock.Type == "thinking" && claudeResponse.ContentBlock.Thinking != nil {
+				claudeInfo.ReasoningResponseText.WriteString(*claudeResponse.ContentBlock.Thinking)
+			}
 		}
+	} else if claudeResponse.Type == "message_stop" {
+		claudeInfo.MessageStopSeen = true
 	} else {
 		return false
+	}
+	if claudeResponse.Usage != nil || (claudeResponse.Message != nil && claudeResponse.Message.Usage != nil) {
+		rawUsage := *claudeInfo.Usage
+		claudeInfo.RawUsage = &rawUsage
 	}
 	if oaiResponse != nil {
 		oaiResponse.Id = claudeInfo.ResponseId
@@ -1128,7 +1143,7 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 		claudeInfo.Diagnostics.recordDownstream("done", "[DONE]")
 		helper.Done(c)
 	}
-	captureSuspiciousClaudeResponse(c, info, claudeInfo, nil)
+	captureSuspiciousClaudeResponse(c, info, claudeInfo, nil, nil)
 }
 
 func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError) {
@@ -1182,6 +1197,8 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Usage.CacheCreationInputTokens
 		claudeInfo.Usage.ClaudeCacheCreation5mTokens = claudeResponse.Usage.GetCacheCreation5mTokens()
 		claudeInfo.Usage.ClaudeCacheCreation1hTokens = claudeResponse.Usage.GetCacheCreation1hTokens()
+		rawUsage := *claudeInfo.Usage
+		claudeInfo.RawUsage = &rawUsage
 	}
 	observeClaudeNonStreamResponse(info, claudeInfo, &claudeResponse)
 	var responseData []byte
@@ -1202,7 +1219,7 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	}
 
 	service.IOCopyBytesGracefully(c, httpResp, responseData)
-	captureSuspiciousClaudeResponse(c, info, claudeInfo, data)
+	captureSuspiciousClaudeResponse(c, info, claudeInfo, data, responseData)
 	return nil
 }
 

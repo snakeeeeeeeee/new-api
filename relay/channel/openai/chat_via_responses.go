@@ -44,31 +44,36 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	defer service.CloseResponseBodyGracefully(resp)
+	beginOpenAIResponseDiagnostics(c, openAIResponsesDiagnosticProtocol)
 
 	var responsesResp dto.OpenAIResponsesResponse
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), body)
 	}
 
 	if err := common.Unmarshal(body, &responsesResp); err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), body)
 	}
+	observation := &openAIResponseObservation{}
+	observation.observeResponsesResponse(&responsesResp, true)
+	observation.TerminalEvent = observation.ResponseStatus
 
 	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.WithOpenAIError(*oaiError, resp.StatusCode), body)
 	}
 
 	chatId := helper.GetResponseID(c)
 	chatResp, usage, err := service.ResponsesResponseToChatCompletionsResponse(&responsesResp, chatId)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), body)
 	}
 
 	if usage == nil || usage.TotalTokens == 0 {
 		text := service.ExtractOutputTextFromResponses(&responsesResp)
 		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		chatResp.Usage = *usage
+		observation.UsageSource = "local_estimate"
 	}
 
 	var responseBody []byte
@@ -83,10 +88,11 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		responseBody, err = common.Marshal(chatResp)
 	}
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError), body)
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+	observation.capture(c, info, openAIResponsesDiagnosticProtocol, false, usage, body, responseBody)
 	return usage, nil
 }
 
@@ -96,6 +102,8 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 
 	defer service.CloseResponseBodyGracefully(resp)
+	beginOpenAIResponseDiagnostics(c, openAIResponsesDiagnosticProtocol)
+	observation := &openAIResponseObservation{}
 
 	responseId := helper.GetResponseID(c)
 	streamStartedAt := time.Now()
@@ -131,6 +139,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			return true
 		}
 		if info.RelayFormat == types.RelayFormatOpenAI {
+			recordOpenAIResponseDownstreamObject(c, chunk)
 			if err := helper.ObjectData(c, chunk); err != nil {
 				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 				return false
@@ -299,6 +308,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+		recordOpenAIResponseUpstream(c, data)
 		if streamErr != nil {
 			return false
 		}
@@ -312,6 +322,17 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 		streamSequence++
 		dumpResponsesStreamEvent(c, streamSequence, data, streamResp)
+		terminal := isResponsesTerminalStreamType(streamResp.Type)
+		if streamResp.Item != nil {
+			observation.observeResponsesOutput(streamResp.Item, false)
+		}
+		if terminal {
+			observation.markResponsesTerminal(streamResp.Type)
+			observation.observeResponsesResponse(streamResp.Response, true)
+		}
+		if strings.Contains(streamResp.Type, "reasoning") && strings.HasSuffix(streamResp.Type, ".delta") {
+			observation.ReasoningText.WriteString(streamResp.Delta)
+		}
 
 		switch streamResp.Type {
 		case "response.created":
@@ -365,6 +386,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 
 			if streamResp.Delta != "" {
 				outputText.WriteString(streamResp.Delta)
+				observation.VisibleText.WriteString(streamResp.Delta)
 				usageText.WriteString(streamResp.Delta)
 				delta := streamResp.Delta
 				chunk := &dto.ChatCompletionsStreamResponse{
@@ -541,13 +563,17 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 	}
 	if info.RelayFormat == types.RelayFormatOpenAI && info.ShouldIncludeUsage && usage != nil {
-		if err := helper.ObjectData(c, helper.GenerateFinalUsageResponse(responseId, createAt, model, *usage)); err != nil {
+		finalUsage := helper.GenerateFinalUsageResponse(responseId, createAt, model, *usage)
+		recordOpenAIResponseDownstreamObject(c, finalUsage)
+		if err := helper.ObjectData(c, finalUsage); err != nil {
 			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 		}
 	}
 
 	if info.RelayFormat == types.RelayFormatOpenAI {
+		recordOpenAIResponseDownstream(c, "[DONE]")
 		helper.Done(c)
 	}
+	observation.capture(c, info, openAIResponsesDiagnosticProtocol, true, usage, nil, nil)
 	return usage, nil
 }

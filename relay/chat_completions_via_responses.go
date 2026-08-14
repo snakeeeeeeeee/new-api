@@ -123,6 +123,7 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
+	service.DumpUpstreamRequestIfNeeded(c, jsonData)
 
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, info, bytes.NewBuffer(jsonData))

@@ -161,11 +161,17 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 					return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 				}
 				relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
+				service.DumpUpstreamRequestIfNeeded(c, jsonData)
 				requestBody = bytes.NewBuffer(jsonData)
 			} else {
 				if info.ChannelOtherSettings.ClaudeCacheTTLBillingCompatEnabled {
 					if jsonData, err := storage.Bytes(); err == nil {
 						relaycommon.CaptureClaudeCacheTTLBillingCompat(info, jsonData)
+					}
+				}
+				if service.RelayResponseDiagnosticsEnabled() {
+					if jsonData, err := storage.Bytes(); err == nil {
+						service.CaptureRelayDiagnosticUpstreamRequestIfNeeded(c, jsonData)
 					}
 				}
 				requestBody = common.ReaderOnly(storage)

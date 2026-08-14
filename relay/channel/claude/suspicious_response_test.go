@@ -1,14 +1,17 @@
 package claude
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,6 +52,7 @@ func TestFormatClaudeResponseInfoSeparatesVisibleTextFromThinking(t *testing.T) 
 
 	require.Equal(t, startText+text, claudeInfo.VisibleResponseText.String())
 	require.Equal(t, text+thinking, claudeInfo.ResponseText.String())
+	require.Equal(t, thinking, claudeInfo.ReasoningResponseText.String())
 	require.Equal(t, "end_turn", claudeInfo.StopReason)
 	require.Equal(t, []string{"text"}, claudeInfo.ContentBlockTypes)
 }
@@ -95,4 +99,71 @@ func TestClaudeDiagnosticTraceIsBounded(t *testing.T) {
 	require.Len(t, diagnostics.Downstream.Events, claudeDiagnosticMaxEvents)
 	require.Equal(t, claudeDiagnosticMaxEvents+10, diagnostics.Downstream.TotalEvents)
 	require.LessOrEqual(t, diagnostics.Downstream.StoredBytes, claudeDiagnosticMaxBytesPerSide)
+}
+
+func TestBuildClaudeRelayAnomalyEvidenceClassifiesEmptyOutputOne(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatClaude,
+		IsStream:    true,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "claude-test",
+		},
+	}
+	claudeInfo := &ClaudeResponseInfo{
+		Model:           "claude-reported",
+		StopReason:      "end_turn",
+		RawUsage:        &dto.Usage{PromptTokens: 19, CompletionTokens: 1, TotalTokens: 20},
+		Usage:           &dto.Usage{PromptTokens: 19, CompletionTokens: 1, TotalTokens: 20},
+		MessageStopSeen: true,
+	}
+
+	evidence := buildClaudeRelayAnomalyEvidence(c, info, claudeInfo, nil, nil)
+	matched, reason := service.ClassifyRelayResponseAnomaly(evidence)
+	require.True(t, matched)
+	require.Equal(t, service.RelayResponseAnomalyOutputTokensOne, reason)
+	require.Equal(t, "anthropic_messages", evidence.Protocol)
+	require.Equal(t, "end_turn", evidence.TerminalEvent)
+	require.True(t, evidence.TerminalSeen)
+}
+
+func TestBuildClaudeRelayAnomalyEvidenceAcceptsToolOnlyResponse(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatClaude,
+		IsStream:    true,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-test"},
+	}
+	claudeInfo := &ClaudeResponseInfo{
+		ContentBlockTypes: []string{"tool_use"},
+		StopReason:        "tool_use",
+		Usage:             &dto.Usage{PromptTokens: 19, CompletionTokens: 5, TotalTokens: 24},
+		MessageStopSeen:   true,
+	}
+
+	evidence := buildClaudeRelayAnomalyEvidence(c, info, claudeInfo, nil, nil)
+	matched, reason := service.ClassifyRelayResponseAnomaly(evidence)
+	require.False(t, matched)
+	require.Empty(t, reason)
+	require.True(t, evidence.HasToolCall)
+}
+
+func TestBuildClaudeRelayAnomalyEvidenceDetectsMissingMessageStop(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{
+		RelayFormat: types.RelayFormatOpenAI,
+		IsStream:    true,
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "claude-test"},
+	}
+	claudeInfo := &ClaudeResponseInfo{
+		StopReason: "end_turn",
+		Usage:      &dto.Usage{PromptTokens: 19, CompletionTokens: 5, TotalTokens: 24},
+	}
+	claudeInfo.VisibleResponseText.WriteString("partial answer")
+
+	evidence := buildClaudeRelayAnomalyEvidence(c, info, claudeInfo, nil, nil)
+	matched, reason := service.ClassifyRelayResponseAnomaly(evidence)
+	require.True(t, matched)
+	require.Equal(t, service.RelayResponseAnomalyTerminalMissing, reason)
+	require.False(t, evidence.TerminalSeen)
 }

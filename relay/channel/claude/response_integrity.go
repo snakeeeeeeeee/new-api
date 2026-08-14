@@ -393,7 +393,7 @@ func finishClaudeIntegrityStream(c *gin.Context, info *relaycommon.RelayInfo, cl
 		}
 		info.SendResponseCount++
 	}
-	captureSuspiciousClaudeResponse(c, info, claudeInfo, nil)
+	captureSuspiciousClaudeResponse(c, info, claudeInfo, nil, nil)
 	return nil
 }
 

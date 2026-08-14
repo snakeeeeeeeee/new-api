@@ -110,18 +110,19 @@ type errorSnapshotBodyCapture struct {
 }
 
 type errorSnapshotEnvelope struct {
-	SchemaVersion    int                        `json:"schema_version"`
-	SnapshotID       string                     `json:"snapshot_id"`
-	CreatedAt        int64                      `json:"created_at"`
-	Request          map[string]any             `json:"request"`
-	Route            map[string]any             `json:"route"`
-	Error            map[string]any             `json:"error"`
-	Timing           map[string]any             `json:"timing,omitempty"`
-	ClientRequest    *errorSnapshotBodyFragment `json:"client_request,omitempty"`
-	UpstreamRequest  *errorSnapshotBodyFragment `json:"upstream_request,omitempty"`
-	UpstreamResponse *errorSnapshotBodyFragment `json:"upstream_response,omitempty"`
-	Response         map[string]any             `json:"response,omitempty"`
-	Stream           map[string]any             `json:"stream,omitempty"`
+	SchemaVersion      int                        `json:"schema_version"`
+	SnapshotID         string                     `json:"snapshot_id"`
+	CreatedAt          int64                      `json:"created_at"`
+	Request            map[string]any             `json:"request"`
+	Route              map[string]any             `json:"route"`
+	Error              map[string]any             `json:"error"`
+	Timing             map[string]any             `json:"timing,omitempty"`
+	ClientRequest      *errorSnapshotBodyFragment `json:"client_request,omitempty"`
+	UpstreamRequest    *errorSnapshotBodyFragment `json:"upstream_request,omitempty"`
+	UpstreamResponse   *errorSnapshotBodyFragment `json:"upstream_response,omitempty"`
+	DownstreamResponse *errorSnapshotBodyFragment `json:"downstream_response,omitempty"`
+	Response           map[string]any             `json:"response,omitempty"`
+	Stream             map[string]any             `json:"stream,omitempty"`
 }
 
 type errorSnapshotBodyFragment struct {
@@ -207,7 +208,7 @@ func CaptureErrorSnapshotUpstreamRequestIfNeeded(c *gin.Context, body []byte) {
 	c.Set(errorSnapshotUpstreamRequestKey, capture)
 }
 
-func CaptureClaudeDiagnosticUpstreamRequestIfNeeded(c *gin.Context, body []byte) {
+func CaptureRelayDiagnosticUpstreamRequestIfNeeded(c *gin.Context, body []byte) {
 	if c == nil || len(body) == 0 || !error_snapshot_setting.GetSnapshot().Enabled {
 		return
 	}
@@ -220,6 +221,10 @@ func CaptureClaudeDiagnosticUpstreamRequestIfNeeded(c *gin.Context, body []byte)
 		Body:         diagnosticBody,
 	}
 	c.Set(errorSnapshotUpstreamRequestKey, capture)
+}
+
+func CaptureClaudeDiagnosticUpstreamRequestIfNeeded(c *gin.Context, body []byte) {
+	CaptureRelayDiagnosticUpstreamRequestIfNeeded(c, body)
 }
 
 func MarkClaudeDiagnosticUpstreamPassthrough(c *gin.Context) {
@@ -418,8 +423,12 @@ func buildErrorSnapshotWork(c *gin.Context, apiErr *types.NewAPIError, internalR
 		channelType = c.GetInt("channel_type")
 	}
 	priority := error_snapshot_setting.IsPriority(c.GetInt("id"), channelID)
+	relayDiagnostics := RelayResponseDiagnosticsSummary(c)
+	diagnosticCapture := len(relayDiagnostics) > 0
 	captureLevel := model.ErrorSnapshotCaptureLevelSummary
-	if priority {
+	if diagnosticCapture {
+		captureLevel = model.ErrorSnapshotCaptureLevelDiagnostic
+	} else if priority {
 		captureLevel = model.ErrorSnapshotCaptureLevelPriority
 	}
 	requestPath := ""
@@ -493,8 +502,12 @@ func buildErrorSnapshotWork(c *gin.Context, apiErr *types.NewAPIError, internalR
 			"upstream_first_event_ms": common.GetContextKeyInt(c, constant.ContextKeyUpstreamFirstEventMs),
 		},
 	}
-	if priority {
-		envelope.ClientRequest = captureClientRequestBody(c, contentType)
+	if priority || diagnosticCapture {
+		if diagnosticCapture {
+			envelope.ClientRequest = captureDiagnosticClientRequestBody(c, contentType)
+		} else {
+			envelope.ClientRequest = captureClientRequestBody(c, contentType)
+		}
 		if value, ok := c.Get(errorSnapshotUpstreamRequestKey); ok {
 			if capture, captureOK := value.(errorSnapshotBodyCapture); captureOK {
 				envelope.UpstreamRequest = buildErrorSnapshotBodyFragment(capture.Body, capture.OriginalSize, capture.ContentType, errorSnapshotMaxBodyFragment)
@@ -516,6 +529,14 @@ func buildErrorSnapshotWork(c *gin.Context, apiErr *types.NewAPIError, internalR
 		}
 		if len(diagnostic.StreamSummary) > 0 {
 			envelope.Stream = common.MaskSensitiveValue(diagnostic.StreamSummary).(map[string]any)
+		}
+	}
+	if diagnosticCapture {
+		summary := sanitizeDiagnosticMap(relayDiagnostics)
+		if len(envelope.Stream) == 0 {
+			envelope.Stream = summary
+		} else {
+			envelope.Stream["relay_response"] = summary
 		}
 	}
 	payload, err := common.Marshal(envelope)

@@ -5401,6 +5401,7 @@
     "上游响应": "Phản hồi thượng nguồn",
     "异常上游响应": "Phản hồi thượng nguồn lỗi",
     "没有可用的上游响应片段": "Không có đoạn phản hồi thượng nguồn khả dụng",
+    "没有可用的下游响应片段": "Không có đoạn phản hồi hạ nguồn khả dụng",
     "流状态": "Trạng thái luồng",
     "流事件摘要": "Tóm tắt sự kiện luồng",
     "该错误没有流状态摘要": "Không có tóm tắt trạng thái luồng cho lỗi này",

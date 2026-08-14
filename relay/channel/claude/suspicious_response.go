@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -151,14 +153,12 @@ func captureSuspiciousClaudeResponse(
 	info *relaycommon.RelayInfo,
 	claudeInfo *ClaudeResponseInfo,
 	upstreamResponseBody []byte,
+	downstreamResponseBody []byte,
 ) {
 	if c == nil || info == nil || claudeInfo == nil {
 		return
 	}
 	if claudeInfo.Diagnostics == nil {
-		return
-	}
-	if matched, _ := service.MatchSuspiciousClaudeResponse(claudeInfo.VisibleResponseText.String()); !matched {
 		return
 	}
 	responseModel := strings.TrimSpace(claudeInfo.Model)
@@ -169,18 +169,105 @@ func captureSuspiciousClaudeResponse(
 	if upstreamModel == "" {
 		upstreamModel = strings.TrimSpace(info.UpstreamModelName)
 	}
-	service.CaptureSuspiciousClaudeResponseSnapshot(c, service.SuspiciousClaudeResponseEvidence{
-		VisibleText:          claudeInfo.VisibleResponseText.String(),
-		UpstreamModel:        upstreamModel,
-		ResponseModel:        responseModel,
-		StopReason:           strings.TrimSpace(claudeInfo.StopReason),
-		RelayFormat:          string(info.RelayFormat),
-		IsStream:             info.IsStream,
-		ContentBlockTypes:    append([]string(nil), claudeInfo.ContentBlockTypes...),
-		Usage:                claudeDiagnosticUsage(claudeInfo.Usage),
-		UpstreamResponseBody: append([]byte(nil), upstreamResponseBody...),
-		Stream:               claudeInfo.Diagnostics.summary(),
-	})
+	if matched, _ := service.MatchSuspiciousClaudeResponse(claudeInfo.VisibleResponseText.String()); matched {
+		service.CaptureSuspiciousClaudeResponseSnapshot(c, service.SuspiciousClaudeResponseEvidence{
+			VisibleText:            claudeInfo.VisibleResponseText.String(),
+			UpstreamModel:          upstreamModel,
+			ResponseModel:          responseModel,
+			StopReason:             strings.TrimSpace(claudeInfo.StopReason),
+			RelayFormat:            string(info.RelayFormat),
+			IsStream:               info.IsStream,
+			ContentBlockTypes:      append([]string(nil), claudeInfo.ContentBlockTypes...),
+			Usage:                  claudeDiagnosticUsage(claudeInfo.Usage),
+			UpstreamResponseBody:   append([]byte(nil), upstreamResponseBody...),
+			DownstreamResponseBody: append([]byte(nil), downstreamResponseBody...),
+			Stream:                 claudeInfo.Diagnostics.summary(),
+		})
+	}
+
+	evidence := buildClaudeRelayAnomalyEvidence(c, info, claudeInfo, upstreamResponseBody, downstreamResponseBody)
+	service.CaptureRelayResponseAnomalySnapshot(c, evidence)
+}
+
+func buildClaudeRelayAnomalyEvidence(
+	c *gin.Context,
+	info *relaycommon.RelayInfo,
+	claudeInfo *ClaudeResponseInfo,
+	upstreamResponseBody []byte,
+	downstreamResponseBody []byte,
+) service.RelayResponseAnomalyEvidence {
+	if info == nil || claudeInfo == nil {
+		return service.RelayResponseAnomalyEvidence{}
+	}
+	responseModel := strings.TrimSpace(claudeInfo.Model)
+	if responseModel == "" {
+		responseModel = strings.TrimSpace(info.UpstreamModelName)
+	}
+	upstreamModel := strings.TrimSpace(info.UpstreamModelName)
+	if claudeInfo.Diagnostics != nil && strings.TrimSpace(claudeInfo.Diagnostics.RequestedUpstreamModel) != "" {
+		upstreamModel = strings.TrimSpace(claudeInfo.Diagnostics.RequestedUpstreamModel)
+	}
+	hasToolCall := false
+	hasOtherOutput := false
+	for _, blockType := range claudeInfo.ContentBlockTypes {
+		switch strings.TrimSpace(blockType) {
+		case "", "text", "thinking", "redacted_thinking":
+		case "tool_use", "server_tool_use":
+			hasToolCall = true
+		default:
+			hasOtherOutput = true
+		}
+	}
+	usageSource := "upstream"
+	if common.GetContextKeyBool(c, constant.ContextKeyLocalCountTokens) {
+		usageSource = "local_estimate"
+	} else if claudeInfo.RawUsage == nil {
+		usageSource = "unavailable"
+	}
+	terminalSeen := true
+	if info.IsStream {
+		terminalSeen = claudeInfo.MessageStopSeen
+	}
+	finishReasons := []string{}
+	if stopReason := strings.TrimSpace(claudeInfo.StopReason); stopReason != "" {
+		finishReasons = append(finishReasons, stopReason)
+	}
+	stream := map[string]any(nil)
+	if claudeInfo.Diagnostics != nil {
+		stream = claudeInfo.Diagnostics.summary()
+	}
+	return service.RelayResponseAnomalyEvidence{
+		Protocol:               "anthropic_messages",
+		UpstreamModel:          upstreamModel,
+		ResponseModel:          responseModel,
+		RelayFormat:            string(info.RelayFormat),
+		IsStream:               info.IsStream,
+		VisibleText:            claudeInfo.VisibleResponseText.String(),
+		ReasoningText:          claudeInfo.ReasoningResponseText.String(),
+		HasToolCall:            hasToolCall,
+		HasOtherOutput:         hasOtherOutput,
+		FinishReasons:          finishReasons,
+		TerminalEvent:          strings.TrimSpace(claudeInfo.StopReason),
+		TerminalSeen:           terminalSeen,
+		RawUsage:               cloneClaudeDiagnosticUsage(claudeInfo.RawUsage),
+		EffectiveUsage:         cloneClaudeDiagnosticUsage(claudeInfo.Usage),
+		UsageSource:            usageSource,
+		UpstreamResponseBody:   append([]byte(nil), upstreamResponseBody...),
+		DownstreamResponseBody: append([]byte(nil), downstreamResponseBody...),
+		Stream:                 stream,
+		Details: map[string]any{
+			"content_block_types": append([]string(nil), claudeInfo.ContentBlockTypes...),
+			"message_stop_seen":   claudeInfo.MessageStopSeen,
+		},
+	}
+}
+
+func cloneClaudeDiagnosticUsage(usage *dto.Usage) *dto.Usage {
+	if usage == nil {
+		return nil
+	}
+	cloned := *usage
+	return &cloned
 }
 
 func observeClaudeNonStreamResponse(
@@ -199,6 +286,9 @@ func observeClaudeNonStreamResponse(
 	var visibleText string
 	for _, block := range response.Content {
 		claudeInfo.ContentBlockTypes = appendClaudeContentBlockType(claudeInfo.ContentBlockTypes, block.Type)
+		if block.Type == "thinking" && block.Thinking != nil {
+			claudeInfo.ReasoningResponseText.WriteString(*block.Thinking)
+		}
 		if block.Type != "text" {
 			continue
 		}

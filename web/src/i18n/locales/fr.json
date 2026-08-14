@@ -4895,6 +4895,7 @@
     "上游响应": "Réponse amont",
     "异常上游响应": "Réponse amont en échec",
     "没有可用的上游响应片段": "Aucun fragment de réponse amont disponible",
+    "没有可用的下游响应片段": "Aucun fragment de réponse aval disponible",
     "流状态": "État du flux",
     "流事件摘要": "Résumé des événements du flux",
     "该错误没有流状态摘要": "Aucun résumé d'état du flux pour cette erreur",

@@ -20,29 +20,27 @@ import (
 
 func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
+	beginOpenAIResponseDiagnostics(c, openAIResponsesDiagnosticProtocol)
 
 	// read response body
 	var responsesResponse dto.OpenAIResponsesResponse
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), responseBody)
 	}
 	err = common.Unmarshal(responseBody, &responsesResponse)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), responseBody)
 	}
-	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
-	}
+	observation := &openAIResponseObservation{}
+	observation.observeResponsesResponse(&responsesResponse, true)
+	observation.TerminalEvent = observation.ResponseStatus
 
 	if responsesResponse.HasImageGenerationCall() {
 		c.Set("image_generation_call", true)
 		c.Set("image_generation_call_quality", responsesResponse.GetQuality())
 		c.Set("image_generation_call_size", responsesResponse.GetSize())
 	}
-
-	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	// compute usage
 	usage := dto.Usage{}
@@ -52,6 +50,13 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		usage.TotalTokens = responsesResponse.Usage.TotalTokens
 		service.NormalizeResponsesInputUsage(&usage, responsesResponse.Usage)
 	}
+	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
+		return nil, attachOpenAIResponseErrorDiagnostic(types.WithOpenAIError(*oaiError, resp.StatusCode), responseBody)
+	}
+
+	// 写入新的 response body
+	service.IOCopyBytesGracefully(c, resp, responseBody)
+	observation.capture(c, info, openAIResponsesDiagnosticProtocol, false, &usage, responseBody, responseBody)
 	if info == nil || info.ResponsesUsageInfo == nil || info.ResponsesUsageInfo.BuiltInTools == nil {
 		return &usage, nil
 	}
@@ -83,6 +88,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	defer service.CloseResponseBodyGracefully(resp)
+	beginOpenAIResponseDiagnostics(c, openAIResponsesDiagnosticProtocol)
+	observation := &openAIResponseObservation{}
 
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
@@ -90,6 +97,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	streamSequence := 0
 
 	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+		recordOpenAIResponseUpstream(c, data)
 
 		// 检查当前数据是否包含 completed 状态和 usage 信息
 		var streamResponse dto.ResponsesStreamResponse
@@ -98,6 +106,16 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			dumpResponsesStreamEvent(c, streamSequence, data, streamResponse)
 			sendResponsesStreamData(c, streamResponse, data)
 			terminal := isResponsesTerminalStreamType(streamResponse.Type)
+			if streamResponse.Item != nil {
+				observation.observeResponsesOutput(streamResponse.Item, false)
+			}
+			if terminal {
+				observation.markResponsesTerminal(streamResponse.Type)
+				observation.observeResponsesResponse(streamResponse.Response, true)
+			}
+			if strings.Contains(streamResponse.Type, "reasoning") && strings.HasSuffix(streamResponse.Type, ".delta") {
+				observation.ReasoningText.WriteString(streamResponse.Delta)
+			}
 			switch streamResponse.Type {
 			case "response.completed":
 				markResponsesStreamStopReason(c, streamResponse.Type)
@@ -124,6 +142,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			case "response.output_text.delta":
 				// 处理输出文本
 				responseTextBuilder.WriteString(streamResponse.Delta)
+				observation.VisibleText.WriteString(streamResponse.Delta)
 			case dto.ResponsesOutputTypeItemDone:
 				// 函数调用处理
 				if streamResponse.Item != nil {
@@ -157,14 +176,17 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			// 非正常结束，使用输出文本的 token 数量
 			completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)
 			usage.CompletionTokens = completionTokens
+			observation.UsageSource = "mixed_local_output_estimate"
 		}
 	}
 
 	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 {
 		usage.PromptTokens = info.GetEstimatePromptTokens()
+		observation.UsageSource = "mixed_local_estimate"
 	}
 
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	observation.capture(c, info, openAIResponsesDiagnosticProtocol, true, usage, nil, nil)
 
 	return usage, nil
 }

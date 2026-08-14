@@ -33,6 +33,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	data = string(restoredData)
 
 	if !forceFormat && !thinkToContent {
+		recordOpenAIResponseDownstream(c, data)
 		return helper.StringData(c, data)
 	}
 
@@ -42,6 +43,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 	}
 
 	if !thinkToContent {
+		recordOpenAIResponseDownstreamObject(c, lastStreamResponse)
 		return helper.ObjectData(c, lastStreamResponse)
 	}
 
@@ -70,11 +72,13 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 			}
 			info.ThinkingContentInfo.IsFirstThinkingContent = false
 			info.ThinkingContentInfo.HasSentThinkingContent = true
+			recordOpenAIResponseDownstreamObject(c, response)
 			return helper.ObjectData(c, response)
 		}
 	}
 
 	if lastStreamResponse.Choices == nil || len(lastStreamResponse.Choices) == 0 {
+		recordOpenAIResponseDownstreamObject(c, lastStreamResponse)
 		return helper.ObjectData(c, lastStreamResponse)
 	}
 
@@ -90,6 +94,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 				response.Choices[j].Delta.Reasoning = nil
 			}
 			info.ThinkingContentInfo.SendLastThinkingContent = true
+			recordOpenAIResponseDownstreamObject(c, response)
 			helper.ObjectData(c, response)
 		}
 
@@ -105,6 +110,7 @@ func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, fo
 		}
 	}
 
+	recordOpenAIResponseDownstreamObject(c, lastStreamResponse)
 	return helper.ObjectData(c, lastStreamResponse)
 }
 
@@ -115,6 +121,8 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	}
 
 	defer service.CloseResponseBodyGracefully(resp)
+	beginOpenAIResponseDiagnostics(c, openAIChatDiagnosticProtocol)
+	observation := &openAIResponseObservation{}
 
 	model := info.UpstreamModelName
 	var responseId string
@@ -132,6 +140,8 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	isAudioModel := strings.Contains(strings.ToLower(model), "audio")
 
 	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+		recordOpenAIResponseUpstream(c, data)
+		observation.observeChatStreamData(data)
 		if lastStreamData != "" {
 			err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
 			if err != nil {
@@ -194,49 +204,54 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	applyUsagePostProcessing(info, usage, common.StringToByteSlice(lastStreamData))
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+	observation.capture(c, info, openAIChatDiagnosticProtocol, true, usage, nil, nil)
 
 	return usage, nil
 }
 
 func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
+	beginOpenAIResponseDiagnostics(c, openAIChatDiagnosticProtocol)
 
 	var simpleResponse dto.OpenAITextResponse
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), responseBody)
 	}
 	if common.DebugEnabled {
 		println("upstream response body:", string(responseBody))
 	}
+	rawUpstreamResponseBody := append([]byte(nil), responseBody...)
 	// Unmarshal to simpleResponse
 	if info.ChannelType == constant.ChannelTypeOpenRouter && info.ChannelOtherSettings.IsOpenRouterEnterprise() {
 		// 尝试解析为 openrouter enterprise
 		var enterpriseResponse openrouter.OpenRouterEnterpriseResponse
 		err = common.Unmarshal(responseBody, &enterpriseResponse)
 		if err != nil {
-			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), rawUpstreamResponseBody)
 		}
 		if enterpriseResponse.Success {
 			responseBody = enterpriseResponse.Data
 		} else {
 			logger.LogError(c, fmt.Sprintf("openrouter enterprise response success=false, data: %s", enterpriseResponse.Data))
-			return nil, types.NewOpenAIError(fmt.Errorf("openrouter response success=false"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+			return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(fmt.Errorf("openrouter response success=false"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError), rawUpstreamResponseBody)
 		}
 	}
 	responseBody, err = relaycommon.RestoreOpenAIReservedFunctionNamesJSON(responseBody, info)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), rawUpstreamResponseBody)
 	}
 
 	err = common.Unmarshal(responseBody, &simpleResponse)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), rawUpstreamResponseBody)
 	}
 
 	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+		return nil, attachOpenAIResponseErrorDiagnostic(types.WithOpenAIError(*oaiError, resp.StatusCode), rawUpstreamResponseBody)
 	}
+	observation := &openAIResponseObservation{}
+	observation.observeChatResponse(&simpleResponse)
 
 	for _, choice := range simpleResponse.Choices {
 		if choice.FinishReason == constant.FinishReasonContentFilter {
@@ -265,6 +280,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 			TotalTokens:      info.GetEstimatePromptTokens() + completionTokens,
 		}
 		usageModified = true
+		observation.UsageSource = "local_estimate"
 	}
 
 	applyUsagePostProcessing(info, &simpleResponse.Usage, responseBody)
@@ -275,7 +291,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 			var bodyMap map[string]interface{}
 			err = common.Unmarshal(responseBody, &bodyMap)
 			if err != nil {
-				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+				return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), rawUpstreamResponseBody)
 			}
 			bodyMap["usage"] = simpleResponse.Usage
 			responseBody, _ = common.Marshal(bodyMap)
@@ -283,7 +299,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		if forceFormat {
 			responseBody, err = common.Marshal(simpleResponse)
 			if err != nil {
-				return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+				return nil, attachOpenAIResponseErrorDiagnostic(types.NewError(err, types.ErrorCodeBadResponseBody), rawUpstreamResponseBody)
 			}
 		} else {
 			break
@@ -292,19 +308,20 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		claudeResp := service.ResponseOpenAI2Claude(&simpleResponse, info)
 		claudeRespStr, err := common.Marshal(claudeResp)
 		if err != nil {
-			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+			return nil, attachOpenAIResponseErrorDiagnostic(types.NewError(err, types.ErrorCodeBadResponseBody), rawUpstreamResponseBody)
 		}
 		responseBody = claudeRespStr
 	case types.RelayFormatGemini:
 		geminiResp := service.ResponseOpenAI2Gemini(&simpleResponse, info)
 		geminiRespStr, err := common.Marshal(geminiResp)
 		if err != nil {
-			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+			return nil, attachOpenAIResponseErrorDiagnostic(types.NewError(err, types.ErrorCodeBadResponseBody), rawUpstreamResponseBody)
 		}
 		responseBody = geminiRespStr
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+	observation.capture(c, info, openAIChatDiagnosticProtocol, false, &simpleResponse.Usage, rawUpstreamResponseBody, responseBody)
 
 	return &simpleResponse.Usage, nil
 }

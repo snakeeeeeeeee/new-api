@@ -25,16 +25,17 @@ var suspiciousClaudeIdleGreetingPattern = regexp.MustCompile(
 )
 
 type SuspiciousClaudeResponseEvidence struct {
-	VisibleText          string
-	UpstreamModel        string
-	ResponseModel        string
-	StopReason           string
-	RelayFormat          string
-	IsStream             bool
-	ContentBlockTypes    []string
-	Usage                map[string]any
-	UpstreamResponseBody []byte
-	Stream               map[string]any
+	VisibleText            string
+	UpstreamModel          string
+	ResponseModel          string
+	StopReason             string
+	RelayFormat            string
+	IsStream               bool
+	ContentBlockTypes      []string
+	Usage                  map[string]any
+	UpstreamResponseBody   []byte
+	DownstreamResponseBody []byte
+	Stream                 map[string]any
 }
 
 func SuspiciousResponseCaptureEnabled() bool {
@@ -191,6 +192,14 @@ func buildSuspiciousClaudeResponseSnapshot(c *gin.Context, evidence SuspiciousCl
 			int64(len(evidence.UpstreamResponseBody)),
 			"application/json",
 			errorSnapshotMaxResponseFragment,
+		)
+	}
+	if len(evidence.DownstreamResponseBody) > 0 {
+		envelope.DownstreamResponse = buildDiagnosticBodyFragment(
+			evidence.DownstreamResponseBody,
+			int64(len(evidence.DownstreamResponseBody)),
+			"application/json",
+			errorSnapshotMaxBodyFragment,
 		)
 	}
 	if len(evidence.Stream) > 0 {

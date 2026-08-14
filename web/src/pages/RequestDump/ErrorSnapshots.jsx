@@ -1217,6 +1217,13 @@ const ErrorSnapshots = () => {
                       truncatedText={t('快照已截断')}
                       hashLabel={t('SHA-256')}
                     />
+                    <BodySection
+                      title={t('下游响应')}
+                      fragment={payload.downstream_response}
+                      missingText={t('没有可用的下游响应片段')}
+                      truncatedText={t('快照已截断')}
+                      hashLabel={t('SHA-256')}
+                    />
                   </div>
                 </TabPane>
                 <TabPane tab={t('流状态')} itemKey='stream'>
