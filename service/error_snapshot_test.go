@@ -327,6 +327,36 @@ func TestErrorSnapshotQueueFullReturnsWithoutBlocking(t *testing.T) {
 	require.Equal(t, oldDropped+1, errorSnapshotManager.dropped.Load())
 }
 
+func TestCaptureRelayErrorSnapshotSkipsExpectedErrors(t *testing.T) {
+	setupErrorSnapshotTest(t)
+	oldQueue := errorSnapshotManager.queue
+	errorSnapshotManager.queue = make(chan errorSnapshotWork, 1)
+	t.Cleanup(func() { errorSnapshotManager.queue = oldQueue })
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test"}`))
+	c.Set(common.RequestIdKey, "req-filtered-error")
+	c.Set("original_model", "gpt-test")
+	BeginErrorSnapshotAttempt(c, 0)
+
+	rateLimitErr := types.NewOpenAIError(errors.New("upstream rate limited"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	CaptureRelayErrorSnapshot(c, rateLimitErr, false)
+	require.Empty(t, errorSnapshotManager.queue)
+	require.False(t, c.GetBool(errorSnapshotAnyCapturedKey))
+
+	quotaErr := types.NewErrorWithStatusCode(errors.New("quota insufficient"), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden)
+	CaptureRelayErrorSnapshot(c, quotaErr, false)
+	require.Empty(t, errorSnapshotManager.queue)
+	require.False(t, c.GetBool(errorSnapshotAnyCapturedKey))
+
+	accessDeniedErr := types.NewErrorWithStatusCode(errors.New("channel access denied"), types.ErrorCodeAccessDenied, http.StatusForbidden)
+	CaptureRelayErrorSnapshot(c, accessDeniedErr, false)
+	require.Len(t, errorSnapshotManager.queue, 1)
+	work := <-errorSnapshotManager.queue
+	require.Equal(t, http.StatusForbidden, work.index.StatusCode)
+	require.Equal(t, string(types.ErrorCodeAccessDenied), work.index.ErrorCode)
+}
+
 func TestErrorSnapshotFallbackOutcomeIsQueuedAfterFailedAttempt(t *testing.T) {
 	setupErrorSnapshotTest(t)
 	oldQueue := errorSnapshotManager.queue

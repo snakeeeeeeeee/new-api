@@ -235,7 +235,7 @@ func MarkClaudeDiagnosticUpstreamPassthrough(c *gin.Context) {
 }
 
 func CaptureRelayErrorSnapshot(c *gin.Context, err *types.NewAPIError, internalRetry bool) {
-	if c == nil || err == nil || isErrorSnapshotClientDisconnect(err) {
+	if c == nil || err == nil || shouldSkipRelayErrorSnapshot(err) {
 		return
 	}
 	if !error_snapshot_setting.GetSnapshot().Enabled {
@@ -253,8 +253,17 @@ func CaptureRelayErrorSnapshot(c *gin.Context, err *types.NewAPIError, internalR
 	}
 }
 
+func shouldSkipRelayErrorSnapshot(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	return isErrorSnapshotClientDisconnect(err) ||
+		err.StatusCode == http.StatusTooManyRequests ||
+		err.GetErrorCode() == types.ErrorCodeInsufficientUserQuota
+}
+
 func CaptureFinalRelayErrorSnapshotIfNeeded(c *gin.Context, err *types.NewAPIError) {
-	if c == nil || err == nil || c.GetBool(errorSnapshotCurrentCapturedKey) || isErrorSnapshotClientDisconnect(err) {
+	if c == nil || err == nil || c.GetBool(errorSnapshotCurrentCapturedKey) || shouldSkipRelayErrorSnapshot(err) {
 		return
 	}
 	CaptureRelayErrorSnapshot(c, err, false)
