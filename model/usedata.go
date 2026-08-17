@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,6 +110,7 @@ func GetQuotaDataByUsername(username string, startTime int64, endTime int64) (qu
 		quotaDatas = appendQuotaDataCacheSnapshot(quotaDatas, startTime, endTime, func(data *QuotaData) bool {
 			return data.Username == username
 		})
+		quotaDatas, err = appendQuotaDataSettlementAdjustments(quotaDatas, startTime, endTime, 0, username)
 	}
 	return quotaDatas, err
 }
@@ -121,6 +123,7 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64) (quotaData
 		quotaDatas = appendQuotaDataCacheSnapshot(quotaDatas, startTime, endTime, func(data *QuotaData) bool {
 			return data.UserID == userId
 		})
+		quotaDatas, err = appendQuotaDataSettlementAdjustments(quotaDatas, startTime, endTime, userId, "")
 	}
 	return quotaDatas, err
 }
@@ -138,8 +141,124 @@ func GetAllQuotaDates(startTime int64, endTime int64, username string) (quotaDat
 		quotaDatas = appendQuotaDataCacheSnapshot(quotaDatas, startTime, endTime, func(data *QuotaData) bool {
 			return true
 		})
+		quotaDatas, err = appendQuotaDataSettlementAdjustments(quotaDatas, startTime, endTime, 0, "")
 	}
 	return quotaDatas, err
+}
+
+type quotaDataSettlementLog struct {
+	UserId    int
+	Username  string
+	ModelName string
+	CreatedAt int64
+	Type      int
+	Quota     int
+	Other     string
+}
+
+func quotaDataSettlementQuery(startTime int64, endTime int64, userId int, username string) *gorm.DB {
+	query := LOG_DB.Model(&Log{}).
+		Select("user_id, username, model_name, created_at, type, quota, other").
+		Where("created_at >= ? AND created_at <= ?", startTime, endTime)
+	if userId > 0 {
+		query = query.Where("user_id = ?", userId)
+	}
+	if username != "" {
+		query = query.Where("username = ?", username)
+	}
+	return excludeNonBillingAuditLogs(query, "logs.other")
+}
+
+func quotaDataOtherInt(other map[string]interface{}, key string) (int, bool) {
+	value, ok := other[key]
+	if !ok {
+		return 0, false
+	}
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case string:
+		var parsed int
+		if _, err := fmt.Sscan(v, &parsed); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func appendQuotaDataSettlementAdjustments(quotaDatas []*QuotaData, startTime int64, endTime int64, userId int, username string) ([]*QuotaData, error) {
+	// quota_data stores hourly buckets. Settlement rows must use the same bucket filter
+	// after their second-level log timestamps are selected.
+	appendAdjustment := func(row quotaDataSettlementLog, quotaDelta int) {
+		if quotaDelta == 0 {
+			return
+		}
+		adjustment := quotaDataAdjustmentFromLog(row, quotaDelta)
+		if adjustment.CreatedAt < startTime || adjustment.CreatedAt > endTime {
+			return
+		}
+		quotaDatas = append(quotaDatas, adjustment)
+	}
+
+	var rows []quotaDataSettlementLog
+	if err := quotaDataSettlementQuery(startTime, endTime, userId, username).
+		Where("type = ?", LogTypeRefund).
+		Scan(&rows).Error; err != nil {
+		return quotaDatas, err
+	}
+	for _, row := range rows {
+		appendAdjustment(row, -row.Quota)
+	}
+
+	rows = nil
+	if err := quotaDataSettlementQuery(startTime, endTime, userId, username).
+		Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
+		Where("other LIKE ?", "%pre_consumed_quota%").
+		Scan(&rows).Error; err != nil {
+		return quotaDatas, err
+	}
+	for _, row := range rows {
+		other := make(map[string]interface{})
+		if err := common.UnmarshalJsonStr(row.Other, &other); err != nil {
+			continue
+		}
+		billingStage, _ := other["billing_stage"].(string)
+		quotaDelta := 0
+		if strings.HasPrefix(billingStage, "async_image_") {
+			var ok bool
+			quotaDelta, ok = quotaDataOtherInt(other, "quota_delta")
+			if !ok {
+				actualQuota, actualOK := quotaDataOtherInt(other, "actual_quota")
+				preConsumedQuota, preConsumedOK := quotaDataOtherInt(other, "pre_consumed_quota")
+				if actualOK && preConsumedOK {
+					quotaDelta = actualQuota - preConsumedQuota
+				}
+			}
+		} else if row.Type == LogTypeConsume {
+			_, preConsumedOK := quotaDataOtherInt(other, "pre_consumed_quota")
+			_, actualOK := quotaDataOtherInt(other, "actual_quota")
+			if preConsumedOK && actualOK {
+				quotaDelta = row.Quota
+			}
+		}
+		appendAdjustment(row, quotaDelta)
+	}
+	return quotaDatas, nil
+}
+
+func quotaDataAdjustmentFromLog(row quotaDataSettlementLog, quotaDelta int) *QuotaData {
+	createdAt := row.CreatedAt - (row.CreatedAt % 3600)
+	return &QuotaData{
+		UserID:    row.UserId,
+		Username:  row.Username,
+		ModelName: row.ModelName,
+		CreatedAt: createdAt,
+		Quota:     quotaDelta,
+	}
 }
 
 func appendQuotaDataCacheSnapshot(quotaDatas []*QuotaData, startTime int64, endTime int64, match func(*QuotaData) bool) []*QuotaData {

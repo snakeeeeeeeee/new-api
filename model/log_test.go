@@ -33,6 +33,44 @@ func resetLogTestTables(t *testing.T) {
 	require.NoError(t, DB.Exec("DELETE FROM users").Error)
 }
 
+func resetQuotaDataTestState(t *testing.T) {
+	t.Helper()
+	require.NoError(t, DB.AutoMigrate(&QuotaData{}))
+	require.NoError(t, DB.Exec("DELETE FROM quota_data").Error)
+	previousDataExportEnabled := common.DataExportEnabled
+	common.DataExportEnabled = true
+	CacheQuotaDataLock.Lock()
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+	t.Cleanup(func() {
+		CacheQuotaDataLock.Lock()
+		CacheQuotaData = make(map[string]*QuotaData)
+		CacheQuotaDataLock.Unlock()
+		_ = DB.Exec("DELETE FROM quota_data").Error
+		common.DataExportEnabled = previousDataExportEnabled
+	})
+}
+
+func requireQuotaDataTotals(t *testing.T, userID int, startTime int64, endTime int64, quota int, count int, tokenUsed int) {
+	t.Helper()
+	rows, err := GetQuotaDataByUserId(userID, startTime, endTime)
+	require.NoError(t, err)
+	requireQuotaDataRowsTotals(t, rows, quota, count, tokenUsed)
+}
+
+func requireQuotaDataRowsTotals(t *testing.T, rows []*QuotaData, quota int, count int, tokenUsed int) {
+	t.Helper()
+	var actualQuota, actualCount, actualTokenUsed int
+	for _, row := range rows {
+		actualQuota += row.Quota
+		actualCount += row.Count
+		actualTokenUsed += row.TokenUsed
+	}
+	require.Equal(t, quota, actualQuota)
+	require.Equal(t, count, actualCount)
+	require.Equal(t, tokenUsed, actualTokenUsed)
+}
+
 func countLogsByTypeAndUser(t *testing.T, userID int, logType int) int64 {
 	t.Helper()
 	var count int64
@@ -138,22 +176,32 @@ func TestFinalizeAsyncImageConsumeLogUpdatesOriginalPrechargeRow(t *testing.T) {
 func TestFinalizeAsyncImageConsumeLogWritesExplicitZeroAndMissingRequestID(t *testing.T) {
 	truncateTables(t)
 	resetLogTestTables(t)
+	resetQuotaDataTestState(t)
+	createdAt := time.Now().Unix()
 
 	logItem := &Log{
 		UserId:    73,
-		CreatedAt: time.Now().Unix(),
+		Username:  "async-image-user",
+		CreatedAt: createdAt,
 		Type:      LogTypeConsume,
 		Content:   "precharge",
+		ModelName: "async-image-model",
 		Quota:     100,
 		Other:     common.MapToJsonStr(map[string]interface{}{"task_id": "task_failed"}),
 	}
 	require.NoError(t, LOG_DB.Create(logItem).Error)
+	LogQuotaData(logItem.UserId, logItem.Username, logItem.ModelName, logItem.Quota, logItem.CreatedAt, 37)
 
 	merged, err := FinalizeAsyncImageConsumeLog(logItem.Id, logItem.UserId, "task_failed", "req-failure", &TaskFinalConsumeLogSnapshot{
 		LogType: LogTypeError,
 		Quota:   0,
 		Content: "failed and refunded",
-		Other:   map[string]interface{}{"billing_stage": "async_image_failed"},
+		Other: map[string]interface{}{
+			"billing_stage":      "async_image_failed",
+			"pre_consumed_quota": 100,
+			"actual_quota":       0,
+			"quota_delta":        -100,
+		},
 	})
 	require.NoError(t, err)
 	require.True(t, merged)
@@ -168,10 +216,61 @@ func TestFinalizeAsyncImageConsumeLogWritesExplicitZeroAndMissingRequestID(t *te
 		LogType: LogTypeError,
 		Quota:   0,
 		Content: "failed and refunded",
-		Other:   map[string]interface{}{"billing_stage": "async_image_failed"},
+		Other: map[string]interface{}{
+			"billing_stage":      "async_image_failed",
+			"pre_consumed_quota": 100,
+			"actual_quota":       0,
+			"quota_delta":        -100,
+		},
 	})
 	require.NoError(t, err)
 	require.True(t, merged)
+	requireQuotaDataTotals(t, logItem.UserId, createdAt-3600, createdAt+3600, 0, 1, 37)
+}
+
+func TestRecordTaskBillingLogNetsDashboardQuotaWithoutCountingRefund(t *testing.T) {
+	truncateTables(t)
+	resetLogTestTables(t)
+	resetQuotaDataTestState(t)
+	createdAt := time.Now().Unix()
+	const userID = 74
+	seedLogTestUser(t, userID, "dashboard-refund-user")
+	LogQuotaData(userID, "dashboard-refund-user", "async-video-model", 100, createdAt, 29)
+	SaveQuotaDataCache()
+
+	RecordTaskBillingLog(RecordTaskBillingLogParams{
+		UserId:    userID,
+		LogType:   LogTypeRefund,
+		Content:   "async task failed and refunded",
+		ModelName: "async-video-model",
+		Quota:     60,
+		Other:     map[string]interface{}{"task_id": "task_dashboard_refund"},
+	})
+
+	requireQuotaDataTotals(t, userID, createdAt-3600, createdAt+3600, 40, 1, 29)
+	RecordTaskBillingLog(RecordTaskBillingLogParams{
+		UserId:    userID,
+		LogType:   LogTypeConsume,
+		Content:   "async task final supplemental charge",
+		ModelName: "async-video-model",
+		Quota:     20,
+		Other: map[string]interface{}{
+			"task_id":            "task_dashboard_refund",
+			"pre_consumed_quota": 40,
+			"actual_quota":       60,
+		},
+	})
+	requireQuotaDataTotals(t, userID, createdAt-3600, createdAt+3600, 60, 1, 29)
+
+	usernameRows, err := GetQuotaDataByUsername("dashboard-refund-user", createdAt-3600, createdAt+3600)
+	require.NoError(t, err)
+	requireQuotaDataRowsTotals(t, usernameRows, 60, 1, 29)
+	allRows, err := GetAllQuotaDates(createdAt-3600, createdAt+3600, "")
+	require.NoError(t, err)
+	requireQuotaDataRowsTotals(t, allRows, 60, 1, 29)
+
+	SaveQuotaDataCache()
+	requireQuotaDataTotals(t, userID, createdAt-3600, createdAt+3600, 60, 1, 29)
 }
 
 func TestRecordConsumeLogSkipsExcludedUsers(t *testing.T) {
