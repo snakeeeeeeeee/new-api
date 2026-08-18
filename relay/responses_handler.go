@@ -21,6 +21,9 @@ import (
 )
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
+	if info.OpenAIResponseIntegrityEnabled {
+		defer info.EndOpenAIResponseIntegrityAttempt()
+	}
 	info.InitChannelMeta(c)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
 		switch info.ApiType {

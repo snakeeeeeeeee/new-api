@@ -26,11 +26,11 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	var responsesResponse dto.OpenAIResponsesResponse
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), responseBody)
+		return nil, openAIIntegrityReadError(c, info, openAIIntegrityResponses, err, responseBody)
 	}
 	err = common.Unmarshal(responseBody, &responsesResponse)
 	if err != nil {
-		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), responseBody)
+		return nil, openAIIntegrityParseError(info, openAIIntegrityResponses, err, responseBody)
 	}
 	observation := &openAIResponseObservation{}
 	observation.observeResponsesResponse(&responsesResponse, true)
@@ -50,8 +50,11 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		usage.TotalTokens = responsesResponse.Usage.TotalTokens
 		service.NormalizeResponsesInputUsage(&usage, responsesResponse.Usage)
 	}
-	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, attachOpenAIResponseErrorDiagnostic(types.WithOpenAIError(*oaiError, resp.StatusCode), responseBody)
+	if oaiError := responsesResponse.GetOpenAIError(); openAIIntegrityErrorPresent(oaiError) {
+		return nil, openAIIntegrityResponseError(info, openAIIntegrityResponses, oaiError, resp.StatusCode, responseBody)
+	}
+	if integrityErr := validateOpenAIResponsesResponseIntegrity(info, &responsesResponse, responseBody, false); integrityErr != nil {
+		return nil, integrityErr
 	}
 
 	// 写入新的 response body
@@ -96,7 +99,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	streamStartedAt := time.Now()
 	streamSequence := 0
 
-	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+	handleStreamData := func(data string) bool {
 		recordOpenAIResponseUpstream(c, data)
 
 		// 检查当前数据是否包含 completed 状态和 usage 信息
@@ -166,7 +169,18 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
 		}
 		return true
-	})
+	}
+	integrityResult := openAIIntegrityStreamResult{}
+	if info.OpenAIResponseIntegrityEnabled {
+		var integrityErr *types.NewAPIError
+		integrityResult, integrityErr = runOpenAIIntegrityStream(c, info, resp, openAIIntegrityResponses, handleStreamData)
+		if integrityErr != nil {
+			return nil, integrityErr
+		}
+		logOpenAIIntegrityPostCommitFailure(c, integrityResult)
+	} else {
+		helper.StreamScannerHandler(c, resp, info, handleStreamData)
+	}
 	dumpResponsesStreamSummary(c, streamStartedAt, streamSequence, info.ReceivedResponseCount)
 
 	if usage.CompletionTokens == 0 {

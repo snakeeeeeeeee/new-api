@@ -389,6 +389,7 @@ func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]s
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
+		info.EndOpenAIResponseIntegrityAttempt()
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
 	if common2.DebugEnabled {
@@ -398,17 +399,21 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if info.ClaudeResponseIntegrityEnabled && info.GetFinalRequestRelayFormat() == types.RelayFormatClaude {
 		attemptCtx := info.BeginClaudeResponseIntegrityAttempt(c.Request.Context())
 		req, err = http.NewRequestWithContext(attemptCtx, c.Request.Method, fullRequestURL, requestBody)
+	} else if attemptCtx := info.OpenAIResponseIntegrityAttemptContext(); attemptCtx != nil {
+		req, err = http.NewRequestWithContext(attemptCtx, c.Request.Method, fullRequestURL, requestBody)
 	} else {
 		req, err = http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
 	}
 	if err != nil {
 		info.EndClaudeResponseIntegrityAttempt()
+		info.EndOpenAIResponseIntegrityAttempt()
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
 	headers := req.Header
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
 		info.EndClaudeResponseIntegrityAttempt()
+		info.EndOpenAIResponseIntegrityAttempt()
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
@@ -416,6 +421,7 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	headerOverride, err := processHeaderOverride(info, c)
 	if err != nil {
 		info.EndClaudeResponseIntegrityAttempt()
+		info.EndOpenAIResponseIntegrityAttempt()
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
@@ -437,6 +443,41 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 			}
 			info.EndClaudeResponseIntegrityAttempt()
 		}
+		if info.OpenAIResponseIntegrityAttemptContext() != nil {
+			if c.Request.Context().Err() != nil {
+				info.EndOpenAIResponseIntegrityAttempt()
+				return nil, types.NewErrorWithStatusCode(c.Request.Context().Err(), types.ErrorCodeDoRequestFailed, 499, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			}
+			if info.OpenAIResponseIntegrityFirstOutputTimedOut() {
+				protocol := "openai_chat"
+				if info.RelayMode == constant.RelayModeResponses {
+					protocol = "openai_responses"
+				}
+				apiErr := types.NewErrorWithStatusCode(
+					errors.New("upstream returned no usable output"),
+					types.ErrorCodeEmptyResponse,
+					http.StatusBadGateway,
+					types.ErrOptionWithClientSafe(),
+				)
+				apiErr.Diagnostic = &types.RelayErrorDiagnostic{StreamSummary: map[string]any{
+					"protocol":                protocol,
+					"integrity_reason":        "first_output_timeout",
+					"stream_stop_reason":      "first_output_timeout",
+					"terminal_event":          "",
+					"terminal_seen":           false,
+					"meaningful_output_seen":  false,
+					"response_committed":      false,
+					"received_events":         info.ReceivedResponseCount,
+					"sent_events":             info.SendResponseCount,
+					"buffered_events":         0,
+					"buffered_bytes":          0,
+					"first_output_elapsed_ms": info.OpenAIResponseIntegrityAttemptElapsed().Milliseconds(),
+				}}
+				info.EndOpenAIResponseIntegrityAttempt()
+				return nil, apiErr
+			}
+		}
+		info.EndOpenAIResponseIntegrityAttempt()
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
 	return resp, nil

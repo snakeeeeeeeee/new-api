@@ -527,6 +527,17 @@ func UpdateOption(c *gin.Context) {
 			common.ApiErrorMsg(c, "OpenAI 工具 Schema 空 required 兼容开关格式无效")
 			return
 		}
+	case "global.openai_response_integrity_fallback_enabled":
+		if _, parseErr := strconv.ParseBool(option.Value.(string)); parseErr != nil {
+			common.ApiErrorMsg(c, "OpenAI 响应完整性保护开关格式无效")
+			return
+		}
+	case "global.openai_response_integrity_first_output_timeout_seconds":
+		intValue, parseErr := strconv.Atoi(option.Value.(string))
+		if parseErr != nil || intValue < 1 || intValue > 300 {
+			common.ApiErrorMsg(c, "OpenAI 首个有效输出超时必须在 1 到 300 秒之间")
+			return
+		}
 	case "global.openai_reserved_function_names":
 		normalized, _, normalizeErr := model_setting.NormalizeOpenAIReservedFunctionNames(option.Value.(string))
 		if normalizeErr != nil {

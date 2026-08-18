@@ -37,6 +37,26 @@ func TestOpenAIToolSchemaNullRequiredCompatibilityDefaultsDisabled(t *testing.T)
 	require.False(t, defaultOpenaiSettings.OpenAIToolSchemaNullRequiredCompatEnabled)
 }
 
+func TestOpenAIResponseIntegrityDefaultsDisabled(t *testing.T) {
+	require.False(t, defaultOpenaiSettings.OpenAIResponseIntegrityFallbackEnabled)
+	require.Equal(t, 30, defaultOpenaiSettings.OpenAIResponseIntegrityFirstOutputTimeout)
+}
+
+func TestOpenAIResponseIntegritySnapshotNormalizesInvalidTimeout(t *testing.T) {
+	original := globalSettings
+	t.Cleanup(func() {
+		globalSettings = original
+		RefreshOpenAIResponseIntegritySettingsSnapshot()
+	})
+
+	globalSettings.OpenAIResponseIntegrityFallbackEnabled = true
+	globalSettings.OpenAIResponseIntegrityFirstOutputTimeout = 0
+	snapshot := RefreshOpenAIResponseIntegritySettingsSnapshot()
+
+	require.True(t, snapshot.Enabled)
+	require.Equal(t, 30, snapshot.FirstOutputTimeoutSeconds)
+}
+
 func buildOpenAIReservedFunctionNames(count int) string {
 	names := make([]string, count)
 	for i := range names {

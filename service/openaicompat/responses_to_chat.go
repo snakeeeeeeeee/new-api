@@ -95,6 +95,14 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 	}
 
 	finishReason := "stop"
+	if strings.Trim(string(resp.Status), "\" ") == "incomplete" && resp.IncompleteDetails != nil {
+		switch strings.TrimSpace(resp.IncompleteDetails.GetReason()) {
+		case "max_output_tokens":
+			finishReason = "length"
+		case "content_filter":
+			finishReason = "content_filter"
+		}
+	}
 	if len(toolCalls) > 0 {
 		finishReason = "tool_calls"
 	}

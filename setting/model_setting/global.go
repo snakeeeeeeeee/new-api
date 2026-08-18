@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/QuantumNous/new-api/setting/config"
 )
@@ -46,6 +47,13 @@ type GlobalSettings struct {
 	OpenAIReservedFunctionNameCompatEnabled   bool                             `json:"openai_reserved_function_name_compat_enabled"`
 	OpenAIReservedFunctionNames               string                           `json:"openai_reserved_function_names"`
 	OpenAIToolSchemaNullRequiredCompatEnabled bool                             `json:"openai_tool_schema_null_required_compat_enabled"`
+	OpenAIResponseIntegrityFallbackEnabled    bool                             `json:"openai_response_integrity_fallback_enabled"`
+	OpenAIResponseIntegrityFirstOutputTimeout int                              `json:"openai_response_integrity_first_output_timeout_seconds"`
+}
+
+type OpenAIResponseIntegritySettingsSnapshot struct {
+	Enabled                   bool
+	FirstOutputTimeoutSeconds int
 }
 
 // 默认配置
@@ -62,18 +70,42 @@ var defaultOpenaiSettings = GlobalSettings{
 	OpenAIReservedFunctionNameCompatEnabled:   true,
 	OpenAIReservedFunctionNames:               "python",
 	OpenAIToolSchemaNullRequiredCompatEnabled: false,
+	OpenAIResponseIntegrityFallbackEnabled:    false,
+	OpenAIResponseIntegrityFirstOutputTimeout: 30,
 }
 
 // 全局实例
 var globalSettings = defaultOpenaiSettings
+var openAIResponseIntegritySettings atomic.Value
 
 func init() {
 	// 注册到全局配置管理器
 	config.GlobalConfig.Register("global", &globalSettings)
+	RefreshOpenAIResponseIntegritySettingsSnapshot()
 }
 
 func GetGlobalSettings() *GlobalSettings {
 	return &globalSettings
+}
+
+func GetOpenAIResponseIntegritySettingsSnapshot() OpenAIResponseIntegritySettingsSnapshot {
+	if value := openAIResponseIntegritySettings.Load(); value != nil {
+		return value.(OpenAIResponseIntegritySettingsSnapshot)
+	}
+	return RefreshOpenAIResponseIntegritySettingsSnapshot()
+}
+
+func RefreshOpenAIResponseIntegritySettingsSnapshot() OpenAIResponseIntegritySettingsSnapshot {
+	timeout := globalSettings.OpenAIResponseIntegrityFirstOutputTimeout
+	if timeout < 1 || timeout > 300 {
+		timeout = defaultOpenaiSettings.OpenAIResponseIntegrityFirstOutputTimeout
+	}
+	snapshot := OpenAIResponseIntegritySettingsSnapshot{
+		Enabled:                   globalSettings.OpenAIResponseIntegrityFallbackEnabled,
+		FirstOutputTimeoutSeconds: timeout,
+	}
+	openAIResponseIntegritySettings.Store(snapshot)
+	return snapshot
 }
 
 func NormalizeOpenAIReservedFunctionNames(value string) (string, []string, error) {

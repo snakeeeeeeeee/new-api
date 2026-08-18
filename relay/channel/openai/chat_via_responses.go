@@ -49,18 +49,21 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var responsesResp dto.OpenAIResponsesResponse
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), body)
+		return nil, openAIIntegrityReadError(c, info, openAIIntegrityResponsesToChat, err, body)
 	}
 
 	if err := common.Unmarshal(body, &responsesResp); err != nil {
-		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), body)
+		return nil, openAIIntegrityParseError(info, openAIIntegrityResponsesToChat, err, body)
 	}
 	observation := &openAIResponseObservation{}
 	observation.observeResponsesResponse(&responsesResp, true)
 	observation.TerminalEvent = observation.ResponseStatus
 
-	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, attachOpenAIResponseErrorDiagnostic(types.WithOpenAIError(*oaiError, resp.StatusCode), body)
+	if oaiError := responsesResp.GetOpenAIError(); openAIIntegrityErrorPresent(oaiError) {
+		return nil, openAIIntegrityResponseError(info, openAIIntegrityResponsesToChat, oaiError, resp.StatusCode, body)
+	}
+	if integrityErr := validateOpenAIResponsesResponseIntegrity(info, &responsesResp, body, true); integrityErr != nil {
+		return nil, integrityErr
 	}
 
 	chatId := helper.GetResponseID(c)
@@ -111,14 +114,15 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	model := info.UpstreamModelName
 
 	var (
-		usage          = &dto.Usage{}
-		outputText     strings.Builder
-		usageText      strings.Builder
-		sentStart      bool
-		sentStop       bool
-		sawToolCall    bool
-		streamErr      *types.NewAPIError
-		streamSequence int
+		usage                = &dto.Usage{}
+		outputText           strings.Builder
+		usageText            strings.Builder
+		sentStart            bool
+		sentStop             bool
+		sawToolCall          bool
+		terminalFinishReason string
+		streamErr            *types.NewAPIError
+		streamSequence       int
 	)
 
 	toolCallIndexByID := make(map[string]int)
@@ -307,7 +311,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		return true
 	}
 
-	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+	handleStreamData := func(data string) bool {
 		recordOpenAIResponseUpstream(c, data)
 		if streamErr != nil {
 			return false
@@ -525,7 +529,19 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 			return false
 
-		case "response.incomplete", "response.cancelled":
+		case "response.incomplete":
+			markResponsesStreamStopReason(c, streamResp.Type)
+			if streamResp.Response != nil && streamResp.Response.IncompleteDetails != nil {
+				switch strings.TrimSpace(streamResp.Response.IncompleteDetails.GetReason()) {
+				case "max_output_tokens":
+					terminalFinishReason = "length"
+				case "content_filter":
+					terminalFinishReason = "content_filter"
+				}
+			}
+			return false
+
+		case "response.cancelled":
 			markResponsesStreamStopReason(c, streamResp.Type)
 			return false
 
@@ -533,15 +549,36 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 
 		return true
-	})
-	dumpResponsesStreamSummary(c, streamStartedAt, streamSequence, info.ReceivedResponseCount)
-
-	if streamErr != nil {
-		return nil, streamErr
 	}
+	integrityResult := openAIIntegrityStreamResult{}
+	if info.OpenAIResponseIntegrityEnabled {
+		var integrityErr *types.NewAPIError
+		integrityResult, integrityErr = runOpenAIIntegrityStream(c, info, resp, openAIIntegrityResponsesToChat, handleStreamData)
+		if integrityErr != nil {
+			return nil, integrityErr
+		}
+	} else {
+		helper.StreamScannerHandler(c, resp, info, handleStreamData)
+	}
+	dumpResponsesStreamSummary(c, streamStartedAt, streamSequence, info.ReceivedResponseCount)
 
 	if usage.TotalTokens == 0 {
 		usage = service.ResponseText2Usage(c, usageText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+	}
+
+	if streamErr != nil {
+		if info.OpenAIResponseIntegrityEnabled && (integrityResult.MeaningfulOutputSeen || integrityResult.ResponseCommitted) {
+			integrityResult.PostCommitFailure = true
+			logOpenAIIntegrityPostCommitFailure(c, integrityResult)
+			observation.capture(c, info, openAIResponsesDiagnosticProtocol, true, usage, nil, nil)
+			return usage, nil
+		}
+		return nil, streamErr
+	}
+	if info.OpenAIResponseIntegrityEnabled && integrityResult.PostCommitFailure {
+		logOpenAIIntegrityPostCommitFailure(c, integrityResult)
+		observation.capture(c, info, openAIResponsesDiagnosticProtocol, true, usage, nil, nil)
+		return usage, nil
 	}
 
 	if !sentStart {
@@ -554,6 +591,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			info.ClaudeConvertInfo.Usage = usage
 		}
 		finishReason := "stop"
+		if terminalFinishReason != "" {
+			finishReason = terminalFinishReason
+		}
 		if sawToolCall && outputText.Len() == 0 {
 			finishReason = "tool_calls"
 		}

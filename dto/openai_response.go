@@ -352,7 +352,18 @@ func (o *OpenAIResponsesResponse) GetSize() string {
 }
 
 type IncompleteDetails struct {
-	Reasoning string `json:"reasoning"`
+	Reason    string `json:"reason,omitempty"`
+	Reasoning string `json:"reasoning,omitempty"`
+}
+
+func (details *IncompleteDetails) GetReason() string {
+	if details == nil {
+		return ""
+	}
+	if details.Reason != "" {
+		return details.Reason
+	}
+	return details.Reasoning
 }
 
 type ResponsesOutput struct {

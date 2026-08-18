@@ -57,6 +57,16 @@ type claudeResponseIntegrityAttempt struct {
 	mutex             sync.Mutex
 }
 
+type openAIResponseIntegrityAttempt struct {
+	ctx                context.Context
+	cancel             context.CancelFunc
+	firstOutputTimer   *time.Timer
+	firstOutputPending atomic.Bool
+	firstOutputTimeout atomic.Bool
+	startedAt          time.Time
+	mutex              sync.Mutex
+}
+
 type RerankerInfo struct {
 	Documents       []any
 	ReturnDocuments bool
@@ -140,16 +150,19 @@ type RelayInfo struct {
 	UserSetting            dto.UserSetting
 	// BillingPreferenceOverride constrains funding selection for this request.
 	// Video requests use wallet_only unless the exact public model opts in.
-	BillingPreferenceOverride                string
-	UserEmail                                string
-	UserQuota                                int
-	RelayFormat                              types.RelayFormat
-	SendResponseCount                        int
-	ReceivedResponseCount                    int
-	ClaudeResponseIntegrityEnabled           bool
-	ClaudeResponseIntegrityFirstBlockTimeout time.Duration
-	claudeResponseIntegrityAttempt           *claudeResponseIntegrityAttempt
-	FinalPreConsumedQuota                    int // 最终预消耗的配额
+	BillingPreferenceOverride                 string
+	UserEmail                                 string
+	UserQuota                                 int
+	RelayFormat                               types.RelayFormat
+	SendResponseCount                         int
+	ReceivedResponseCount                     int
+	ClaudeResponseIntegrityEnabled            bool
+	ClaudeResponseIntegrityFirstBlockTimeout  time.Duration
+	claudeResponseIntegrityAttempt            *claudeResponseIntegrityAttempt
+	OpenAIResponseIntegrityEnabled            bool
+	OpenAIResponseIntegrityFirstOutputTimeout time.Duration
+	openAIResponseIntegrityAttempt            *openAIResponseIntegrityAttempt
+	FinalPreConsumedQuota                     int // 最终预消耗的配额
 	// ForcePreConsume 为 true 时禁用 BillingSession 的信任额度旁路，
 	// 强制预扣全额。用于异步任务（视频/音乐生成等），因为请求返回后任务仍在运行，
 	// 必须在提交前锁定全额。
@@ -493,6 +506,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		reqId = common.GetTimeString() + common.GetRandomString(8)
 	}
 	claudeIntegritySettings := model_setting.GetClaudeResponseIntegritySettingsSnapshot()
+	openAIIntegritySettings := model_setting.GetOpenAIResponseIntegritySettingsSnapshot()
 	info := &RelayInfo{
 		Request: request,
 
@@ -510,13 +524,15 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		TokenUnlimited: common.GetContextKeyBool(c, constant.ContextKeyTokenUnlimited),
 		TokenGroup:     tokenGroup,
 
-		isFirstResponse:                          true,
-		RelayMode:                                relayconstant.Path2RelayMode(c.Request.URL.Path),
-		RequestURLPath:                           c.Request.URL.String(),
-		RequestHeaders:                           cloneRequestHeaders(c),
-		IsStream:                                 isStream,
-		ClaudeResponseIntegrityEnabled:           claudeIntegritySettings.Enabled,
-		ClaudeResponseIntegrityFirstBlockTimeout: time.Duration(claudeIntegritySettings.FirstBlockTimeoutSeconds) * time.Second,
+		isFirstResponse:                           true,
+		RelayMode:                                 relayconstant.Path2RelayMode(c.Request.URL.Path),
+		RequestURLPath:                            c.Request.URL.String(),
+		RequestHeaders:                            cloneRequestHeaders(c),
+		IsStream:                                  isStream,
+		ClaudeResponseIntegrityEnabled:            claudeIntegritySettings.Enabled,
+		ClaudeResponseIntegrityFirstBlockTimeout:  time.Duration(claudeIntegritySettings.FirstBlockTimeoutSeconds) * time.Second,
+		OpenAIResponseIntegrityEnabled:            openAIIntegritySettings.Enabled,
+		OpenAIResponseIntegrityFirstOutputTimeout: time.Duration(openAIIntegritySettings.FirstOutputTimeoutSeconds) * time.Second,
 
 		StartTime:         startTime,
 		FirstResponseTime: startTime.Add(-time.Second),

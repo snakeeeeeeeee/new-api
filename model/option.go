@@ -810,6 +810,12 @@ func handleConfigUpdate(key, value string) (bool, error) {
 			common.OptionMap[key] = strconv.Itoa(snapshot.FirstBlockTimeoutSeconds)
 		}
 	}
+	if configName == "global" {
+		snapshot := model_setting.RefreshOpenAIResponseIntegritySettingsSnapshot()
+		if configKey == "openai_response_integrity_first_output_timeout_seconds" {
+			common.OptionMap[key] = strconv.Itoa(snapshot.FirstOutputTimeoutSeconds)
+		}
+	}
 	if configName == "error_snapshot" {
 		snapshot := error_snapshot_setting.RefreshSnapshot()
 		common.OptionMap["error_snapshot.enabled"] = strconv.FormatBool(snapshot.Enabled)
@@ -835,6 +841,18 @@ func normalizeOpenAICompatibilityOption(key string, value string) (string, error
 			return "", errors.New("OpenAI 工具 Schema 空 required 兼容开关格式无效")
 		}
 		return strconv.FormatBool(enabled), nil
+	case "global.openai_response_integrity_fallback_enabled":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return "", errors.New("OpenAI 响应完整性保护开关格式无效")
+		}
+		return strconv.FormatBool(enabled), nil
+	case "global.openai_response_integrity_first_output_timeout_seconds":
+		timeout, err := strconv.Atoi(value)
+		if err != nil || timeout < 1 || timeout > 300 {
+			return "", errors.New("OpenAI 首个有效输出超时必须在 1 到 300 秒之间")
+		}
+		return strconv.Itoa(timeout), nil
 	case "global.openai_reserved_function_names":
 		normalized, _, err := model_setting.NormalizeOpenAIReservedFunctionNames(value)
 		return normalized, err

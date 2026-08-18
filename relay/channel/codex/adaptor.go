@@ -108,6 +108,9 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
+	if info.ShouldUseOpenAIResponseIntegrity() {
+		info.BeginOpenAIResponseIntegrityAttempt(c.Request.Context())
+	}
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 

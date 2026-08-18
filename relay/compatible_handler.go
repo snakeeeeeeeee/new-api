@@ -27,6 +27,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	if info.ClaudeResponseIntegrityEnabled {
 		defer info.EndClaudeResponseIntegrityAttempt()
 	}
+	if info.OpenAIResponseIntegrityEnabled {
+		defer info.EndOpenAIResponseIntegrityAttempt()
+	}
 	info.InitChannelMeta(c)
 
 	textReq, ok := info.Request.(*dto.GeneralOpenAIRequest)

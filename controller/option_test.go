@@ -106,6 +106,60 @@ func TestOpenAIReservedFunctionNameOptionsCanBeUpdated(t *testing.T) {
 	require.True(t, settings.OpenAIToolSchemaNullRequiredCompatEnabled)
 }
 
+func TestOpenAIResponseIntegrityOptionsCanBeReadAndUpdated(t *testing.T) {
+	setupAggregateGroupControllerTestDB(t)
+	model.InitOptionMap()
+	settings := model_setting.GetGlobalSettings()
+	original := *settings
+	t.Cleanup(func() {
+		*model_setting.GetGlobalSettings() = original
+		model_setting.RefreshOpenAIResponseIntegritySettingsSnapshot()
+	})
+
+	listRecorder := httptest.NewRecorder()
+	listCtx, _ := gin.CreateTestContext(listRecorder)
+	listCtx.Request = httptest.NewRequest(http.MethodGet, "/api/option", nil)
+	GetOptions(listCtx)
+	var listResponse tokenAPIResponse
+	require.NoError(t, common.Unmarshal(listRecorder.Body.Bytes(), &listResponse))
+	require.True(t, listResponse.Success, listResponse.Message)
+	data := string(listResponse.Data)
+	require.Contains(t, data, `"key":"global.openai_response_integrity_fallback_enabled","value":"false"`)
+	require.Contains(t, data, `"key":"global.openai_response_integrity_first_output_timeout_seconds","value":"30"`)
+
+	update := func(key string, value any) tokenAPIResponse {
+		t.Helper()
+		payload, err := common.Marshal(map[string]any{"key": key, "value": value})
+		require.NoError(t, err)
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/api/option", bytes.NewReader(payload))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		UpdateOption(ctx)
+		var response tokenAPIResponse
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		return response
+	}
+
+	enabled := update("global.openai_response_integrity_fallback_enabled", true)
+	require.True(t, enabled.Success, enabled.Message)
+	require.True(t, model_setting.GetOpenAIResponseIntegritySettingsSnapshot().Enabled)
+
+	timeout := update("global.openai_response_integrity_first_output_timeout_seconds", 45)
+	require.True(t, timeout.Success, timeout.Message)
+	require.Equal(t, 45, model_setting.GetOpenAIResponseIntegritySettingsSnapshot().FirstOutputTimeoutSeconds)
+
+	for _, invalid := range []any{0, 301, "invalid"} {
+		response := update("global.openai_response_integrity_first_output_timeout_seconds", invalid)
+		require.False(t, response.Success)
+		require.Equal(t, 45, model_setting.GetOpenAIResponseIntegritySettingsSnapshot().FirstOutputTimeoutSeconds)
+	}
+
+	invalidSwitch := update("global.openai_response_integrity_fallback_enabled", "invalid")
+	require.False(t, invalidSwitch.Success)
+	require.True(t, model_setting.GetOpenAIResponseIntegritySettingsSnapshot().Enabled)
+}
+
 func TestAggregateGroupStrategyOptionsCanBeReadAndUpdated(t *testing.T) {
 	setupAggregateGroupControllerTestDB(t)
 	model.InitOptionMap()

@@ -139,7 +139,7 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	// 检查是否为音频模型
 	isAudioModel := strings.Contains(strings.ToLower(model), "audio")
 
-	helper.StreamScannerHandler(c, resp, info, func(data string) bool {
+	handleStreamData := func(data string) bool {
 		recordOpenAIResponseUpstream(c, data)
 		observation.observeChatStreamData(data)
 		if lastStreamData != "" {
@@ -158,7 +158,18 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			streamItems = append(streamItems, data)
 		}
 		return true
-	})
+	}
+	integrityResult := openAIIntegrityStreamResult{}
+	if info.OpenAIResponseIntegrityEnabled {
+		var integrityErr *types.NewAPIError
+		integrityResult, integrityErr = runOpenAIIntegrityStream(c, info, resp, openAIIntegrityChat, handleStreamData)
+		if integrityErr != nil {
+			return nil, integrityErr
+		}
+		logOpenAIIntegrityPostCommitFailure(c, integrityResult)
+	} else {
+		helper.StreamScannerHandler(c, resp, info, handleStreamData)
+	}
 
 	// 对音频模型，从倒数第二个stream data中提取usage信息
 	if isAudioModel && secondLastStreamData != "" {
@@ -203,7 +214,9 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 
 	applyUsagePostProcessing(info, usage, common.StringToByteSlice(lastStreamData))
 
-	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+	if !integrityResult.PostCommitFailure {
+		HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+	}
 	observation.capture(c, info, openAIChatDiagnosticProtocol, true, usage, nil, nil)
 
 	return usage, nil
@@ -216,7 +229,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	var simpleResponse dto.OpenAITextResponse
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), responseBody)
+		return nil, openAIIntegrityReadError(c, info, openAIIntegrityChat, err, responseBody)
 	}
 	if common.DebugEnabled {
 		println("upstream response body:", string(responseBody))
@@ -228,7 +241,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		var enterpriseResponse openrouter.OpenRouterEnterpriseResponse
 		err = common.Unmarshal(responseBody, &enterpriseResponse)
 		if err != nil {
-			return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), rawUpstreamResponseBody)
+			return nil, openAIIntegrityParseError(info, openAIIntegrityChat, err, rawUpstreamResponseBody)
 		}
 		if enterpriseResponse.Success {
 			responseBody = enterpriseResponse.Data
@@ -244,11 +257,14 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 
 	err = common.Unmarshal(responseBody, &simpleResponse)
 	if err != nil {
-		return nil, attachOpenAIResponseErrorDiagnostic(types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), rawUpstreamResponseBody)
+		return nil, openAIIntegrityParseError(info, openAIIntegrityChat, err, rawUpstreamResponseBody)
 	}
 
-	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, attachOpenAIResponseErrorDiagnostic(types.WithOpenAIError(*oaiError, resp.StatusCode), rawUpstreamResponseBody)
+	if oaiError := simpleResponse.GetOpenAIError(); openAIIntegrityErrorPresent(oaiError) {
+		return nil, openAIIntegrityResponseError(info, openAIIntegrityChat, oaiError, resp.StatusCode, rawUpstreamResponseBody)
+	}
+	if integrityErr := validateOpenAIChatResponseIntegrity(info, &simpleResponse, rawUpstreamResponseBody); integrityErr != nil {
+		return nil, integrityErr
 	}
 	observation := &openAIResponseObservation{}
 	observation.observeChatResponse(&simpleResponse)

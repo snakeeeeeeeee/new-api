@@ -79,6 +79,8 @@ const DEFAULT_OPTIONS = {
   'global.openai_reserved_function_name_compat_enabled': true,
   'global.openai_reserved_function_names': 'python',
   'global.openai_tool_schema_null_required_compat_enabled': false,
+  'global.openai_response_integrity_fallback_enabled': false,
+  'global.openai_response_integrity_first_output_timeout_seconds': '30',
 };
 
 const CLAUDE_DEFAULT_MAX_TOKENS_EXAMPLE = {
@@ -425,6 +427,17 @@ export default function CompatibilityPage() {
       showError(t('Claude 请求体限制必须大于 0'));
       return;
     }
+    const openAIIntegrityTimeout = Number(
+      inputs['global.openai_response_integrity_first_output_timeout_seconds'],
+    );
+    if (
+      !Number.isInteger(openAIIntegrityTimeout) ||
+      openAIIntegrityTimeout < 1 ||
+      openAIIntegrityTimeout > 300
+    ) {
+      showError(t('OpenAI 首个有效输出超时必须在 1 到 300 秒之间'));
+      return;
+    }
     const requestQueue = updateArray.map((item) =>
       API.put('/api/option/', {
         key: item.key,
@@ -624,6 +637,52 @@ export default function CompatibilityPage() {
                       '管理 OpenAI Chat Completions 转换、工具 Schema 及上游保留函数名兼容。',
                     )}
                   />
+                  <Row gutter={[16, 12]}>
+                    <Col xs={24} md={12} lg={10}>
+                      <Form.Switch
+                        label={t('OpenAI 响应完整性保护')}
+                        field={
+                          'global.openai_response_integrity_fallback_enabled'
+                        }
+                        extraText={t(
+                          '开启后，Chat Completions 与 Responses 在首个有效输出前遇到空响应或异常终止时返回 502，由现有渠道重试机制处理。默认关闭。',
+                        )}
+                        onChange={(value) =>
+                          setInputs((current) => ({
+                            ...current,
+                            'global.openai_response_integrity_fallback_enabled':
+                              value,
+                          }))
+                        }
+                      />
+                    </Col>
+                    <Col xs={24} md={12} lg={8}>
+                      <Form.InputNumber
+                        label={t('首个有效输出超时')}
+                        field={
+                          'global.openai_response_integrity_first_output_timeout_seconds'
+                        }
+                        min={1}
+                        max={300}
+                        step={1}
+                        disabled={
+                          !inputs[
+                            'global.openai_response_integrity_fallback_enabled'
+                          ]
+                        }
+                        extraText={t(
+                          '范围 1-300 秒，默认 30 秒。是否切换渠道仍取决于 RetryTimes、自动重试状态码和聚合组策略。',
+                        )}
+                        onChange={(value) =>
+                          setInputs((current) => ({
+                            ...current,
+                            'global.openai_response_integrity_first_output_timeout_seconds':
+                              String(value),
+                          }))
+                        }
+                      />
+                    </Col>
+                  </Row>
                   <Row gutter={[16, 12]}>
                     <Col xs={24} md={12} lg={10}>
                       <Form.Switch
